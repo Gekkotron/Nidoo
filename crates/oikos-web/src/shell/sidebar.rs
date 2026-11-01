@@ -105,13 +105,13 @@ pub fn Sidebar(
         });
     };
 
-    // Double-clicking the logo makes the bird sing and gives it a little shake.
-    let singing = RwSignal::new(false);
-    let sing = move |_| {
+    // A small surprise for the curious.
+    let wiggling = RwSignal::new(false);
+    let wiggle = move |_| {
         crate::chime::ring();
-        singing.set(true);
+        wiggling.set(true);
         gloo_timers::callback::Timeout::new(1200, move || {
-            singing.try_set(false);
+            wiggling.try_set(false);
         })
         .forget();
     };
@@ -141,13 +141,13 @@ pub fn Sidebar(
             <div class="sidebar__brand">
                 <img
                     class="sidebar__logo"
-                    class:sidebar__logo--singing=move || singing.get()
+                    class:sidebar__logo--wiggle=move || wiggling.get()
                     src="/assets/icon.svg"
                     alt=""
                     width="28"
                     height="28"
                     draggable="false"
-                    on:dblclick=sing
+                    on:dblclick=wiggle
                 />
                 <span class="sidebar__wordmark">"nidoo."</span>
             </div>

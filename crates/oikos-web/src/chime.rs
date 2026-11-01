@@ -1,5 +1,3 @@
-//! Double-click the logo and the bird sings.
-//!
 //! A short songbird call, synthesized with Web Audio: two rising whistles ("tsee-tseet") then a
 //! quick trill. Every note is one sine gliding between two pitches under its own envelope.
 //! The context is created inside the gesture, so autoplay policies let it sound.
@@ -81,7 +79,7 @@ pub fn notes() -> Vec<Note> {
     WHISTLES.into_iter().chain(trill).collect()
 }
 
-/// Sings the call. Audio is a nicety: any failure is silent.
+/// Plays the call. Audio is a nicety: any failure is silent.
 pub fn ring() {
     #[cfg(target_arch = "wasm32")]
     let _ = imp::ring();
