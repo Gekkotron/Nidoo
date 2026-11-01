@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -10 152 152" width="152" height="152" role="img" aria-label="Nidoo">
-<rect x="-16" y="-10" width="152" height="152" rx="34" fill="#0b1020"/><defs><clipPath id="c"><rect width="120" height="92"/></clipPath></defs>
+<rect x="-16" y="-10" width="152" height="152" rx="34" fill="#0b1020"/><defs><clipPath id="c"><path d="M0 0 H120 V62 H112 C 104 104, 16 104, 8 62 H0 Z"/></clipPath></defs>
 <g clip-path="url(#c)"><g class="head">
 <path d="M54 37 L49 25 M60 35 L60 21 M66 37 L71 25" stroke="#58e1ff" stroke-width="4" stroke-linecap="round" fill="none"/>
 <circle cx="60" cy="62" r="28" fill="#58e1ff"/>
