@@ -78,7 +78,7 @@ services:
     container_name: oikos-hub
     restart: unless-stopped
     network_mode: host
-    # Optional, git-ignored: any OIKOS_* override.
+    # Optional, git-ignored: any NIDOO_* override (OIKOS_* still works).
     env_file:
       - path: .env
         required: false

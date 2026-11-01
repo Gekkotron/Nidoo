@@ -187,4 +187,4 @@ The hub sends Firebase Cloud Messaging alerts with a service-account key (see [P
 
 ## Overrides without editing tracked files
 
-Any setting can also come from an `OIKOS_*` environment variable (`__` between levels, for example `OIKOS_MQTT__PASSWORD`). Put them in a `.env` file next to `compose.yml`: compose hands it to the hub when it exists, and git ignores it.
+Any setting can also come from a `NIDOO_*` environment variable (`__` between levels, for example `NIDOO_MQTT__PASSWORD`). Put them in a `.env` file next to `compose.yml`: compose hands it to the hub when it exists, and git ignores it.

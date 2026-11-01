@@ -123,21 +123,25 @@ fn numeric_looking_env_strings_stay_strings() {
 #[test]
 fn env_layer_excludes_string_keys() {
     Jail::expect_with(|jail| {
-        for key in nidoo::config::STRING_ENV_KEYS {
-            jail.set_env(
-                format!("OIKOS_{}", key.replace('.', "__").to_uppercase()),
-                "123",
-            );
+        for prefix in ["OIKOS_", "NIDOO_"] {
+            for key in nidoo::config::STRING_ENV_KEYS {
+                jail.set_env(
+                    format!("{prefix}{}", key.replace('.', "__").to_uppercase()),
+                    "123",
+                );
+            }
+            jail.set_env(format!("{prefix}MQTT__PORT"), "1999");
         }
-        jail.set_env("OIKOS_MQTT__PORT", "1999");
-        let env = figment::Figment::from(Config::env_provider());
-        for key in nidoo::config::STRING_ENV_KEYS {
-            assert!(
-                env.find_value(key).is_err(),
-                "{key} leaked into the Env layer"
-            );
+        for provider in [Config::legacy_env_provider(), Config::env_provider()] {
+            let env = figment::Figment::from(provider);
+            for key in nidoo::config::STRING_ENV_KEYS {
+                assert!(
+                    env.find_value(key).is_err(),
+                    "{key} leaked into the Env layer"
+                );
+            }
+            assert!(env.find_value("mqtt.port").is_ok());
         }
-        assert!(env.find_value("mqtt.port").is_ok());
         Ok(())
     });
 }

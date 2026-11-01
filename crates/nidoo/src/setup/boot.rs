@@ -62,7 +62,7 @@ pub async fn resolve(data_dir: &Path, config_flag: Option<&Path>) -> anyhow::Res
     };
     let file = file
         .with_bootstrap_env()
-        .map_err(|e| anyhow::anyhow!("invalid OIKOS_* override: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid NIDOO_* (or OIKOS_*) override: {e}"))?;
 
     let restart = RestartHook::Exec;
     let Some(url) = file.database_url.clone().filter(|_| file.is_complete()) else {

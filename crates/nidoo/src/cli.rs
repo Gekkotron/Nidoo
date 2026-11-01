@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::parser::ValueSource;
+use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(name = "nidoo", version, about = "Nidoo home-automation hub")]
@@ -11,12 +12,13 @@ struct RawCli {
     /// treats an existing one as a hub that is already set up.
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
-    /// Folder holding `hub.json` and the settings cache.
+    /// Folder holding `hub.json` and the settings cache (`OIKOS_DATA_DIR` is still read when
+    /// `NIDOO_DATA_DIR` is not set).
     #[arg(
         long = "data",
         global = true,
         value_name = "DIR",
-        env = "OIKOS_DATA_DIR",
+        env = "NIDOO_DATA_DIR",
         default_value = "./data"
     )]
     data_dir: PathBuf,
@@ -55,7 +57,7 @@ pub enum Cli {
 
 impl Cli {
     pub fn parse_args() -> Cli {
-        Self::from_raw(RawCli::parse())
+        Self::try_parse_from(std::env::args_os()).unwrap_or_else(|e| e.exit())
     }
 
     pub fn try_parse_from<I, T>(args: I) -> Result<Cli, clap::Error>
@@ -63,7 +65,12 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        RawCli::try_parse_from(args).map(Self::from_raw)
+        let matches = RawCli::command().try_get_matches_from(args)?;
+        let mut raw = RawCli::from_arg_matches(&matches)?;
+        if let Some(dir) = legacy_data_dir(&matches) {
+            raw.data_dir = dir;
+        }
+        Ok(Self::from_raw(raw))
     }
 
     fn from_raw(raw: RawCli) -> Cli {
@@ -82,6 +89,16 @@ impl Cli {
             },
         }
     }
+}
+
+/// `OIKOS_DATA_DIR`, when the data folder came from neither `--data` nor `NIDOO_DATA_DIR`.
+fn legacy_data_dir(matches: &ArgMatches) -> Option<PathBuf> {
+    if matches.value_source("data_dir") != Some(ValueSource::DefaultValue) {
+        return None;
+    }
+    std::env::var_os("OIKOS_DATA_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -140,6 +157,22 @@ mod tests {
                 Cli::try_parse_from(["nidoo", "--data", "x"]).unwrap(),
                 run(None, "x")
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn data_dir_falls_back_to_oikos_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OIKOS_DATA_DIR", "/data");
+            assert_eq!(Cli::try_parse_from(["nidoo"]).unwrap(), run(None, "/data"));
+            // An explicit flag still beats the legacy variable.
+            assert_eq!(
+                Cli::try_parse_from(["nidoo", "run", "--data", "d"]).unwrap(),
+                run(None, "d")
+            );
+            jail.set_env("NIDOO_DATA_DIR", "/n");
+            assert_eq!(Cli::try_parse_from(["nidoo"]).unwrap(), run(None, "/n"));
             Ok(())
         });
     }

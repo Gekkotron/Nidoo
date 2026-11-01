@@ -44,7 +44,7 @@ fn spawn_acl_tail(cfg: &Config, hub: &Arc<Hub>) -> Vec<tokio::task::JoinHandle<(
 }
 
 /// The log settings, read before anything else so the boot itself can log: `hub.json` when it
-/// exists, else the TOML about to be imported, else the defaults (plus `OIKOS_LOG__*`).
+/// exists, else the TOML about to be imported, else the defaults (plus `NIDOO_LOG__*` / `OIKOS_LOG__*`).
 fn early_log_config(data_dir: &Path, config_flag: Option<&Path>) -> LogConfig {
     // A broken file is reported by `resolve`.
     let file = HubFile::load(data_dir).unwrap_or_default();
@@ -82,6 +82,11 @@ async fn main() -> anyhow::Result<ExitCode> {
     match cli {
         Cli::Run { config, data_dir } => {
             logging::init(&early_log_config(&data_dir, config.as_deref()));
+            if nidoo::config::legacy_env_in_use() {
+                tracing::warn!(
+                    "OIKOS_* environment variables are deprecated; rename them to NIDOO_*"
+                );
+            }
             let (cfg, setup_ctx) = match resolve(&data_dir, config.as_deref()).await? {
                 Boot::Setup(ctx) => return run_setup(ctx).await,
                 Boot::Run { cfg, ctx } => (*cfg, ctx),

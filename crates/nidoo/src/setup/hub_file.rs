@@ -4,12 +4,13 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use figment::Figment;
-use figment::providers::{Env, Serialized};
+use figment::providers::Serialized;
 use nidoo_api::{Location, SetupStep};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    BOOTSTRAP_ENV_PREFIXES, HttpConfig, LogConfig, MqttConfig, STRING_ENV_KEYS, mask_url_password,
+    BOOTSTRAP_ENV_PREFIXES, ENV_PREFIX, HttpConfig, LEGACY_ENV_PREFIX, LogConfig, MqttConfig,
+    mask_url_password, merge_env,
 };
 
 pub const HUB_FILE: &str = "hub.json";
@@ -113,11 +114,16 @@ impl HubFile {
         self.mqtt.is_some() && self.database_url.is_some()
     }
 
-    /// Applies `OIKOS_*` env overrides to the bootstrap keys only. `mqtt` is filled only
-    /// when at least one `OIKOS_MQTT__*` variable is set.
+    /// Applies the env overrides (`OIKOS_*`, then `NIDOO_*` over them) to the bootstrap keys
+    /// only. `mqtt` is filled only when at least one `*_MQTT__*` variable is set.
     #[allow(clippy::result_large_err)]
     pub fn with_bootstrap_env(mut self) -> Result<HubFile, figment::Error> {
-        let mqtt_env = std::env::vars().any(|(k, _)| k.to_uppercase().starts_with("OIKOS_MQTT__"));
+        let mqtt_env = std::env::vars().any(|(k, _)| {
+            let k = k.to_uppercase();
+            [LEGACY_ENV_PREFIX, ENV_PREFIX]
+                .iter()
+                .any(|p| k.starts_with(&format!("{p}MQTT__")))
+        });
         let view = BootstrapView {
             mqtt: self.mqtt.clone().unwrap_or_default(),
             history: UrlOnly {
@@ -126,19 +132,7 @@ impl HubFile {
             http: self.http.clone(),
             log: self.log.clone(),
         };
-        let mut figment = Figment::from(Serialized::defaults(view)).merge(
-            Env::prefixed("OIKOS_")
-                .split("__")
-                .ignore(STRING_ENV_KEYS)
-                .filter(|k| is_bootstrap_key(k.as_str())),
-        );
-        // String fields keep the raw env text (`123456` must not become a number).
-        for key in STRING_ENV_KEYS.iter().filter(|k| is_bootstrap_key(k)) {
-            let var = format!("OIKOS_{}", key.replace('.', "__").to_uppercase());
-            if let Ok(value) = std::env::var(&var) {
-                figment = figment.merge(Serialized::default(key, value));
-            }
-        }
+        let figment = merge_env(Figment::from(Serialized::defaults(view)), is_bootstrap_key);
         let view: BootstrapView = figment.extract()?;
         if mqtt_env {
             self.mqtt = Some(view.mqtt);

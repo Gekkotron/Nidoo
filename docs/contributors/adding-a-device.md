@@ -134,7 +134,7 @@ Without them the card falls back to the mode. The target stepper appears only wi
 
 ### Restarts
 
-With `mqtt.send_ha_birth` on (off by default; set it in the `mqtt` object of `data/hub.json` while the hub is stopped, or with `OIKOS_MQTT__SEND_HA_BIRTH=true`), the hub publishes `online` (not retained) on `mqtt.ha_status_topic` (default `homeassistant/status`) each time it connects. A bridge subscribes to that topic and re-publishes its discovery and state when it sees `online`.
+With `mqtt.send_ha_birth` on (off by default; set it in the `mqtt` object of `data/hub.json` while the hub is stopped, or with `NIDOO_MQTT__SEND_HA_BIRTH=true`), the hub publishes `online` (not retained) on `mqtt.ha_status_topic` (default `homeassistant/status`) each time it connects. A bridge subscribes to that topic and re-publishes its discovery and state when it sees `online`.
 
 Retained configs cover most restarts. The birth message covers a broker that lost its retained messages.
 

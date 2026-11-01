@@ -23,7 +23,7 @@ The documents the hub keeps on the broker (home settings, alarm, climate schedul
 
 You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. A value it could not start with is refused with the reason, and nothing is saved.
 
-The folder is `./data` by default. `nidoo --data <dir>` (or `OIKOS_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`. The compose file also mounts the checkout read-only at `/checkout` and starts the hub with `--config /checkout/oikos.toml`, which only matters for a host whose `oikos.toml` has not moved into `./data` yet.
+The folder is `./data` by default. `nidoo --data <dir>` (or `NIDOO_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`. The compose file also mounts the checkout read-only at `/checkout` and starts the hub with `--config /checkout/oikos.toml`, which only matters for a host whose `oikos.toml` has not moved into `./data` yet.
 
 ## Secrets
 
@@ -37,7 +37,7 @@ See [Security](../users/security.md#settings-and-secrets) for what is and is not
 
 ## Bootstrap settings (`hub.json`)
 
-The location, the database and the MQTT connection have a screen in the wizard and in **Settings**. The HTTP and log settings do not: set them with the `OIKOS_*` variables below, or in `hub.json` while the hub is stopped.
+The location, the database and the MQTT connection have a screen in the wizard and in **Settings**. The HTTP and log settings do not: set them with the `NIDOO_*` variables below, or in `hub.json` while the hub is stopped.
 
 ### Home location
 
@@ -78,28 +78,30 @@ Two more MQTT fields have no screen. Set them in the `mqtt` object of `data/hub.
 
 ### HTTP and log
 
-No screen. Set with `OIKOS_HTTP__BIND`, `OIKOS_LOG__LEVEL` and `OIKOS_LOG__JSON`, or in the `http` and `log` objects of `data/hub.json` while the hub is stopped.
+No screen. Set with `NIDOO_HTTP__BIND`, `NIDOO_LOG__LEVEL` and `NIDOO_LOG__JSON`, or in the `http` and `log` objects of `data/hub.json` while the hub is stopped.
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `http.bind` | `"0.0.0.0:8081"` | Address the HTTP server listens on: the [HTTP API](http-api.md), the WebSocket, the MCP server and the web UI share it. 8081 sits next to Jeedom on 80 and clear of Zigbee2MQTT on 8080 on the same server. The Docker image sets it with `OIKOS_HTTP__BIND`. |
+| `http.bind` | `"0.0.0.0:8081"` | Address the HTTP server listens on: the [HTTP API](http-api.md), the WebSocket, the MCP server and the web UI share it. 8081 sits next to Jeedom on 80 and clear of Zigbee2MQTT on 8080 on the same server. The Docker image sets it with `NIDOO_HTTP__BIND`. |
 | `log.level` | `"info"` | A `tracing` filter: a level (`debug`) or a directive list (`nidoo=debug,rumqttc=warn`). `RUST_LOG` wins when it is set and valid; if it is unset or invalid, `log.level` applies, and if that is invalid too, the level is `info`. |
 | `log.json` | `false` | `true` writes JSON lines; otherwise a human-readable format. Logs go to stderr. |
 
 ## Environment variables and flags
 
-`OIKOS_*` variables override the **bootstrap** values only: the MQTT connection, the database URL, the HTTP bind address and the log settings. They are the only way to set them without the wizard, so an unattended install can script them. They win over `hub.json` at every start.
+`NIDOO_*` variables override the **bootstrap** values only: the MQTT connection, the database URL, the HTTP bind address and the log settings. They are the only way to set them without the wizard, so an unattended install can script them. They win over `hub.json` at every start.
 
 | Variable | Overrides |
 | --- | --- |
-| `OIKOS_MQTT__HOST`, `OIKOS_MQTT__PORT`, `OIKOS_MQTT__USER`, `OIKOS_MQTT__PASSWORD`, `OIKOS_MQTT__CLIENT_ID`, `OIKOS_MQTT__SEND_HA_BIRTH`, `OIKOS_MQTT__HA_STATUS_TOPIC` | `mqtt.*`. Setting any one of them makes the MQTT connection complete from the environment. |
-| `OIKOS_HISTORY__URL` | `database_url`. |
-| `OIKOS_HTTP__BIND` | `http.bind`. |
-| `OIKOS_LOG__LEVEL`, `OIKOS_LOG__JSON` | `log.level`, `log.json`. |
-| `OIKOS_DATA_DIR` | The data folder, like `--data`. |
+| `NIDOO_MQTT__HOST`, `NIDOO_MQTT__PORT`, `NIDOO_MQTT__USER`, `NIDOO_MQTT__PASSWORD`, `NIDOO_MQTT__CLIENT_ID`, `NIDOO_MQTT__SEND_HA_BIRTH`, `NIDOO_MQTT__HA_STATUS_TOPIC` | `mqtt.*`. Setting any one of them makes the MQTT connection complete from the environment. |
+| `NIDOO_HISTORY__URL` | `database_url`. |
+| `NIDOO_HTTP__BIND` | `http.bind`. |
+| `NIDOO_LOG__LEVEL`, `NIDOO_LOG__JSON` | `log.level`, `log.json`. |
+| `NIDOO_DATA_DIR` | The data folder, like `--data`. |
 | `RUST_LOG` | The log level, ahead of `log.level`. |
 
-Two underscores separate the levels, and the names are upper case. String values keep the raw text of the variable, so `OIKOS_MQTT__PASSWORD=007` stays `"007"` and is not read as a number; numbers and booleans are parsed. In Docker, put them in a git-ignored `.env` next to `compose.yml`. Variables for any other section (`OIKOS_WEATHER__ENABLED` and the like) are ignored: those settings live in the database.
+Two underscores separate the levels, and the names are upper case. String values keep the raw text of the variable, so `NIDOO_MQTT__PASSWORD=007` stays `"007"` and is not read as a number; numbers and booleans are parsed. In Docker, put them in a git-ignored `.env` next to `compose.yml`. Variables for any other section (`NIDOO_WEATHER__ENABLED` and the like) are ignored: those settings live in the database.
+
+`OIKOS_*` names still work; `NIDOO_*` wins when both are set. The hub logs one warning at start while any `OIKOS_*` variable is set.
 
 Command line:
 
@@ -108,7 +110,7 @@ Command line:
 | `nidoo` or `nidoo run` | Run the hub. |
 | `nidoo mcp-stdio --server <url>` | Serve MCP over stdio, proxying to a running hub (for example `http://localhost:8081`). It reads the log level from `data/hub.json` when that exists. |
 | `nidoo init-bundled` | Create the bundled broker and database credentials in `data/` and exit. The compose `init` service runs it; it changes nothing once `data/bundled.json` exists. |
-| `--data <dir>` | The data folder (default `./data`, or `OIKOS_DATA_DIR`). Works with every command. |
+| `--data <dir>` | The data folder (default `./data`, or `NIDOO_DATA_DIR`). Works with every command. |
 | `--config <path>` | A file to import once (see below). Used by `run`; `init-bundled` treats an existing one as a hub that is already set up. |
 
 ## Weather

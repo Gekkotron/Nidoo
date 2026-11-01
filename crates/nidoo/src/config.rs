@@ -1,4 +1,4 @@
-//! Layered configuration: defaults, then `oikos.toml`, then `OIKOS_*` env vars.
+//! Layered configuration: defaults, then `oikos.toml`, then `OIKOS_*` and `NIDOO_*` env vars.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -820,7 +820,7 @@ pub const STRING_ENV_KEYS: &[&str] = &[
     "solcast.api_key_file",
 ];
 
-/// The only keys `OIKOS_*` env vars may override once the hub boots from `hub.json`.
+/// The only keys env vars may override once the hub boots from `hub.json`.
 pub const BOOTSTRAP_ENV_PREFIXES: &[&str] = &["mqtt.", "history.url", "http.", "log."];
 
 /// The push key `load` falls back to, relative to the config file's folder (git-ignored).
@@ -828,6 +828,38 @@ pub const PUSH_KEY_FILE: &str = "secrets/firebase.json";
 
 /// The Solcast key `load` falls back to, relative to the config file's folder (git-ignored).
 pub const SOLCAST_KEY_FILE: &str = "secrets/solcast.key";
+
+/// The env var prefix: `NIDOO_<SECTION>__<KEY>`.
+pub const ENV_PREFIX: &str = "NIDOO_";
+
+/// The old prefix, still read underneath [`ENV_PREFIX`] (which wins when both are set).
+pub const LEGACY_ENV_PREFIX: &str = "OIKOS_";
+
+/// True when any `OIKOS_*` variable is set, so the hub can warn once that they are deprecated.
+pub fn legacy_env_in_use() -> bool {
+    std::env::vars_os().any(|(k, _)| {
+        k.to_str()
+            .is_some_and(|k| k.to_uppercase().starts_with(LEGACY_ENV_PREFIX))
+    })
+}
+
+/// Merges the env layers onto `figment`, for the keys `keep` accepts: `OIKOS_*` first, then
+/// `NIDOO_*` over it. String keys are read raw (figment would guess `123456` or `007` to be
+/// numbers).
+pub fn merge_env(mut figment: Figment, keep: fn(&str) -> bool) -> Figment {
+    for env in [Config::legacy_env_provider(), Config::env_provider()] {
+        figment = figment.merge(env.filter(move |k| keep(k.as_str())));
+    }
+    for prefix in [LEGACY_ENV_PREFIX, ENV_PREFIX] {
+        for key in STRING_ENV_KEYS.iter().filter(|k| keep(k)) {
+            let var = format!("{prefix}{}", key.replace('.', "__").to_uppercase());
+            if let Ok(value) = std::env::var(&var) {
+                figment = figment.merge(Serialized::default(key, value));
+            }
+        }
+    }
+    figment
+}
 
 impl Config {
     /// Runs every section validator, first error wins.
@@ -841,30 +873,32 @@ impl Config {
         Ok(())
     }
 
-    /// The `OIKOS_*` env layer for non-string fields; string fields are
+    /// The `NIDOO_*` env layer for non-string fields; string fields are
     /// excluded because figment would guess `123456` to be a number.
     pub fn env_provider() -> Env {
-        Env::prefixed("OIKOS_").split("__").ignore(STRING_ENV_KEYS)
+        Env::prefixed(ENV_PREFIX)
+            .split("__")
+            .ignore(STRING_ENV_KEYS)
+    }
+
+    /// The `OIKOS_*` env layer, read underneath [`Config::env_provider`].
+    pub fn legacy_env_provider() -> Env {
+        Env::prefixed(LEGACY_ENV_PREFIX)
+            .split("__")
+            .ignore(STRING_ENV_KEYS)
     }
 
     /// Loads defaults, merged with the TOML file (`oikos.toml` when `path` is
-    /// `None`; a missing file is fine), merged with `OIKOS_` env vars
-    /// (`__` separates nesting levels). With no `push.credentials` from either,
-    /// [`PUSH_KEY_FILE`] next to the TOML file is used when it exists.
+    /// `None`; a missing file is fine), merged with the env vars (`OIKOS_*`, then
+    /// `NIDOO_*` over them; `__` separates nesting levels). With no `push.credentials`
+    /// from either, [`PUSH_KEY_FILE`] next to the TOML file is used when it exists.
     #[allow(clippy::result_large_err)] // signature fixed by the spec
     pub fn load(path: Option<&Path>) -> Result<Config, figment::Error> {
         let file = path.unwrap_or_else(|| Path::new("oikos.toml"));
-        let mut figment = Figment::from(Serialized::defaults(Config::default()))
-            .merge(Toml::file(file))
-            .merge(Self::env_provider());
-        // String fields keep the raw env text: figment would otherwise guess
-        // `123456` or `007` to be numbers.
-        for key in STRING_ENV_KEYS {
-            let var = format!("OIKOS_{}", key.replace('.', "__").to_uppercase());
-            if let Ok(value) = std::env::var(&var) {
-                figment = figment.merge(Serialized::default(key, value));
-            }
-        }
+        let figment = merge_env(
+            Figment::from(Serialized::defaults(Config::default())).merge(Toml::file(file)),
+            |_| true,
+        );
         let mut cfg: Config = figment.extract()?;
         if cfg.push.credentials.is_none() {
             let key = file.parent().unwrap_or(Path::new("")).join(PUSH_KEY_FILE);
@@ -1027,5 +1061,82 @@ mod flows_config_tests {
         let configured: FlowsConfig = toml::from_str("latitude = 45.75\nlongitude = 4.85").unwrap();
         assert_eq!(configured.house_point(), (45.75, 4.85));
         assert!(!configured.fallback_active());
+    }
+}
+
+#[cfg(test)]
+mod env_prefix_tests {
+    #![allow(clippy::result_large_err)] // figment::Jail closures return figment::Error
+
+    use super::*;
+
+    #[test]
+    fn oikos_env_still_read() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OIKOS_MQTT__PORT", "1884");
+            assert_eq!(Config::load(None)?.mqtt.port, 1884);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn nidoo_env_wins_over_oikos() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OIKOS_MQTT__HOST", "a");
+            jail.set_env("NIDOO_MQTT__HOST", "b");
+            jail.set_env("OIKOS_MQTT__PORT", "1884");
+            jail.set_env("NIDOO_MQTT__PORT", "1885");
+            let cfg = Config::load(None)?;
+            assert_eq!(cfg.mqtt.host, "b");
+            assert_eq!(cfg.mqtt.port, 1885);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn string_keys_read_under_both_prefixes() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OIKOS_MQTT__PASSWORD", "007");
+            assert_eq!(Config::load(None)?.mqtt.password.as_deref(), Some("007"));
+            jail.set_env("NIDOO_MQTT__PASSWORD", "008");
+            assert_eq!(Config::load(None)?.mqtt.password.as_deref(), Some("008"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hub_json_bootstrap_reads_both_prefixes() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OIKOS_MQTT__HOST", "192.0.2.5");
+            jail.set_env("OIKOS_HISTORY__URL", "postgres://u:p@192.0.2.6/oikos");
+            let file = crate::setup::HubFile::default().with_bootstrap_env()?;
+            assert_eq!(
+                file.mqtt.as_ref().map(|m| m.host.as_str()),
+                Some("192.0.2.5")
+            );
+            jail.set_env("NIDOO_MQTT__HOST", "192.0.2.9");
+            jail.set_env("NIDOO_MQTT__PASSWORD", "0042");
+            let file = crate::setup::HubFile::default().with_bootstrap_env()?;
+            let mqtt = file.mqtt.expect("mqtt from env");
+            assert_eq!(mqtt.host, "192.0.2.9");
+            assert_eq!(mqtt.password.as_deref(), Some("0042"));
+            assert_eq!(
+                file.database_url.as_deref(),
+                Some("postgres://u:p@192.0.2.6/oikos")
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn legacy_env_detection() {
+        figment::Jail::expect_with(|jail| {
+            assert!(!legacy_env_in_use());
+            jail.set_env("NIDOO_MQTT__HOST", "b");
+            assert!(!legacy_env_in_use());
+            jail.set_env("OIKOS_MQTT__HOST", "a");
+            assert!(legacy_env_in_use());
+            Ok(())
+        });
     }
 }
