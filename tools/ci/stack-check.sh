@@ -168,7 +168,11 @@ old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_
   -t oikos/ui/oikos_t -C 1 -W 3 || true)
 [ -z "$old" ] || { echo "old retained topic still there: '$old'" >&2; exit 1; }
 migrate --verify
-jq -e '.database_url | endswith("/nidoo")' data/hub.json >/dev/null
+# The one-off container wrote hub.json as its own user (mode 0600), so read it there.
+migrate_cat() {
+  docker compose run --rm --no-deps -T --entrypoint cat hub /data/hub.json
+}
+migrate_cat | jq -e '.database_url | endswith("/nidoo")' >/dev/null
 docker compose up -d --no-deps hub
 wait_hub || { echo "hub not healthy on the renamed database" >&2; exit 1; }
 
