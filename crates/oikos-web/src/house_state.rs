@@ -321,6 +321,7 @@ mod tests {
             source: None,
             silent: false,
             resolved: false,
+            resolved_at: None,
             sent_at: 1,
         };
         let mut s = state_with(&[]);

@@ -184,6 +184,7 @@ mod tests {
             source: None,
             silent: false,
             resolved: false,
+            resolved_at: None,
             sent_at,
         }
     }

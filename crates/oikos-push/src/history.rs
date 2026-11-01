@@ -69,6 +69,7 @@ impl History {
             (true, Some(i)) => {
                 if let Some(obj) = self.entries[i].as_object_mut() {
                     obj.insert("cancel".into(), true.into());
+                    obj.insert("resolved_at".into(), alert.sent_at.into());
                 }
             }
             (_, found) => {
@@ -185,6 +186,7 @@ mod tests {
         h.apply(&cancel("a"), NOW);
         assert_eq!(h.entries().len(), 1);
         assert_eq!(h.entries()[0]["cancel"], true);
+        assert_eq!(h.entries()[0]["resolved_at"], NOW);
         assert_eq!(h.entries()[0]["title"], "title-a");
     }
 
@@ -205,9 +207,11 @@ mod tests {
         h.apply(&cancel("a"), NOW);
         assert_eq!(ids(&h), ["c", "b", "a"]);
         assert_eq!(h.entries()[2]["cancel"], true);
+        assert_eq!(h.entries()[2]["resolved_at"], NOW);
         h.apply(&mk("a", NOW, |a| a.title = "again".into()), NOW);
         assert_eq!(ids(&h), ["a", "c", "b"]);
         assert!(h.entries()[0].get("cancel").is_none());
+        assert!(h.entries()[0].get("resolved_at").is_none());
         assert_eq!(h.entries()[0]["title"], "again");
     }
 

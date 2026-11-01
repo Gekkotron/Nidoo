@@ -126,6 +126,7 @@ mod tests {
             source: None,
             silent: false,
             resolved,
+            resolved_at: None,
             sent_at: 1_000,
         }
     }
