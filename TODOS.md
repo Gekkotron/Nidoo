@@ -2,12 +2,6 @@
 
 Running backlog of ideas and deferred follow-ups. Priority: **P1** = correctness or user-visible safety (do next), **P2** = polish or test coverage, **P3** = cosmetic or opportunistic.
 
-## Dashboards (landed on `feat/dashboards`, 2026-10-22; triaged 2026-10-24)
-
-### P3 — cosmetic / backlog
-
-- Two concurrent PUTs can pick the same `next_free_order` (lock released between read and publish). Fine single-user; add a guard if the hub grows multi-writer.
-
 ## Climate engine v1 (landed on sc-critical-meissner-823c, 2026-10-22)
 
 Spec: `docs/superpowers/specs/2026-10-22-climate-engine-design.md`. Plan: `docs/superpowers/plans/2026-10-22-climate-engine.md`.
