@@ -222,7 +222,7 @@ async fn lists_the_expected_tools() {
 
     let info = client.peer_info().expect("server info");
     let implementation = info.server_info.as_ref().expect("implementation");
-    assert_eq!(implementation.name, "oikos-os");
+    assert_eq!(implementation.name, "nidoo");
     assert_eq!(implementation.version, env!("CARGO_PKG_VERSION"));
     let instructions = info.instructions.as_deref().expect("instructions");
     assert!(instructions.contains("list_entities"), "{instructions}");

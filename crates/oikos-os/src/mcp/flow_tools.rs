@@ -1,5 +1,5 @@
 //! The six flow tools. They live beside the eleven house tools of `tools.rs` in a second router, combined
-//! in [`OikosMcp::new`], and share their conventions: lists are wrapped in objects, write tools
+//! in [`NidooMcp::new`], and share their conventions: lists are wrapped in objects, write tools
 //! go through `log_write`, and a refusal is answered in-band.
 
 use oikos_api::{FlowView, FlowWriteOutcome, RunView};
@@ -11,10 +11,10 @@ use super::params::{
     SetFlowEnabledParams, SetFlowParams,
 };
 use super::tools::{ToolResult, log_write};
-use super::{OikosMcp, ToolError};
+use super::{NidooMcp, ToolError};
 
 #[tool_router(router = flow_tool_router, vis = "pub(super)")]
-impl OikosMcp {
+impl NidooMcp {
     /// The automations (flows), each with its name, whether it is enabled, why it is invalid
     /// if it is, its node count and its latest run. `get_flow` returns one in full.
     #[tool(name = "list_flows", annotations(read_only_hint = true))]

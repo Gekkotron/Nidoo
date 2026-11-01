@@ -26,7 +26,7 @@ use super::params::{
     SetGroupParams, SetHomeSettingsParams, SetNetworkWatchParams, SetOverrideParams,
     SetSettingsParams, SetVirtualParams,
 };
-use super::{OikosMcp, ToolError};
+use super::{NidooMcp, ToolError};
 use crate::history::query as history_query;
 use crate::setup::settings::{ApiError, read_section, write_section};
 
@@ -37,7 +37,7 @@ fn api_error(e: ApiError) -> ToolError {
 }
 
 #[tool_router(vis = "pub(super)")]
-impl OikosMcp {
+impl NidooMcp {
     /// The outdoor weather from Open-Meteo: now, today, rain in the next hour, tonight's low and
     /// the next five days with their full figures (metric units; `stale` is true when the data is old). Answers
     /// `weather unavailable` while `[weather]` is off or before the first fetch.

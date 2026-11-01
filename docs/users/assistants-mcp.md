@@ -33,7 +33,7 @@ Claude Desktop only speaks stdio, so it launches `oikos-os mcp-stdio`, a proxy t
 }
 ```
 
-The proxy exits with `cannot reach Oikos-os MCP server at …` when the hub is down; its logs go to stderr, stdout carries the protocol.
+The proxy exits with `cannot reach the Nidoo MCP server at …` when the hub is down; its logs go to stderr, stdout carries the protocol.
 
 The web UI's Settings screen builds the same snippets from the address you opened it at (see [The web UI](web-ui.md#settings)).
 

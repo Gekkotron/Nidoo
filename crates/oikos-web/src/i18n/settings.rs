@@ -269,7 +269,7 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
         ),
         T::Hub => ("Hub", "Hub"),
         T::Product => ("Product", "Produit"),
-        T::ProductName => ("Oikos-os", "Oikos-os"),
+        T::ProductName => ("Nidoo", "Nidoo"),
         T::HubOrigin => (
             "Hub: this page's origin",
             "Hub\u{A0}: origine de cette page",

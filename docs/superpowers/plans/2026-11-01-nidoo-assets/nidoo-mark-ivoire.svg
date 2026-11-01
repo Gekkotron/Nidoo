@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Nidoo">
+<style>.head{animation:peek 7s infinite both}@keyframes peek{0%{transform:translateY(48px)}12%{transform:translateY(-4px)}16%{transform:translateY(0)}80%{transform:translateY(0)}90%,100%{transform:translateY(48px)}}.pupils{animation:look 7s infinite both}@keyframes look{0%,20%{transform:translateX(0)}26%,38%{transform:translateX(-3.5px)}44%,56%{transform:translateX(3.5px)}62%,100%{transform:translateX(0)}}.eyes{transform-box:fill-box;transform-origin:50% 50%;animation:blink 7s infinite both}@keyframes blink{0%,64%{transform:scaleY(1)}66%{transform:scaleY(.1)}68%{transform:scaleY(1)}70%{transform:scaleY(.1)}72%,100%{transform:scaleY(1)}}@media (prefers-reduced-motion:reduce){*{animation:none!important}}</style><defs><clipPath id="c"><path d="M0 0 H120 V62 H112 C 104 104, 16 104, 8 62 H0 Z"/></clipPath></defs>
+<g clip-path="url(#c)"><g class="head">
+<path d="M54 37 L49 25 M60 35 L60 21 M66 37 L71 25" stroke="#38738f" stroke-width="4" stroke-linecap="round" fill="none"/>
+<circle cx="60" cy="62" r="28" fill="#38738f"/>
+<g class="eyes"><circle cx="49" cy="56" r="9" fill="#fff"/><circle cx="71" cy="56" r="9" fill="#fff"/>
+<g class="pupils"><circle cx="49" cy="57" r="4.5" fill="#1f2420"/><circle cx="71" cy="57" r="4.5" fill="#1f2420"/></g></g>
+<path d="M55 66 L65 66 L60 73 Z" fill="#8f6613"/>
+</g></g>
+<path d="M8 62 C 16 104, 104 104, 112 62 Z" fill="#8f6613"/>
+<path d="M16 74 C 44 84, 76 66, 104 74 M24 85 C 46 92, 74 80, 96 86" stroke="#6b4c0e" stroke-width="3" stroke-linecap="round" fill="none"/>
+</svg>

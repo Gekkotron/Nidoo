@@ -75,7 +75,7 @@ fn config(prefix: &str, key: &str) -> Value {
         "device": {
             "identifiers": [DEVICE_ID],
             "name": "Solar forecast",
-            "manufacturer": "Oikos",
+            "manufacturer": "Nidoo",
         },
     });
     if let Some(unit) = unit {

@@ -46,6 +46,7 @@
 }
 
 .heroInner { max-width: 880px; }
+.markWrap { display: flex; justify-content: center; margin-bottom: 1.25rem; }
 
 .preamble {
   display: inline-flex;

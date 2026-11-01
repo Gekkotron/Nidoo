@@ -149,7 +149,7 @@ pub fn Sidebar(
                     draggable="false"
                     on:dblclick=ring
                 />
-                <span class="sidebar__wordmark">"oikos."</span>
+                <span class="sidebar__wordmark">"nidoo."</span>
             </div>
             <nav class="sidebar__nav" aria-label=move || t(Key::Navigation)>
                 <ul class="sidebar__list">

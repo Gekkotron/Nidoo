@@ -158,7 +158,7 @@ async fn stdio_proxy_forwards_list_tools() {
 
     let info = client.peer_info().expect("server info");
     let implementation = info.server_info.as_ref().expect("implementation");
-    assert_eq!(implementation.name, "oikos-os");
+    assert_eq!(implementation.name, "nidoo");
     let instructions = info.instructions.as_deref().expect("instructions");
     assert!(instructions.contains("list_entities"), "{instructions}");
     assert!(info.capabilities.tools.is_some(), "tools capability");

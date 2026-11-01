@@ -35,12 +35,12 @@ pub use stdio_proxy::run_stdio_proxy;
 pub const SNAPSHOT_URI: &str = "oikos://snapshot";
 
 /// The MCP server over one hub; one instance serves one session.
-pub struct OikosMcp {
+pub struct NidooMcp {
     hub: Arc<Hub>,
-    tool_router: ToolRouter<OikosMcp>,
+    tool_router: ToolRouter<NidooMcp>,
 }
 
-impl OikosMcp {
+impl NidooMcp {
     /// The setup context, or a tool error while the hub runs without one.
     fn setup_ctx(&self) -> Result<&Arc<crate::setup::SetupCtx>, ToolError> {
         self.hub
@@ -68,17 +68,17 @@ impl OikosMcp {
 /// equally open, with permissive CORS and no auth, and the hub is reached by LAN name or
 /// address. Revisit with auth: prefer `with_allowed_hosts([...])` derived from the configured
 /// bind address or hostname.
-pub fn mcp_service(hub: Arc<Hub>) -> StreamableHttpService<OikosMcp, LocalSessionManager> {
+pub fn mcp_service(hub: Arc<Hub>) -> StreamableHttpService<NidooMcp, LocalSessionManager> {
     let config = StreamableHttpServerConfig::default().disable_allowed_hosts();
     StreamableHttpService::new(
-        move || Ok(OikosMcp::new(Arc::clone(&hub))),
+        move || Ok(NidooMcp::new(Arc::clone(&hub))),
         Arc::new(LocalSessionManager::default()),
         config,
     )
 }
 
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for OikosMcp {
+impl ServerHandler for NidooMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(
             ServerCapabilities::builder()
@@ -86,7 +86,7 @@ impl ServerHandler for OikosMcp {
                 .enable_resources()
                 .build(),
         )
-        .with_server_info(Implementation::new("oikos-os", env!("CARGO_PKG_VERSION")))
+        .with_server_info(Implementation::new("nidoo", env!("CARGO_PKG_VERSION")))
         .with_instructions(instructions())
     }
 
@@ -127,7 +127,7 @@ impl ServerHandler for OikosMcp {
 /// One paragraph telling the assistant what the house is and how the tools behave.
 fn instructions() -> String {
     format!(
-        "Oikos-os is the hub of a Zigbee2MQTT home behind a Mosquitto broker: devices are the \
+        "Nidoo is the hub of a Zigbee2MQTT home behind a Mosquitto broker: devices are the \
          Zigbee nodes, entities are their Home Assistant discovery entries (lights, switches, \
          covers, climates, sensors and so on) and areas are the rooms. `list_entities` hides \
          diagnostic, config, disabled-by-default and folded entities unless you pass \

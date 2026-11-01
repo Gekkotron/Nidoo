@@ -17,7 +17,7 @@ fn app_renders() {
     // The handle unmounts the app when dropped, so it must live until the assertions run.
     let _mounted = leptos::mount::mount_to(host.clone().unchecked_into(), oikos_web::app::App);
     let html = host.inner_html();
-    assert!(html.contains("oikos."));
+    assert!(html.contains("nidoo."));
     assert!(html.contains("pill"));
     assert!(html.contains("Alerts"));
     assert!(html.contains("Automations"));

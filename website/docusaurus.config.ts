@@ -3,15 +3,15 @@ import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
-  title: 'Oikos-os',
+  title: 'Nidoo',
   tagline: 'A hub you run at home, and talk to.',
   favicon: 'img/favicon.svg',
 
   url: 'https://gekkotron.github.io',
-  baseUrl: '/Oikos-os/',
+  baseUrl: '/Nidoo/',
 
   organizationName: 'Gekkotron',
-  projectName: 'Oikos-os',
+  projectName: 'Nidoo',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
@@ -28,7 +28,7 @@ const config: Config = {
   headTags: [
     {
       tagName: 'link',
-      attributes: { rel: 'apple-touch-icon', href: '/Oikos-os/img/apple-touch-icon.png' },
+      attributes: { rel: 'apple-touch-icon', href: '/Nidoo/img/apple-touch-icon.png' },
     },
   ],
 
@@ -41,7 +41,7 @@ const config: Config = {
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
           editUrl: ({ docPath }) =>
-            `https://github.com/Gekkotron/Oikos-os/edit/main/docs/${docPath}`,
+            `https://github.com/Gekkotron/Nidoo/edit/main/docs/${docPath}`,
           exclude: ['superpowers/**', '**/_*.{js,jsx,ts,tsx,md,mdx}', '**/_*/**'],
         },
         blog: false,
@@ -59,14 +59,14 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'Oikos-os',
-      logo: { alt: 'Oikos-os logo', src: 'img/logo.svg' },
+      title: 'Nidoo',
+      logo: { alt: 'Nidoo logo', src: 'img/logo.svg' },
       items: [
         { to: '/docs/category/user-guide', label: 'User guide', position: 'left' },
         { to: '/docs/category/reference', label: 'Reference', position: 'left' },
         { to: '/docs/category/contributors', label: 'Contributors', position: 'left' },
         {
-          href: 'https://github.com/Gekkotron/Oikos-os',
+          href: 'https://github.com/Gekkotron/Nidoo',
           label: 'GitHub',
           position: 'right',
         },
@@ -87,16 +87,16 @@ const config: Config = {
         {
           title: 'Project',
           items: [
-            { label: 'GitHub', href: 'https://github.com/Gekkotron/Oikos-os' },
-            { label: 'Issues', href: 'https://github.com/Gekkotron/Oikos-os/issues' },
+            { label: 'GitHub', href: 'https://github.com/Gekkotron/Nidoo' },
+            { label: 'Issues', href: 'https://github.com/Gekkotron/Nidoo/issues' },
             {
               label: 'License',
-              href: 'https://github.com/Gekkotron/Oikos-os/blob/main/LICENSE',
+              href: 'https://github.com/Gekkotron/Nidoo/blob/main/LICENSE',
             },
           ],
         },
       ],
-      copyright: 'Oikos-os · Built by Gekkotron · Apache-2.0',
+      copyright: 'Nidoo · Built by Gekkotron · Apache-2.0',
     },
     prism: {
       theme: prismThemes.github,

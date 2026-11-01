@@ -64,7 +64,7 @@ pub enum SetupText {
     DatabaseName,
     /// Placeholder of a password field whose value is stored; the field stays empty to keep it.
     SecretSaved,
-    /// "This database already holds Oikos history since {date}".
+    /// "This database already holds Nidoo history since {date}".
     HistorySince,
     PortInvalid,
     FieldRequired,
@@ -171,7 +171,7 @@ pub fn setup_text(lang: Lang, k: SetupText) -> &'static str {
         SetupText::StepDevices => ("Devices", "Appareils"),
         SetupText::StepServices => ("Services", "Services"),
         SetupText::StepDone => ("Done", "Terminé"),
-        SetupText::WelcomeTitle => ("Welcome to Oikos", "Bienvenue dans Oikos"),
+        SetupText::WelcomeTitle => ("Welcome to Nidoo", "Bienvenue dans Nidoo"),
         SetupText::WelcomeLead => (
             "A few questions and your home is ready. Everything can be changed later in Settings.",
             "Quelques questions et votre maison est prête. Tout peut être modifié plus tard dans les Réglages.",
@@ -217,13 +217,13 @@ pub fn setup_text(lang: Lang, k: SetupText) -> &'static str {
         SetupText::Back => ("Back", "Retour"),
         SetupText::MqttTitle => ("Connect to your MQTT broker", "Connectez votre broker MQTT"),
         SetupText::MqttLead => (
-            "Oikos talks to your devices through MQTT. Filled in for the broker that came with Oikos.",
-            "Oikos parle à vos appareils via MQTT. Pré-rempli pour le broker fourni avec Oikos.",
+            "Nidoo talks to your devices through MQTT. Filled in for the broker that came with Nidoo.",
+            "Nidoo parle à vos appareils via MQTT. Pré-rempli pour le broker fourni avec Nidoo.",
         ),
         SetupText::DatabaseTitle => ("Connect to the database", "Connectez la base de données"),
         SetupText::DatabaseLead => (
-            "TimescaleDB keeps your history and settings. Filled in for the database that came with Oikos.",
-            "TimescaleDB conserve votre historique et vos réglages. Pré-rempli pour la base fournie avec Oikos.",
+            "TimescaleDB keeps your history and settings. Filled in for the database that came with Nidoo.",
+            "TimescaleDB conserve votre historique et vos réglages. Pré-rempli pour la base fournie avec Nidoo.",
         ),
         SetupText::TestConnection => ("Test connection", "Tester la connexion"),
         SetupText::Testing => ("Testing…", "Test en cours…"),
@@ -240,8 +240,8 @@ pub fn setup_text(lang: Lang, k: SetupText) -> &'static str {
             "Enregistré, saisissez-en un nouveau pour le remplacer",
         ),
         SetupText::HistorySince => (
-            "This database already holds Oikos history since {date}.",
-            "Cette base contient déjà l'historique d'Oikos depuis le {date}.",
+            "This database already holds Nidoo history since {date}.",
+            "Cette base contient déjà l'historique de Nidoo depuis le {date}.",
         ),
         SetupText::PortInvalid => (
             "The port is a number from 1 to 65535.",

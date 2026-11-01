@@ -23,6 +23,15 @@ body {
   gap: 24px;
 }
 
+/* The inline theme script sets data-theme before the body paints. */
+.boot__mark--ivoire,
+[data-theme="light"] .boot__mark--night {
+  display: none;
+}
+[data-theme="light"] .boot__mark--ivoire {
+  display: block;
+}
+
 .boot__spinner {
   width: 28px;
   height: 28px;

@@ -1,4 +1,4 @@
-//! The eleven climate tools, in a third router combined in [`OikosMcp::new`]. While
+//! The eleven climate tools, in a third router combined in [`NidooMcp::new`]. While
 //! `[climate] enabled` is false every one answers `climate disabled` in-band.
 
 use oikos_climate::view::{ClimateView, LearnStatus, RoomEcoRequest};
@@ -10,14 +10,14 @@ use super::params::{
     SetClimateEcoParams, SetClimateOverrideParams, SetClimateSettingsParams, SetClimateZoneParams,
 };
 use super::tools::{ToolResult, log_write};
-use super::{OikosMcp, ToolError};
+use super::{NidooMcp, ToolError};
 use crate::clock;
 
 /// How many decisions `get_climate_zone` returns.
 const ZONE_DECISIONS: usize = 20;
 
 #[tool_router(router = climate_tool_router, vis = "pub(super)")]
-impl OikosMcp {
+impl NidooMcp {
     /// The climate engine: the house settings and every zone with its live reading, its
     /// decision and why (`source`, `reason`), its overrides, its pending proposal and where
     /// the learner stands.
