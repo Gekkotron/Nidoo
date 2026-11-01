@@ -1,0 +1,13 @@
+[package]
+name = "nidoo-api"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nidoo-core = { path = "../nidoo-core", features = ["schemars"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true

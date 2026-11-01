@@ -4,11 +4,11 @@ sidebar_position: 3
 description: The 43 tools and the one resource of the hub's MCP server, with their arguments.
 ---
 
-The MCP server is at `http://<host>:8081/mcp` (streamable HTTP, stateful sessions) and offers **fifty tools** and **one resource**. It has the same trust model as the REST API on the same port: LAN-only, no authentication in v1. The tools are defined in [`crates/oikos-os/src/mcp`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-os/src/mcp). For setup in Claude Code, Codex and Claude Desktop, see [Talking to the house (MCP)](../users/assistants-mcp.md).
+The MCP server is at `http://<host>:8081/mcp` (streamable HTTP, stateful sessions) and offers **fifty tools** and **one resource**. It has the same trust model as the REST API on the same port: LAN-only, no authentication in v1. The tools are defined in [`crates/nidoo/src/mcp`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo/src/mcp). For setup in Claude Code, Codex and Claude Desktop, see [Talking to the house (MCP)](../users/assistants-mcp.md).
 
 A failed tool call answers in-band (`isError: true` with the reason as text) so the assistant can retry with better arguments. A refused publish (broker link down) is the same in-band error.
 
-Claude Desktop only speaks stdio, so it launches `oikos-os mcp-stdio --server http://<host>:8081`, a proxy that relays every request to the running hub. It exits with `cannot reach the Nidoo MCP server at …` when the hub is down; its logs go to stderr and stdout carries the protocol.
+Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio --server http://<host>:8081`, a proxy that relays every request to the running hub. It exits with `cannot reach the Nidoo MCP server at …` when the hub is down; its logs go to stderr and stdout carries the protocol.
 
 ## Resource
 

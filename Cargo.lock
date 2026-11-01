@@ -2155,6 +2155,176 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60993920e071b0c9b66f14e2b32740a4e27ffc82854dcd72035887f336a09a28"
 
 [[package]]
+name = "nidoo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "figment",
+ "futures-util",
+ "getrandom 0.2.17",
+ "iana-time-zone",
+ "if-addrs",
+ "mime_guess",
+ "nidoo-alarm",
+ "nidoo-api",
+ "nidoo-climate",
+ "nidoo-core",
+ "nidoo-frigate",
+ "nidoo-push",
+ "nidoo-solcast",
+ "nidoo-watchdog",
+ "pbkdf2",
+ "percent-encoding",
+ "reqwest",
+ "rmcp",
+ "rumqttc",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "socket2",
+ "sqlx",
+ "surge-ping",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "toml 0.8.23",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "nidoo-alarm"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nidoo-api"
+version = "0.1.0"
+dependencies = [
+ "nidoo-core",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nidoo-climate"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "nidoo-core",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nidoo-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "croner",
+ "minijinja",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "nidoo-frigate"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "nidoo-push"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "futures-util",
+ "jsonwebtoken",
+ "nidoo-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "nidoo-solcast"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "chrono-tz",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "nidoo-watchdog"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nidoo-web"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "console_error_panic_hook",
+ "futures-util",
+ "gloo-net",
+ "gloo-timers",
+ "js-sys",
+ "leptos",
+ "leptos_router",
+ "nidoo-alarm",
+ "nidoo-api",
+ "nidoo-climate",
+ "nidoo-core",
+ "nidoo-frigate",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "thiserror 2.0.21",
+ "time",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2250,176 +2420,6 @@ checksum = "ed0423ff9973dea4d6bd075934fdda86ebb8c05bdf9d6b0507067d4a1226371d"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "oikos-alarm"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "oikos-api"
-version = "0.1.0"
-dependencies = [
- "oikos-core",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "oikos-climate"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "oikos-core",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "oikos-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "croner",
- "minijinja",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "oikos-frigate"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "oikos-os"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "axum",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "chrono-tz",
- "clap",
- "figment",
- "futures-util",
- "getrandom 0.2.17",
- "iana-time-zone",
- "if-addrs",
- "mime_guess",
- "oikos-alarm",
- "oikos-api",
- "oikos-climate",
- "oikos-core",
- "oikos-frigate",
- "oikos-push",
- "oikos-solcast",
- "oikos-watchdog",
- "pbkdf2",
- "percent-encoding",
- "reqwest",
- "rmcp",
- "rumqttc",
- "rust-embed",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "socket2",
- "sqlx",
- "surge-ping",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "toml 0.8.23",
- "tower-http 0.7.1",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "oikos-push"
-version = "0.1.0"
-dependencies = [
- "axum",
- "futures-util",
- "jsonwebtoken",
- "oikos-core",
- "reqwest",
- "serde",
- "serde_json",
- "sha1 0.10.7",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "oikos-solcast"
-version = "0.1.0"
-dependencies = [
- "axum",
- "chrono",
- "chrono-tz",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "oikos-watchdog"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "oikos-web"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "chrono-tz",
- "console_error_panic_hook",
- "futures-util",
- "gloo-net",
- "gloo-timers",
- "js-sys",
- "leptos",
- "leptos_router",
- "oikos-alarm",
- "oikos-api",
- "oikos-climate",
- "oikos-core",
- "oikos-frigate",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "thiserror 2.0.21",
- "time",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-bindgen-test",
- "web-sys",
 ]
 
 [[package]]

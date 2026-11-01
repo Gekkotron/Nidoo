@@ -1,0 +1,24 @@
+[package]
+name = "nidoo-push"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+reqwest.workspace = true
+jsonwebtoken.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+nidoo-core = { path = "../nidoo-core" }
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["test-util", "rt"] }

@@ -1,7 +1,7 @@
 .git
 .gitignore
 target/
-crates/oikos-web/dist/
+crates/nidoo-web/dist/
 .DS_Store
 .superpowers/
 .vscode/
