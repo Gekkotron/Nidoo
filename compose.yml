@@ -1,4 +1,4 @@
-# Oikos-os single-host Docker Compose.
+# Nidoo single-host Docker Compose.
 # See docs/users/install-on-linux.md for the full install.
 #
 # `docker compose up` starts four services:
@@ -6,7 +6,7 @@
 #                into ./data the first time, then exits.
 #   mosquitto    the MQTT broker, on port 1883.
 #   timescaledb  the history database, on port 5432.
-#   hub          Oikos-os itself, on port 8081.
+#   hub          Nidoo itself, on port 8081.
 #
 # Already have a broker and a database? Start only the hub and point it at
 # them from the setup wizard: `docker compose up -d hub`.

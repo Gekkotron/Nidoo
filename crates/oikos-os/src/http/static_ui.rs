@@ -16,7 +16,7 @@ const INDEX: &str = "index.html";
 /// offer `br` only over HTTPS, so on a plain-HTTP LAN it is gzip that gets used.
 const ENCODINGS: [(&str, &str); 2] = [("br", ".br"), ("gzip", ".gz")];
 const NOT_BUILT: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-    <title>Oikos-os</title></head><body><p>The Oikos-os web UI has not been built. \
+    <title>Nidoo</title></head><body><p>The Nidoo web UI has not been built. \
     Run <code>trunk build --release</code> in <code>crates/oikos-web</code>.</p></body></html>";
 
 pub(super) async fn index(uri: Uri, request_headers: HeaderMap) -> Response {

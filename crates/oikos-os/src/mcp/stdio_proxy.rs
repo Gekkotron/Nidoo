@@ -24,7 +24,7 @@ pub async fn run_stdio_proxy(server_url: String) -> anyhow::Result<()> {
     let upstream = ()
         .serve(transport)
         .await
-        .with_context(|| format!("cannot reach Oikos-os MCP server at {mcp_url}"))?;
+        .with_context(|| format!("cannot reach the Nidoo MCP server at {mcp_url}"))?;
     let info = upstream
         .peer_info()
         .map(|peer| server_config(&peer))

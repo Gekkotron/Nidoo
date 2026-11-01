@@ -93,4 +93,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: tools/tests/update_test.sh
       - run: shellcheck tools/*.sh tools/ci/*.sh tools/tests/*.sh
+      - run: tools/ci/brand-check.sh
       - run: tools/ci/stack-check.sh

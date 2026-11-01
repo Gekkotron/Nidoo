@@ -5,12 +5,12 @@ use oikos_api::{AmbianceView, ApplyReport};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{tool, tool_router};
 
-use super::OikosMcp;
+use super::NidooMcp;
 use super::params::{AmbianceIdParams, AmbianceList, Deleted, SetAmbianceParams};
 use super::tools::{ToolResult, log_write};
 
 #[tool_router(router = ambiance_tool_router, vis = "pub(super)")]
-impl OikosMcp {
+impl NidooMcp {
     /// The ambiances (one-tap house states), each with its actions, or the reason it cannot be
     /// read.
     #[tool(name = "list_ambiances", annotations(read_only_hint = true))]

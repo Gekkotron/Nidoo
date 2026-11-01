@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "oikos-os", version, about = "Oikos home-automation hub")]
+#[command(name = "oikos-os", version, about = "Nidoo home-automation hub")]
 struct RawCli {
     #[command(subcommand)]
     command: Option<RawCommand>,

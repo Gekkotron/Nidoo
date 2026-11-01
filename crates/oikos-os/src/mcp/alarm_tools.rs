@@ -1,16 +1,16 @@
-//! The two alarm tools, in a fourth router combined in [`OikosMcp::new`]. Arming and disarming
+//! The two alarm tools, in a fourth router combined in [`NidooMcp::new`]. Arming and disarming
 //! are not tools: they are `send_command` on the alarm entity.
 
 use oikos_alarm::view::AlarmView;
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{tool, tool_router};
 
-use super::OikosMcp;
+use super::NidooMcp;
 use super::params::SetAlarmSettingsParams;
 use super::tools::{ToolResult, log_write};
 
 #[tool_router(router = alarm_tool_router, vis = "pub(super)")]
-impl OikosMcp {
+impl NidooMcp {
     /// The native alarm: its settings (`enabled`, delays, sensors, sirens, remotes, presence),
     /// the panel state (`disarmed`, `arming`, `armed_away`, `armed_home`, `armed_night`, `pending`, `triggered`), why, and the
     /// run-time warnings.
