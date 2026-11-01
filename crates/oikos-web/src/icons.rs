@@ -24,8 +24,10 @@ const SWITCH: &str = svg!(
 const COVER: &str = svg!(
     r#"<path d="M4 4h16"/><path d="M5 4v6h14V4"/><path d="M5 10v2h14v-2"/><path d="M12 14v6"/><path d="M9.5 17.5 12 20l2.5-2.5"/>"#
 );
-const CLIMATE: &str =
-    svg!(r#"<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>"#);
+/// A wall air conditioner blowing air, so a climate entity never reads as a thermometer.
+const CLIMATE: &str = svg!(
+    r#"<rect x="3" y="4" width="18" height="9" rx="2"/><path d="M6.5 10h11"/><path d="m8 16-1 3.5"/><path d="M12 16v4"/><path d="m16 16 1 3.5"/>"#
+);
 const SENSOR: &str = svg!(r#"<path d="M3 12h4l3-7 4 14 3-7h4"/>"#);
 const BINARY_SENSOR: &str = svg!(
     r#"<circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4"/><path d="M17.7 6.3a8 8 0 0 1 0 11.4"/>"#
