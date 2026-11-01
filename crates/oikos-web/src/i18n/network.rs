@@ -1,0 +1,170 @@
+//! FR/EN text: Settings › Network presence, the hosts the hub watches by ping.
+
+use super::*;
+
+/// A fixed word or sentence of the network presence page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkText {
+    Title,
+    WatchedTitle,
+    WatchedHint,
+    Empty,
+    Loading,
+    CouldNotLoad,
+    AddTitle,
+    AddHint,
+    Name,
+    Host,
+    Every,
+    Room,
+    NoRoom,
+    Add,
+    Edit,
+    Save,
+    Cancel,
+    Remove,
+    WatchOnNetwork,
+    DeviceTag,
+    EveryPrefix,
+    Connected,
+    DisconnectedFor,
+    Paused,
+    Waiting,
+    CannotPing,
+    Watched,
+    CouldNotSave,
+    UnitSecond,
+    UnitMinute,
+    UnitHour,
+    UnitDay,
+}
+
+/// A fixed word of the network presence page.
+pub fn network_text(lang: Lang, k: NetworkText) -> &'static str {
+    use NetworkText::*;
+    let (en, fr) = match k {
+        Title => ("Network presence", "Présence réseau"),
+        WatchedTitle => ("Watched hosts", "Hôtes surveillés"),
+        WatchedHint => (
+            "Each host is pinged on its own interval and shows up as a “network” entity you can use in flows.",
+            "Chaque hôte reçoit un ping à son propre rythme et devient une entité «\u{A0}réseau\u{A0}» utilisable dans les automatisations.",
+        ),
+        Empty => ("No host watched yet.", "Aucun hôte surveillé."),
+        Loading => ("Loading…", "Chargement…"),
+        CouldNotLoad => (
+            "Could not load the watched hosts",
+            "Impossible de charger les hôtes surveillés",
+        ),
+        AddTitle => ("Add host", "Ajouter un hôte"),
+        AddHint => (
+            "A device the hub already knows is switched on from its own sheet.",
+            "Un appareil que le hub connaît déjà s'active depuis sa propre fiche.",
+        ),
+        Name => ("Name", "Nom"),
+        Host => ("IP or hostname", "IP ou nom d'hôte"),
+        Every => ("Ping every", "Ping toutes les"),
+        Room => ("Room", "Pièce"),
+        NoRoom => ("No room", "Aucune pièce"),
+        Add => ("Add", "Ajouter"),
+        Edit => ("Edit", "Modifier"),
+        Save => ("Save", "Enregistrer"),
+        Cancel => ("Cancel", "Annuler"),
+        Remove => ("Remove", "Supprimer"),
+        WatchOnNetwork => ("Watch on network", "Surveiller sur le réseau"),
+        DeviceTag => ("device", "appareil"),
+        EveryPrefix => ("every", "toutes les"),
+        Connected => ("connected", "connecté"),
+        DisconnectedFor => ("disconnected for", "déconnecté depuis"),
+        Paused => ("paused", "en pause"),
+        Waiting => (
+            "waiting for the first reply",
+            "en attente de la première réponse",
+        ),
+        CannotPing => (
+            "the hub cannot send pings",
+            "le hub ne peut pas envoyer de ping",
+        ),
+        Watched => ("watched", "surveillés"),
+        CouldNotSave => ("Could not save", "Enregistrement impossible"),
+        UnitSecond => ("s", "s"),
+        UnitMinute => ("min", "min"),
+        UnitHour => ("h", "h"),
+        UnitDay => ("d", "j"),
+    };
+    if lang == Lang::Fr { fr } else { en }
+}
+
+/// The text table for the current language.
+pub fn use_network_text() -> impl Fn(NetworkText) -> &'static str + Copy + 'static {
+    let lang = use_lang();
+    move |k| network_text(lang(), k)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Adding a variant without listing it in `ALL` fails to compile here.
+    const fn listed(k: NetworkText) -> bool {
+        use NetworkText::*;
+        match k {
+            Title | WatchedTitle | WatchedHint | Empty | Loading | CouldNotLoad | AddTitle
+            | AddHint | Name | Host | Every | Room | NoRoom | Add | Edit | Save | Cancel
+            | Remove | WatchOnNetwork | DeviceTag | EveryPrefix | Connected | DisconnectedFor
+            | Paused | Waiting | CannotPing | Watched | CouldNotSave | UnitSecond | UnitMinute
+            | UnitHour | UnitDay => true,
+        }
+    }
+
+    const ALL: &[NetworkText] = {
+        use NetworkText::*;
+        &[
+            Title,
+            WatchedTitle,
+            WatchedHint,
+            Empty,
+            Loading,
+            CouldNotLoad,
+            AddTitle,
+            AddHint,
+            Name,
+            Host,
+            Every,
+            Room,
+            NoRoom,
+            Add,
+            Edit,
+            Save,
+            Cancel,
+            Remove,
+            WatchOnNetwork,
+            DeviceTag,
+            EveryPrefix,
+            Connected,
+            DisconnectedFor,
+            Paused,
+            Waiting,
+            CannotPing,
+            Watched,
+            CouldNotSave,
+            UnitSecond,
+            UnitMinute,
+            UnitHour,
+            UnitDay,
+        ]
+    };
+
+    #[test]
+    fn network_copy_has_both_languages() {
+        assert!(ALL.iter().all(|&k| listed(k)));
+        crate::i18n::assert_table(
+            ALL,
+            network_text,
+            &[
+                NetworkText::UnitSecond,
+                NetworkText::UnitMinute,
+                NetworkText::UnitHour,
+            ],
+        );
+    }
+}

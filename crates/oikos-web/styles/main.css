@@ -8976,6 +8976,33 @@ dialog.popup::backdrop {
   gap: 8px;
 }
 
+.network-row .alarm-row__name {
+  flex: 0 1 auto;
+}
+
+.network-row .alarm-row__head .btn {
+  margin-left: auto;
+}
+
+.network-tag {
+  flex: none;
+  font: var(--type-label);
+  opacity: 0.7;
+}
+
+.network-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.network-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .hero__detail {
   font: var(--type-label);
   opacity: 0.85;

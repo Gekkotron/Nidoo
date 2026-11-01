@@ -22,6 +22,7 @@ use crate::screens::alarm_settings::{AlarmSettingsPage, settings_status};
 use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
+use crate::screens::network_settings::{NetworkSettingsPage, watched_label};
 use crate::setup::connection::{DatabaseForm, MqttForm};
 use crate::setup::services::basic::WeatherForm;
 use crate::setup::services::keys::{FrigateForm, PushForm, SolcastForm};
@@ -199,6 +200,7 @@ pub enum SettingsPage {
     Cameras,
     Push,
     Alarm,
+    NetworkPresence,
     Appearance,
     Zigbee2mqtt,
     Broker,
@@ -209,7 +211,7 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 13] = [
+    pub const ALL: [SettingsPage; 14] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
@@ -217,6 +219,7 @@ impl SettingsPage {
         SettingsPage::Cameras,
         SettingsPage::Push,
         SettingsPage::Alarm,
+        SettingsPage::NetworkPresence,
         SettingsPage::Appearance,
         SettingsPage::Zigbee2mqtt,
         SettingsPage::Broker,
@@ -234,6 +237,7 @@ impl SettingsPage {
             SettingsPage::Cameras => "cameras",
             SettingsPage::Push => "push-notifications",
             SettingsPage::Alarm => "alarm",
+            SettingsPage::NetworkPresence => "network-presence",
             SettingsPage::Appearance => "appearance",
             SettingsPage::Zigbee2mqtt => "zigbee2mqtt",
             SettingsPage::Broker => "broker",
@@ -257,6 +261,7 @@ impl SettingsPage {
             SettingsPage::Cameras => Key::Cameras,
             SettingsPage::Push => Key::PushNotifications,
             SettingsPage::Alarm => Key::Alarm,
+            SettingsPage::NetworkPresence => Key::NetworkPresence,
             SettingsPage::Appearance => Key::Appearance,
             SettingsPage::Zigbee2mqtt => Key::Zigbee2mqtt,
             SettingsPage::Broker => Key::Broker,
@@ -281,6 +286,7 @@ impl SettingsPage {
                 SettingsPage::Cameras => T::HintCameras,
                 SettingsPage::Push => T::HintPush,
                 SettingsPage::Alarm => T::HintAlarm,
+                SettingsPage::NetworkPresence => T::HintNetworkPresence,
                 SettingsPage::Appearance => T::HintAppearance,
                 SettingsPage::Zigbee2mqtt => T::HintZigbee,
                 SettingsPage::Broker => T::HintBroker,
@@ -344,6 +350,14 @@ pub fn SettingsScreen() -> impl IntoView {
             }
         });
     });
+    let watches = RwSignal::new(None::<Vec<oikos_api::NetworkWatchView>>);
+    Effect::new(move |_| {
+        spawn_local(async move {
+            if let Ok(v) = crate::api::list_network_watches().await {
+                watches.try_set(Some(v));
+            }
+        });
+    });
     let status = move |page: SettingsPage| match page {
         SettingsPage::Home
         | SettingsPage::Location
@@ -354,6 +368,9 @@ pub fn SettingsScreen() -> impl IntoView {
         SettingsPage::Alarm => alarm
             .get()
             .map(|v| settings_status(&v, lang()))
+            .unwrap_or_default(),
+        SettingsPage::NetworkPresence => watches
+            .with(|w| w.as_ref().map(|w| watched_label(w, lang())))
             .unwrap_or_default(),
         SettingsPage::Appearance => theme.get().label().to_owned(),
         SettingsPage::Zigbee2mqtt => zigbee_status(
@@ -437,6 +454,9 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::Cameras) => view! { <CamerasPage /> }.into_any(),
                 Some(SettingsPage::Push) => view! { <PushPage /> }.into_any(),
                 Some(SettingsPage::Alarm) => view! { <AlarmSettingsPage /> }.into_any(),
+                Some(SettingsPage::NetworkPresence) => {
+                    view! { <NetworkSettingsPage /> }.into_any()
+                }
                 Some(SettingsPage::Appearance) => view! { <AppearancePage /> }.into_any(),
                 Some(SettingsPage::Zigbee2mqtt) => view! { <ZigbeePage /> }.into_any(),
                 Some(SettingsPage::Broker) => view! { <BrokerPage /> }.into_any(),

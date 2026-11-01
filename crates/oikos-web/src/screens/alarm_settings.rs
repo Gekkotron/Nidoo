@@ -254,7 +254,7 @@ fn EntityName(house: House, id: String) -> impl IntoView {
 
 /// An on/off switch row.
 #[component]
-fn SwitchRow(
+pub(crate) fn SwitchRow(
     #[prop(into)] label: Signal<String>,
     #[prop(into)] on: Signal<bool>,
     on_toggle: Callback<bool>,

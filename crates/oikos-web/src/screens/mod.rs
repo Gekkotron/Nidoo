@@ -21,6 +21,7 @@ pub mod groups;
 pub mod history_detail;
 pub mod home;
 pub mod home_settings_panel;
+pub mod network_settings;
 pub mod room;
 pub mod security;
 pub mod settings;
