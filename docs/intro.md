@@ -11,7 +11,7 @@ Status: v1 hub with its web UI: registry, API, WebSocket, MCP and the browser ap
 
 ## The pieces
 
-- **The hub** (`oikos-os`): one binary with the device registry, the HTTP API, the WebSocket, the MCP server, the flow engine, the climate engine, history, push notifications and the watchdogs.
+- **The hub** (`nidoo`): one binary with the device registry, the HTTP API, the WebSocket, the MCP server, the flow engine, the climate engine, history, push notifications and the watchdogs.
 - **The web UI**: the browser app the hub serves on its own port.
 - **The Android app** (Nidoo): the phone client for the same house.
 - **The MCP server**: lets AI assistants such as Claude Code, Codex and Claude Desktop read and change the house.

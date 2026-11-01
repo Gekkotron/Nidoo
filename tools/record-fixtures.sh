@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Record retained broker messages as test fixtures for oikos-core.
+# Record retained broker messages as test fixtures for nidoo-core.
 # Env: MQTT_HOST (required), MQTT_USER, MQTT_PASS (optional), MQTT_PORT (default 1883).
 # Never reads credentials from a file; never writes them anywhere.
 set -euo pipefail
 
 : "${MQTT_HOST:?set MQTT_HOST}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="$ROOT/crates/oikos-core/tests/fixtures"
+OUT="$ROOT/crates/nidoo-core/tests/fixtures"
 RAW="$(mktemp)"
 trap 'rm -f "$RAW"' EXIT
 

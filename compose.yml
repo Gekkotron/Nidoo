@@ -14,16 +14,16 @@
 # `network_mode: host` makes `localhost` inside each container the host's
 # localhost. Everything the stack writes lives under ./data.
 
-x-oikos-build: &oikos-build
+x-nidoo-build: &nidoo-build
   context: .
   dockerfile: Dockerfile
 
 services:
   init:
-    build: *oikos-build
+    build: *nidoo-build
     # Same tag as the hub, so a fresh `docker compose up` builds it once
     # instead of trying to pull it.
-    image: oikos-os:local
+    image: nidoo:local
     # `--config` points at the repository's oikos.toml: a host upgraded by an
     # older update.sh still has it there, and init then leaves it alone.
     command: ["init-bundled", "--config", "/checkout/oikos.toml"]
@@ -34,7 +34,7 @@ services:
 
   mosquitto:
     image: eclipse-mosquitto:2.0.22
-    container_name: oikos-mosquitto
+    container_name: nidoo-mosquitto
     restart: unless-stopped
     network_mode: host
     depends_on:
@@ -47,7 +47,7 @@ services:
 
   timescaledb:
     image: timescale/timescaledb:2.30.2-pg17
-    container_name: oikos-timescaledb
+    container_name: nidoo-timescaledb
     restart: unless-stopped
     network_mode: host
     depends_on:
@@ -65,20 +65,20 @@ services:
       - sh
       - -c
       - |
-        [ -f /run/oikos-bundled/db-password ] && export POSTGRES_PASSWORD_FILE=/run/oikos-bundled/db-password
+        [ -f /run/nidoo-bundled/db-password ] && export POSTGRES_PASSWORD_FILE=/run/nidoo-bundled/db-password
         exec docker-entrypoint.sh "$$0" "$$@"
     command: ["postgres"]
     volumes:
       - ./data/timescaledb:/var/lib/postgresql/data
-      - ./data/bundled:/run/oikos-bundled:ro
+      - ./data/bundled:/run/nidoo-bundled:ro
 
   hub:
-    build: *oikos-build
-    image: oikos-os:local
-    container_name: oikos-hub
+    build: *nidoo-build
+    image: nidoo:local
+    container_name: nidoo-hub
     restart: unless-stopped
     network_mode: host
-    # Optional, git-ignored: any OIKOS_* override.
+    # Optional, git-ignored: any NIDOO_* override (OIKOS_* still works).
     env_file:
       - path: .env
         required: false

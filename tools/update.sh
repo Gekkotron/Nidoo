@@ -70,16 +70,74 @@ main() {
 
   if [ "$mode" = hub ]; then
     echo "==> $reason: rebuilding the hub only"
-    echo "==> docker compose up -d --build hub"
-    docker compose up -d --build hub
+    services=(hub)
   else
+    refuse_beside_own_old_containers
     echo "==> $reason: rebuilding the whole stack"
-    echo "==> docker compose up -d --build"
-    docker compose up -d --build
+    services=()
   fi
+  switch_renamed_containers ${services[@]+"${services[@]}"}
+  echo "==> docker compose up -d --build${services[*]+ ${services[*]}}"
+  docker compose up -d --build ${services[@]+"${services[@]}"}
 
   echo "==> docker compose logs --tail 20 hub"
   docker compose logs --tail 20 hub
+}
+
+# Before the Nidoo rename the bundled broker and database were named like a
+# host's own oikos-mosquitto / oikos-timescaledb, so `docker compose up` stopped
+# on the name clash. Now they are nidoo-* and would start beside the host's own
+# (crash-looping, or fighting over the ports after a reboot). Refuse when compose
+# would start such a service while a container of that old name lives outside
+# this project and no override pins the name.
+refuse_beside_own_old_containers() {
+  local services ours config name service clash=()
+  services="$(docker compose config --services 2>/dev/null || true)"
+  ours="$(docker compose ps -a --format '{{.Name}}' 2>/dev/null || true)"
+  config="$(docker compose config 2>/dev/null || true)"
+  while IFS= read -r name; do
+    case "$name" in
+      oikos-mosquitto) service=mosquitto ;;
+      oikos-timescaledb) service=timescaledb ;;
+      *) continue ;;
+    esac
+    grep -Fxq "$service" <<<"$services" || continue
+    grep -Fxq "$name" <<<"$ours" && continue
+    grep -Eq "container_name: \"?$name\"?\$" <<<"$config" && continue
+    clash+=("$name")
+  done < <(docker ps -a --format '{{.Names}}')
+  [ "${#clash[@]}" -eq 0 ] && return 0
+  echo "This host runs its own ${clash[*]} outside this stack; the whole stack would now" >&2
+  echo "start the bundled one beside it. Run tools/update.sh --hub-only (your own broker" >&2
+  echo "and database), or move them in first: docs/users/move-into-the-stack.md" >&2
+  exit 1
+}
+
+# The containers were named oikos-* before the Nidoo rename. Compose finds them
+# by its own labels (`docker compose ps` lists this project's containers only,
+# for the services about to start), so a host's hand-made container that
+# happens to carry an old name is never touched, and neither is one that
+# compose.override.yml still names. The images are built first, so the old
+# containers stop only for the switch itself; the stop is graceful, so the
+# database flushes. Data stays where it is mounted.
+switch_renamed_containers() {
+  local old=() name config
+  config="$(docker compose config 2>/dev/null || true)"
+  while IFS= read -r name; do
+    case "$name" in
+      oikos-hub|oikos-mosquitto|oikos-timescaledb)
+        grep -Eq "container_name: \"?$name\"?\$" <<<"$config" || old+=("$name")
+        ;;
+    esac
+  done < <(docker compose ps -a --format '{{.Name}}' "$@")
+  [ "${#old[@]}" -gt 0 ] || return 0
+  echo "==> renamed containers: building first, then replacing ${old[*]}"
+  docker compose build "$@"
+  for name in "${old[@]}"; do
+    echo "==> docker stop -t 120 $name && docker rm $name"
+    docker stop -t 120 "$name"
+    docker rm "$name"
+  done
 }
 
 # Runs a command through sudo when data/ is not writable by this user.

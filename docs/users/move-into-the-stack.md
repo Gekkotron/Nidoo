@@ -20,7 +20,7 @@ Write these five facts down for each of the two old containers (`docker inspect 
 2. **Folders.** The host folders mounted on `/mosquitto/config`, `/mosquitto/data`, `/mosquitto/log` and `/var/lib/postgresql/data`. A named volume works too.
 3. **Ports.** 1883 for the broker, and the database port (5432 unless you changed it).
 4. **How they start.** A compose project, a `docker run` or a systemd unit. You will stop them, and later disable that autostart.
-5. **Their names**, which the new containers take over: `oikos-mosquitto` and `oikos-timescaledb`.
+5. **Their names**, in case they are the ones the new containers take: `nidoo-mosquitto` and `nidoo-timescaledb`.
 
 ## Check that the broker persists
 
@@ -30,7 +30,7 @@ The hub keeps its flows, alarm and climate settings as retained messages on the 
 
 ```bash
 # The database, in a restorable archive
-docker exec oikos-timescaledb pg_dump -U oikos -Fc oikos > oikos-db.dump
+docker exec <old-timescaledb> pg_dump -U oikos -Fc oikos > oikos-db.dump
 
 # The broker's config and data
 tar czf mosquitto-backup.tgz <config-folder> <data-folder>
@@ -46,7 +46,7 @@ Create `compose.override.yml` next to `compose.yml`. Compose merges it on top: t
 services:
   mosquitto:
     image: eclipse-mosquitto:<your tag>
-    container_name: oikos-mosquitto
+    container_name: nidoo-mosquitto
     restart: unless-stopped
     network_mode: host
     volumes:
@@ -56,7 +56,7 @@ services:
 
   timescaledb:
     image: timescale/timescaledb:<your tag>
-    container_name: oikos-timescaledb
+    container_name: nidoo-timescaledb
     restart: unless-stopped
     network_mode: host
     command: postgres -c port=<port>
@@ -66,6 +66,7 @@ services:
 
 Notes:
 
+- An override written before the rename names the containers `oikos-mosquitto` and `oikos-timescaledb`. That still works: the names it sets win, and `tools/update.sh` leaves those containers alone.
 - Leave out `command` when the database port is 5432.
 - If the database lives in a named volume, mount it as `<name>:/var/lib/postgresql/data` and declare it at the bottom of the file with `volumes: {<name>: {external: true}}`.
 - You do not set any password. An initialised data folder keeps its users, and the stack only applies the generated password when it creates a database from scratch.
@@ -85,7 +86,7 @@ Because `data/hub.json` already exists on a configured hub, `init` writes no bun
    ```
 
 3. Make cold copies of both data folders now that nothing writes to them, for example `cp -a`. They are your safety net for the rollback.
-4. Rename the old containers, because the new ones take the names `oikos-mosquitto` and `oikos-timescaledb` and `docker compose up` fails with "container name already in use" otherwise (skip a container whose name is different):
+4. If an old container is already named `nidoo-mosquitto` or `nidoo-timescaledb`, rename it: the new ones take those names, and `docker compose up` fails with "container name already in use" otherwise (skip a container whose name is different):
 
    ```bash
    docker rename <old-mosquitto> <old-mosquitto>-retired
