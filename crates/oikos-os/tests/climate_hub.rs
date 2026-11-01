@@ -1364,6 +1364,30 @@ mod engine {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_dropped_pass_command_the_device_later_echoes_is_not_a_hand_change() {
+        let mut rig = Rig::new(None).await;
+        rig.settings(heat_rules(17.0));
+        rig.pass(0).await;
+        rig.settings(heat_rules(19.0));
+        rig.sim.echo = false;
+        let hub = Arc::clone(&rig.hub);
+        let now = rig.t0 + 61;
+        let task = tokio::spawn(async move { hub.evaluate_climate(now).await });
+        loop {
+            let published = rig.rx.recv().await.expect("publisher open");
+            if published.topic.ends_with("/ha/temperature/set") {
+                break;
+            }
+        }
+        task.abort();
+        let _ = task.await;
+        // The device applies the abandoned command after the pass is gone.
+        rig.sim.set(&rig.hub, 0, "heat", 19.0, 20.0);
+        rig.hub.observe_climate(&rig.id, rig.t0 + 700);
+        assert!(rig.zone().overrides.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn decision_published_only_when_outcome_changes() {
         let mut rig = Rig::new(None).await;
         rig.settings(heat_rules(17.0));
