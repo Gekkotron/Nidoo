@@ -69,7 +69,7 @@ The engine decides per zone from a priority tree, and every decision carries its
 3. **Zone override**: a whole-zone target and/or mode held for a number of minutes or until a time.
 4. **Rules**: holiday, then eco (the zone's own eco, or the whole house's while nobody is home), then the schedule, set back while the room is empty (see [Room presence](#room-presence)).
 
-Per-device overrides (hand changes) sit on top of the rules and hold their device whatever the zone does.
+Per-device overrides (hand changes) sit on top of the rules and hold their device whatever the zone does. An override the device cannot run (cool on a heat-only valve) holds it as it is, and the reason says "held as it is".
 
 A temperature set by hand on a device holds until the zone's next scheduled change, at most `manual_hold_max_min` minutes (240 by default). Only an active zone watches for hand changes: what is set by hand while a zone is off is not held when it is switched back on, and the schedule applies.
 
