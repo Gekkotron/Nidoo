@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::migrate::{MigrateArgs, Mode};
 use clap::parser::ValueSource;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
@@ -36,6 +37,23 @@ enum RawCommand {
     },
     /// Create the bundled broker and database credentials, then exit.
     InitBundled,
+    /// One-off: move the `oikos` retained messages, database rows, database and role to
+    /// `nidoo`. Without a flag it is a dry run that writes nothing.
+    #[command(name = "migrate-oikos")]
+    Migrate {
+        /// Do the switch-over (the hub must be stopped; needs `--backup`).
+        #[arg(long, conflicts_with_all = ["verify", "restore"], requires = "backup")]
+        apply: bool,
+        /// Report anything still carrying the old name; exits non-zero when something does.
+        #[arg(long, conflicts_with = "restore")]
+        verify: bool,
+        /// Write the retained messages to this file first.
+        #[arg(long, value_name = "FILE", conflicts_with = "restore")]
+        backup: Option<PathBuf>,
+        /// Republish the retained messages of a backup file, then exit.
+        #[arg(long, value_name = "FILE")]
+        restore: Option<PathBuf>,
+    },
 }
 
 /// Resolved command line.
@@ -52,6 +70,10 @@ pub enum Cli {
     InitBundled {
         data_dir: PathBuf,
         config: Option<PathBuf>,
+    },
+    Migrate {
+        args: MigrateArgs,
+        data_dir: PathBuf,
     },
 }
 
@@ -86,6 +108,25 @@ impl Cli {
             Some(RawCommand::InitBundled) => Cli::InitBundled {
                 data_dir: raw.data_dir,
                 config: raw.config,
+            },
+            Some(RawCommand::Migrate {
+                apply,
+                verify,
+                backup,
+                restore,
+            }) => Cli::Migrate {
+                args: MigrateArgs {
+                    mode: if apply {
+                        Mode::Apply
+                    } else if verify {
+                        Mode::Verify
+                    } else {
+                        Mode::DryRun
+                    },
+                    backup,
+                    restore,
+                },
+                data_dir: raw.data_dir,
             },
         }
     }
@@ -236,6 +277,88 @@ mod tests {
                     }
                 );
             }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn migrate_defaults_to_dry_run() {
+        figment::Jail::expect_with(|_| {
+            assert_eq!(
+                Cli::try_parse_from(["nidoo", "migrate-oikos"]).unwrap(),
+                Cli::Migrate {
+                    args: MigrateArgs {
+                        mode: Mode::DryRun,
+                        backup: None,
+                        restore: None,
+                    },
+                    data_dir: "./data".into(),
+                }
+            );
+            assert_eq!(
+                Cli::try_parse_from(["nidoo", "--data", "d", "migrate-oikos", "--verify"]).unwrap(),
+                Cli::Migrate {
+                    args: MigrateArgs {
+                        mode: Mode::Verify,
+                        backup: None,
+                        restore: None,
+                    },
+                    data_dir: "d".into(),
+                }
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn migrate_apply_requires_backup() {
+        figment::Jail::expect_with(|_| {
+            assert!(Cli::try_parse_from(["nidoo", "migrate-oikos", "--apply"]).is_err());
+            assert_eq!(
+                Cli::try_parse_from(["nidoo", "migrate-oikos", "--apply", "--backup", "b.jsonl"])
+                    .unwrap(),
+                Cli::Migrate {
+                    args: MigrateArgs {
+                        mode: Mode::Apply,
+                        backup: Some("b.jsonl".into()),
+                        restore: None,
+                    },
+                    data_dir: "./data".into(),
+                }
+            );
+            assert!(
+                Cli::try_parse_from([
+                    "nidoo",
+                    "migrate-oikos",
+                    "--apply",
+                    "--verify",
+                    "--backup",
+                    "b"
+                ])
+                .is_err()
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn migrate_restore_takes_file() {
+        figment::Jail::expect_with(|_| {
+            assert_eq!(
+                Cli::try_parse_from(["nidoo", "migrate-oikos", "--restore", "b.jsonl"]).unwrap(),
+                Cli::Migrate {
+                    args: MigrateArgs {
+                        mode: Mode::DryRun,
+                        backup: None,
+                        restore: Some("b.jsonl".into()),
+                    },
+                    data_dir: "./data".into(),
+                }
+            );
+            assert!(
+                Cli::try_parse_from(["nidoo", "migrate-oikos", "--restore", "b", "--apply"])
+                    .is_err()
+            );
             Ok(())
         });
     }

@@ -121,4 +121,39 @@ if docker exec nidoo-mosquitto mosquitto_pub -h localhost \
   exit 1
 fi
 
+# The switch-over, last: it renames the bundled database and role, which the
+# checks above still use under their old names.
+echo "== migrate-oikos"
+# The throwaway one-off container reaches the host-network services directly.
+jq -n --arg pw "$mqtt_password" --arg dbpw "$db_password" '{
+  mqtt: {host: "localhost", port: 1883, user: "oikos", password: $pw},
+  database_url: "postgresql://oikos:\($dbpw)@localhost:5433/oikos"
+}' > data/hub.json
+docker exec nidoo-mosquitto mosquitto_pub -h localhost -u oikos -P "$mqtt_password" \
+  -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
+docker compose stop hub
+migrate() {
+  docker compose run --rm --no-deps -T hub --data /data migrate-oikos "$@"
+}
+migrate
+migrate --backup /data/backup.jsonl --apply
+got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_password" \
+  -t nidoo/ui/nidoo_t -C 1 -W 3)
+[ "$got" = '{"name":"nidoo t"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
+old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_password" \
+  -t oikos/ui/oikos_t -C 1 -W 3 || true)
+[ -z "$old" ] || { echo "old retained topic still there: '$old'" >&2; exit 1; }
+migrate --verify
+jq -e '.database_url | endswith("/nidoo")' data/hub.json >/dev/null
+docker compose up -d --no-deps hub
+healthy=0
+for _ in $(seq 1 60); do
+  if curl -fsS http://localhost:8081/health >/dev/null 2>&1; then
+    healthy=1
+    break
+  fi
+  sleep 1
+done
+[ "$healthy" -eq 1 ] || { docker compose logs hub; echo "hub not healthy on the renamed database" >&2; exit 1; }
+
 echo "stack ok"
