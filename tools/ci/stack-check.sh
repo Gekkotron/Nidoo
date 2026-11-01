@@ -129,6 +129,30 @@ jq -n --arg pw "$mqtt_password" --arg dbpw "$db_password" '{
   mqtt: {host: "localhost", port: 1883, user: "oikos", password: $pw},
   database_url: "postgresql://oikos:\($dbpw)@localhost:5433/oikos"
 }' > data/hub.json
+wait_hub() {
+  for _ in $(seq 1 60); do
+    if curl -fsS http://localhost:8081/health >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  docker compose logs hub
+  return 1
+}
+# The hub creates its tables on boot, which the migration expects to find.
+docker compose up -d --no-deps hub
+wait_hub || { echo "hub not healthy on the bundled database" >&2; exit 1; }
+tables=0
+for _ in $(seq 1 60); do
+  if [ "$(docker exec nidoo-timescaledb psql \
+    "postgresql://oikos:${db_password}@${host_ip}:5433/oikos" \
+    -tAc "select to_regclass('settings') is not null")" = "t" ]; then
+    tables=1
+    break
+  fi
+  sleep 1
+done
+[ "$tables" -eq 1 ] || { echo "hub created no tables after 60 s" >&2; exit 1; }
 docker exec nidoo-mosquitto mosquitto_pub -h localhost -u oikos -P "$mqtt_password" \
   -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
 docker compose stop hub
@@ -146,14 +170,6 @@ old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_
 migrate --verify
 jq -e '.database_url | endswith("/nidoo")' data/hub.json >/dev/null
 docker compose up -d --no-deps hub
-healthy=0
-for _ in $(seq 1 60); do
-  if curl -fsS http://localhost:8081/health >/dev/null 2>&1; then
-    healthy=1
-    break
-  fi
-  sleep 1
-done
-[ "$healthy" -eq 1 ] || { docker compose logs hub; echo "hub not healthy on the renamed database" >&2; exit 1; }
+wait_hub || { echo "hub not healthy on the renamed database" >&2; exit 1; }
 
 echo "stack ok"
