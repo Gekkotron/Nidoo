@@ -64,14 +64,31 @@ struct Outcome {
 }
 
 /// Clears an entity's in-flight mark when dropped, so a cancelled pass cannot leave it set.
+/// A command abandoned while armed may already be published, so it is remembered as
+/// unconfirmed: the device echoing it later is not a hand change.
 struct InflightGuard<'a> {
     hub: &'a Hub,
     id: &'a str,
+    intended: &'a DeviceTarget,
+    now: u64,
+    armed: bool,
+}
+
+impl InflightGuard<'_> {
+    /// The command finished, so dropping the guard is no abandonment.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for InflightGuard<'_> {
     fn drop(&mut self) {
-        self.hub.climate_runtime().inflight.remove(self.id);
+        let mut rt = self.hub.climate_runtime();
+        rt.inflight.remove(self.id);
+        if self.armed {
+            rt.unconfirmed
+                .insert(self.id.to_owned(), (self.intended.clone(), self.now));
+        }
     }
 }
 
@@ -725,11 +742,15 @@ impl Hub {
             rt.last_sent.insert(device.id.clone(), now);
             rt.inflight.insert(device.id.clone());
         }
-        let _inflight = InflightGuard {
+        let mut inflight = InflightGuard {
             hub: self,
             id: &device.id,
+            intended: target,
+            now,
+            armed: true,
         };
         let result = self.send_target(device, target, now).await;
+        inflight.disarm();
         if result.is_ok() {
             self.climate_runtime().unconfirmed.remove(&device.id);
         }
@@ -1228,6 +1249,49 @@ mod tests {
             mode: mode.into(),
             held: false,
         }
+    }
+
+    fn guard_hub() -> Arc<Hub> {
+        let mut cfg = crate::config::Config::default();
+        cfg.climate.enabled = true;
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        Hub::new(&cfg, tx)
+    }
+
+    #[test]
+    fn an_armed_guard_dropped_leaves_the_command_unconfirmed() {
+        let hub = guard_hub();
+        let intended = want(Some(19.0), "heat");
+        hub.climate_runtime().inflight.insert("climate.a".into());
+        drop(InflightGuard {
+            hub: &hub,
+            id: "climate.a",
+            intended: &intended,
+            now: 7,
+            armed: true,
+        });
+        let rt = hub.climate_runtime();
+        assert!(rt.inflight.is_empty());
+        assert_eq!(rt.unconfirmed.get("climate.a"), Some(&(intended, 7)));
+    }
+
+    #[test]
+    fn a_disarmed_guard_dropped_only_clears_the_mark() {
+        let hub = guard_hub();
+        let intended = want(Some(19.0), "heat");
+        hub.climate_runtime().inflight.insert("climate.a".into());
+        let mut guard = InflightGuard {
+            hub: &hub,
+            id: "climate.a",
+            intended: &intended,
+            now: 7,
+            armed: true,
+        };
+        guard.disarm();
+        drop(guard);
+        let rt = hub.climate_runtime();
+        assert!(rt.inflight.is_empty());
+        assert!(rt.unconfirmed.is_empty());
     }
 
     #[tokio::test]

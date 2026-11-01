@@ -16,12 +16,7 @@ Spec: `docs/superpowers/specs/2026-10-22-climate-engine-design.md`. Plan: `docs/
 
 ### Deferred follow-ups (from the SDD reviews; none blocks enabling the feature)
 
-- **T3** hold_devices skips a device override the device can't do; device keeps zone target (decide.rs hold_devices)
-- **T5** combine() float summation order depends on device order (learn.rs combine)
-- **T7** no test pins seq tie-break for equal times (history_db.rs)
 - **T8** unconfirmed entry expiry 120 s can turn a late-applied engine command into a hand change — Ruling: real but rare; holds the engine's own value (safe) — deferred.
-- **T8** a dropped pass's abandoned command is not moved to unconfirmed (engine.rs:61)
-- **T8** a safety alert resolved less than six hours before a restart can be pushed again: the repeat window is in memory, and the push history keeps no resolve time (an open alert is no longer re-pushed).
 - **T9** autumn repeated hour merges samples in micros_local (learning.rs:68) — Ruling: real, ≤1 h/year of evidence — deferred.
 - **Final** overlapping learning sequences / manual learn_climate_zone bypasses claim_run — Ruling: practically unreachable, conclude is serialised — deferred.
 - **Final** one failed re-assert right after reconnect turns drift into a hold after ~121 s — Ruling: never fights the user; frost overrides — deferred.

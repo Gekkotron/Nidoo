@@ -37,6 +37,7 @@ fn alert() -> AlertView {
         source: Some("frigate".into()),
         silent: false,
         resolved: false,
+        resolved_at: None,
         sent_at: NOW - 600,
     }
 }

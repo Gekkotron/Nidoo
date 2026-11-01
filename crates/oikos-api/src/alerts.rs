@@ -106,6 +106,8 @@ pub struct AlertView {
     pub silent: bool,
     /// The entry's `cancel: true`.
     pub resolved: bool,
+    /// Unix seconds the entry was cancelled; older entries have none.
+    pub resolved_at: Option<u64>,
     /// Unix seconds.
     pub sent_at: u64,
 }
@@ -166,6 +168,7 @@ fn parse_entry(entry: &Value) -> Option<AlertView> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         resolved,
+        resolved_at: object.get("resolved_at").and_then(Value::as_u64),
         sent_at: object.get("sent_at").and_then(Value::as_u64).unwrap_or(0),
     })
 }
@@ -216,6 +219,7 @@ mod tests {
                 source: Some("frigate".into()),
                 silent: false,
                 resolved: false,
+                resolved_at: None,
                 sent_at: 1_760_880_000,
             }]
         );

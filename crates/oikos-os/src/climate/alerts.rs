@@ -69,6 +69,17 @@ fn adopt(hub: &Hub, id: &str) {
     }
 }
 
+/// When the newest push history entry of alert `id` was cancelled, if it was and says when:
+/// after a restart the in-memory resolve times are gone and the retained history is what
+/// remembers them.
+fn resolved_in_history(hub: &Hub, id: &str) -> Option<u64> {
+    hub.alerts()
+        .iter()
+        .find(|a| a.id == id)
+        .filter(|a| a.resolved)
+        .and_then(|a| a.resolved_at)
+}
+
 /// Raises alert `id` unless it is already raised.
 pub(crate) fn raise(hub: &Hub, id: &str, title: &str, body: &str, severity: &str) {
     adopt(hub, id);
@@ -118,14 +129,19 @@ pub(crate) fn sync_safety(
         let id = safety_id(zone, cause);
         adopt(hub, &id);
         if d.cause == Some(cause) {
-            let recently_resolved = {
+            let known = {
                 let mut rt = hub.climate_runtime();
                 rt.absent_since.remove(&id);
-                rt.safety_resolved_at
-                    .get(&id)
-                    .is_some_and(|at| now.saturating_sub(*at) < REPEAT_AFTER_S)
+                rt.safety_resolved_at.get(&id).copied()
             };
-            if recently_resolved {
+            let resolved_at = known.or_else(|| {
+                let at = resolved_in_history(hub, &id)?;
+                hub.climate_runtime()
+                    .safety_resolved_at
+                    .insert(id.clone(), at);
+                Some(at)
+            });
+            if resolved_at.is_some_and(|at| now.saturating_sub(at) < REPEAT_AFTER_S) {
                 continue;
             }
             let name = title(cause);
@@ -155,5 +171,82 @@ pub(crate) fn sync_safety(
             }
             resolve(hub, &id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use oikos_climate::doc::Source;
+    use oikos_core::command::Publish;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::clock;
+    use crate::config::Config;
+
+    const ID: &str = "climate-safety-living-frost";
+
+    fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+        let mut cfg = Config::default();
+        cfg.climate.enabled = true;
+        let (tx, rx) = mpsc::channel(64);
+        (Hub::new(&cfg, tx), rx)
+    }
+
+    fn frost() -> Decision {
+        Decision {
+            zone: "living".to_owned(),
+            mode: None,
+            setpoint: None,
+            source: Source::Safety,
+            cause: Some(SafetyCause::Frost),
+            reason: "too cold".to_owned(),
+            reading: None,
+            reading_age_s: None,
+            outdoor_mean: None,
+            home: true,
+            applied: false,
+            at: 0,
+            entities: Default::default(),
+            eco_restore: Default::default(),
+            adjust: None,
+        }
+    }
+
+    /// Whether `sync_safety` pushes a frost alert for a hub restarted with the frost alert
+    /// cancelled `ago` seconds ago in the retained history and nothing in memory.
+    async fn raised_after_restart(ago: u64) -> bool {
+        let (hub, mut rx) = hub();
+        hub.on_connected();
+        hub.on_suback();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let now = clock::now();
+        let history = json!([{
+            "v": 1, "id": ID, "channel": "climate", "severity": "critical",
+            "title": "Frost protection in Living", "body": "", "actions": [],
+            "silent": false, "source": "climate", "sent_at": now - ago - 600,
+            "cancel": true, "resolved_at": now - ago,
+        }]);
+        hub.ingest_message("oikos/push/history", history.to_string().as_bytes(), true);
+        sync_safety(&hub, "living", || "Living".to_owned(), &frost(), now);
+        while let Ok(p) = rx.try_recv() {
+            if p.topic == "oikos/push/history" {
+                hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
+            }
+        }
+        hub.alerts().iter().any(|a| a.id == ID && !a.resolved)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_safety_alert_resolved_an_hour_before_a_restart_is_not_raised_again() {
+        assert!(!raised_after_restart(3_600).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_safety_alert_resolved_seven_hours_before_a_restart_is_raised_again() {
+        assert!(raised_after_restart(7 * 3_600).await);
     }
 }

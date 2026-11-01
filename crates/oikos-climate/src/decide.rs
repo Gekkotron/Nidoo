@@ -743,14 +743,38 @@ fn hold_devices(inp: &ZoneInputs, d: &mut Decision, fallback: Option<Setpoint>) 
         ) else {
             continue;
         };
-        let (Some(mode), Some(sp)) = (ov.mode.or(zone_mode), ov.setpoint.or(fallback)) else {
-            continue;
+        let held = match (ov.mode.or(zone_mode), ov.setpoint.or(fallback)) {
+            (Some(mode), Some(sp)) => device_target(sp, mode, &dev.caps).map(|mut t| {
+                t.held = true;
+                t
+            }),
+            _ if !d.entities.contains_key(&dev.id) => continue,
+            _ => None,
         };
-        if let Some(mut t) = device_target(sp, mode, &dev.caps) {
-            t.held = true;
-            d.entities.insert(dev.id.clone(), t);
-            d.reason
-                .push_str(&format!("; {} held until {}", dev.id, clock(inp, ov.until)));
+        match held {
+            Some(t) => {
+                d.entities.insert(dev.id.clone(), t);
+                d.reason
+                    .push_str(&format!("; {} held until {}", dev.id, clock(inp, ov.until)));
+            }
+            None => {
+                match &dev.mode {
+                    Some(mode) => d.entities.insert(
+                        dev.id.clone(),
+                        DeviceTarget {
+                            setpoint: dev.target,
+                            mode: mode.clone(),
+                            held: true,
+                        },
+                    ),
+                    None => d.entities.remove(&dev.id),
+                };
+                d.reason.push_str(&format!(
+                    "; {} held as it is until {}",
+                    dev.id,
+                    clock(inp, ov.until)
+                ));
+            }
         }
     }
 }
@@ -1668,6 +1692,47 @@ mod tests {
         assert_eq!(d.entities["trv2"], target(Some(23.0), "heat", true));
         assert!(
             d.reason.ends_with("; trv2 held until 11:00"),
+            "{}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn device_override_the_device_cannot_run_holds_it_as_it_is() {
+        let mut c = Case::new();
+        c.overrides = vec![Override {
+            entity: Some("trv".into()),
+            setpoint: Some(Setpoint::Temp(24.0)),
+            mode: Some(Mode::Cool),
+            until: NOW + 3600,
+            origin: OverrideOrigin::Hand,
+        }];
+        let d = c.run();
+        assert_eq!(d.entities["trv"], target(Some(21.0), "heat", true));
+        assert!(
+            d.reason.ends_with("; trv held as it is until 11:00"),
+            "{}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn device_override_the_device_cannot_run_leaves_an_unknown_device_alone() {
+        let mut c = Case::new();
+        let mut unknown = trv();
+        unknown.mode = None;
+        c.devices = vec![unknown];
+        c.overrides = vec![Override {
+            entity: Some("trv".into()),
+            setpoint: Some(Setpoint::Temp(24.0)),
+            mode: Some(Mode::Cool),
+            until: NOW + 3600,
+            origin: OverrideOrigin::Hand,
+        }];
+        let d = c.run();
+        assert!(!d.entities.contains_key("trv"));
+        assert!(
+            d.reason.ends_with("; trv held as it is until 11:00"),
             "{}",
             d.reason
         );

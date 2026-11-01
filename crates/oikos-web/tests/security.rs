@@ -277,6 +277,7 @@ fn alert(id: &str, sent_at: u64) -> AlertView {
         source: None,
         silent: false,
         resolved: false,
+        resolved_at: None,
         sent_at,
     }
 }
