@@ -219,3 +219,72 @@ async fn renames_database_and_role() {
         .await;
     t.drop_db().await;
 }
+
+async fn throwaway(t: &common::db::TestDb, tag: &str) -> (url::Url, String, String) {
+    let mut base = url::Url::parse(&std::env::var("TEST_DATABASE_URL").unwrap()).unwrap();
+    let suffix = format!("{tag}{}", t.name.trim_start_matches("oikos_test_"));
+    let from = format!("oikos_t{suffix}");
+    let to = format!("nidoo_t{suffix}");
+    sqlx::query(&format!(
+        "CREATE ROLE \"{from}\" SUPERUSER LOGIN PASSWORD 'pw'"
+    ))
+    .execute(&t.admin)
+    .await
+    .unwrap();
+    sqlx::query(&format!("CREATE DATABASE \"{from}\" OWNER \"{from}\""))
+        .execute(&t.admin)
+        .await
+        .unwrap();
+    base.set_username(&from).unwrap();
+    base.set_password(Some("pw")).unwrap();
+    base.set_path(&format!("/{from}"));
+    (base, from, to)
+}
+
+async fn cleanup(admin: &PgPool, names: &[&str]) {
+    for n in names {
+        let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{n}\""))
+            .execute(admin)
+            .await;
+    }
+    for n in names {
+        let _ = sqlx::query(&format!("DROP ROLE IF EXISTS \"{n}\""))
+            .execute(admin)
+            .await;
+    }
+}
+
+const NO_TMP: &str = "SELECT count(*) FROM pg_roles WHERE rolname = 'nidoo_migrate_tmp'";
+
+#[tokio::test]
+async fn failed_rename_still_drops_the_temp_role() {
+    let Some(t) = fresh_db().await else { return };
+    let (base, from, to) = throwaway(&t, "f").await;
+    // An open session on the database makes ALTER DATABASE ... RENAME fail.
+    let held = PgConnection::connect(base.as_str()).await.unwrap();
+    let r = rename_db_and_role(base.as_str(), &from, &to).await;
+    assert!(r.is_err());
+    assert_eq!(count(&t.admin, NO_TMP).await, 0);
+    held.close().await.unwrap();
+    cleanup(&t.admin, &[&from, &to]).await;
+    t.drop_db().await;
+}
+
+#[tokio::test]
+async fn refuses_an_existing_target() {
+    let Some(t) = fresh_db().await else { return };
+    let (base, from, to) = throwaway(&t, "e").await;
+    sqlx::query(&format!("CREATE DATABASE \"{to}\""))
+        .execute(&t.admin)
+        .await
+        .unwrap();
+    let r = rename_db_and_role(base.as_str(), &from, &to).await;
+    assert!(r.is_err());
+    assert_eq!(count(&t.admin, NO_TMP).await, 0);
+    let dbs = format!("SELECT count(*) FROM pg_database WHERE datname = '{from}'");
+    assert_eq!(count(&t.admin, &dbs).await, 1);
+    let role = format!("SELECT count(*) FROM pg_roles WHERE rolname = '{from}'");
+    assert_eq!(count(&t.admin, &role).await, 1);
+    cleanup(&t.admin, &[&from, &to]).await;
+    t.drop_db().await;
+}

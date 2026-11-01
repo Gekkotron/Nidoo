@@ -2,7 +2,7 @@
 //! the settings values, then rename the database and role. Throwaway like the rest of the
 //! module.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use percent_encoding::percent_decode_str;
 use sqlx::postgres::{PgConnectOptions, PgConnection};
 use sqlx::{Connection, PgPool, Row};
@@ -83,6 +83,11 @@ async fn key_columns(conn: &mut PgConnection, table: &str) -> sqlx::Result<Vec<S
 pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec<(String, u64)>> {
     let tables = entity_id_tables(pool).await?;
     let mut tx = pool.begin().await?;
+    // Updating compressed chunks decompresses rows; the default cap (100000 per transaction)
+    // would abort a live switch-over. 0 lifts it. Every target runs TimescaleDB, so no guard.
+    sqlx::query("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0")
+        .execute(&mut *tx)
+        .await?;
     let mut out = Vec::new();
     for table in tables {
         let keys = key_columns(&mut tx, &table).await?;
@@ -204,7 +209,9 @@ async fn drop_tmp_role(conn: &mut PgConnection) -> Result<()> {
 
 /// Renames the database and the role `from` to `to`. Run with the hub stopped, since a
 /// database cannot be renamed while connected to. `admin_url` is the hub's URL (user `from`,
-/// database `from`), so the same password is kept for `to`. Safe to run again.
+/// database `from`), so the same password is kept for `to`. Safe to run again: only "`from`
+/// gone, `to` present" counts as already switched over. If both exist, nothing is renamed and
+/// it fails. The temporary superuser is dropped on every path.
 pub async fn rename_db_and_role(admin_url: &str, from: &str, to: &str) -> Result<()> {
     let url = Url::parse(admin_url).context("database url")?;
     let password = percent_decode_str(url.password().unwrap_or(""))
@@ -248,63 +255,118 @@ pub async fn rename_db_and_role(admin_url: &str, from: &str, to: &str) -> Result
         }
     }
 
-    // 2. Rename as the temporary role.
+    // 2 and 3, then always drop the temporary role.
+    let result = switch(admin_url, from, to, &password, &tmp_password).await;
+    let dropped = drop_tmp_role_after(admin_url, from, to, &password).await;
+    match (result, dropped) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(e), Ok(())) => Err(e),
+        (Ok(()), Err(d)) => Err(d),
+        (Err(e), Err(d)) => {
+            Err(e.context(format!("and the temporary role was left behind: {d:#}")))
+        }
+    }
+}
+
+/// Renames as the temporary role, then checks the new role logs in with the old password.
+async fn switch(
+    admin_url: &str,
+    from: &str,
+    to: &str,
+    password: &str,
+    tmp_password: &str,
+) -> Result<()> {
     let mut tmp =
-        PgConnection::connect_with(&options(admin_url, TMP_ROLE, &tmp_password, "postgres")?)
+        PgConnection::connect_with(&options(admin_url, TMP_ROLE, tmp_password, "postgres")?)
             .await
             .context("connecting as the temporary role")?;
-    let db_from: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)")
-            .bind(from)
-            .fetch_one(&mut tmp)
-            .await?;
-    let db_to: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)")
-            .bind(to)
-            .fetch_one(&mut tmp)
-            .await?;
-    if db_from && !db_to {
+    let result = rename_as_tmp(&mut tmp, admin_url, from, to, password).await;
+    let _ = tmp.close().await;
+    result
+}
+
+async fn database_exists(conn: &mut PgConnection, name: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)")
+        .bind(name)
+        .fetch_one(conn)
+        .await
+}
+
+async fn rename_as_tmp(
+    tmp: &mut PgConnection,
+    admin_url: &str,
+    from: &str,
+    to: &str,
+    password: &str,
+) -> Result<()> {
+    let db_from = database_exists(tmp, from).await?;
+    let db_to = database_exists(tmp, to).await?;
+    let role_from = role_exists(tmp, from).await?;
+    let role_to = role_exists(tmp, to).await?;
+    if db_from && db_to {
+        bail!("database {to} already exists next to {from}: nothing was renamed");
+    }
+    if role_from && role_to {
+        bail!("role {to} already exists next to {from}: nothing was renamed");
+    }
+    if db_from {
         sqlx::query(&format!(
             "ALTER DATABASE {} RENAME TO {}",
             quote_ident(from),
             quote_ident(to)
         ))
-        .execute(&mut tmp)
-        .await?;
+        .execute(&mut *tmp)
+        .await
+        .with_context(|| format!("renaming database {from} (is the hub still connected?)"))?;
     }
-    if role_exists(&mut tmp, from).await? && !role_exists(&mut tmp, to).await? {
+    if role_from {
         sqlx::query(&format!(
             "ALTER ROLE {} RENAME TO {}",
             quote_ident(from),
             quote_ident(to)
         ))
-        .execute(&mut tmp)
-        .await?;
+        .execute(&mut *tmp)
+        .await
+        .with_context(|| format!("renaming role {from}"))?;
     }
 
-    // 3. The new role must work with the original password.
-    let target = options(admin_url, to, &password, to)?;
-    let mut conn = match PgConnection::connect_with(&target).await {
+    let target = options(admin_url, to, password, to)?;
+    let conn = match PgConnection::connect_with(&target).await {
         Ok(c) => c,
         Err(_) => {
             sqlx::query(&format!(
                 "ALTER ROLE {} PASSWORD {}",
                 quote_ident(to),
-                quote_literal(&password)
+                quote_literal(password)
             ))
-            .execute(&mut tmp)
+            .execute(&mut *tmp)
             .await?;
             PgConnection::connect_with(&target)
                 .await
                 .context("connecting as the renamed role")?
         }
     };
-    tmp.close().await?;
-
-    // 4. The temporary role is no longer needed.
-    drop_tmp_role(&mut conn).await?;
     conn.close().await?;
     Ok(())
+}
+
+/// Drops the temporary role from a session that is not the temporary role: as `from` while it
+/// still exists, else as `to`.
+async fn drop_tmp_role_after(admin_url: &str, from: &str, to: &str, password: &str) -> Result<()> {
+    let mut last = None;
+    for user in [from, to] {
+        match PgConnection::connect_with(&options(admin_url, user, password, "postgres")?).await {
+            Ok(mut conn) => {
+                let r = drop_tmp_role(&mut conn).await;
+                let _ = conn.close().await;
+                return r;
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(anyhow::Error::from(last.expect("two attempts"))).context(format!(
+        "dropping role {TMP_ROLE}: no login as {from} or {to}"
+    ))
 }
 
 /// Everything that still says `oikos` in any casing: database names, role names, entity ids
