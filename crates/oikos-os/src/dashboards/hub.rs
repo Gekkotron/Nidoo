@@ -41,6 +41,7 @@ impl Hub {
             })?;
         }
         validate_layout(&body.widgets).map_err(HubError::Rejected)?;
+        let _write = self.dashboards_write();
         {
             let store = self.dashboard_store();
             let taken = store
@@ -84,6 +85,7 @@ impl Hub {
             .map(String::as_str)
             .filter(|id| *id != HOUSE_ID)
             .collect();
+        let _write = self.dashboards_write();
         let updated: Vec<Dashboard> = {
             let store = self.dashboard_store();
             let mut current: Vec<String> = store.list().into_iter().map(|d| d.id).collect();
@@ -113,6 +115,12 @@ impl Hub {
             self.write_dashboard(dashboard)?;
         }
         Ok(())
+    }
+
+    fn dashboards_write(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.dashboards_write
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Publishes the definition retained, then applies it locally (the echo is a no-op).

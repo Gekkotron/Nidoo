@@ -261,6 +261,9 @@ pub struct Hub {
     pub(crate) solar_subscribed: tokio::sync::watch::Sender<bool>,
     /// The retained dashboard definitions, under `<ui_prefix>/dashboards/<id>`.
     dashboard_store: Mutex<DashboardStore>,
+    /// Held while a dashboard write picks orders from the store and publishes, so two writers
+    /// never take the same `order`. Never held across an `await`.
+    pub(crate) dashboards_write: Mutex<()>,
     /// The retained ambiance definitions, under `<ui_prefix>/ambiances/<id>`.
     ambiance_store: Mutex<AmbianceStore>,
     /// Ids of the ambiances being applied right now.
@@ -403,6 +406,7 @@ impl Hub {
             solar: Mutex::default(),
             solar_subscribed: tokio::sync::watch::channel(false).0,
             dashboard_store: Mutex::new(DashboardStore::new()),
+            dashboards_write: Mutex::new(()),
             ambiance_store: Mutex::new(AmbianceStore::new()),
             ambiances_running: Mutex::new(BTreeSet::new()),
             home_settings: Mutex::new(oikos_api::HomeSettings::default()),
