@@ -55,6 +55,9 @@ const EXPECTED_TOOLS: &[&str] = &[
     "list_groups",
     "set_group",
     "delete_group",
+    "list_network_watches",
+    "set_network_watch",
+    "delete_network_watch",
     "list_ambiances",
     "set_ambiance",
     "delete_ambiance",
@@ -1176,6 +1179,37 @@ async fn mcp_set_group_round_trips_to_the_hub() {
     let stored = server.hub.list_groups().expect("groups");
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].id, "stair");
+
+    client.cancel().await.expect("close");
+}
+
+#[tokio::test]
+async fn mcp_set_network_watch_round_trips() {
+    let server = Server::start().await;
+    server.online();
+    let client = server.client().await;
+    let view = json_of(
+        "set_network_watch",
+        &call(
+            &client,
+            "set_network_watch",
+            json!({ "id": "nas", "spec": { "name": "NAS", "host": "nas.local" } }),
+        )
+        .await,
+    );
+    assert_eq!(view["entity"], "network_nas");
+
+    let list = json_of(
+        "list_network_watches",
+        &call(&client, "list_network_watches", json!({})).await,
+    );
+    assert_eq!(list["watches"].as_array().map(Vec::len), Some(1));
+
+    let deleted = json_of(
+        "delete_network_watch",
+        &call(&client, "delete_network_watch", json!({ "id": "nas" })).await,
+    );
+    assert_eq!(deleted, json!({ "id": "nas" }));
 
     client.cancel().await.expect("close");
 }

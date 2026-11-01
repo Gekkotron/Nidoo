@@ -18,7 +18,8 @@ use oikos_api::{
     CommandResponse, ConnectionStatus, Dashboard, DashboardReorder, DashboardView, EnergyKind,
     EntityView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec, GroupView,
     HistoryDaily, HistoryRange, HistorySeries, HistoryToday, HomeSettings, IgnoredView, LastChange,
-    OverridePatch, RunView, SchedulePreview, Snapshot, VirtualSpec, WeatherView,
+    NetworkWatchSpec, NetworkWatchView, OverridePatch, RunView, SchedulePreview, Snapshot,
+    VirtualSpec, WeatherView,
 };
 use oikos_climate::doc::{HouseSettings, Rules, ZoneSettings};
 use oikos_climate::view::{ClimateView, DecisionLog, LearnStatus, OverrideRequest, RoomEcoRequest};
@@ -66,6 +67,11 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/flows/{id}/run", post(run_flow))
         .route("/groups", get(list_groups))
         .route("/groups/{id}", put(put_group).delete(delete_group))
+        .route("/network", get(list_network_watches))
+        .route(
+            "/network/{id}",
+            put(put_network_watch).delete(delete_network_watch),
+        )
         .route("/ambiances", get(list_ambiances))
         .route("/ambiances/{id}", put(put_ambiance).delete(delete_ambiance))
         .route("/ambiances/{id}/apply", post(apply_ambiance))
@@ -781,6 +787,33 @@ async fn delete_group(
     Path(id): Path<String>,
 ) -> Result<StatusCode, HttpError> {
     hub.delete_group(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The stored network watches (`200`); `503` while `[network] enabled` is false.
+async fn list_network_watches(
+    State(hub): HubState,
+) -> Result<Json<Vec<NetworkWatchView>>, HttpError> {
+    Ok(Json(hub.list_network_watches()?))
+}
+
+/// Creates or replaces a network watch (`200` with its view); `422` for a bad id or spec, `503`
+/// while network presence is off or the broker link is down.
+async fn put_network_watch(
+    State(hub): HubState,
+    Path(id): Path<String>,
+    body: Body<NetworkWatchSpec>,
+) -> Result<Json<NetworkWatchView>, HttpError> {
+    let Json(spec) = body?;
+    Ok(Json(hub.set_network_watch(&id, spec).await?))
+}
+
+/// Removes a network watch (204); `404` for an id that is not one.
+async fn delete_network_watch(
+    State(hub): HubState,
+    Path(id): Path<String>,
+) -> Result<StatusCode, HttpError> {
+    hub.delete_network_watch(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
