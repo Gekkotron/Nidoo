@@ -37,6 +37,14 @@ pub enum NetworkText {
     UnitMinute,
     UnitHour,
     UnitDay,
+    PanelTitle,
+    PanelHintHead,
+    PanelHintTail,
+    State,
+    LastReply,
+    LastReplyAgo,
+    UnitMillisecond,
+    NameSuffix,
 }
 
 /// A fixed word of the network presence page.
@@ -90,6 +98,20 @@ pub fn network_text(lang: Lang, k: NetworkText) -> &'static str {
         UnitMinute => ("min", "min"),
         UnitHour => ("h", "h"),
         UnitDay => ("d", "j"),
+        PanelTitle => ("Network", "Réseau"),
+        PanelHintHead => (
+            "Disconnected after 3 missed pings in a row",
+            "Déconnecté après 3 pings manqués d'affilée",
+        ),
+        PanelHintTail => (
+            "Flows see it as “{}”.",
+            "Les automatisations le voient comme «\u{A0}{}\u{A0}».",
+        ),
+        State => ("State", "État"),
+        LastReply => ("Last reply", "Dernière réponse"),
+        LastReplyAgo => ("{} ago", "il y a {}"),
+        UnitMillisecond => ("ms", "ms"),
+        NameSuffix => ("network", "réseau"),
     };
     if lang == Lang::Fr { fr } else { en }
 }
@@ -112,7 +134,8 @@ mod tests {
             | AddHint | Name | Host | Every | Room | NoRoom | Add | Edit | Save | Cancel
             | Remove | WatchOnNetwork | DeviceTag | EveryPrefix | Connected | DisconnectedFor
             | Paused | Waiting | CannotPing | Watched | CouldNotSave | UnitSecond | UnitMinute
-            | UnitHour | UnitDay => true,
+            | UnitHour | UnitDay | PanelTitle | PanelHintHead | PanelHintTail | State
+            | LastReply | LastReplyAgo | UnitMillisecond | NameSuffix => true,
         }
     }
 
@@ -151,6 +174,14 @@ mod tests {
             UnitMinute,
             UnitHour,
             UnitDay,
+            PanelTitle,
+            PanelHintHead,
+            PanelHintTail,
+            State,
+            LastReply,
+            LastReplyAgo,
+            UnitMillisecond,
+            NameSuffix,
         ]
     };
 
@@ -164,6 +195,7 @@ mod tests {
                 NetworkText::UnitSecond,
                 NetworkText::UnitMinute,
                 NetworkText::UnitHour,
+                NetworkText::UnitMillisecond,
             ],
         );
     }

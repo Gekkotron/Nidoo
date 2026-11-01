@@ -26,6 +26,7 @@ use crate::nav::BackLink;
 use crate::override_editor::OverrideEditor;
 use crate::screens::generic_panel::GenericPanel;
 use crate::screens::home::card_for;
+use crate::screens::network_panel::NetworkPanel;
 
 pub(crate) fn availability_class(availability: Availability) -> &'static str {
     match availability {
@@ -276,6 +277,7 @@ pub fn SheetBody(id: String) -> impl IntoView {
         })
     };
 
+    let initial_for_network = initial.clone();
     let history_href = format!("/history/{}", crate::api::encode_id(&id));
     let id_for_groups = id.clone();
     view! {
@@ -296,6 +298,7 @@ pub fn SheetBody(id: String) -> impl IntoView {
         <Panel title=key_signal(Key::Settings)>
             {initial.map(|e| view! { <OverrideEditor entity=e /> })}
         </Panel>
+        {initial_for_network.map(|e| view! { <NetworkPanel entity=e /> })}
         {move || {
             let list = house.groups.with(|g| groups_containing(g, &id_for_groups));
             (!list.is_empty())
