@@ -183,6 +183,25 @@ async fn put_dashboard_normalizes_colliding_order() {
     assert_eq!(body["order"], 3);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_puts_never_share_an_order() {
+    let server = Server::start().await;
+    let puts = (0..32).map(|n| {
+        let hub = Arc::clone(&server.hub);
+        tokio::spawn(async move {
+            let body: oikos_api::Dashboard =
+                serde_json::from_value(dash(&format!("d{n}"), 0)).unwrap();
+            hub.set_dashboard(body).await.expect("put").order
+        })
+    });
+    let mut orders = Vec::new();
+    for put in puts.collect::<Vec<_>>() {
+        orders.push(put.await.unwrap());
+    }
+    orders.sort_unstable();
+    assert_eq!(orders, (1..=32).collect::<Vec<u32>>());
+}
+
 #[tokio::test]
 async fn delete_dashboard_removes() {
     let server = Server::start().await;
