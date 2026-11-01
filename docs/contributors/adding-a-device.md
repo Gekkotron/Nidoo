@@ -10,7 +10,7 @@ The hub speaks Home Assistant MQTT discovery. It holds no per-device code. Each 
 
 | Situation | Path | Where the change goes |
 |---|---|---|
-| A Zigbee device Zigbee2MQTT does not know | [Fix it in Zigbee2MQTT](#zigbee-devices-unknown-to-zigbee2mqtt) | External converter, then upstream PR. Not an Nidoo change. |
+| A Zigbee device Zigbee2MQTT does not know | [Fix it in Zigbee2MQTT](#zigbee-devices-unknown-to-zigbee2mqtt) | External converter, then upstream PR. Not a Nidoo change. |
 | The device is not Zigbee (cloud API, Wi-Fi, vendor protocol) | [Write a bridge](#writing-a-bridge) | Separate process, any language, own repo. It publishes discovery to the broker. |
 | The device publishes discovery for a component Nidoo ignores (`GET /api/v1/ignored` reports `ignored component <name>`) | [Add a type or a kind](#adding-a-component-kind-to-nidoo) | Usually a JSON entry in `crates/oikos-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Nidoo, one per component, never per device. |
 | The device is a type Nidoo describes but reports no state for the primary field | [Type table](#a-type-table-entry-json-no-rust) | Bridge or firmware: publish the state topic of the primary field, retained. A `requires_state` type is rejected without it. |

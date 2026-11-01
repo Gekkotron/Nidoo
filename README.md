@@ -54,7 +54,7 @@ From source, see [Getting started](https://gekkotron.github.io/nidoo/docs/users/
 
 ## Documentation
 
-The site at **[gekkotron.github.io/Nidoo](https://gekkotron.github.io/nidoo/)** is built from [`docs/`](docs/) by Docusaurus in [`website/`](website/):
+The site at **[gekkotron.github.io/nidoo](https://gekkotron.github.io/nidoo/)** is built from [`docs/`](docs/) by Docusaurus in [`website/`](website/):
 
 - [User guide](docs/users/): install, Zigbee2MQTT, the web UI, flows, groups, MCP, push, cameras, climate, history, watchdogs, security.
 - [Reference](docs/reference/): configuration, the HTTP API, MCP tools, flow nodes, entity types, MQTT topics.

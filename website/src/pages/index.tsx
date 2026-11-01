@@ -14,13 +14,17 @@ function Hero() {
     <header className={styles.hero}>
       <div className={styles.sky} aria-hidden="true" />
       <div className={clsx('container', styles.heroInner)}>
-        <img
-          src={useBaseUrl('/img/mark-animated.svg')}
-          className={styles.mark}
-          width={88}
-          height={88}
-          alt=""
-        />
+        <div className={styles.markWrap}>
+          <ThemedImage
+            sources={{
+              dark: useBaseUrl('/img/mark-animated.svg'),
+              light: useBaseUrl('/img/mark-animated-ivoire.svg'),
+            }}
+            width={88}
+            height={88}
+            alt=""
+          />
+        </div>
         <p className={styles.preamble}>
           <span>open source</span>
           <span className={styles.dot} aria-hidden="true">·</span>

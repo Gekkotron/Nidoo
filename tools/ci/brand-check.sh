@@ -7,6 +7,14 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
+# git grep exits 1 when nothing matches; anything above (a bad pathspec, say)
+# must fail the check instead of passing with nothing scanned.
+scan() {
+  local rc=0
+  git grep "$@" || rc=$?
+  [ "$rc" -le 1 ] || { echo "brand-check: git grep failed ($rc)" >&2; return "$rc"; }
+}
+
 allow=tools/ci/brand-allow.txt
 pathspecs=(. ':!docs/superpowers' ":!$allow" ':!tools/ci/brand-check.sh')
 strings=()
@@ -20,8 +28,8 @@ while IFS= read -r line; do
   esac
 done < "$allow"
 
-hits=$(git grep -n 'Oikos' -- "${pathspecs[@]}" || true)
-for s in "${strings[@]}"; do
+hits=$(scan -n 'Oikos' -- "${pathspecs[@]}")
+for s in ${strings[@]+"${strings[@]}"}; do
   hits=$(printf '%s\n' "$hits" | grep -vF -- "$s" || true)
 done
 hits=$(printf '%s\n' "$hits" | sed '/^$/d')
@@ -36,10 +44,19 @@ fi
 # The English word for a bird's home is a Google smart-home brand: keep it out
 # of the prose and the logo files (code such as axum's .nest() is not scanned).
 word=$(printf '%s' 'bmVzdA==' | base64 -d)
-brand=$(git grep -n -i -w "$word" -- README.md docs website 'crates/*/assets' ':!docs/superpowers' || true)
+brand=$(scan -n -i -w "$word" -- README.md docs website 'crates/*/assets' ':!docs/superpowers')
 if [ -n "$brand" ]; then
   echo "A Google brand name is in the docs or the logo files; describe it another way:"
   printf '%s\n' "$brand"
+  status=1
+fi
+# Wording the rename gets wrong: the web UI's lowercase wordmark, the docs
+# address (GitHub Pages paths are case-sensitive) and the article.
+wording=$(scan -n -E -e '"oikos\."' -e 'github\.io/Nidoo' -e '(^|[^[:alnum:]])[Aa]n Nidoo([^[:alnum:]]|$)' -- \
+  . ':!docs/superpowers' ':!tools/ci/brand-check.sh')
+if [ -n "$wording" ]; then
+  echo "Brand wording to fix (wordmark \"nidoo.\", lowercase /nidoo/ address, \"a Nidoo\"):"
+  printf '%s\n' "$wording"
   status=1
 fi
 exit "$status"
