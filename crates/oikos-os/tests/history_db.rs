@@ -567,6 +567,65 @@ async fn climate_targets_reads_jsonb_and_carries_prior_value() {
 }
 
 #[tokio::test]
+async fn equal_times_keep_insertion_order() {
+    let Some(tdb) = fresh_db().await else { return };
+    let rows = vec![
+        decision(1_000_000, "z1", "climate.a", true, "first"),
+        decision(1_000_000, "z1", "climate.a", true, "second"),
+        decision(1_000_000, "z1", "climate.a", true, "third"),
+    ];
+    tdb.db.insert_climate_decisions(&rows).await.unwrap();
+
+    let newest_first: Vec<String> = tdb
+        .db
+        .climate_decisions("z1", None, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.reason)
+        .collect();
+    assert_eq!(newest_first, ["third", "second", "first"]);
+    let oldest_first: Vec<String> = tdb
+        .db
+        .climate_commands(&["climate.a".to_string()], 0, 5_000_000)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.reason)
+        .collect();
+    assert_eq!(oldest_first, ["first", "second", "third"]);
+
+    let t: i64 = 1_800_000_000_000_000;
+    let m = 60_000_000;
+    let states = Rows {
+        values: vec![
+            climate_row("climate.a", t - 10 * m, Some(18.0), "heat"),
+            climate_row("climate.a", t - 10 * m, Some(21.0), "heat"),
+            climate_row("climate.a", t + m, Some(19.0), "heat"),
+            climate_row("climate.a", t + m, None, "off"),
+        ],
+        availability: vec![],
+    };
+    tdb.db.insert(&states).await.unwrap();
+    let got = tdb
+        .db
+        .climate_targets("climate.a", t, t + 10 * m)
+        .await
+        .unwrap();
+    assert_eq!(
+        got,
+        vec![
+            (t, Some(21.0), Some("heat".to_string())),
+            (t + m, Some(19.0), Some("heat".to_string())),
+            (t + m, None, Some("off".to_string())),
+        ],
+        "the later write wins the prior value, and same-time rows stay in order"
+    );
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
 async fn mean_since_averages_num() {
     let Some(tdb) = fresh_db().await else { return };
     let rows = Rows {
