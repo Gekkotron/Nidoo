@@ -33,11 +33,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # oikos-core and oikos-api are shared with the web UI and must keep
+      # nidoo-core and nidoo-api are shared with the web UI and must keep
       # building for the browser.
-      - run: cargo check -p oikos-core --target wasm32-unknown-unknown
-      - run: cargo check -p oikos-api --target wasm32-unknown-unknown
-      - run: cargo check -p oikos-web --target wasm32-unknown-unknown
+      - run: cargo check -p nidoo-core --target wasm32-unknown-unknown
+      - run: cargo check -p nidoo-api --target wasm32-unknown-unknown
+      - run: cargo check -p nidoo-web --target wasm32-unknown-unknown
 
   test:
     name: cargo test
@@ -80,7 +80,7 @@ jobs:
           tool: wasm-pack
       # The runner image ships Chrome and a matching chromedriver.
       - run: wasm-pack test --headless --chrome --chromedriver "$CHROMEWEBDRIVER/chromedriver"
-        working-directory: crates/oikos-web
+        working-directory: crates/nidoo-web
 
   stack:
     name: bundled stack

@@ -1,0 +1,19 @@
+[package]
+name = "nidoo-climate"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+schemars = { workspace = true, optional = true }
+
+[dev-dependencies]
+nidoo-core = { path = "../nidoo-core" }
+
+[features]
+schemars = ["dep:schemars"]

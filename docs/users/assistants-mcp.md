@@ -23,12 +23,12 @@ Codex CLI, in `~/.codex/config.toml`:
 url = "http://<host>:8081/mcp"
 ```
 
-Claude Desktop only speaks stdio, so it launches `oikos-os mcp-stdio`, a proxy that relays every request to the running hub. In its config JSON, with the path of a built binary (`cargo build --release -p oikos-os`):
+Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio`, a proxy that relays every request to the running hub. In its config JSON, with the path of a built binary (`cargo build --release -p nidoo`):
 
 ```json
 {
   "mcpServers": {
-    "oikos": {"command": "<path>/oikos-os", "args": ["mcp-stdio", "--server", "http://<host>:8081"]}
+    "oikos": {"command": "<path>/nidoo", "args": ["mcp-stdio", "--server", "http://<host>:8081"]}
   }
 }
 ```

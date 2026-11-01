@@ -4,7 +4,7 @@ sidebar_position: 2
 description: Every route of the hub's REST API and WebSocket, with bodies, replies and status codes.
 ---
 
-The hub listens on the HTTP bind address (default `0.0.0.0:8081`, see the [Settings reference](configuration.md#bootstrap-settings-hubjson)). It answers JSON, with CORS open to any origin and no authentication in v1: keep it on the LAN. The router is in [`crates/oikos-os/src/http`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-os/src/http) and the wire types in [`crates/oikos-api`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-api).
+The hub listens on the HTTP bind address (default `0.0.0.0:8081`, see the [Settings reference](configuration.md#bootstrap-settings-hubjson)). It answers JSON, with CORS open to any origin and no authentication in v1: keep it on the LAN. The router is in [`crates/nidoo/src/http`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo/src/http) and the wire types in [`crates/nidoo-api`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-api).
 
 Besides the JSON API, the same port serves:
 

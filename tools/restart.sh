@@ -2,7 +2,7 @@
 # Build the web UI and the hub, stop the running hub, start the new one.
 #
 # Usage: tools/restart.sh [--no-web] [--debug] [--fast] [--sweep]
-#   --no-web  skip `trunk build` (reuse crates/oikos-web/dist)
+#   --no-web  skip `trunk build` (reuse crates/nidoo-web/dist)
 #   --debug   build and run the debug profile instead of release
 #   --fast    debug profile + trunk dev build (no wasm-opt); fastest dev loop
 #   --sweep   first delete build artifacts untouched for 14 days (needs
@@ -11,7 +11,7 @@
 # A warning is printed when target/ is over TARGET_WARN_GB (default 10).
 #
 # The hub runs detached from this shell, from the repo root (so it reads
-# ./oikos.toml), and logs to target/oikos-os.log (OIKOS_LOG overrides).
+# ./oikos.toml), and logs to target/nidoo.log (OIKOS_LOG overrides).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,8 +33,8 @@ done
 TARGET_DIR="$(cd "$ROOT" && cargo metadata --no-deps --format-version=1 2>/dev/null \
   | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' | head -1)"
 TARGET_DIR="${TARGET_DIR:-$ROOT/target}"
-BIN="$TARGET_DIR/$PROFILE/oikos-os"
-LOG="${OIKOS_LOG:-$TARGET_DIR/oikos-os.log}"
+BIN="$TARGET_DIR/$PROFILE/nidoo"
+LOG="${OIKOS_LOG:-$TARGET_DIR/nidoo.log}"
 BIND="$(sed -n 's/.*"bind": *"\([^"]*\)".*/\1/p' "$ROOT/data/hub.json" 2>/dev/null | head -1)"
 if [ -z "$BIND" ]; then
   BIND="$(sed -n 's/^bind *= *"\(.*\)"/\1/p' "$ROOT/oikos.toml" 2>/dev/null | head -1)"
@@ -64,34 +64,34 @@ fi
 if [ "$BUILD_WEB" = 1 ]; then
   if [ "$WEB_RELEASE" = 1 ] && [ "$PROFILE" = release ]; then
     echo "==> trunk build (release)"
-    (cd "$ROOT/crates/oikos-web" && trunk build --release)
+    (cd "$ROOT/crates/nidoo-web" && trunk build --release)
   else
     echo "==> trunk build (dev)"
-    (cd "$ROOT/crates/oikos-web" && trunk build)
+    (cd "$ROOT/crates/nidoo-web" && trunk build)
   fi
 fi
 
 # 2. Build the hub.
-echo "==> cargo build -p oikos-os ($PROFILE)"
+echo "==> cargo build -p nidoo ($PROFILE)"
 if [ "$PROFILE" = release ]; then
-  (cd "$ROOT" && cargo build --release -p oikos-os)
+  (cd "$ROOT" && cargo build --release -p nidoo)
 else
-  (cd "$ROOT" && cargo build -p oikos-os)
+  (cd "$ROOT" && cargo build -p nidoo)
 fi
 
 # 3. Stop the previous hub: SIGTERM, wait up to 10 s, then SIGKILL.
-pids="$(pgrep -f 'oikos-os run' || true)"
+pids="$(pgrep -f 'nidoo run' || true)"
 if [ -n "$pids" ]; then
   echo "==> stopping previous hub (pid $pids)"
   # shellcheck disable=SC2086 # several pids, split on purpose
   kill $pids 2>/dev/null || true
   for _ in $(seq 1 20); do
-    pgrep -f 'oikos-os run' >/dev/null || break
+    pgrep -f 'nidoo run' >/dev/null || break
     sleep 0.5
   done
-  if pgrep -f 'oikos-os run' >/dev/null; then
+  if pgrep -f 'nidoo run' >/dev/null; then
     echo "    still alive, sending SIGKILL"
-    pkill -9 -f 'oikos-os run' || true
+    pkill -9 -f 'nidoo run' || true
     sleep 0.5
   fi
 fi

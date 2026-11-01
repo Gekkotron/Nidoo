@@ -28,7 +28,7 @@ Only `device` (device-based discovery) is folded by routing: it expands into one
 
 ## The type table
 
-[`crates/oikos-core/src/types/table.json`](https://github.com/Gekkotron/Nidoo/blob/main/crates/oikos-core/src/types/table.json) is shaped `{"version": 1, "types": {"<component>": {…}}}`. Each entry says where the entity shows, which field is its primary state, which controls it offers, what puts it in alert style and how its history is charted.
+[`crates/nidoo-core/src/types/table.json`](https://github.com/Gekkotron/Nidoo/blob/main/crates/nidoo-core/src/types/table.json) is shaped `{"version": 1, "types": {"<component>": {…}}}`. Each entry says where the entity shows, which field is its primary state, which controls it offers, what puts it in alert style and how its history is charted.
 
 Sixteen components are covered:
 

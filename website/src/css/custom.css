@@ -1,8 +1,8 @@
 /* ---------------------------------------------------------------------------
  * Nidoo docs site theme.
- * Tokens derive from the web UI (crates/oikos-web/styles/tokens.css):
+ * Tokens derive from the web UI (crates/nidoo-web/styles/tokens.css):
  * Night Glass (dark, default) and Ivoire (light). Fonts are self-hosted from
- * static/fonts, copied from crates/oikos-web/assets/fonts.
+ * static/fonts, copied from crates/nidoo-web/assets/fonts.
  * ------------------------------------------------------------------------- */
 
 @font-face {

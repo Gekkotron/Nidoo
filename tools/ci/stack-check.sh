@@ -42,7 +42,7 @@ echo "$config" | jq -e '.services.hub.depends_on == null' >/dev/null
 echo "$config" | jq -e '.services | has("init") and has("mosquitto") and has("timescaledb")' >/dev/null
 
 echo "== init-bundled"
-cargo run -q -p oikos-os -- --data ./data init-bundled
+cargo run -q -p nidoo -- --data ./data init-bundled
 
 # The migration guide's override shape: a second port for Postgres.
 cat > compose.override.yml <<'YAML'

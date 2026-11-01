@@ -26,7 +26,7 @@ Spec: `docs/superpowers/specs/2026-10-22-climate-engine-design.md`. Plan: `docs/
 - [ ] Dashboard-wide search bar — the current search is only on the Z2M diagnostics screen (`screens/devices.rs`); add an equivalent on the dashboard/Home so any entity can be found by name across rooms.
 - [ ] Address the ~47 deferred minors from the flow-canvas redesign SDD ledger (`.superpowers/sdd/2026-10-20-flow-canvas-redesign/`).
 - [ ] Housekeeping: cap/clean `target/` so it stops filling the disk.
-- [ ] System health screen + uptime history — record the hub's uptime, CPU, RAM, disk and temperature over time (and the broker / Z2M / database up or down), and add a screen that shows the current values and their history. Today `oikos-watchdog` only pushes gateway and ACL alerts; nothing is stored or shown.
+- [ ] System health screen + uptime history — record the hub's uptime, CPU, RAM, disk and temperature over time (and the broker / Z2M / database up or down), and add a screen that shows the current values and their history. Today `nidoo-watchdog` only pushes gateway and ACL alerts; nothing is stored or shown.
 
 ### Flows
 

@@ -12,7 +12,7 @@ The hub speaks Home Assistant MQTT discovery. It holds no per-device code. Each 
 |---|---|---|
 | A Zigbee device Zigbee2MQTT does not know | [Fix it in Zigbee2MQTT](#zigbee-devices-unknown-to-zigbee2mqtt) | External converter, then upstream PR. Not a Nidoo change. |
 | The device is not Zigbee (cloud API, Wi-Fi, vendor protocol) | [Write a bridge](#writing-a-bridge) | Separate process, any language, own repo. It publishes discovery to the broker. |
-| The device publishes discovery for a component Nidoo ignores (`GET /api/v1/ignored` reports `ignored component <name>`) | [Add a type or a kind](#adding-a-component-kind-to-nidoo) | Usually a JSON entry in `crates/oikos-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Nidoo, one per component, never per device. |
+| The device publishes discovery for a component Nidoo ignores (`GET /api/v1/ignored` reports `ignored component <name>`) | [Add a type or a kind](#adding-a-component-kind-to-nidoo) | Usually a JSON entry in `crates/nidoo-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Nidoo, one per component, never per device. |
 | The device is a type Nidoo describes but reports no state for the primary field | [Type table](#a-type-table-entry-json-no-rust) | Bridge or firmware: publish the state topic of the primary field, retained. A `requires_state` type is rejected without it. |
 | The device works but looks wrong (wrong room, wrong name, a relay that is really a heater or light) | [Override](#overrides) | No code. Web device sheet, `PATCH /api/v1/entities/{id}/override`, or MCP `set_override`. |
 
@@ -152,7 +152,7 @@ Two routes. Most components need only a type-table entry. Write a Rust kind only
 
 ### A type-table entry (JSON, no Rust)
 
-Find or add the entry in `crates/oikos-core/src/types/table.json` (the covered components are listed in [Entity types](../reference/entity-types.md#the-type-table)). Entries sit under the top-level `types` object, keyed by component name, inside a file shaped `{"version": 1, "types": {"<component>": {...}}}`:
+Find or add the entry in `crates/nidoo-core/src/types/table.json` (the covered components are listed in [Entity types](../reference/entity-types.md#the-type-table)). Entries sit under the top-level `types` object, keyed by component name, inside a file shaped `{"version": 1, "types": {"<component>": {...}}}`:
 
 | Key | Meaning |
 |---|---|
@@ -191,7 +191,7 @@ A short example, the `device_tracker` entry:
 
 The hub publishes the whole table retained on `oikos/ui/_types` (`{ui_prefix}/_types`) on every connection, so the Android app reads the same vocabulary. Its own echo is ignored. Camera and image entities carry their picture in the `picture` field. `GET /api/v1/entities/{id}/picture` serves the stored bytes, or the bytes of its URL fetched by the hub now (10 s timeout, 5 MiB cap, no redirects followed).
 
-Check it with `GET /api/v1/ignored` (the component must no longer appear there) and `GET /api/v1/snapshot` (the entity must show its primary field). A type-table entry needs no other change to appear in the flow editor: `oikos_core::vocabulary` turns its announced controls into actions and its primary field into the values an `if` card offers.
+Check it with `GET /api/v1/ignored` (the component must no longer appear there) and `GET /api/v1/snapshot` (the entity must show its primary field). A type-table entry needs no other change to appear in the flow editor: `nidoo_core::vocabulary` turns its announced controls into actions and its primary field into the values an `if` card offers.
 
 ### A hand-written kind (Rust)
 
@@ -199,21 +199,21 @@ Base the PR on how `water_heater` was added. A kind touches these files:
 
 | File | Change |
 |---|---|
-| `crates/oikos-core/src/model/kind.rs` | Add the `Kind` variant, its component name and `Kind::ALL`. Remove the name from `IGNORED_COMPONENTS`. |
-| `crates/oikos-core/src/discovery/capabilities.rs` | What the kind can do, read from the config. |
-| `crates/oikos-core/src/model/state.rs` | State model for the kind. |
-| `crates/oikos-core/src/state/kinds/<kind>.rs`, `state/kinds/mod.rs` | Reading the kind's state. |
-| `crates/oikos-core/src/command/kinds.rs` | Mapping commands to publishes. |
-| `crates/oikos-core/src/flow/scalar.rs` | The kind's scalar for flows. |
-| `crates/oikos-core/src/vocabulary.rs` | What the kind accepts (`actions`) and reports (`reports`): the flow editor's Action and Value lists and the ambiance device action read them. |
-| `crates/oikos-core/src/energy/units.rs` | Only if the kind reports energy. |
-| `crates/oikos-web/src/cards/<kind>.rs`, `icons.rs`, `format.rs`, `screens/home.rs` | Web card. |
+| `crates/nidoo-core/src/model/kind.rs` | Add the `Kind` variant, its component name and `Kind::ALL`. Remove the name from `IGNORED_COMPONENTS`. |
+| `crates/nidoo-core/src/discovery/capabilities.rs` | What the kind can do, read from the config. |
+| `crates/nidoo-core/src/model/state.rs` | State model for the kind. |
+| `crates/nidoo-core/src/state/kinds/<kind>.rs`, `state/kinds/mod.rs` | Reading the kind's state. |
+| `crates/nidoo-core/src/command/kinds.rs` | Mapping commands to publishes. |
+| `crates/nidoo-core/src/flow/scalar.rs` | The kind's scalar for flows. |
+| `crates/nidoo-core/src/vocabulary.rs` | What the kind accepts (`actions`) and reports (`reports`): the flow editor's Action and Value lists and the ambiance device action read them. |
+| `crates/nidoo-core/src/energy/units.rs` | Only if the kind reports energy. |
+| `crates/nidoo-web/src/cards/<kind>.rs`, `icons.rs`, `format.rs`, `screens/home.rs` | Web card. |
 
 The Android app needs the matching card.
 
-Tests run against recorded broker messages in `crates/oikos-core/tests/fixtures`. Add cases to `crates/oikos-core/tests/state.rs`. `crates/oikos-core/tests/vocabulary.rs` runs every action `vocabulary::actions` lists through the command mapper, so the editors never offer a command the hub refuses; add a hand-written config there when the recording has no entity of the new kind.
+Tests run against recorded broker messages in `crates/nidoo-core/tests/fixtures`. Add cases to `crates/nidoo-core/tests/state.rs`. `crates/nidoo-core/tests/vocabulary.rs` runs every action `vocabulary::actions` lists through the command mapper, so the editors never offer a command the hub refuses; add a hand-written config there when the recording has no entity of the new kind.
 
-Before opening the PR, run the commands in [Development](development.md#checks): `cargo test`, `clippy -D warnings`, `fmt --check`, and the wasm32 checks for `oikos-core`, `oikos-api` and `oikos-web`.
+Before opening the PR, run the commands in [Development](development.md#checks): `cargo test`, `clippy -D warnings`, `fmt --check`, and the wasm32 checks for `nidoo-core`, `nidoo-api` and `nidoo-web`.
 
 ## Overrides
 

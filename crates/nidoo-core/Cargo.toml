@@ -1,0 +1,19 @@
+[package]
+name = "nidoo-core"
+edition.workspace = true
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+minijinja.workspace = true
+chrono.workspace = true
+croner.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+schemars = ["dep:schemars"]
