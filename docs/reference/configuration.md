@@ -218,6 +218,12 @@ The flow engine.
 | --- | --- | --- |
 | `enabled` | `false` | Kill switch for [flexible groups](../users/groups-and-virtual-entities.md). While `false`, `GET /api/v1/groups`, `PUT`/`DELETE /api/v1/groups/{id}` and the MCP group tools answer `groups disabled` (503 over HTTP), group commands are rejected, and the one-shot room-group migration is skipped. |
 
+### `network`
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Kill switch for network presence watches. While `false`, the network watch routes and MCP tools answer `network presence disabled` (503 over HTTP) and no pings are sent. |
+
 ### `alarm`
 
 The native alarm's topic prefix. The alarm itself is switched on in its settings document (**Settings → Alarm**, [MCP](mcp-tools.md#alarm), [HTTP](http-api.md#alarm)), so there is no `enabled` field here. See [Alarm](../users/alarm.md).

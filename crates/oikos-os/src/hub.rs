@@ -2,7 +2,7 @@
 //! three writers (commands, overrides, areas). The MQTT task feeds it through [`Hub::ingest`]
 //! and drains its publishes from the channel given to [`Hub::new`]; the HTTP layer reads it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{
     Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
@@ -16,12 +16,13 @@ use crate::flows::FlowStore;
 use crate::groups::{self, ApplyOutcome, GroupStore};
 use crate::history::History;
 use crate::media::MediaProxy;
+use crate::network::NetworkStore;
 use crate::pictures::{MAX_PICTURE_BYTES, Picture, Pictures};
 use crate::virtual_entities as virtuals;
 use oikos_api::{
     AlertView, AreaView, CommandResponse, ConnectionStatus, EntityView, GroupMemberView, GroupSpec,
-    GroupView, IgnoredView, OverridePatch, Snapshot, VirtualKind, VirtualSpec, WsEvent, area_views,
-    device_views, entity_views, mask_secret, snapshot,
+    GroupView, IgnoredView, OverridePatch, Snapshot, VirtualKind, VirtualSpec, WatchStatus,
+    WsEvent, area_views, device_views, entity_views, mask_secret, snapshot,
 };
 use oikos_core::command::{CommandError, Publish, map_command};
 use oikos_core::model::{
@@ -237,6 +238,14 @@ pub struct Hub {
     group_store: Mutex<GroupStore>,
     /// `[groups] enabled`: group writes and listing are refused while it is false.
     groups_enabled: bool,
+    /// The retained network watch definitions.
+    network_store: Mutex<NetworkStore>,
+    /// `[network] enabled`: watch writes and listing are refused while it is false.
+    pub(crate) network_enabled: bool,
+    /// The last verdict of each watch, by id.
+    pub(crate) network_status: Mutex<BTreeMap<String, WatchStatus>>,
+    /// Bumped on every change of the network store.
+    network_rev: watch::Sender<u64>,
     /// The climate engine's documents, present only while `[climate] enabled`.
     pub(crate) climate: Option<ClimateHub>,
     /// The alarm's documents; the engine always listens and idles while the alarm is off.
@@ -384,6 +393,10 @@ impl Hub {
             limits: Mutex::new(Default::default()),
             group_store: Mutex::new(GroupStore::default()),
             groups_enabled: cfg.groups.enabled,
+            network_store: Mutex::new(NetworkStore::default()),
+            network_enabled: cfg.network.enabled,
+            network_status: Mutex::new(BTreeMap::new()),
+            network_rev: watch::channel(0).0,
             climate: cfg
                 .climate
                 .enabled
@@ -517,6 +530,9 @@ impl Hub {
             };
         }
         if self.ingest_group(topic, payload) {
+            return Vec::new();
+        }
+        if self.ingest_network(topic, payload) {
             return Vec::new();
         }
         let at = clock::now();
@@ -2018,6 +2034,56 @@ impl Hub {
             ApplyOutcome::Marker | ApplyOutcome::Unchanged => {}
         }
         true
+    }
+
+    /// Feeds a network watch definition to the store; false when `topic` is not one, so the
+    /// config, state and availability topics fall through to the registry.
+    fn ingest_network(&self, topic: &str, payload: &[u8]) -> bool {
+        let Some(id) = topic
+            .strip_prefix(self.discovery_prefix.as_str())
+            .and_then(|rest| rest.strip_prefix("/network/"))
+            .and_then(|rest| rest.strip_suffix("/definition"))
+        else {
+            return false;
+        };
+        if id.is_empty() || id.contains('/') {
+            return false;
+        }
+        let outcome = self.network_store().apply(id, payload);
+        match &outcome {
+            ApplyOutcome::Rejected(reason) => {
+                tracing::warn!(%id, %reason, "network definition rejected");
+            }
+            ApplyOutcome::Created | ApplyOutcome::Replaced | ApplyOutcome::Deleted => {
+                tracing::info!(%id, ?outcome, "network definition applied");
+                let rev = self.network_store().rev();
+                self.network_rev.send_replace(rev);
+            }
+            ApplyOutcome::Marker | ApplyOutcome::Unchanged => {}
+        }
+        true
+    }
+
+    /// The network store, taken as it is when a thread panicked while holding it.
+    pub(crate) fn network_store(&self) -> MutexGuard<'_, NetworkStore> {
+        self.network_store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A receiver of the network store revision.
+    #[allow(dead_code)]
+    pub(crate) fn subscribe_network_rev(&self) -> watch::Receiver<u64> {
+        self.network_rev.subscribe()
+    }
+
+    /// Records the last verdict of watch `id`.
+    #[allow(dead_code)]
+    pub(crate) fn set_network_status(&self, id: &str, status: WatchStatus) {
+        self.network_status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id.to_owned(), status);
     }
 
     /// Asks the flow engine to do something; nobody listening is fine (no engine started).

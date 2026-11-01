@@ -3,6 +3,7 @@
 //! definitions; the hub does the pinging and publishing.
 
 pub mod discovery;
+mod hub;
 pub mod store;
 pub mod topics;
 pub mod tracker;
