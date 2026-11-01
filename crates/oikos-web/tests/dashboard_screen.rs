@@ -495,3 +495,44 @@ async fn the_dashboard_sheet_and_the_history_axis_follow_the_language() {
         .count();
     assert_eq!(fetches, 1);
 }
+
+/// A dashboard showing the house header waits for what sizes the header (the state snapshot,
+/// the weather and solar answers) before it paints, so the grid never jumps down as chips and
+/// cards fill in.
+#[wasm_bindgen_test]
+async fn a_dashboard_with_the_header_waits_for_the_house() {
+    let house = House::new();
+    house.dashboards_loaded.set(true);
+    let mut view = solar_stat("d_head", None);
+    view.dashboard.show_header = true;
+    house.dashboards.set(vec![view]);
+    let (host, _app) = mount_at("/dashboards/d_head", house);
+    settle().await;
+    assert!(host.query_selector(".dashboard-loading").unwrap().is_some());
+    assert!(host.query_selector(".home-header").unwrap().is_none());
+    assert!(
+        host.query_selector(".dashboard-edit-toolbar")
+            .unwrap()
+            .is_none()
+    );
+
+    house.entities.set(
+        [light("light.k")]
+            .into_iter()
+            .map(|e| (e.id.clone(), e))
+            .collect(),
+    );
+    settle().await;
+    assert!(host.query_selector(".home-header").unwrap().is_none());
+
+    house.weather_loaded.set(true);
+    house.solar_loaded.set(true);
+    settle().await;
+    assert!(host.query_selector(".dashboard-loading").unwrap().is_none());
+    assert!(host.query_selector(".home-header").unwrap().is_some());
+    assert!(
+        host.query_selector(".dashboard-edit-toolbar")
+            .unwrap()
+            .is_some()
+    );
+}

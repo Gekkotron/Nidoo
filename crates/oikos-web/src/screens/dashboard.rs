@@ -9,7 +9,7 @@ use crate::dashboards::config_sheet::{DashboardSettingsSheet, WidgetConfigSheet}
 use crate::dashboards::edit::{EditState, EditToolbar, add_widget_handler};
 use crate::dashboards::grid::Grid;
 use crate::dashboards::library::WidgetLibrary;
-use crate::home_header::view::HomeHeader;
+use crate::home_header::view::{HomeHeader, use_header_ready};
 use crate::house::House;
 use crate::i18n::{DashText, dash_text, use_lang};
 use crate::screens::home::HomeScreen;
@@ -32,6 +32,14 @@ pub fn DashboardScreen() -> impl IntoView {
     });
     // A Memo too: the screen reads it, so only the flag's first change may rebuild the editor.
     let loaded = Memo::new(move |_| house.dashboards_loaded.get());
+    let header_ready = use_header_ready();
+    let loading = move || {
+        view! {
+            <p class="dashboard-loading" aria-busy="true">
+                {move || dash_text(lang(), DashText::LoadingDashboard)}
+            </p>
+        }
+    };
 
     // One closure that reads `id` first, not a `<Show>` on "is it the house" whose fallback reads
     // `id`: that shape is a diamond (effect → `when` memo → `id`, and effect → `id`). When the
@@ -68,46 +76,46 @@ pub fn DashboardScreen() -> impl IntoView {
                 });
                 let widgets = Signal::derive(move || edit.draft.get().widgets);
                 let show_header = move || edit.draft.with(|d| d.show_header);
+                // With the header on, header and grid wait for the house together: painted
+                // early, the header grows as chips and cards land and pushes the grid down.
+                let ready = move || !show_header() || header_ready.get();
                 view! {
-                    <Show when=show_header>
-                        <HomeHeader />
-                    </Show>
-                    <EditToolbar state=edit />
-                    // The library sits beside the grid while editing; the layout wraps
-                    // both only then so the plain grid keeps its full width.
-                    <div class:dashboard-edit-layout=move || edit.active.get()>
-                        <Grid widgets=widgets edit=edit />
-                        <Show when=move || edit.active.get()>
-                            <aside class="dashboard-library-panel" aria-label=move || dash_text(lang(), DashText::WidgetLibrary)>
-                                <WidgetLibrary on_add=add_widget_handler(edit) />
-                            </aside>
+                    <Show when=ready fallback=loading>
+                        <Show when=show_header>
+                            <HomeHeader />
                         </Show>
-                    </div>
-                    // Rebuilt per selected index so the sheet never shows a stale widget.
-                    {move || {
-                        edit.selected_widget.get().map(|index| view! {
-                            <WidgetConfigSheet
+                        <EditToolbar state=edit />
+                        // The library sits beside the grid while editing; the layout wraps
+                        // both only then so the plain grid keeps its full width.
+                        <div class:dashboard-edit-layout=move || edit.active.get()>
+                            <Grid widgets=widgets edit=edit />
+                            <Show when=move || edit.active.get()>
+                                <aside class="dashboard-library-panel" aria-label=move || dash_text(lang(), DashText::WidgetLibrary)>
+                                    <WidgetLibrary on_add=add_widget_handler(edit) />
+                                </aside>
+                            </Show>
+                        </div>
+                        // Rebuilt per selected index so the sheet never shows a stale widget.
+                        {move || {
+                            edit.selected_widget.get().map(|index| view! {
+                                <WidgetConfigSheet
+                                    state=edit
+                                    index=index
+                                    on_close=Callback::new(move |_| edit.selected_widget.set(None))
+                                />
+                            })
+                        }}
+                        <Show when=move || edit.settings_open.get()>
+                            <DashboardSettingsSheet
                                 state=edit
-                                index=index
-                                on_close=Callback::new(move |_| edit.selected_widget.set(None))
+                                on_close=Callback::new(move |_| edit.settings_open.set(false))
                             />
-                        })
-                    }}
-                    <Show when=move || edit.settings_open.get()>
-                        <DashboardSettingsSheet
-                            state=edit
-                            on_close=Callback::new(move |_| edit.settings_open.set(false))
-                        />
+                        </Show>
                     </Show>
                 }
                     .into_any()
             }
-            None if !loaded.get() => view! {
-                <p class="dashboard-loading" aria-busy="true">
-                    {move || dash_text(lang(), DashText::LoadingDashboard)}
-                </p>
-            }
-            .into_any(),
+            None if !loaded.get() => loading().into_any(),
             None => view! {
                 <div class="dashboard-unknown">
                     <p>{move || dash_text(lang(), DashText::UnknownDashboard)}</p>
