@@ -105,13 +105,13 @@ pub fn Sidebar(
         });
     };
 
-    // Easter egg: double-clicking the logo rings the doorbell and gives the house a little shake.
-    let ringing = RwSignal::new(false);
-    let ring = move |_| {
+    // A small surprise for the curious.
+    let wiggling = RwSignal::new(false);
+    let wiggle = move |_| {
         crate::chime::ring();
-        ringing.set(true);
+        wiggling.set(true);
         gloo_timers::callback::Timeout::new(1200, move || {
-            ringing.try_set(false);
+            wiggling.try_set(false);
         })
         .forget();
     };
@@ -141,13 +141,13 @@ pub fn Sidebar(
             <div class="sidebar__brand">
                 <img
                     class="sidebar__logo"
-                    class:sidebar__logo--ringing=move || ringing.get()
+                    class:sidebar__logo--wiggle=move || wiggling.get()
                     src="/assets/icon.svg"
                     alt=""
                     width="28"
                     height="28"
                     draggable="false"
-                    on:dblclick=ring
+                    on:dblclick=wiggle
                 />
                 <span class="sidebar__wordmark">"nidoo."</span>
             </div>
