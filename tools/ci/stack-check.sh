@@ -60,7 +60,7 @@ db_password=$(jq -er .db_password data/bundled.json)
 echo "== timescaledb"
 ready=0
 for _ in $(seq 1 60); do
-  if docker exec oikos-timescaledb pg_isready -h localhost -p 5433 >/dev/null 2>&1; then
+  if docker exec nidoo-timescaledb pg_isready -h localhost -p 5433 >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -73,11 +73,11 @@ done
 host_ip=$(hostname -I | awk '{print $1}')
 [ -n "$host_ip" ] || { echo "no non-loopback address found" >&2; exit 1; }
 
-extension=$(docker exec oikos-timescaledb psql \
+extension=$(docker exec nidoo-timescaledb psql \
   "postgresql://oikos:${db_password}@${host_ip}:5433/oikos" \
   -tAc "select extname from pg_extension where extname='timescaledb'")
 [ "$extension" = "timescaledb" ] || { echo "timescaledb extension missing: '$extension'" >&2; exit 1; }
-if docker exec oikos-timescaledb psql \
+if docker exec nidoo-timescaledb psql \
   "postgresql://oikos:wrong@${host_ip}:5433/oikos" -tAc "select 1" >/dev/null 2>&1; then
   echo "timescaledb accepted a wrong password" >&2
   exit 1
@@ -92,14 +92,14 @@ mv data/bundled/db-password data/bundled/db-password.away
 docker compose up -d --no-deps timescaledb
 ready=0
 for _ in $(seq 1 60); do
-  if docker exec oikos-timescaledb pg_isready -h localhost -p 5433 >/dev/null 2>&1; then
+  if docker exec nidoo-timescaledb pg_isready -h localhost -p 5433 >/dev/null 2>&1; then
     ready=1
     break
   fi
   sleep 1
 done
 [ "$ready" -eq 1 ] || { echo "timescaledb not ready without a password file after 60 s" >&2; exit 1; }
-extension=$(docker exec oikos-timescaledb psql \
+extension=$(docker exec nidoo-timescaledb psql \
   "postgresql://oikos:${db_password}@${host_ip}:5433/oikos" \
   -tAc "select extname from pg_extension where extname='timescaledb'")
 [ "$extension" = "timescaledb" ] || { echo "right password refused without a password file: '$extension'" >&2; exit 1; }
@@ -107,7 +107,7 @@ extension=$(docker exec oikos-timescaledb psql \
 echo "== mosquitto"
 published=0
 for _ in $(seq 1 20); do
-  if docker exec oikos-mosquitto mosquitto_pub -h localhost \
+  if docker exec nidoo-mosquitto mosquitto_pub -h localhost \
     -u oikos -P "$mqtt_password" -t oikos/ci -m ok >/dev/null 2>&1; then
     published=1
     break
@@ -115,7 +115,7 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 [ "$published" -eq 1 ] || { echo "mosquitto refused the right password for 20 s" >&2; exit 1; }
-if docker exec oikos-mosquitto mosquitto_pub -h localhost \
+if docker exec nidoo-mosquitto mosquitto_pub -h localhost \
   -u oikos -P wrong -t oikos/ci -m ok >/dev/null 2>&1; then
   echo "mosquitto accepted a wrong password" >&2
   exit 1

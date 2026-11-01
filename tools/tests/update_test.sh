@@ -31,9 +31,16 @@ if [ "\${1:-}" = pull ] && [ -n "\${STUB_GIT_NEW_SCRIPT:-}" ]; then
   printf '%s\n' '#!/usr/bin/env bash' 'echo "NEW VERSION \$*"' > "$T/repo/tools/update.sh"
 fi
 STUB
+  # `docker compose ps` answers with STUB_COMPOSE_PS (this project's containers, as compose's
+  # labels find them); `docker ps` with STUB_DOCKER_PS (every container on the host).
   cat > "$T/bin/docker" <<STUB
 #!/usr/bin/env bash
 echo "docker \$*" >> "$LOG"
+case "\${1:-} \${2:-}" in
+  "compose ps") for n in \${STUB_COMPOSE_PS:-}; do echo "\$n"; done ;;
+  "compose config") printf '%b' "\${STUB_COMPOSE_CONFIG:-}" ;;
+  "ps "*) for n in \${STUB_DOCKER_PS:-}; do echo "\$n"; done ;;
+esac
 STUB
   chmod +x "$T/bin/git" "$T/bin/docker"
 }
@@ -51,6 +58,15 @@ assert_out() { case "$OUT" in *"$1"*) ;; *) fail "output lacks: $1" ;; esac; }
 
 HUB='docker compose up -d --build hub'
 ALL='docker compose up -d --build'
+
+# Line number of the first log line equal to $1 (0 when absent).
+log_line() { grep -Fxn -- "$1" "$LOG" | head -1 | cut -d: -f1 || true; }
+assert_before() {
+  local a b
+  a="$(log_line "$1")"
+  b="$(log_line "$2")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "expected '$1' before '$2'"
+}
 
 test_moves_legacy_files() {
   setup
@@ -169,6 +185,68 @@ STUB
   assert_content "$T/repo/data/secrets/firebase.json" fb
 }
 
+test_update_recreates_renamed_containers() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/bundled.json"
+  STUB_COMPOSE_PS="oikos-hub oikos-mosquitto oikos-timescaledb nidoo-hub" run_update
+  assert_log "docker compose ps -a --format {{.Name}}"
+  # Built first, so the old containers stop only for the switch itself.
+  assert_before "docker compose build" "docker stop -t 120 oikos-hub"
+  for name in oikos-hub oikos-mosquitto oikos-timescaledb; do
+    # A graceful stop first: the database gets time to flush, not a SIGKILL.
+    assert_before "docker stop -t 120 $name" "docker rm $name"
+    assert_before "docker rm $name" "$ALL"
+  done
+  ! grep -q 'nidoo-hub' <(grep -E '^docker (stop|rm)' "$LOG") || fail "touched nidoo-hub"
+  assert_out "renamed containers"
+}
+
+test_update_hub_only_removes_only_the_old_hub() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/hub.json"
+  STUB_COMPOSE_PS="oikos-hub" run_update
+  assert_log "docker compose ps -a --format {{.Name}} hub"
+  assert_before "docker compose build hub" "docker stop -t 120 oikos-hub"
+  assert_before "docker rm oikos-hub" "$HUB"
+}
+
+test_update_keeps_old_names_the_override_still_sets() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/hub.json"
+  echo 'services: {}' > "$T/repo/compose.override.yml"
+  # A host that followed the move guide before the rename pins the old names itself.
+  STUB_COMPOSE_CONFIG='    container_name: oikos-mosquitto\n    container_name: oikos-timescaledb\n    container_name: nidoo-hub\n' \
+    STUB_COMPOSE_PS="oikos-hub oikos-mosquitto oikos-timescaledb" run_update
+  assert_log "docker rm oikos-hub"
+  ! grep -Eq '^docker (stop|rm).*oikos-(mosquitto|timescaledb)' "$LOG" || fail "removed a container the override still names"
+  assert_log "$ALL"
+}
+
+test_update_hub_only_leaves_own_db_alone() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/hub.json"
+  printf 'services:\n  mosquitto: !reset {}\n  timescaledb: !reset {}\n' > "$T/repo/compose.override.yml"
+  # The house runs its own database container under the old name, outside this project.
+  STUB_DOCKER_PS="oikos-timescaledb" run_update
+  ! grep -q 'oikos-timescaledb' "$LOG" || fail "the host's own oikos-timescaledb was touched"
+  assert_no_log "docker compose build"
+  assert_log "$ALL"
+}
+
+test_no_switchover_without_old_containers() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/bundled.json"
+  STUB_COMPOSE_PS="nidoo-hub nidoo-mosquitto nidoo-timescaledb" run_update
+  assert_no_log "docker compose build"
+  ! grep -q '^docker rm' "$LOG" || fail "removed a container without an old name"
+  assert_log "$ALL"
+}
+
 test_rejects_bad_arguments() {
   setup
   if (cd "$T/repo" && PATH="$T/bin:$PATH" bash tools/update.sh --bogus >/dev/null 2>&1); then fail "--bogus accepted"; fi
@@ -178,7 +256,10 @@ test_rejects_bad_arguments() {
 
 for t in test_moves_legacy_files test_never_overwrites_data test_bundled_runs_everything \
   test_override_runs_everything test_flags_win test_warns_about_old_key_paths test_no_old_key_warning_once_hub_json_exists test_reexecs_after_pull \
-  test_uses_sudo_when_data_is_not_writable test_rejects_bad_arguments; do
+  test_uses_sudo_when_data_is_not_writable test_update_recreates_renamed_containers \
+  test_update_hub_only_removes_only_the_old_hub test_update_hub_only_leaves_own_db_alone \
+  test_update_keeps_old_names_the_override_still_sets \
+  test_no_switchover_without_old_containers test_rejects_bad_arguments; do
   echo "==> $t"
   "$t"
 done

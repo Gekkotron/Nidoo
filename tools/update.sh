@@ -70,16 +70,44 @@ main() {
 
   if [ "$mode" = hub ]; then
     echo "==> $reason: rebuilding the hub only"
-    echo "==> docker compose up -d --build hub"
-    docker compose up -d --build hub
+    services=(hub)
   else
     echo "==> $reason: rebuilding the whole stack"
-    echo "==> docker compose up -d --build"
-    docker compose up -d --build
+    services=()
   fi
+  switch_renamed_containers ${services[@]+"${services[@]}"}
+  echo "==> docker compose up -d --build${services[*]+ ${services[*]}}"
+  docker compose up -d --build ${services[@]+"${services[@]}"}
 
   echo "==> docker compose logs --tail 20 hub"
   docker compose logs --tail 20 hub
+}
+
+# The containers were named oikos-* before the Nidoo rename. Compose finds them
+# by its own labels (`docker compose ps` lists this project's containers only,
+# for the services about to start), so a host's hand-made container that
+# happens to carry an old name is never touched, and neither is one that
+# compose.override.yml still names. The images are built first, so the old
+# containers stop only for the switch itself; the stop is graceful, so the
+# database flushes. Data stays where it is mounted.
+switch_renamed_containers() {
+  local old=() name config
+  config="$(docker compose config 2>/dev/null || true)"
+  while IFS= read -r name; do
+    case "$name" in
+      oikos-hub|oikos-mosquitto|oikos-timescaledb)
+        grep -Eq "container_name: \"?$name\"?\$" <<<"$config" || old+=("$name")
+        ;;
+    esac
+  done < <(docker compose ps -a --format '{{.Name}}' "$@")
+  [ "${#old[@]}" -gt 0 ] || return 0
+  echo "==> renamed containers: building first, then replacing ${old[*]}"
+  docker compose build "$@"
+  for name in "${old[@]}"; do
+    echo "==> docker stop -t 120 $name && docker rm $name"
+    docker stop -t 120 "$name"
+    docker rm "$name"
+  done
 }
 
 # Runs a command through sudo when data/ is not writable by this user.

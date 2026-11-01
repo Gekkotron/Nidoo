@@ -39,9 +39,9 @@ Open that address from any device on the LAN. The [setup wizard](getting-started
 | Service | What it is |
 | --- | --- |
 | `init` | A one-shot job. The first time, it generates a password for the broker and one for the database, then exits. |
-| `mosquitto` | The MQTT broker (container `oikos-mosquitto`), on port 1883. |
-| `timescaledb` | The history and settings database (container `oikos-timescaledb`), on port 5432. |
-| `hub` | Nidoo itself (container `oikos-hub`), on port 8081. |
+| `mosquitto` | The MQTT broker (container `nidoo-mosquitto`), on port 1883. |
+| `timescaledb` | The history and settings database (container `nidoo-timescaledb`), on port 5432. |
+| `hub` | Nidoo itself (container `nidoo-hub`), on port 8081. |
 
 Everything the stack writes lives in `./data/` next to `compose.yml`:
 
@@ -69,7 +69,7 @@ mqtt:
 Then set the discovery prefix as described in [Zigbee2MQTT](zigbee2mqtt.md). If you prefer a separate login for Zigbee2MQTT, add a second user inside the broker container and restart it:
 
 ```bash
-docker exec -it oikos-mosquitto mosquitto_passwd /mosquitto/config/passwd zigbee2mqtt
+docker exec -it nidoo-mosquitto mosquitto_passwd /mosquitto/config/passwd zigbee2mqtt
 docker compose restart mosquitto
 ```
 
@@ -81,7 +81,7 @@ If this host already runs a Mosquitto on port 1883 or a Postgres on port 5432, a
 docker compose up -d --build hub
 ```
 
-The wizard asks for your broker and database addresses instead of pre-filling the bundled ones. The first start of such a host is always `docker compose up -d --build hub`, never the Install command above. If a plain `docker compose up` already ran, clear the failed services (the restart-looping `oikos-mosquitto` and `oikos-timescaledb` containers):
+The wizard asks for your broker and database addresses instead of pre-filling the bundled ones. The first start of such a host is always `docker compose up -d --build hub`, never the Install command above. If a plain `docker compose up` already ran, clear the failed services (the restart-looping `nidoo-mosquitto` and `nidoo-timescaledb` containers):
 
 ```bash
 docker compose rm -sf mosquitto timescaledb init
@@ -95,10 +95,10 @@ sudo rm -rf data/bundled.json data/bundled data/mosquitto data/timescaledb
 
 ### If Docker says a container name is already in use
 
-If your own database or broker container is already named `oikos-timescaledb` or `oikos-mosquitto`, a plain `docker compose up` stops with:
+If your own database or broker container is already named `nidoo-timescaledb` or `nidoo-mosquitto`, a plain `docker compose up` stops with:
 
 ```text
-Error response from daemon: Conflict. The container name "/oikos-timescaledb" is already in use by container "<id>". You have to remove (or rename) that container to be able to reuse that name.
+Error response from daemon: Conflict. The container name "/nidoo-timescaledb" is already in use by container "<id>". You have to remove (or rename) that container to be able to reuse that name.
 ```
 
 That container is your own database (or broker), not a leftover from the stack. **Do not remove or rename it** as Docker suggests. The bundled service would then start on an empty `data/timescaledb/`, and your history would be left in a volume nothing uses any more, where a `docker volume prune` deletes it for good. Start the hub alone instead:
@@ -106,8 +106,8 @@ That container is your own database (or broker), not a leftover from the stack. 
 ```bash
 docker compose rm -sf mosquitto timescaledb init   # clears only this stack's containers; yours belong to another project and are untouched
 docker compose up -d --build hub
-docker compose ps                                  # oikos-hub is up
-docker ps --filter name=oikos                      # your own oikos-timescaledb / oikos-mosquitto are still up
+docker compose ps                                  # nidoo-hub is up
+docker ps                                          # your own database and broker are still up
 ```
 
 Then check for `data/bundled.json` and remove what `init` generated, as above. From then on upgrade with `tools/update.sh`, which picks the hub only. Letting the stack take over that container's name is the job of the move guide below: it backs up the data and renames the old container first.
@@ -129,6 +129,8 @@ The script runs `git pull --rebase`, then re-runs itself from the pulled version
 - the hub only (`docker compose up -d --build hub`) when you have `data/oikos.toml` or `data/hub.json` but no bundled stack, which means you run your own broker and database.
 
 Force one with `tools/update.sh --all` or `tools/update.sh --hub-only`. If you run your own broker and database but have not finished the first start yet, there is no `hub.json` or `oikos.toml` to go by, so the script would pick the full stack: use `tools/update.sh --hub-only`. It ends by printing the last lines of the hub's log.
+
+The containers used to be named `oikos-hub`, `oikos-mosquitto` and `oikos-timescaledb`; they are now `nidoo-*`. The first upgrade past that change builds the images, stops the old containers of this stack gracefully and starts them again under the new names, on the same data. It never touches a container of another project or one started by hand, even with an old name, and keeps any old name your `compose.override.yml` still sets. `OIKOS_*` variables in `.env` keep working; the hub logs a warning until you rename them to `NIDOO_*`.
 
 ## Upgrading from `oikos.toml`
 
