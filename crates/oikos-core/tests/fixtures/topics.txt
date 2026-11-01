@@ -77,7 +77,6 @@
 1 homeassistant/device_automation/0xd4fe28fffe8f1f52/action_brightness_stop/config
 1 homeassistant/device_automation/0xd4fe28fffe8f1f52/action_off/config
 1 homeassistant/device_automation/0xd4fe28fffe8f1f52/action_on/config
-1 homeassistant/device_tracker/oikos_juien/config
 1 homeassistant/device_tracker/oikos_phone/config
 1 homeassistant/light/0x00124b000b1355e6/light_3/config
 1 homeassistant/light/0x00124b0011b6b80f/light_4/config
