@@ -153,19 +153,17 @@ pub fn timeline(input: &LearnInput) -> Vec<(NaiveDate, [Slot; SLOTS])> {
 
 /// The mean of the devices' temperatures, `Off` when every contributing device is off.
 fn combine(parts: impl Iterator<Item = Slot>) -> Slot {
-    let (mut sum, mut n, mut off) = (0.0, 0u32, false);
+    let (mut temps, mut off) = (Vec::new(), false);
     for p in parts {
         match p {
-            Slot::Temp(t) => {
-                sum += t;
-                n += 1;
-            }
+            Slot::Temp(t) => temps.push(t),
             Slot::Off => off = true,
             Slot::None => {}
         }
     }
-    if n > 0 {
-        Slot::Temp(sum / f64::from(n))
+    if !temps.is_empty() {
+        temps.sort_by(f64::total_cmp);
+        Slot::Temp(temps.iter().sum::<f64>() / temps.len() as f64)
     } else if off {
         Slot::Off
     } else {
@@ -961,6 +959,17 @@ mod tests {
 
     fn at(h: u32, m: u32) -> NaiveDateTime {
         day().and_hms_opt(h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn combine_does_not_depend_on_device_order() {
+        assert_ne!(0.1 + 0.2 + 0.3, 0.3 + 0.2 + 0.1);
+        let temps = |v: [f64; 3]| combine(v.into_iter().map(Slot::Temp));
+        let (Slot::Temp(a), Slot::Temp(b)) = (temps([0.1, 0.2, 0.3]), temps([0.3, 0.2, 0.1]))
+        else {
+            panic!("expected temperatures");
+        };
+        assert_eq!(a.to_bits(), b.to_bits());
     }
 
     fn sample(when: NaiveDateTime, target: Option<f64>, mode: &str) -> TargetSample {
