@@ -2,4 +2,5 @@
 //! database rows. Throwaway: this module is deleted after the switch-over.
 
 pub mod broker;
+pub mod db;
 pub mod rewrite;
