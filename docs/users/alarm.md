@@ -120,7 +120,7 @@ A remote only shows up in the picker once Zigbee2MQTT has seen it press a button
 
 ## Presence
 
-The alarm can follow your phones. List the trackers (the `device_tracker` entities of your phones, for example the one the Oikos Android app publishes), then choose what presence may do:
+The alarm can follow your phones. List the trackers (the `device_tracker` entities of your phones, for example the one the Nidoo Android app publishes), then choose what presence may do:
 
 - **Arm away** (**Arm when everyone is away**) when **every** tracker has read *away* for 120 s (**Arm after (s)**, the default, 0 to 3600). The 120 s absorbs a geofence flapping at the edge. An unknown tracker blocks the auto-arm, and so does an offline one: a phone that is switched off or out of battery counts as unknown, whatever it last said, so it never arms the house by accident.
 - **Disarm** (**Disarm when someone comes home**) when **any** tracker changes to *home*. Only a real homecoming counts: the phone must have read *away* before. A phone that is already home when someone arms the house by hand does not disarm it, and neither does one that drops offline and comes back while still at home.

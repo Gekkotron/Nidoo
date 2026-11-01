@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 allow=tools/ci/brand-allow.txt
-pathspecs=(. ':!docs/superpowers' ":!$allow")
+pathspecs=(. ':!docs/superpowers' ":!$allow" ':!tools/ci/brand-check.sh')
 strings=()
 while IFS= read -r line; do
   line="${line%%#*}"

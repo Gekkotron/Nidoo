@@ -2,10 +2,10 @@
 slug: /
 title: Overview
 sidebar_position: 1
-description: What Oikos-os is, what it replaces, the pieces it is made of and how they fit together.
+description: What Nidoo is, what it replaces, the pieces it is made of and how they fit together.
 ---
 
-Oikos-os is the home-automation hub that replaces Jeedom. It runs on the home server next to Mosquitto, owns the device registry built from Zigbee2MQTT and Home Assistant MQTT discovery, and is the brain behind the Oikos Android app. It is configured through conversation: an MCP server lets an AI assistant inspect and change the house instead of a rules editor.
+Nidoo is the home-automation hub that replaces Jeedom. It runs on the home server next to Mosquitto, owns the device registry built from Zigbee2MQTT and Home Assistant MQTT discovery, and is the brain behind the Nidoo Android app. It is configured through conversation: an MCP server lets an AI assistant inspect and change the house instead of a rules editor.
 
 Status: v1 hub with its web UI: registry, API, WebSocket, MCP and the browser app.
 
@@ -13,7 +13,7 @@ Status: v1 hub with its web UI: registry, API, WebSocket, MCP and the browser ap
 
 - **The hub** (`oikos-os`): one binary with the device registry, the HTTP API, the WebSocket, the MCP server, the flow engine, the climate engine, history, push notifications and the watchdogs.
 - **The web UI**: the browser app the hub serves on its own port.
-- **The Android app** (Oikos): the phone client for the same house.
+- **The Android app** (Nidoo): the phone client for the same house.
 - **The MCP server**: lets AI assistants such as Claude Code, Codex and Claude Desktop read and change the house.
 
 ## How it fits together

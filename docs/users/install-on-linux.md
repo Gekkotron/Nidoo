@@ -1,10 +1,10 @@
 ---
 title: Install on Linux (Docker)
 sidebar_position: 2
-description: Install Oikos-os on a Linux host from a git clone with one Docker Compose command, then set it up in the browser, upgrade and run it.
+description: Install Nidoo on a Linux host from a git clone with one Docker Compose command, then set it up in the browser, upgrade and run it.
 ---
 
-Oikos-os is published only as source. On the Linux box that will run it, `git clone` the repo and let Docker Compose build the hub and start a broker and a database next to it. You finish the setup in the browser.
+Nidoo is published only as source. On the Linux box that will run it, `git clone` the repo and let Docker Compose build the hub and start a broker and a database next to it. You finish the setup in the browser.
 
 ## Prerequisites on the host
 
@@ -18,8 +18,8 @@ You do not need to install a broker or a database: the stack carries both. If yo
 ## Install
 
 ```bash
-git clone https://github.com/Gekkotron/Oikos-os.git
-cd Oikos-os
+git clone https://github.com/Gekkotron/nidoo.git
+cd nidoo
 docker compose up -d --build
 docker compose logs hub
 ```
@@ -41,7 +41,7 @@ Open that address from any device on the LAN. The [setup wizard](getting-started
 | `init` | A one-shot job. The first time, it generates a password for the broker and one for the database, then exits. |
 | `mosquitto` | The MQTT broker (container `oikos-mosquitto`), on port 1883. |
 | `timescaledb` | The history and settings database (container `oikos-timescaledb`), on port 5432. |
-| `hub` | Oikos-os itself (container `oikos-hub`), on port 8081. |
+| `hub` | Nidoo itself (container `oikos-hub`), on port 8081. |
 
 Everything the stack writes lives in `./data/` next to `compose.yml`:
 
@@ -117,7 +117,7 @@ Want one stack in the end? [Move an existing broker and database into the stack]
 ## Upgrade
 
 ```bash
-cd Oikos-os
+cd nidoo   # or the folder you cloned it into
 tools/update.sh
 ```
 

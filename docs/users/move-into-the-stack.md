@@ -1,7 +1,7 @@
 ---
 title: Move an existing broker and database into the stack
 sidebar_position: 2.5
-description: Replace a hand-run Mosquitto and TimescaleDB with the ones in Oikos-os's compose stack, keeping their data, with a backup and a rollback.
+description: Replace a hand-run Mosquitto and TimescaleDB with the ones in Nidoo's compose stack, keeping their data, with a backup and a rollback.
 ---
 
 If you already run Mosquitto and TimescaleDB in Docker for the hub, you can let the compose stack own them without losing a retained message or a history row. The stack's services read their data from folders you choose, so the move is mostly: stop the old containers, point the stack at the same folders, start it.

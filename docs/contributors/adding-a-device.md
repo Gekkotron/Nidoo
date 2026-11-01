@@ -10,10 +10,10 @@ The hub speaks Home Assistant MQTT discovery. It holds no per-device code. Each 
 
 | Situation | Path | Where the change goes |
 |---|---|---|
-| A Zigbee device Zigbee2MQTT does not know | [Fix it in Zigbee2MQTT](#zigbee-devices-unknown-to-zigbee2mqtt) | External converter, then upstream PR. Not an Oikos change. |
+| A Zigbee device Zigbee2MQTT does not know | [Fix it in Zigbee2MQTT](#zigbee-devices-unknown-to-zigbee2mqtt) | External converter, then upstream PR. Not an Nidoo change. |
 | The device is not Zigbee (cloud API, Wi-Fi, vendor protocol) | [Write a bridge](#writing-a-bridge) | Separate process, any language, own repo. It publishes discovery to the broker. |
-| The device publishes discovery for a component Oikos ignores (`GET /api/v1/ignored` reports `ignored component <name>`) | [Add a type or a kind](#adding-a-component-kind-to-oikos) | Usually a JSON entry in `crates/oikos-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Oikos, one per component, never per device. |
-| The device is a type Oikos describes but reports no state for the primary field | [Type table](#a-type-table-entry-json-no-rust) | Bridge or firmware: publish the state topic of the primary field, retained. A `requires_state` type is rejected without it. |
+| The device publishes discovery for a component Nidoo ignores (`GET /api/v1/ignored` reports `ignored component <name>`) | [Add a type or a kind](#adding-a-component-kind-to-nidoo) | Usually a JSON entry in `crates/oikos-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Nidoo, one per component, never per device. |
+| The device is a type Nidoo describes but reports no state for the primary field | [Type table](#a-type-table-entry-json-no-rust) | Bridge or firmware: publish the state topic of the primary field, retained. A `requires_state` type is rejected without it. |
 | The device works but looks wrong (wrong room, wrong name, a relay that is really a heater or light) | [Override](#overrides) | No code. Web device sheet, `PATCH /api/v1/entities/{id}/override`, or MCP `set_override`. |
 
 Some firmwares already publish discovery when their MQTT discovery option is on, Tasmota, ESPHome and Valetudo among them. Those devices need no bridge.
@@ -25,7 +25,7 @@ Zigbee2MQTT (Z2M) holds the per-device code for thousands of Zigbee devices. Whe
 1. Write an external converter for local use. It is a JavaScript file referenced in Z2M's configuration.
 2. Contribute it upstream to `Koenkk/zigbee-herdsman-converters` so every user gets it.
 
-Z2M publishes discovery under the `oikos` prefix. Once Z2M exposes the device, Oikos picks it up with no change. See [Zigbee2MQTT](../users/zigbee2mqtt.md).
+Z2M publishes discovery under the `oikos` prefix. Once Z2M exposes the device, Nidoo picks it up with no change. See [Zigbee2MQTT](../users/zigbee2mqtt.md).
 
 ## Writing a bridge
 
@@ -146,7 +146,7 @@ Retained configs cover most restarts. The birth message covers a broker that los
 
 Security: bindings are readable by anything on the LAN. Never put credentials in topics or templates.
 
-## Adding a component kind to Oikos
+## Adding a component kind to Nidoo
 
 Two routes. Most components need only a type-table entry. Write a Rust kind only when the component needs behaviour the table cannot express: a new state model, a command mapping of its own, or energy reporting.
 

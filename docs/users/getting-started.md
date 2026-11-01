@@ -9,8 +9,8 @@ You need a Linux host with Docker and its Compose plugin. Zigbee2MQTT can run on
 ## Install
 
 ```sh
-git clone https://github.com/Gekkotron/Oikos-os.git
-cd Oikos-os
+git clone https://github.com/Gekkotron/nidoo.git
+cd nidoo
 docker compose up -d --build
 docker compose logs hub
 ```
@@ -24,7 +24,7 @@ Already run a broker or database? See [Bring your own broker and database](insta
 The wizard has six steps. Each one saves when you press Next, so closing the tab loses nothing, and Back is always allowed.
 
 1. **Welcome**: pick the language (English or French) and your home's city and country. The hub looks up the latitude, longitude and time zone, which you can correct. Sun-based automations need this even when weather is off.
-2. **MQTT broker**: host, port, user and password of the broker. They are pre-filled for the broker that came with Oikos. **Test connection** must succeed before Next. The client id and the Zigbee2MQTT base topic are under Advanced.
+2. **MQTT broker**: host, port, user and password of the broker. They are pre-filled for the broker that came with Nidoo. **Test connection** must succeed before Next. The client id and the Zigbee2MQTT base topic are under Advanced.
 3. **Database**: the TimescaleDB connection, pre-filled for the bundled one. The test checks the connection and the `timescaledb` extension and prepares the tables. This step cannot be skipped, because the hub keeps its settings and history there.
 4. **Devices**: what the hub has found through MQTT discovery, with a live count. You can name devices and set their rooms here. With nothing found, check that Zigbee2MQTT publishes to this broker and under the base topic shown; see [Zigbee2MQTT](zigbee2mqtt.md).
 5. **Services**: optional features as cards, each Set up, Not set up or Skipped: Weather, Solar forecast, Energy, Cameras, Notifications, Climate and Alarm. Do only the ones you want.

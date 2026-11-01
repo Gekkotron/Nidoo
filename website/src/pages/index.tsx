@@ -14,6 +14,13 @@ function Hero() {
     <header className={styles.hero}>
       <div className={styles.sky} aria-hidden="true" />
       <div className={clsx('container', styles.heroInner)}>
+        <img
+          src={useBaseUrl('/img/mark-animated.svg')}
+          className={styles.mark}
+          width={88}
+          height={88}
+          alt=""
+        />
         <p className={styles.preamble}>
           <span>open source</span>
           <span className={styles.dot} aria-hidden="true">·</span>
@@ -26,7 +33,7 @@ function Hero() {
           <span className={styles.line2}>Ask it anything.</span>
         </Heading>
         <p className={styles.subhead}>
-          Oikos-os runs your Zigbee2MQTT devices, dashboards, flows, energy, climate and phone
+          Nidoo runs your Zigbee2MQTT devices, dashboards, flows, energy, climate and phone
           alerts from one small Rust hub. You set it up by talking to it over MCP.
         </p>
         <div className={styles.ctas}>
@@ -36,7 +43,7 @@ function Hero() {
           <Link to="/docs/users/install-on-linux" className={clsx('button button--lg', styles.ctaGhost)}>
             Install with Docker
           </Link>
-          <Link href="https://github.com/Gekkotron/Oikos-os" className={styles.ctaText}>
+          <Link href="https://github.com/Gekkotron/nidoo" className={styles.ctaText}>
             View the source <span aria-hidden="true">↗</span>
           </Link>
         </div>
@@ -71,7 +78,7 @@ function ProductShot() {
             className={styles.shot}
             width={2880}
             height={2270}
-            alt="The Oikos-os House dashboard: rooms in the sidebar, the weather and solar cards, moods and favourite devices."
+            alt="The Nidoo House dashboard: rooms in the sidebar, the weather and solar cards, moods and favourite devices."
           />
         </div>
       </div>
@@ -110,7 +117,7 @@ export default function Home() {
   return (
     <Layout
       title="Your house, one hub"
-      description="Oikos-os is a self-hosted home-automation hub for Zigbee2MQTT, written in Rust, that you configure by talking to it over MCP.">
+      description="Nidoo is a self-hosted home-automation hub for Zigbee2MQTT, written in Rust, that you configure by talking to it over MCP.">
       <Hero />
       <main>
         <ProductShot />

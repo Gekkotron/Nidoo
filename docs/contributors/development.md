@@ -19,7 +19,7 @@ cargo check -p oikos-api --target wasm32-unknown-unknown
 cargo check -p oikos-web --target wasm32-unknown-unknown
 ```
 
-The `wasm32-unknown-unknown` target comes with [`rust-toolchain.toml`](https://github.com/Gekkotron/Oikos-os/blob/main/rust-toolchain.toml) (stable channel). `oikos-core` and `oikos-api` must keep building for it, because the web UI shares them.
+The `wasm32-unknown-unknown` target comes with [`rust-toolchain.toml`](https://github.com/Gekkotron/nidoo/blob/main/rust-toolchain.toml) (stable channel). `oikos-core` and `oikos-api` must keep building for it, because the web UI shares them.
 
 The tests run against recorded broker messages under `crates/oikos-core/tests/fixtures` and never need a broker.
 
@@ -63,7 +63,7 @@ cargo run -p oikos-os -- run       # the hub on 8081
 cd crates/oikos-web && trunk serve # the UI on 127.0.0.1:3000, rebuilt on save
 ```
 
-Open `http://127.0.0.1:3000`. [`Trunk.toml`](https://github.com/Gekkotron/Oikos-os/blob/main/crates/oikos-web/Trunk.toml) proxies `/api/v1/`, `/ws` and `/mcp/` to the hub on `127.0.0.1:8081`, so the UI talks to a real hub while Trunk rebuilds it on save. If your hub binds elsewhere, change the three `backend` entries.
+Open `http://127.0.0.1:3000`. [`Trunk.toml`](https://github.com/Gekkotron/nidoo/blob/main/crates/oikos-web/Trunk.toml) proxies `/api/v1/`, `/ws` and `/mcp/` to the hub on `127.0.0.1:8081`, so the UI talks to a real hub while Trunk rebuilds it on save. If your hub binds elsewhere, change the three `backend` entries.
 
 ### Release build order
 
@@ -88,7 +88,7 @@ The other tests under `crates/oikos-web/tests` (cards, flow canvas, group wizard
 
 ## `tools/restart.sh`
 
-[`tools/restart.sh`](https://github.com/Gekkotron/Oikos-os/blob/main/tools/restart.sh) builds the web UI and the hub, stops the running hub and starts the new one, detached, from the repo root so it reads `./data`. It waits up to 20 seconds for `/health`, and logs to `<cargo target dir>/oikos-os.log` (set `OIKOS_LOG` to log elsewhere).
+[`tools/restart.sh`](https://github.com/Gekkotron/nidoo/blob/main/tools/restart.sh) builds the web UI and the hub, stops the running hub and starts the new one, detached, from the repo root so it reads `./data`. It waits up to 20 seconds for `/health`, and logs to `<cargo target dir>/oikos-os.log` (set `OIKOS_LOG` to log elsewhere).
 
 | Flag | Effect |
 | --- | --- |

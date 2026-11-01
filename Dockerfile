@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 #
-# Multi-stage build of the Oikos-os hub.
+# Multi-stage build of the Nidoo hub.
 # Uses cargo-chef to cache the dependency graph in its own layer so
 # incremental rebuilds only recompile the workspace crates (oikos-*),
 # not the hundreds of crates they pull in from crates.io.
