@@ -277,6 +277,11 @@ fn PanelBody(device_id: String, device_name: String) -> impl IntoView {
                 </div>
                 <p class="settings__hint">{hint}</p>
                 {move || error.get().map(|e| view! { <p class="home-settings__error">{e}</p> })}
+                <Show when=move || {
+                    watch.with(|w| w.as_ref().is_some_and(|w| w.status.state == WatchState::CannotPing))
+                }>
+                    <p class="settings__hint network-hint">{move || t(NetworkText::CannotPingHint)}</p>
+                </Show>
                 {move || {
                     watch
                         .get()

@@ -264,3 +264,34 @@ async fn switch_off_pauses() {
     assert_eq!(body["host"], "192.168.1.42");
     assert_eq!(host_input(&m.host).value(), "192.168.1.42");
 }
+
+#[wasm_bindgen_test]
+async fn panel_shows_the_cannot_ping_hint() {
+    let stub = FetchStub::install();
+    let mut watch = watch_json(true);
+    watch["status"] =
+        json!({"state": "cannot_ping", "since": null, "lastReply": null, "rttMs": null});
+    stub.reply("GET", "/api/v1/network", 200, &json!([watch]).to_string());
+    let m = mount(entity("vacuum.roborock", "vac_1"), vec![]);
+    settle().await;
+    let text = panel_text(&m.host).expect("network panel");
+    assert!(
+        text.contains("The hub cannot send pings. On the server, run: sysctl"),
+        "{text}"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn panel_has_no_hint_when_connected() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/network",
+        200,
+        &json!([watch_json(true)]).to_string(),
+    );
+    let m = mount(entity("vacuum.roborock", "vac_1"), vec![]);
+    settle().await;
+    let text = panel_text(&m.host).expect("network panel");
+    assert!(!text.contains("sysctl"), "{text}");
+}

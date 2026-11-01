@@ -488,6 +488,14 @@ pub fn NetworkSettingsPage() -> impl IntoView {
                 .unwrap_or_default()
         })
     };
+    let cannot_ping = move || {
+        watches.with(|w| {
+            w.as_ref().is_some_and(|w| {
+                w.iter()
+                    .any(|v| v.spec.enabled && v.status.state == WatchState::CannotPing)
+            })
+        })
+    };
     view! {
         <div class="alarm-settings">
             {move || {
@@ -504,6 +512,9 @@ pub fn NetworkSettingsPage() -> impl IntoView {
             <section class="sheet__panel alarm-section">
                 <h2 class="sheet__heading">{move || t(NetworkText::WatchedTitle)}</h2>
                 <p class="settings__hint">{move || t(NetworkText::WatchedHint)}</p>
+                <Show when=cannot_ping>
+                    <p class="settings__hint network-hint">{move || t(NetworkText::CannotPingHint)}</p>
+                </Show>
                 <Show
                     when=move || watches.with(Option::is_some)
                     fallback=move || view! { <p class="settings__hint">{t(NetworkText::Loading)}</p> }

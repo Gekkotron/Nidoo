@@ -313,3 +313,31 @@ async fn settings_list_shows_network_presence_entry() {
     assert!(entry.contains("Network presence"), "{entry}");
     assert!(entry.contains("2 watched"), "{entry}");
 }
+
+#[wasm_bindgen_test]
+async fn cannot_ping_shows_the_hint_once() {
+    let stub = FetchStub::install();
+    let both = json!([
+        watch("nas", "NAS", "nas.local", None, "cannot_ping", 0),
+        watch("tv", "TV", "192.168.1.43", None, "cannot_ping", 0),
+    ])
+    .to_string();
+    stub.reply("GET", "/api/v1/network", 200, &both);
+    let m = mount("/settings/network-presence");
+    wait_for(&m.host, ".alarm-row", 2).await;
+    let hints = texts(&m.host, ".network-hint");
+    assert_eq!(hints.len(), 1, "{hints:?}");
+    assert!(
+        hints[0].contains("The hub cannot send pings. On the server, run: sysctl"),
+        "{hints:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn no_hint_while_pings_work() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/network", 200, &two_watches());
+    let m = mount("/settings/network-presence");
+    wait_for(&m.host, ".alarm-row", 2).await;
+    assert!(texts(&m.host, ".network-hint").is_empty());
+}

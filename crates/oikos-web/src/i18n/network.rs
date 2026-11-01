@@ -31,6 +31,7 @@ pub enum NetworkText {
     Paused,
     Waiting,
     CannotPing,
+    CannotPingHint,
     Watched,
     CouldNotSave,
     UnitSecond,
@@ -92,6 +93,10 @@ pub fn network_text(lang: Lang, k: NetworkText) -> &'static str {
             "the hub cannot send pings",
             "le hub ne peut pas envoyer de ping",
         ),
+        CannotPingHint => (
+            "The hub cannot send pings. On the server, run: sysctl net.ipv4.ping_group_range=\"0 2147483647\"",
+            "Le hub ne peut pas envoyer de ping. Sur le serveur, lancez\u{A0}: sysctl net.ipv4.ping_group_range=\"0 2147483647\"",
+        ),
         Watched => ("watched", "surveillés"),
         CouldNotSave => ("Could not save", "Enregistrement impossible"),
         UnitSecond => ("s", "s"),
@@ -133,9 +138,11 @@ mod tests {
             Title | WatchedTitle | WatchedHint | Empty | Loading | CouldNotLoad | AddTitle
             | AddHint | Name | Host | Every | Room | NoRoom | Add | Edit | Save | Cancel
             | Remove | WatchOnNetwork | DeviceTag | EveryPrefix | Connected | DisconnectedFor
-            | Paused | Waiting | CannotPing | Watched | CouldNotSave | UnitSecond | UnitMinute
-            | UnitHour | UnitDay | PanelTitle | PanelHintHead | PanelHintTail | State
-            | LastReply | LastReplyAgo | UnitMillisecond | NameSuffix => true,
+            | Paused | Waiting | CannotPing | CannotPingHint | Watched | CouldNotSave
+            | UnitSecond | UnitMinute | UnitHour | UnitDay | PanelTitle | PanelHintHead
+            | PanelHintTail | State | LastReply | LastReplyAgo | UnitMillisecond | NameSuffix => {
+                true
+            }
         }
     }
 
@@ -168,6 +175,7 @@ mod tests {
             Paused,
             Waiting,
             CannotPing,
+            CannotPingHint,
             Watched,
             CouldNotSave,
             UnitSecond,
