@@ -16,6 +16,7 @@ use crate::format::word;
 use crate::house::House;
 use crate::i18n::{self, Lang};
 use crate::icons;
+use crate::rooms::use_loaded;
 use crate::screens::flow_canvas::sun::house_place;
 use crate::solar::card::SolarCard;
 use crate::solar::model::solar_card_visible;
@@ -129,6 +130,15 @@ fn weather_card(
         </A>
     }
     .into_any()
+}
+
+/// Whether everything that sizes the header has answered: the state snapshot (the chips) and the
+/// weather and solar fetches (the side cards). A screen that holds its content until then paints
+/// the header once at its full height, instead of letting it grow and push the page down.
+pub fn use_header_ready() -> Memo<bool> {
+    let house: House = expect_context();
+    let loaded = use_loaded();
+    Memo::new(move |_| loaded.get() && house.weather_loaded.get() && house.solar_loaded.get())
 }
 
 /// The header of the house overview.
