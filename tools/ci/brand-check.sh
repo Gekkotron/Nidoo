@@ -51,11 +51,11 @@ if [ -n "$brand" ]; then
   status=1
 fi
 # Wording the rename gets wrong: the web UI's lowercase wordmark, the docs
-# address (GitHub Pages paths are case-sensitive) and the article.
-wording=$(scan -n -E -e '"oikos\."' -e 'github\.io/Nidoo' -e '(^|[^[:alnum:]])[Aa]n Nidoo([^[:alnum:]]|$)' -- \
+# address /Nidoo/ (GitHub Pages paths follow the repo name's case) and the article.
+wording=$(scan -n -E -e '"oikos\."' -e 'github\.io/nidoo' -e '(^|[^[:alnum:]])[Aa]n Nidoo([^[:alnum:]]|$)' -- \
   . ':!docs/superpowers' ':!tools/ci/brand-check.sh')
 if [ -n "$wording" ]; then
-  echo "Brand wording to fix (wordmark \"nidoo.\", lowercase /nidoo/ address, \"a Nidoo\"):"
+  echo "Brand wording to fix: wordmark \"nidoo.\", docs address /Nidoo/, \"a Nidoo\":"
   printf '%s\n' "$wording"
   status=1
 fi

@@ -1,6 +1,6 @@
 # Nidoo website
 
-Docusaurus 3 site for the docs in `../docs`, published at https://gekkotron.github.io/nidoo/.
+Docusaurus 3 site for the docs in `../docs`, published at https://gekkotron.github.io/Nidoo/.
 
 - `npm ci` installs the dependencies.
 - `npm start` serves the site with live reload.

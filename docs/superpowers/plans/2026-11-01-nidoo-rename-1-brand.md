@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Product name: `Nidoo` (one word, capital N). Never `Nidoo-os`, `NidoOS` or `Nidoo OS`.
-- GitHub repo: `Gekkotron/nidoo` (lowercase). Docs site: `https://gekkotron.github.io/nidoo/`.
+- GitHub repo: `Gekkotron/Nidoo` (capital N; Pages paths follow its case). Docs site: `https://gekkotron.github.io/Nidoo/`.
 - Never use the English word for a bird's home in tracked files: it is a Google smart-home brand. Describe the logo as a small round bird peeking out of a bowl. No name-origin line.
 - Logo: the files in `docs/superpowers/plans/2026-11-01-nidoo-assets/`, unchanged except the header comment. Colours stay the web UI's tokens: navy `#0b1020`, cyan `#58e1ff`, amber `#ffc457`, Ivoire `#38738f` / `#8f6613`.
 - Lowercase `oikos` in code, paths, topics, env vars, commands and ids stays as is in this phase, in docs too (``cargo run -p oikos-os`` stays until phase 2).
@@ -27,7 +27,7 @@
 - The web UI's boot screen showing the animated mark at a size where the head is clipped or the bowl is cut by the 72 px box → the mark must sit whole inside the box. Task 1, step 5.
 - `prefers-reduced-motion` users still seeing the bird move → the animated SVG already stops; Task 1 keeps its `@media` rule.
 - A French string left in English (or the reverse) in `setup.rs` after the swap → Task 2 checks both columns.
-- The repo rename done **after** the merge, so the Pages build deploys a `/nidoo/` site under `/Oikos-os/` → broken CSS. Task 4 orders the rename before the merge.
+- The repo rename done **after** the merge, so the Pages build deploys a `/Nidoo/` site under `/Oikos-os/` → broken CSS. Task 4 orders the rename before the merge.
 
 ---
 
@@ -100,7 +100,7 @@ Expected: FAIL, listing the strings of this task, the README, `docs/` and `websi
 | `T::ProductName` | `("Nidoo", "Nidoo")` |
 | `SetupText::WelcomeTitle` | `("Welcome to Nidoo", "Bienvenue dans Nidoo")` |
 | setup.rs 220–244 | `Oikos` → `Nidoo` in both columns; FR `l'historique d'Oikos` → `l'historique de Nidoo` |
-| energy_day.rs | `https://gekkotron.github.io/nidoo/docs/users/history` |
+| energy_day.rs | `https://gekkotron.github.io/Nidoo/docs/users/history` |
 | cli.rs `about` | `Nidoo home-automation hub` (the `name = "oikos-os"` stays: it is the binary, phase 2) |
 | stdio_proxy.rs | `cannot reach the Nidoo MCP server at {mcp_url}` |
 | mcp/mod.rs server info | `Implementation::new("nidoo", …)` |
@@ -134,11 +134,11 @@ git commit -m "feat(brand): Nidoo in the web UI, hub messages and MCP server inf
 
 - [ ] **Step 1: Prose rule, applied to every file listed**
 
-`Oikos-os` and `Oikos` (product) → `Nidoo`; `the Oikos Android app` → `the Nidoo Android app`; `github.com/Gekkotron/Oikos-os` → `github.com/Gekkotron/nidoo`; `gekkotron.github.io/Oikos-os/` → `gekkotron.github.io/nidoo/`. Inside code blocks and backticks only the two URLs change. README logo `alt`: `Nidoo icon: a small round bird peeking out`; README `<h1>`: `Nidoo`.
+`Oikos-os` and `Oikos` (product) → `Nidoo`; `the Oikos Android app` → `the Nidoo Android app`; `github.com/Gekkotron/Oikos-os` → `github.com/Gekkotron/Nidoo`; `gekkotron.github.io/Oikos-os/` → `gekkotron.github.io/Nidoo/`. Inside code blocks and backticks only the two URLs change. README logo `alt`: `Nidoo icon: a small round bird peeking out`; README `<h1>`: `Nidoo`.
 
 - [ ] **Step 2: Docusaurus config**
 
-`title: 'Nidoo'`, `baseUrl: '/nidoo/'`, `projectName: 'nidoo'`, apple-touch `href: '/nidoo/img/apple-touch-icon.png'`, `editUrl` → `https://github.com/Gekkotron/nidoo/edit/main/docs/${docPath}`, navbar `title: 'Nidoo'`, logo `alt: 'Nidoo logo'`, GitHub / Issues / LICENSE links → `Gekkotron/nidoo`, `copyright: 'Nidoo · Built by Gekkotron · Apache-2.0'`. Landing page (`index.tsx`): the four `Oikos-os` strings → `Nidoo`, hero shows `img/mark-animated.svg`.
+`title: 'Nidoo'`, `baseUrl: '/Nidoo/'`, `projectName: 'Nidoo'`, apple-touch `href: '/Nidoo/img/apple-touch-icon.png'`, `editUrl` → `https://github.com/Gekkotron/Nidoo/edit/main/docs/${docPath}`, navbar `title: 'Nidoo'`, logo `alt: 'Nidoo logo'`, GitHub / Issues / LICENSE links → `Gekkotron/Nidoo`, `copyright: 'Nidoo · Built by Gekkotron · Apache-2.0'`. Landing page (`index.tsx`): the four `Oikos-os` strings → `Nidoo`, hero shows `img/mark-animated.svg`.
 
 - [ ] **Step 3: Build the site**
 
@@ -161,7 +161,7 @@ git commit -m "docs(brand): Nidoo across the README, docs and docs site"
 
 - [ ] **Step 1:** Open the PR; CI green (including `brand-check.sh` and the docs build).
 - [ ] **Step 2 (user):** GitHub → Settings → rename `Oikos-os` to `nidoo`. GitHub redirects the old repo URL and git remotes; the old Pages URL is **not** redirected.
-- [ ] **Step 3 (user):** Merge the PR. Check `.github/workflows/docs.yml` deploys and `https://gekkotron.github.io/nidoo/` loads with its CSS and logo.
-- [ ] **Step 4:** `git remote set-url origin https://github.com/Gekkotron/nidoo.git` in every local clone/worktree; `git fetch` works.
+- [ ] **Step 3 (user):** Merge the PR. Check `.github/workflows/docs.yml` deploys and `https://gekkotron.github.io/Nidoo/` loads with its CSS and logo.
+- [ ] **Step 4:** `git remote set-url origin https://github.com/Gekkotron/Nidoo.git` in every local clone/worktree; `git fetch` works.
 - [ ] **Step 5 (user's go):** rebuild the web UI on the live hub; the tab title reads Nidoo and the boot screen shows the bird.
 - [ ] **Step 6:** Out of this repo: the Android app's name and launcher icon (its own repo; the adaptive icon layers come from `crates/oikos-web/assets/icon.svg`). Optional for the user: rename the `oikos` MCP entry in their assistant configs; the server keeps working under either name.

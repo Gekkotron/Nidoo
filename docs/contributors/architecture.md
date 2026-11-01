@@ -10,14 +10,14 @@ Nidoo is one Cargo workspace (`crates/*`) with one binary, `oikos-os`. The hub k
 
 | Crate | Role |
 | --- | --- |
-| [`oikos-core`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-core) | The pure domain: discovery parsing, the registry, state and command mapping, the entity type table, energy, history bucketing, dashboards and the flow model, validation, schedule and sun maths. No I/O, no async. Compiles to native and `wasm32-unknown-unknown`. |
-| [`oikos-api`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-api) | The wire types shared by the hub and the web UI: views over the registry, the snapshot, WebSocket events and REST bodies. Pure data. Also builds for wasm. |
-| [`oikos-os`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-os) | The hub binary and library: config, the MQTT task, the `Hub`, the HTTP/WebSocket/MCP server, the flow engine, groups, virtual entities, dashboards, history, the climate engine's hub side, the Frigate media proxy. |
-| [`oikos-web`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-web) | The browser UI, a Leptos app compiled to wasm with Trunk. The hub embeds its build output (`dist/`) and serves it. |
-| [`oikos-push`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-push) | Push notifications, ported from OikosPush: payload normalisation, the token map, the retry queue, the alert history and the FCM transport. Pure at the bottom; the service takes the clock and a publisher as arguments. |
-| [`oikos-frigate`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-frigate) | The Frigate event bridge: a pure translator from `<frigate>/events` messages to v1 push alerts, with per-event and per-camera memory. |
-| [`oikos-watchdog`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-watchdog) | The gateway-health and broker-ACL watchdogs as pure translators to `system` push alerts, plus a Mosquitto log tailer. |
-| [`oikos-climate`](https://github.com/Gekkotron/nidoo/tree/main/crates/oikos-climate) | The climate engine's documents, decision tree, schedule learning and topics. Pure data and logic, no I/O; the hub and the web UI share it. |
+| [`oikos-core`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-core) | The pure domain: discovery parsing, the registry, state and command mapping, the entity type table, energy, history bucketing, dashboards and the flow model, validation, schedule and sun maths. No I/O, no async. Compiles to native and `wasm32-unknown-unknown`. |
+| [`oikos-api`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-api) | The wire types shared by the hub and the web UI: views over the registry, the snapshot, WebSocket events and REST bodies. Pure data. Also builds for wasm. |
+| [`oikos-os`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-os) | The hub binary and library: config, the MQTT task, the `Hub`, the HTTP/WebSocket/MCP server, the flow engine, groups, virtual entities, dashboards, history, the climate engine's hub side, the Frigate media proxy. |
+| [`oikos-web`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-web) | The browser UI, a Leptos app compiled to wasm with Trunk. The hub embeds its build output (`dist/`) and serves it. |
+| [`oikos-push`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-push) | Push notifications, ported from OikosPush: payload normalisation, the token map, the retry queue, the alert history and the FCM transport. Pure at the bottom; the service takes the clock and a publisher as arguments. |
+| [`oikos-frigate`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-frigate) | The Frigate event bridge: a pure translator from `<frigate>/events` messages to v1 push alerts, with per-event and per-camera memory. |
+| [`oikos-watchdog`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-watchdog) | The gateway-health and broker-ACL watchdogs as pure translators to `system` push alerts, plus a Mosquitto log tailer. |
+| [`oikos-climate`](https://github.com/Gekkotron/Nidoo/tree/main/crates/oikos-climate) | The climate engine's documents, decision tree, schedule learning and topics. Pure data and logic, no I/O; the hub and the web UI share it. |
 
 `oikos-core` depends on no other crate. `oikos-api`, `oikos-push` and `oikos-climate` depend on it; `oikos-frigate` and `oikos-watchdog` depend on no workspace crate. `oikos-os` (native) depends on all of them, and `oikos-web` (wasm) on `oikos-core`, `oikos-api` and `oikos-climate`.
 

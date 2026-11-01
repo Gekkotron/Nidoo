@@ -7,7 +7,7 @@ edition = "2024"
 version = "0.1.0"
 authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
 license = "Apache-2.0"
-repository = "https://github.com/Gekkotron/nidoo"
+repository = "https://github.com/Gekkotron/Nidoo"
 
 [workspace.dependencies]
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }

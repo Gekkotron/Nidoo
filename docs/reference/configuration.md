@@ -4,7 +4,7 @@ sidebar_position: 1
 description: Where the hub keeps its settings, every section and field with its default, how secrets are handled, the environment variables that still apply and the one-time import of an old oikos.toml.
 ---
 
-The hub is configured in the browser: the setup wizard on a first start, then the **Settings** pages. There is no file to edit. This page is the reference behind those screens: where each value is stored, every field with its default, and the few things that still come from the command line or the environment. The structs are in [`crates/oikos-os/src/config.rs`](https://github.com/Gekkotron/nidoo/blob/main/crates/oikos-os/src/config.rs) and the sections in [`crates/oikos-os/src/setup/sections.rs`](https://github.com/Gekkotron/nidoo/blob/main/crates/oikos-os/src/setup/sections.rs).
+The hub is configured in the browser: the setup wizard on a first start, then the **Settings** pages. There is no file to edit. This page is the reference behind those screens: where each value is stored, every field with its default, and the few things that still come from the command line or the environment. The structs are in [`crates/oikos-os/src/config.rs`](https://github.com/Gekkotron/Nidoo/blob/main/crates/oikos-os/src/config.rs) and the sections in [`crates/oikos-os/src/setup/sections.rs`](https://github.com/Gekkotron/Nidoo/blob/main/crates/oikos-os/src/setup/sections.rs).
 
 Other pages write a field as `[topics] ui_prefix` or `watchdog.acl.enabled`. That is the field `ui_prefix` of `topics`, or `acl.enabled` of `watchdog`, inside the **advanced** section below.
 

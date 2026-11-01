@@ -47,7 +47,7 @@ function Hero() {
           <Link to="/docs/users/install-on-linux" className={clsx('button button--lg', styles.ctaGhost)}>
             Install with Docker
           </Link>
-          <Link href="https://github.com/Gekkotron/nidoo" className={styles.ctaText}>
+          <Link href="https://github.com/Gekkotron/Nidoo" className={styles.ctaText}>
             View the source <span aria-hidden="true">↗</span>
           </Link>
         </div>

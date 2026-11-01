@@ -261,7 +261,7 @@ pub fn GridDayCard() -> impl IntoView {
         Some(Err(HistoryApiError::Unavailable)) => view! {
             <p class="energy-day__empty">
                 {word(lang(), EnergyText::HistoryOff)} " "
-                <a href="https://gekkotron.github.io/nidoo/docs/users/history">
+                <a href="https://gekkotron.github.io/Nidoo/docs/users/history">
                     {word(lang(), EnergyText::SetItUp)}
                 </a>
             </p>

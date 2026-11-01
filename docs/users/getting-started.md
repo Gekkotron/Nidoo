@@ -9,8 +9,8 @@ You need a Linux host with Docker and its Compose plugin. Zigbee2MQTT can run on
 ## Install
 
 ```sh
-git clone https://github.com/Gekkotron/nidoo.git
-cd nidoo
+git clone https://github.com/Gekkotron/Nidoo.git
+cd Nidoo
 docker compose up -d --build
 docker compose logs hub
 ```

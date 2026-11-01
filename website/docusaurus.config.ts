@@ -8,10 +8,10 @@ const config: Config = {
   favicon: 'img/favicon.svg',
 
   url: 'https://gekkotron.github.io',
-  baseUrl: '/nidoo/',
+  baseUrl: '/Nidoo/',
 
   organizationName: 'Gekkotron',
-  projectName: 'nidoo',
+  projectName: 'Nidoo',
   trailingSlash: false,
 
   onBrokenLinks: 'throw',
@@ -28,7 +28,7 @@ const config: Config = {
   headTags: [
     {
       tagName: 'link',
-      attributes: { rel: 'apple-touch-icon', href: '/nidoo/img/apple-touch-icon.png' },
+      attributes: { rel: 'apple-touch-icon', href: '/Nidoo/img/apple-touch-icon.png' },
     },
   ],
 
@@ -41,7 +41,7 @@ const config: Config = {
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
           editUrl: ({ docPath }) =>
-            `https://github.com/Gekkotron/nidoo/edit/main/docs/${docPath}`,
+            `https://github.com/Gekkotron/Nidoo/edit/main/docs/${docPath}`,
           exclude: ['superpowers/**', '**/_*.{js,jsx,ts,tsx,md,mdx}', '**/_*/**'],
         },
         blog: false,
@@ -66,7 +66,7 @@ const config: Config = {
         { to: '/docs/category/reference', label: 'Reference', position: 'left' },
         { to: '/docs/category/contributors', label: 'Contributors', position: 'left' },
         {
-          href: 'https://github.com/Gekkotron/nidoo',
+          href: 'https://github.com/Gekkotron/Nidoo',
           label: 'GitHub',
           position: 'right',
         },
@@ -87,11 +87,11 @@ const config: Config = {
         {
           title: 'Project',
           items: [
-            { label: 'GitHub', href: 'https://github.com/Gekkotron/nidoo' },
-            { label: 'Issues', href: 'https://github.com/Gekkotron/nidoo/issues' },
+            { label: 'GitHub', href: 'https://github.com/Gekkotron/Nidoo' },
+            { label: 'Issues', href: 'https://github.com/Gekkotron/Nidoo/issues' },
             {
               label: 'License',
-              href: 'https://github.com/Gekkotron/nidoo/blob/main/LICENSE',
+              href: 'https://github.com/Gekkotron/Nidoo/blob/main/LICENSE',
             },
           ],
         },

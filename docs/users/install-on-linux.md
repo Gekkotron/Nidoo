@@ -18,8 +18,8 @@ You do not need to install a broker or a database: the stack carries both. If yo
 ## Install
 
 ```bash
-git clone https://github.com/Gekkotron/nidoo.git
-cd nidoo
+git clone https://github.com/Gekkotron/Nidoo.git
+cd Nidoo
 docker compose up -d --build
 docker compose logs hub
 ```
@@ -117,7 +117,7 @@ Want one stack in the end? [Move an existing broker and database into the stack]
 ## Upgrade
 
 ```bash
-cd nidoo   # or the folder you cloned it into
+cd Nidoo   # or the folder you cloned it into
 tools/update.sh
 ```
 
