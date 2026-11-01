@@ -85,8 +85,9 @@ RUN apt-get update \
 
 COPY --from=builder /src/target/release/nidoo /usr/local/bin/nidoo
 
-ENV NIDOO_HTTP__BIND=0.0.0.0:8081
-ENV NIDOO_DATA_DIR=/data
+# No ENV defaults: the hub's own (0.0.0.0:8081, ./data = /data from here) fit,
+# and an image NIDOO_* value would beat a user's OIKOS_* override in .env.
+WORKDIR /
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/nidoo"]
 CMD ["run"]

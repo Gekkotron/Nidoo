@@ -72,6 +72,7 @@ main() {
     echo "==> $reason: rebuilding the hub only"
     services=(hub)
   else
+    refuse_beside_own_old_containers
     echo "==> $reason: rebuilding the whole stack"
     services=()
   fi
@@ -81,6 +82,35 @@ main() {
 
   echo "==> docker compose logs --tail 20 hub"
   docker compose logs --tail 20 hub
+}
+
+# Before the Nidoo rename the bundled broker and database were named like a
+# host's own oikos-mosquitto / oikos-timescaledb, so `docker compose up` stopped
+# on the name clash. Now they are nidoo-* and would start beside the host's own
+# (crash-looping, or fighting over the ports after a reboot). Refuse when compose
+# would start such a service while a container of that old name lives outside
+# this project and no override pins the name.
+refuse_beside_own_old_containers() {
+  local services ours config name service clash=()
+  services="$(docker compose config --services 2>/dev/null || true)"
+  ours="$(docker compose ps -a --format '{{.Name}}' 2>/dev/null || true)"
+  config="$(docker compose config 2>/dev/null || true)"
+  while IFS= read -r name; do
+    case "$name" in
+      oikos-mosquitto) service=mosquitto ;;
+      oikos-timescaledb) service=timescaledb ;;
+      *) continue ;;
+    esac
+    grep -Fxq "$service" <<<"$services" || continue
+    grep -Fxq "$name" <<<"$ours" && continue
+    grep -Eq "container_name: \"?$name\"?\$" <<<"$config" && continue
+    clash+=("$name")
+  done < <(docker ps -a --format '{{.Names}}')
+  [ "${#clash[@]}" -eq 0 ] && return 0
+  echo "This host runs its own ${clash[*]} outside this stack; the whole stack would now" >&2
+  echo "start the bundled one beside it. Run tools/update.sh --hub-only (your own broker" >&2
+  echo "and database), or move them in first: docs/users/move-into-the-stack.md" >&2
+  exit 1
 }
 
 # The containers were named oikos-* before the Nidoo rename. Compose finds them

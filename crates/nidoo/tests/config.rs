@@ -602,3 +602,27 @@ mod solcast {
         assert_eq!(cfg.validate(), Ok(()));
     }
 }
+
+/// The image sets no env var of its own: a `NIDOO_*` default would beat a user's `OIKOS_*`
+/// override in `.env` (NIDOO wins), and an `OIKOS_*` one would log the deprecation warning on
+/// every start. The defaults (`0.0.0.0:8081`, `./data` under `WORKDIR /`) already fit the image.
+#[test]
+fn dockerfile_sets_no_env_that_shadows_a_user_override() {
+    let dockerfile =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Dockerfile")).unwrap();
+    let runtime = dockerfile
+        .split_once("AS runtime")
+        .expect("a runtime stage")
+        .1;
+    for line in runtime.lines().map(str::trim) {
+        assert!(
+            !(line.starts_with("ENV NIDOO_") || line.starts_with("ENV OIKOS_")),
+            "the image sets {line}"
+        );
+    }
+    assert!(
+        runtime.lines().any(|l| l.trim() == "WORKDIR /"),
+        "the runtime stage must run from / so the default ./data is /data"
+    );
+    assert_eq!(Config::default().http.bind, "0.0.0.0:8081");
+}

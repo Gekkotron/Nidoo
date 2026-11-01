@@ -38,7 +38,13 @@ STUB
 echo "docker \$*" >> "$LOG"
 case "\${1:-} \${2:-}" in
   "compose ps") for n in \${STUB_COMPOSE_PS:-}; do echo "\$n"; done ;;
-  "compose config") printf '%b' "\${STUB_COMPOSE_CONFIG:-}" ;;
+  "compose config")
+    if [ "\${3:-}" = --services ]; then
+      for n in \${STUB_COMPOSE_SERVICES:-}; do echo "\$n"; done
+    else
+      printf '%b' "\${STUB_COMPOSE_CONFIG:-}"
+    fi
+    ;;
   "ps "*) for n in \${STUB_DOCKER_PS:-}; do echo "\$n"; done ;;
 esac
 STUB
@@ -225,15 +231,39 @@ test_update_keeps_old_names_the_override_still_sets() {
   assert_log "$ALL"
 }
 
-test_update_hub_only_leaves_own_db_alone() {
+# The house runs its own database container under the old name, in another compose project.
+# Before the rename the bundled one clashed on that name and never started; now --all would
+# start nidoo-timescaledb beside it, so the update refuses and points at --hub-only.
+test_all_refuses_beside_own_old_named_db() {
   setup
   mkdir -p "$T/repo/data"
   echo '{}' > "$T/repo/data/hub.json"
-  printf 'services:\n  mosquitto: !reset {}\n  timescaledb: !reset {}\n' > "$T/repo/compose.override.yml"
-  # The house runs its own database container under the old name, outside this project.
-  STUB_DOCKER_PS="oikos-timescaledb" run_update
-  ! grep -q 'oikos-timescaledb' "$LOG" || fail "the host's own oikos-timescaledb was touched"
-  assert_no_log "docker compose build"
+  echo 'services: {}' > "$T/repo/compose.override.yml"
+  OUT="$(cd "$T/repo" && STUB_DOCKER_PS="oikos-timescaledb" STUB_COMPOSE_SERVICES="init mosquitto timescaledb hub" \
+    PATH="$T/bin:$PATH" bash tools/update.sh 2>&1)" && fail "update.sh went ahead beside the host's own oikos-timescaledb"
+  assert_out "oikos-timescaledb"
+  assert_out "--hub-only"
+  ! grep -Eq '^docker (stop|rm|rename|compose (up|build))' "$LOG" || fail "changed something before refusing"
+}
+
+test_hub_only_beside_own_old_named_db() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/hub.json"
+  echo 'services: {}' > "$T/repo/compose.override.yml"
+  STUB_DOCKER_PS="oikos-timescaledb oikos-mosquitto" STUB_COMPOSE_SERVICES="init mosquitto timescaledb hub" \
+    run_update --hub-only
+  ! grep -Eq '^docker (stop|rm|rename).*oikos-(timescaledb|mosquitto)' "$LOG" || fail "touched the host's own containers"
+  assert_log "$HUB"
+}
+
+test_all_goes_ahead_when_the_override_drops_the_bundled_db() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/hub.json"
+  echo 'services: {}' > "$T/repo/compose.override.yml"
+  STUB_DOCKER_PS="oikos-timescaledb oikos-mosquitto" STUB_COMPOSE_SERVICES="init hub" run_update
+  ! grep -Eq '^docker (stop|rm|rename).*oikos-(timescaledb|mosquitto)' "$LOG" || fail "touched the host's own containers"
   assert_log "$ALL"
 }
 
@@ -257,7 +287,8 @@ test_rejects_bad_arguments() {
 for t in test_moves_legacy_files test_never_overwrites_data test_bundled_runs_everything \
   test_override_runs_everything test_flags_win test_warns_about_old_key_paths test_no_old_key_warning_once_hub_json_exists test_reexecs_after_pull \
   test_uses_sudo_when_data_is_not_writable test_update_recreates_renamed_containers \
-  test_update_hub_only_removes_only_the_old_hub test_update_hub_only_leaves_own_db_alone \
+  test_update_hub_only_removes_only_the_old_hub test_all_refuses_beside_own_old_named_db \
+  test_hub_only_beside_own_old_named_db test_all_goes_ahead_when_the_override_drops_the_bundled_db \
   test_update_keeps_old_names_the_override_still_sets \
   test_no_switchover_without_old_containers test_rejects_bad_arguments; do
   echo "==> $t"

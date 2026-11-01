@@ -82,7 +82,7 @@ No screen. Set with `NIDOO_HTTP__BIND`, `NIDOO_LOG__LEVEL` and `NIDOO_LOG__JSON`
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `http.bind` | `"0.0.0.0:8081"` | Address the HTTP server listens on: the [HTTP API](http-api.md), the WebSocket, the MCP server and the web UI share it. 8081 sits next to Jeedom on 80 and clear of Zigbee2MQTT on 8080 on the same server. The Docker image sets it with `NIDOO_HTTP__BIND`. |
+| `http.bind` | `"0.0.0.0:8081"` | Address the HTTP server listens on: the [HTTP API](http-api.md), the WebSocket, the MCP server and the web UI share it. 8081 sits next to Jeedom on 80 and clear of Zigbee2MQTT on 8080 on the same server. The Docker image keeps this default; change it with `NIDOO_HTTP__BIND` in `.env`. |
 | `log.level` | `"info"` | A `tracing` filter: a level (`debug`) or a directive list (`nidoo=debug,rumqttc=warn`). `RUST_LOG` wins when it is set and valid; if it is unset or invalid, `log.level` applies, and if that is invalid too, the level is `info`. |
 | `log.json` | `false` | `true` writes JSON lines; otherwise a human-readable format. Logs go to stderr. |
 

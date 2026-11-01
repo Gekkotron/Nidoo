@@ -101,6 +101,8 @@ If your own database or broker container is already named `nidoo-timescaledb` or
 Error response from daemon: Conflict. The container name "/nidoo-timescaledb" is already in use by container "<id>". You have to remove (or rename) that container to be able to reuse that name.
 ```
 
+If they are named `oikos-timescaledb` or `oikos-mosquitto`, the stack's names before the rename, Docker no longer stops: a plain `docker compose up` starts the bundled `nidoo-*` ones beside yours, where they restart in a loop or take the ports after a reboot. `tools/update.sh` refuses the whole stack in that case and points here. Either way, the answer is the same.
+
 That container is your own database (or broker), not a leftover from the stack. **Do not remove or rename it** as Docker suggests. The bundled service would then start on an empty `data/timescaledb/`, and your history would be left in a volume nothing uses any more, where a `docker volume prune` deletes it for good. Start the hub alone instead:
 
 ```bash
@@ -130,7 +132,7 @@ The script runs `git pull --rebase`, then re-runs itself from the pulled version
 
 Force one with `tools/update.sh --all` or `tools/update.sh --hub-only`. If you run your own broker and database but have not finished the first start yet, there is no `hub.json` or `oikos.toml` to go by, so the script would pick the full stack: use `tools/update.sh --hub-only`. It ends by printing the last lines of the hub's log.
 
-The containers used to be named `oikos-hub`, `oikos-mosquitto` and `oikos-timescaledb`; they are now `nidoo-*`. The first upgrade past that change builds the images, stops the old containers of this stack gracefully and starts them again under the new names, on the same data. It never touches a container of another project or one started by hand, even with an old name, and keeps any old name your `compose.override.yml` still sets. `OIKOS_*` variables in `.env` keep working; the hub logs a warning until you rename them to `NIDOO_*`.
+The containers used to be named `oikos-hub`, `oikos-mosquitto` and `oikos-timescaledb`; they are now `nidoo-*`. The first upgrade past that change builds the images, stops the old containers of this stack gracefully and starts them again under the new names, on the same data. It never touches a container of another project or one started by hand, even with an old name, and keeps any old name your `compose.override.yml` still sets. When your own broker or database is named `oikos-mosquitto` or `oikos-timescaledb`, the whole stack would start the bundled ones beside it, so the script refuses and asks for `--hub-only` (see [If Docker says a container name is already in use](#if-docker-says-a-container-name-is-already-in-use)). `OIKOS_*` variables in `.env` keep working; the hub logs a warning until you rename them to `NIDOO_*`.
 
 ## Upgrading from `oikos.toml`
 
