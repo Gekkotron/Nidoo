@@ -9,6 +9,7 @@ use oikos_core::discovery::{
     expand_device_based, naming, parse,
 };
 use oikos_core::model::{AlarmMode, Bindings, Entity, EntityCategory, Kind, UNASSIGNED_AREA};
+use oikos_core::registry::RegistryConfig;
 use serde_json::{Value, json};
 
 fn strings(items: &[&str]) -> Vec<String> {
@@ -36,6 +37,26 @@ fn parse_fixture(file_stem: &str) -> Entity {
         Ok(Parsed::Entity(entity)) => *entity,
         other => panic!("{file_stem} did not parse as an entity: {other:?}"),
     }
+}
+
+#[test]
+fn network_subtree_is_reserved() {
+    let prefixes = strings(&["oikos"]);
+    let reserved = RegistryConfig::default_reserved();
+    for topic in ["oikos/network/nas", "oikos/network/nas/avail"] {
+        assert_eq!(
+            classify(topic, &prefixes, &reserved),
+            TopicClass::Reserved("network".into())
+        );
+    }
+    assert!(matches!(
+        classify(
+            "oikos/binary_sensor/network/nas/config",
+            &prefixes,
+            &reserved
+        ),
+        TopicClass::Discovery(_)
+    ));
 }
 
 #[test]
