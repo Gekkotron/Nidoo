@@ -3,3 +3,5 @@
 path:crates/*/tests/fixtures/**   # recorded MQTT payloads, replayed as captured
 OikosPush                          # the legacy push service this hub replaced
 OikosHistory                       # the legacy history service whose API shapes the app still uses
+path:crates/nidoo/src/migrate/**       # throwaway oikos to nidoo migration; removed in Task 12
+path:crates/nidoo/tests/migrate.rs        # same; removed in Task 12

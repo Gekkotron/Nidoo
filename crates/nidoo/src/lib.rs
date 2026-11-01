@@ -17,6 +17,7 @@ pub mod hub;
 pub mod logging;
 pub mod mcp;
 pub mod media;
+pub mod migrate;
 pub mod mqtt;
 pub mod network;
 pub mod pictures;
