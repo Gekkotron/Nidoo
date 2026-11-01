@@ -302,12 +302,12 @@ body {
   user-select: none;
 }
 
-/* The Easter egg: the bird shakes while it sings. */
+/* Double-clicking the logo: the bird shakes while it sings. */
 .sidebar__logo--singing {
-  animation: easteregg 0.55s ease-in-out 2;
+  animation: bird-shake 0.55s ease-in-out 2;
 }
 
-@keyframes easteregg {
+@keyframes bird-shake {
   0%,
   100% {
     transform: rotate(0);

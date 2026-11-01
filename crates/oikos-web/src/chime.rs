@@ -1,4 +1,4 @@
-//! The logo's Easter egg: double-click the bird and it sings.
+//! Double-click the logo and the bird sings.
 //!
 //! A short songbird call, synthesized with Web Audio: two rising whistles ("tsee-tseet") then a
 //! quick trill. Every note is one sine gliding between two pitches under its own envelope.
@@ -81,10 +81,10 @@ pub fn notes() -> Vec<Note> {
     WHISTLES.into_iter().chain(trill).collect()
 }
 
-/// Plays the call. Audio is a nicety: any failure is silent.
-pub fn play() {
+/// Sings the call. Audio is a nicety: any failure is silent.
+pub fn ring() {
     #[cfg(target_arch = "wasm32")]
-    let _ = imp::play();
+    let _ = imp::ring();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -96,7 +96,7 @@ mod imp {
     /// The envelope starts and ends here: exponential ramps cannot reach zero.
     const SILENT: f32 = 0.0001;
 
-    pub fn play() -> Result<(), JsValue> {
+    pub fn ring() -> Result<(), JsValue> {
         let ctx = AudioContext::new()?;
         let t0 = ctx.current_time() + 0.02;
         for note in notes() {

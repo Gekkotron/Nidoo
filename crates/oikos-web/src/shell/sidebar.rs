@@ -105,10 +105,10 @@ pub fn Sidebar(
         });
     };
 
-    // Easter egg: double-clicking the logo makes the bird sing and gives it a little shake.
+    // Double-clicking the logo makes the bird sing and gives it a little shake.
     let singing = RwSignal::new(false);
     let sing = move |_| {
-        crate::easteregg::play();
+        crate::chime::ring();
         singing.set(true);
         gloo_timers::callback::Timeout::new(1200, move || {
             singing.try_set(false);
