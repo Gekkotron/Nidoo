@@ -302,12 +302,12 @@ body {
   user-select: none;
 }
 
-/* The doorbell Easter egg: the house shakes while it rings. */
-.sidebar__logo--ringing {
-  animation: doorbell 0.55s ease-in-out 2;
+/* The Easter egg: the bird shakes while it sings. */
+.sidebar__logo--singing {
+  animation: easteregg 0.55s ease-in-out 2;
 }
 
-@keyframes doorbell {
+@keyframes easteregg {
   0%,
   100% {
     transform: rotate(0);
@@ -331,7 +331,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar__logo--ringing {
+  .sidebar__logo--singing {
     animation: none;
   }
 }
