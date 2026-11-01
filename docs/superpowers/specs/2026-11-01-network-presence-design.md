@@ -114,8 +114,9 @@ All text in English and French, like every screen.
 The live hub runs in Docker on a Linux server. An unprivileged ICMP echo needs the kernel's
 `net.ipv4.ping_group_range` to include the process's group; current Docker sets it wide open by default, older
 setups may not. If the socket cannot be opened, the hub logs it once at start, marks every watch unavailable and
-shows the message above. The docs page gives the one-line fix (the `sysctls` entry in `compose.yml`, or
-`cap_add: NET_RAW`).
+shows the message above. The hub service uses host networking, so the fix is on the host:
+`sysctl net.ipv4.ping_group_range="0 2147483647"` (a container `sysctls` entry does not apply). The hub tries an
+unprivileged ICMP socket first and a raw one (Docker grants `NET_RAW` by default) second.
 
 ## Left to the builder
 
