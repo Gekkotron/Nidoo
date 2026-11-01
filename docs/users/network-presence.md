@@ -39,13 +39,13 @@ Until the first verdict, nothing is published, and the State reads **waiting for
 
 ## Use it in a flow
 
-A **When** card on `network_<id>` with the value `off` fires when the host disconnects:
+A **When** card on `network_<id>` with the value off fires when the host disconnects. A connectivity sensor's value is a boolean, so in JSON it is `false`:
 
 ```json
 {
   "id": "nas_down", "name": "NAS offline", "enabled": true, "mode": "restart",
   "nodes": [
-    { "id": "gone", "type": "trigger.state", "params": { "entity": "network_nas", "to": "off" } },
+    { "id": "gone", "type": "trigger.state", "params": { "entity": "network_nas", "to": false } },
     { "id": "alert", "type": "notify", "params": { "title": "NAS is off the network", "severity": "warning" } }
   ],
   "edges": [
