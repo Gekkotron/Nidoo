@@ -12,6 +12,7 @@ repository = "https://github.com/Gekkotron/Oikos-os"
 [workspace.dependencies]
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 rumqttc = "0.25"
+surge-ping = "0.9"
 axum = { version = "0.8", features = ["ws", "json"] }
 rmcp = { version = "3.5", features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-io"] }
 minijinja = { version = "3", features = ["json", "builtins", "serde"] }

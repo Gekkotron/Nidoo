@@ -1,11 +1,16 @@
 //! Network watches through the hub: set, delete, list and the retained definitions.
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use futures_util::future::BoxFuture;
 use oikos_api::{ConnectionStatus, NetworkWatchSpec, WatchState};
 use oikos_core::command::Publish;
 use oikos_os::config::Config;
 use oikos_os::hub::{Hub, HubError};
+use oikos_os::network::{Probe, Prober};
 use tokio::sync::mpsc;
 
 fn network_hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
@@ -223,4 +228,171 @@ async fn standalone_area_is_written_as_override() {
     hub.set_network_watch("nas", s).await.unwrap();
     let entity = hub.entity_view("network_nas").unwrap();
     assert_eq!(entity.ui.area.as_deref(), Some("office"));
+}
+
+/// Answers from a script, then `Miss`; counts every ping.
+struct FakeProber {
+    script: Mutex<VecDeque<Probe>>,
+    calls: AtomicUsize,
+}
+
+impl FakeProber {
+    fn new(script: Vec<Probe>) -> Arc<FakeProber> {
+        Arc::new(FakeProber {
+            script: Mutex::new(script.into()),
+            calls: AtomicUsize::new(0),
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl Prober for FakeProber {
+    fn probe<'a>(&'a self, _host: &'a str, _timeout: Duration) -> BoxFuture<'a, Probe> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let next = self
+            .script
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Probe::Miss);
+        Box::pin(async move { next })
+    }
+}
+
+const REPLY: Probe = Probe::Reply(Duration::from_millis(3));
+
+/// Lets the paused clock run for `secs` seconds, giving the loops time to act each second.
+async fn run_for(secs: u64) {
+    for _ in 0..secs {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+fn payloads(published: &[Publish], topic: &str) -> Vec<String> {
+    published
+        .iter()
+        .filter(|p| p.topic == topic)
+        .map(|p| p.payload.clone())
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn three_misses_publish_off_once() {
+    let (hub, mut rx) = network_hub();
+    let prober = FakeProber::new(vec![REPLY, Probe::Miss, Probe::Miss, Probe::Miss]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    run_for(200).await;
+    let published = drain(&mut rx);
+    assert_eq!(payloads(&published, "oikos/network/nas"), ["ON", "OFF"]);
+    let listed = hub.list_network_watches().unwrap();
+    assert_eq!(listed[0].status.state, WatchState::Disconnected);
+}
+
+#[tokio::test(start_paused = true)]
+async fn restart_publishes_nothing_before_the_first_verdict() {
+    let (hub, mut rx) = network_hub();
+    let prober = FakeProber::new(vec![Probe::Miss, Probe::Miss]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    while prober.calls() < 2 {
+        run_for(1).await;
+    }
+    run_for(1).await;
+    assert_eq!(prober.calls(), 2);
+    let published = drain(&mut rx);
+    assert!(payloads(&published, "oikos/network/nas").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn cannot_ping_touches_only_availability() {
+    let (hub, mut rx) = network_hub();
+    let prober = FakeProber::new(vec![REPLY, Probe::CannotPing("no socket".into()), REPLY]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    drain(&mut rx);
+    let mut states = Vec::new();
+    let mut avails = Vec::new();
+    let mut saw_cannot_ping = false;
+    for _ in 0..100 {
+        run_for(1).await;
+        let published = drain(&mut rx);
+        states.extend(payloads(&published, "oikos/network/nas"));
+        avails.extend(payloads(&published, "oikos/network/nas/avail"));
+        saw_cannot_ping |=
+            hub.list_network_watches().unwrap()[0].status.state == WatchState::CannotPing;
+    }
+    assert_eq!(states, ["ON"]);
+    assert_eq!(avails, ["online", "offline", "online"]);
+    assert!(saw_cannot_ping);
+}
+
+#[tokio::test(start_paused = true)]
+async fn pausing_stops_the_loop_and_marks_offline() {
+    let (hub, mut rx) = network_hub();
+    let prober = FakeProber::new(vec![REPLY; 50]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    run_for(125).await;
+    assert!(prober.calls() >= 3);
+    let mut paused = spec("nas.local");
+    paused.enabled = false;
+    hub.set_network_watch("nas", paused).await.unwrap();
+    run_for(2).await;
+    drain(&mut rx);
+    let calls = prober.calls();
+    run_for(150).await;
+    assert_eq!(prober.calls(), calls);
+    let published = drain(&mut rx);
+    assert!(payloads(&published, "oikos/network/nas").is_empty());
+    let listed = hub.list_network_watches().unwrap();
+    assert_eq!(listed[0].status.state, WatchState::Paused);
+}
+
+#[tokio::test(start_paused = true)]
+async fn deleting_stops_the_loop() {
+    let (hub, _rx) = network_hub();
+    let prober = FakeProber::new(vec![REPLY; 50]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    run_for(65).await;
+    hub.delete_network_watch("nas").await.unwrap();
+    run_for(2).await;
+    let calls = prober.calls();
+    run_for(150).await;
+    assert_eq!(prober.calls(), calls);
+}
+
+#[tokio::test(start_paused = true)]
+async fn interval_change_restarts_the_loop() {
+    let (hub, _rx) = network_hub();
+    let prober = FakeProber::new(vec![REPLY; 100]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    run_for(10).await;
+    let mut faster = spec("nas.local");
+    faster.interval_s = 10;
+    hub.set_network_watch("nas", faster).await.unwrap();
+    run_for(2).await;
+    let before = prober.calls();
+    run_for(100).await;
+    assert!(prober.calls() - before >= 8, "{}", prober.calls() - before);
 }

@@ -4,9 +4,12 @@
 
 pub mod discovery;
 mod hub;
+pub mod probe;
+mod runner;
 pub mod store;
 pub mod topics;
 pub mod tracker;
 
+pub use probe::{IcmpProber, Prober};
 pub use store::NetworkStore;
 pub use tracker::{MISSES, Probe, Tracker, Verdict};

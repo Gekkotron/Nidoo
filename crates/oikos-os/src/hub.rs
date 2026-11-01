@@ -2072,13 +2072,11 @@ impl Hub {
     }
 
     /// A receiver of the network store revision.
-    #[allow(dead_code)]
     pub(crate) fn subscribe_network_rev(&self) -> watch::Receiver<u64> {
         self.network_rev.subscribe()
     }
 
     /// Records the last verdict of watch `id`.
-    #[allow(dead_code)]
     pub(crate) fn set_network_status(&self, id: &str, status: WatchStatus) {
         self.network_status
             .lock()
