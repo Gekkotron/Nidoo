@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oikos_api::{
-    CommandResponse, DeviceView, EntityView, GridDay, GroupView, HomeSettings, WeatherView,
+    CommandResponse, DeviceView, EntityView, GridDay, GroupView, HomeSettings, NetworkWatchView,
+    WeatherView,
 };
 use oikos_core::flow::{notify_channel_error, notify_severity_error};
 use oikos_core::model::{AreasDocument, SwitchType};
@@ -17,12 +18,13 @@ use serde_json::Value;
 
 use super::params::{
     AlertList, AreaList, BridgeStatus, ClearOverrideParams, DEFAULT_ALERTS_LIMIT, DEFAULT_LIMIT,
-    DEFAULT_SEARCH_LIMIT, DeleteGroupParams, DeleteVirtualParams, Deleted, DeviceList,
-    EntityDetailView, EntityPage, GetEntityParams, GetGridDayParams, GetHistoryParams,
-    GetSettingsParams, GroupList, HistoryAnswer, HistoryWhat, IgnoredList, Include,
-    ListAlertsParams, ListDevicesParams, ListEntitiesParams, MAX_LIMIT, SearchParams, SearchResult,
-    SendCommandParams, SendNotificationParams, Sent, SetAreasParams, SetGroupParams,
-    SetHomeSettingsParams, SetOverrideParams, SetSettingsParams, SetVirtualParams,
+    DEFAULT_SEARCH_LIMIT, DeleteGroupParams, DeleteNetworkWatchParams, DeleteVirtualParams,
+    Deleted, DeviceList, EntityDetailView, EntityPage, GetEntityParams, GetGridDayParams,
+    GetHistoryParams, GetSettingsParams, GroupList, HistoryAnswer, HistoryWhat, IgnoredList,
+    Include, ListAlertsParams, ListDevicesParams, ListEntitiesParams, MAX_LIMIT, NetworkWatchList,
+    SearchParams, SearchResult, SendCommandParams, SendNotificationParams, Sent, SetAreasParams,
+    SetGroupParams, SetHomeSettingsParams, SetNetworkWatchParams, SetOverrideParams,
+    SetSettingsParams, SetVirtualParams,
 };
 use super::{OikosMcp, ToolError};
 use crate::history::query as history_query;
@@ -385,6 +387,39 @@ impl OikosMcp {
     ) -> ToolResult<Deleted> {
         log_write("delete_group", &params);
         self.hub.delete_group(&params.id).await?;
+        Ok(Json(Deleted { id: params.id }))
+    }
+
+    /// Creates or replaces a network watch: a device pinged by the hub, presented as the
+    /// `binary_sensor` `network_<id>` (connected after one reply, disconnected after three missed
+    /// pings). Its definition is retained on `oikos/network/<id>/definition`.
+    #[tool(name = "set_network_watch", annotations(idempotent_hint = true))]
+    async fn set_network_watch(
+        &self,
+        Parameters(params): Parameters<SetNetworkWatchParams>,
+    ) -> ToolResult<NetworkWatchView> {
+        log_write("set_network_watch", &params);
+        Ok(Json(
+            self.hub.set_network_watch(&params.id, params.spec).await?,
+        ))
+    }
+
+    /// Every network watch the hub stores, with its entity and live status, sorted by id.
+    #[tool(name = "list_network_watches", annotations(read_only_hint = true))]
+    async fn list_network_watches(&self) -> ToolResult<NetworkWatchList> {
+        Ok(Json(NetworkWatchList {
+            watches: self.hub.list_network_watches()?,
+        }))
+    }
+
+    /// Removes a network watch and clears what the broker retained for it.
+    #[tool(name = "delete_network_watch", annotations(idempotent_hint = true))]
+    async fn delete_network_watch(
+        &self,
+        Parameters(params): Parameters<DeleteNetworkWatchParams>,
+    ) -> ToolResult<Deleted> {
+        log_write("delete_network_watch", &params);
+        self.hub.delete_network_watch(&params.id).await?;
         Ok(Json(Deleted { id: params.id }))
     }
 

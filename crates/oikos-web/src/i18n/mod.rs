@@ -14,6 +14,7 @@ pub mod format;
 pub mod groups;
 pub mod history;
 mod home;
+mod network;
 pub mod picker;
 pub mod security;
 pub mod settings;
@@ -26,6 +27,7 @@ pub use alarm::*;
 pub use ambiances::*;
 pub use dashboards::*;
 pub use home::*;
+pub use network::*;
 pub use solar::*;
 pub use weather::*;
 
@@ -234,6 +236,7 @@ pub enum Key {
     Devices,
     Appearance,
     Alarm,
+    NetworkPresence,
     Zigbee2mqtt,
     Broker,
     AiAssistants,
@@ -377,6 +380,7 @@ impl Key {
         Key::Devices,
         Key::Appearance,
         Key::Alarm,
+        Key::NetworkPresence,
         Key::Zigbee2mqtt,
         Key::Broker,
         Key::AiAssistants,
@@ -539,6 +543,7 @@ pub fn text(lang: Lang, key: Key) -> &'static str {
         Key::Devices => ("Devices", "Appareils"),
         Key::Appearance => ("Appearance", "Apparence"),
         Key::Alarm => ("Alarm", "Alarme"),
+        Key::NetworkPresence => ("Network presence", "Présence réseau"),
         Key::Zigbee2mqtt => ("Zigbee2MQTT", "Zigbee2MQTT"),
         Key::Broker => ("Broker", "Broker MQTT"),
         Key::AiAssistants => ("AI assistants (MCP)", "Assistants IA (MCP)"),
@@ -797,6 +802,7 @@ mod tests {
             | Key::Devices
             | Key::Appearance
             | Key::Alarm
+            | Key::NetworkPresence
             | Key::Zigbee2mqtt
             | Key::Broker
             | Key::AiAssistants
@@ -860,7 +866,7 @@ mod tests {
         for &k in Key::ALL {
             assert!(listed(k));
         }
-        assert_eq!(Key::ALL.len(), 138);
+        assert_eq!(Key::ALL.len(), 139);
     }
     #[test]
     fn every_key_differs_between_languages() {

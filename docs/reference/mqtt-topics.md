@@ -34,6 +34,10 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | `<first discovery prefix>/group/<id>/definition` | in, out | yes | `{kind, name, members, hideMembers}` | `[groups] enabled` |
 | `<first discovery prefix>/group/<id>/avail` | out | yes | `online` | `[groups] enabled` |
 | `<first discovery prefix>/group/_migrated` | in, out | yes | `1`, the marker that the one-time room-group migration ran | `[groups] enabled` |
+| `<first discovery prefix>/binary_sensor/network/<id>/config` | out | yes | Discovery of a network watch entity | `[network] enabled`, `[topics] discovery_prefixes` |
+| `<first discovery prefix>/network/<id>` | out | yes | `ON` (connected) or `OFF` (disconnected); nothing until the first ping verdict | `[network] enabled` |
+| `<first discovery prefix>/network/<id>/definition` | in, out | yes | `{name, host, intervalS, enabled, area, device}` | `[network] enabled` |
+| `<first discovery prefix>/network/<id>/avail` | out | yes | `online`, or `offline` while the watch is paused or the hub cannot ping | `[network] enabled` |
 | `oikos/push/notification/<source>` | in | no | An alert, v1 or legacy payload | `[push] prefix` |
 | `oikos/push/tokens/<installId>` | in; out to clear | yes | `{token, device_name, lang, updated_at}`; empty unregisters. The hub publishes an empty payload to clear a dead token | `[push] prefix` |
 | `oikos/push/responses` | in (climate and alarm), out | no | `{id, action, install_id, ts}`, a tapped alert button | `[push] prefix` |

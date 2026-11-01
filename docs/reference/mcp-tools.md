@@ -4,7 +4,7 @@ sidebar_position: 3
 description: The 43 tools and the one resource of the hub's MCP server, with their arguments.
 ---
 
-The MCP server is at `http://<host>:8081/mcp` (streamable HTTP, stateful sessions) and offers **forty-three tools** and **one resource**. It has the same trust model as the REST API on the same port: LAN-only, no authentication in v1. The tools are defined in [`crates/oikos-os/src/mcp`](https://github.com/Gekkotron/Oikos-os/tree/main/crates/oikos-os/src/mcp). For setup in Claude Code, Codex and Claude Desktop, see [Talking to the house (MCP)](../users/assistants-mcp.md).
+The MCP server is at `http://<host>:8081/mcp` (streamable HTTP, stateful sessions) and offers **fifty tools** and **one resource**. It has the same trust model as the REST API on the same port: LAN-only, no authentication in v1. The tools are defined in [`crates/oikos-os/src/mcp`](https://github.com/Gekkotron/Oikos-os/tree/main/crates/oikos-os/src/mcp). For setup in Claude Code, Codex and Claude Desktop, see [Talking to the house (MCP)](../users/assistants-mcp.md).
 
 A failed tool call answers in-band (`isError: true` with the reason as text) so the assistant can retry with better arguments. A refused publish (broker link down) is the same in-band error.
 
@@ -70,6 +70,16 @@ Groups need `groups.enabled` in the advanced settings ([Settings reference](conf
 | `list_groups` | Every group the hub stores, sorted by id, with its members and the flows that use it. |
 | `set_group` | Creates or replaces a group, the entity `group_<id>`. Args: `id` (1 to 48 characters of `a-z`, `0-9`, `_`), `spec` (`kind`, `name`, `members`, optional `hideMembers`, true by default). Members must be of the group's kind and cannot be groups. |
 | `delete_group` | Removes a group and clears what the broker retained for it. The UI override is kept. Args: `id`. |
+
+## Network presence
+
+Network presence needs `network.enabled`, on by default; otherwise these tools answer `network presence disabled`.
+
+| Tool | What it does |
+| --- | --- |
+| `list_network_watches` | Every network watch the hub stores, sorted by id, with its entity and live status. |
+| `set_network_watch` | Creates or replaces a watch, the entity `network_<id>`. Args: `id` (1 to 48 characters of `a-z`, `0-9`, `_`; the device id for a watch on a device), `spec` (`name`, `host`, optional `intervalS` 10 to 600, `enabled`, `area`, `device`). A device has at most one watch. |
+| `delete_network_watch` | Removes a watch and clears what the broker retained for it. Args: `id`. |
 
 ## Virtual entities
 
@@ -153,4 +163,4 @@ The native alarm (optional, off by default). Its settings are a whole document a
 
 ## Count
 
-Twenty-four tools live in `tools.rs` (house, overrides, command, groups, virtual, history, notifications, weather, solar, home settings), six in `flow_tools.rs`, eleven in `climate_tools.rs`, four in `ambiance_tools.rs` and two in `alarm_tools.rs`: 24 + 6 + 11 + 4 + 2 = 47.
+Twenty-seven tools live in `tools.rs` (house, overrides, command, groups, network, virtual, history, notifications, weather, solar, home settings), six in `flow_tools.rs`, eleven in `climate_tools.rs`, four in `ambiance_tools.rs` and two in `alarm_tools.rs`: 27 + 6 + 11 + 4 + 2 = 50.

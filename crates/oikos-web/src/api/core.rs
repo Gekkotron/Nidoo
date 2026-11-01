@@ -3,8 +3,8 @@
 use gloo_net::http::{Request, Response};
 use oikos_api::{
     ApiError, CamerasView, CommandResponse, Dashboard, DashboardReorder, DashboardView, EntityView,
-    FlowView, FlowWriteOutcome, FlowsConfigView, GroupSpec, GroupView, OverridePatch, RunView,
-    SchedulePreview,
+    FlowView, FlowWriteOutcome, FlowsConfigView, GroupSpec, GroupView, NetworkWatchSpec,
+    NetworkWatchView, OverridePatch, RunView, SchedulePreview,
 };
 use oikos_core::flow::Flow;
 use oikos_core::model::{AreasDocument, Command};
@@ -192,6 +192,29 @@ pub async fn set_group(id: &str, spec: &GroupSpec) -> Result<GroupView, ApiError
 /// Deletes group `id` on the hub.
 pub async fn delete_group(id: &str) -> Result<(), ApiError> {
     let url = format!("/api/v1/groups/{}", encode_id(id));
+    check(Request::delete(&url).build(), None).await?;
+    Ok(())
+}
+
+/// Every network watch the hub holds.
+pub async fn list_network_watches() -> Result<Vec<NetworkWatchView>, ApiError> {
+    let response = check(Request::get("/api/v1/network").build(), None).await?;
+    read_json(response).await
+}
+
+/// Creates or replaces watch `id` from `spec`; the reply is the watch as the hub now has it.
+pub async fn set_network_watch(
+    id: &str,
+    spec: &NetworkWatchSpec,
+) -> Result<NetworkWatchView, ApiError> {
+    let url = format!("/api/v1/network/{}", encode_id(id));
+    let response = check(Request::put(&url).json(spec), None).await?;
+    read_json(response).await
+}
+
+/// Deletes watch `id` on the hub.
+pub async fn delete_network_watch(id: &str) -> Result<(), ApiError> {
+    let url = format!("/api/v1/network/{}", encode_id(id));
     check(Request::delete(&url).build(), None).await?;
     Ok(())
 }

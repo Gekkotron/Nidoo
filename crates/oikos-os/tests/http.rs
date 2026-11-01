@@ -2348,3 +2348,48 @@ async fn put_alarm_settings_validates() {
         .expect("PUT");
     assert_eq!(ok.status(), StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn http_network_round_trips() {
+    let server = Server::start().await;
+    server.online();
+    let url = server.url("/api/v1/network/nas");
+    let res = server
+        .client
+        .put(&url)
+        .json(&json!({ "name": "NAS", "host": "nas.local" }))
+        .send()
+        .await
+        .expect("PUT");
+    assert_eq!(res.status(), StatusCode::OK);
+    let view: Value = res.json().await.expect("json");
+    assert_eq!(view["entity"], "network_nas");
+
+    let list: Value = server
+        .get("/api/v1/network")
+        .await
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(list.as_array().map(Vec::len), Some(1));
+    assert_eq!(list[0]["id"], "nas");
+
+    let gone = server.client.delete(&url).send().await.expect("DELETE");
+    assert_eq!(gone.status(), StatusCode::NO_CONTENT);
+    let again = server.client.delete(&url).send().await.expect("DELETE");
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn http_network_bad_interval_is_422() {
+    let server = Server::start().await;
+    server.online();
+    let res = server
+        .client
+        .put(server.url("/api/v1/network/nas"))
+        .json(&json!({ "name": "NAS", "host": "nas.local", "intervalS": 5 }))
+        .send()
+        .await
+        .expect("PUT");
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}

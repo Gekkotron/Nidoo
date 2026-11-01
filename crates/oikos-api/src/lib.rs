@@ -12,6 +12,7 @@ mod flows;
 mod groups;
 mod history;
 mod home;
+mod network;
 mod setup;
 mod snapshot;
 mod solar;
@@ -43,6 +44,7 @@ pub use history::{
     HistoryToday, LastChange, LastChangeItem,
 };
 pub use home::{EnergyView, HomeSettings, OffPeakDevice, OffPeakEntry, OffPeakWindow};
+pub use network::{NetworkWatchSpec, NetworkWatchView, WatchState, WatchStatus};
 pub use setup::{
     DatabaseInput, DatabaseView, FrigateInput, FrigateView, GeoPlace, Location, MqttInput,
     MqttView, PushInput, PushView, Secret, SecretView, SetupStatus, SetupStep, SolcastInput,

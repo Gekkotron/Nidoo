@@ -86,6 +86,18 @@ Groups need `groups.enabled` in the advanced settings ([Settings reference](conf
 
 The body takes `kind` (`switch`, `number`, `button` or `select`) and `name`; for a number also `min` (0), `max` (100), `step` (1) and `unit`; for a select `options` (1 to 32 distinct strings of up to 64 characters, required); `initial` is the state published when the entity is first created. The id is 1 to 48 characters of `a-z`, `0-9` and `_`.
 
+## Network presence
+
+Network presence needs `network.enabled`, on by default; while it is off every route here answers `503` with `network presence disabled`.
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/v1/network` | The stored watches, sorted by id, each as `{id, spec, entity, status}` with the live status (`waiting`, `connected`, `disconnected`, `paused` or `cannot_ping`). |
+| `PUT /api/v1/network/{id}` | Creates or replaces a watch: body `{"name", "host", "intervalS"?, "enabled"?, "area"?, "device"?}`. Returns the watch with its entity `network_<id>`. `422` for a bad id, an `intervalS` outside 10 to 600, an unknown device, an id other than the device id for a watch on a device, or a second watch for the same device; `503` while network presence is off or the broker link is down. |
+| `DELETE /api/v1/network/{id}` | Removes the watch and clears what the broker retained for it (`204`); `404` for an id that is not a watch. |
+
+The id is 1 to 48 characters of `a-z`, `0-9` and `_`. `intervalS` defaults to 30 and `enabled` to true; a paused watch keeps its definition and its entity reads offline.
+
 ## Dashboards
 
 | Route | What it does |

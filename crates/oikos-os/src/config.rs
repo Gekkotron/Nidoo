@@ -21,6 +21,7 @@ pub struct Config {
     pub automation: AutomationConfig,
     pub flows: FlowsConfig,
     pub groups: GroupsConfig,
+    pub network: NetworkConfig,
     pub climate: ClimateConfig,
     pub alarm: AlarmConfig,
     pub history: HistoryConfig,
@@ -652,6 +653,19 @@ impl FlowsConfig {
 #[serde(default)]
 pub struct GroupsConfig {
     pub enabled: bool,
+}
+
+/// Hub-level kill switch for network presence watches. On by default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct NetworkConfig {
+    pub enabled: bool,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// The climate engine's switch and the topic prefix of its retained documents. Off by default;

@@ -4,7 +4,8 @@
 use oikos_api::{
     Ambiance, AmbianceView, AreaView, BridgeView, ConnectionStatus, DeviceView, EnergyKind,
     EntityView, GroupSpec, GroupView, HistoryDaily, HistoryRange, HistorySeries, HistoryToday,
-    IgnoredView, LastChangeItem, OverridePatch, RunStatus, VirtualSpec,
+    IgnoredView, LastChangeItem, NetworkWatchSpec, NetworkWatchView, OverridePatch, RunStatus,
+    VirtualSpec,
 };
 use oikos_core::flow::Flow;
 use oikos_core::model::{Area, Command, Kind, UiOverride};
@@ -478,6 +479,30 @@ pub struct DeleteGroupParams {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct GroupList {
     pub groups: Vec<GroupView>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetNetworkWatchParams {
+    /// The id: 1 to 48 characters of `a-z`, `0-9` and `_`. The entity becomes `network_<id>`. A
+    /// watch on a device must use the device id as its id.
+    pub id: String,
+    /// The definition: `name`, `host` (name or IP to ping), `intervalS` (10 to 600, default 30),
+    /// `enabled` (false pauses it), optional `area` and `device`.
+    pub spec: NetworkWatchSpec,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteNetworkWatchParams {
+    /// The id given to `set_network_watch` (without the `network_` prefix).
+    pub id: String,
+}
+
+/// The network watches, one entry each with its entity and live status.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct NetworkWatchList {
+    pub watches: Vec<NetworkWatchView>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
