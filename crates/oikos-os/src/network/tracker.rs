@@ -89,6 +89,16 @@ impl Tracker {
         Some(value)
     }
 
+    /// The current connected value; `None` before the first verdict.
+    pub fn value(&self) -> Option<bool> {
+        self.value
+    }
+
+    /// The current availability; `None` before the first verdict.
+    pub fn available(&self) -> Option<bool> {
+        self.available
+    }
+
     /// The watch's status; a paused watch is reported by the caller.
     pub fn status(&self) -> WatchStatus {
         let state = if self.cannot_ping {

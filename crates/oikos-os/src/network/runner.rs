@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use oikos_api::{ConnectionStatus, NetworkWatchSpec};
 use oikos_core::command::Publish;
@@ -136,6 +136,9 @@ impl Hub {
         let mut ticks = interval_at(Instant::now() + jitter(every), every);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut tracker = Tracker::new();
+        let mut published_value: Option<bool> = None;
+        let mut published_available: Option<bool> = None;
+        let mut warned_publish = false;
         loop {
             ticks.tick().await;
             let probe = prober.probe(&spec.host, probe_timeout).await;
@@ -144,33 +147,49 @@ impl Hub {
             {
                 tracing::warn!(%reason, "network presence cannot ping");
             }
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-            let verdict = tracker.on_probe(&probe, now);
+            tracker.on_probe(&probe, crate::clock::now());
             let prefix = &self.discovery_prefix;
-            if let Some(value) = verdict.value {
-                self.publish_retained(state_topic(prefix, &id), if value { "ON" } else { "OFF" });
+            let mut failed = false;
+            if let Some(value) = tracker.value()
+                && published_value != Some(value)
+            {
+                let payload = if value { "ON" } else { "OFF" };
+                if self.publish_retained(state_topic(prefix, &id), payload) {
+                    published_value = Some(value);
+                } else {
+                    failed = true;
+                }
             }
-            if let Some(available) = verdict.available {
-                self.publish_retained(
-                    availability_topic(prefix, &id),
-                    if available { "online" } else { "offline" },
-                );
+            if let Some(available) = tracker.available()
+                && published_available != Some(available)
+            {
+                let payload = if available { "online" } else { "offline" };
+                if self.publish_retained(availability_topic(prefix, &id), payload) {
+                    published_available = Some(available);
+                } else {
+                    failed = true;
+                }
+            }
+            if failed {
+                if !warned_publish {
+                    warned_publish = true;
+                    tracing::warn!(%id, "network publish failed; retrying on the next ping");
+                }
+            } else {
+                warned_publish = false;
             }
             self.set_network_status(&id, tracker.status());
         }
     }
 
-    fn publish_retained(&self, topic: String, payload: &str) {
-        let result = self.publish(Publish {
-            topic: topic.clone(),
+    /// Publishes retained; false when the broker link refused it.
+    fn publish_retained(&self, topic: String, payload: &str) -> bool {
+        self.publish(Publish {
+            topic,
             payload: payload.to_owned(),
             retain: true,
-        });
-        if let Err(err) = result {
-            tracing::warn!(%topic, error = %err, "network publish failed");
-        }
+        })
+        .is_ok()
     }
 }
 

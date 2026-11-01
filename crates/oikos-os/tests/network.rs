@@ -396,3 +396,29 @@ async fn interval_change_restarts_the_loop() {
     run_for(100).await;
     assert!(prober.calls() - before >= 8, "{}", prober.calls() - before);
 }
+
+#[tokio::test(start_paused = true)]
+async fn failed_publish_is_retried() {
+    let (hub, mut rx) = network_hub();
+    let prober = FakeProber::new(vec![REPLY, Probe::Miss, Probe::Miss]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    while prober.calls() < 2 {
+        run_for(1).await;
+    }
+    hub.set_connection(ConnectionStatus::Offline {
+        reason: "test".into(),
+    });
+    while prober.calls() < 4 {
+        run_for(1).await;
+    }
+    run_for(1).await;
+    let during = drain(&mut rx);
+    assert!(!payloads(&during, "oikos/network/nas").contains(&"OFF".to_owned()));
+    hub.set_connection(ConnectionStatus::Online);
+    run_for(35).await;
+    let after = drain(&mut rx);
+    assert_eq!(payloads(&after, "oikos/network/nas"), ["OFF"]);
+}

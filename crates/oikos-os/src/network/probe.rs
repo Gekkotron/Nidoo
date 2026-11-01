@@ -20,8 +20,8 @@ pub trait Prober: Send + Sync + 'static {
 /// The real prober. Each IP family opens its socket on first use; a family that cannot be
 /// opened only fails the hosts that resolve to it.
 pub struct IcmpProber {
-    v4: Mutex<Option<Result<Client, String>>>,
-    v6: Mutex<Option<Result<Client, String>>>,
+    v4: Mutex<Option<Client>>,
+    v6: Mutex<Option<Client>>,
     counter: AtomicU16,
 }
 
@@ -44,8 +44,7 @@ impl IcmpProber {
 
     fn client(&self, v6: bool) -> Result<Client, String> {
         let slot = if v6 { &self.v6 } else { &self.v4 };
-        let mut slot = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        slot.get_or_insert_with(|| open_client(v6)).clone()
+        client_with(slot, || open_client(v6))
     }
 
     async fn ping(&self, host: &str) -> Probe {
@@ -76,6 +75,21 @@ impl Prober for IcmpProber {
                 .unwrap_or(Probe::Miss)
         })
     }
+}
+
+/// The client in `slot`, opening it with `open` when there is none. Only a client that opened
+/// is kept, so a failed open is retried by the next probe.
+fn client_with<C: Clone>(
+    slot: &Mutex<Option<C>>,
+    open: impl FnOnce() -> Result<C, String>,
+) -> Result<C, String> {
+    let mut slot = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(client) = slot.as_ref() {
+        return Ok(client.clone());
+    }
+    let client = open()?;
+    *slot = Some(client.clone());
+    Ok(client)
 }
 
 /// The first IPv4 address of `host`, else the first IPv6 one; `None` when it does not resolve.
@@ -112,6 +126,31 @@ pub fn default_prober() -> Arc<dyn Prober> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_open_failure_is_not_cached() {
+        let slot: Mutex<Option<u8>> = Mutex::new(None);
+        let mut opens = 0;
+        let mut open = |result: Result<u8, String>| {
+            client_with(&slot, || {
+                opens += 1;
+                result
+            })
+        };
+        assert!(open(Err("no socket".into())).is_err());
+        assert_eq!(open(Ok(7)), Ok(7));
+        assert_eq!(open(Err("unused".into())), Ok(7));
+        assert_eq!(opens, 2);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a socket the system lets us open"]
+    async fn pings_localhost() {
+        let probe = IcmpProber::new()
+            .probe("127.0.0.1", Duration::from_secs(2))
+            .await;
+        assert!(matches!(probe, Probe::Reply(_)), "{probe:?}");
+    }
 
     #[tokio::test]
     async fn unresolvable_host_is_a_miss() {
