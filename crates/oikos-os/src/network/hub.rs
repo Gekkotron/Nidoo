@@ -24,7 +24,7 @@ impl Hub {
 
     /// Creates or replaces watch `id`: validates everything first, then publishes the
     /// definition, discovery config and availability retained. The state is left to the first
-    /// ping verdict. A watch on a device joins that device; a standalone watch gets its own.
+    /// ping verdict. A watch on a device joins that device and its room; a standalone watch gets its own.
     pub async fn set_network_watch(
         &self,
         id: &str,
@@ -83,12 +83,24 @@ impl Hub {
         self.ingest(&definition_topic, definition.as_bytes());
         self.ingest(&config_topic, config.as_bytes());
 
-        if spec.device.is_none()
-            && let Some(area) = spec.area.as_deref()
-        {
+        let wanted_area = match spec.device.as_deref() {
+            Some(device) => self.device_area(device),
+            None => spec.area.clone(),
+        };
+        let unique = unique_id(id);
+        let current_area = self
+            .read()
+            .raw_override(&unique)
+            .and_then(|ui| ui.area.clone());
+        let area_patch = match wanted_area {
+            Some(area) => Some(Value::from(area)),
+            None if spec.device.is_none() && current_area.is_some() => Some(Value::Null),
+            None => None,
+        };
+        if let Some(value) = area_patch {
             let mut patch = OverridePatch::new();
-            patch.insert("area".to_owned(), Value::from(area));
-            self.set_override(&unique_id(id), &patch).await?;
+            patch.insert("area".to_owned(), value);
+            self.set_override(&unique, &patch).await?;
         }
         Ok(self.network_view(id, spec))
     }
@@ -162,6 +174,14 @@ impl Hub {
             entity: unique_id(id),
             status,
         }
+    }
+
+    /// The room of device `device_id`: the UI area of its first entity that has one.
+    fn device_area(&self, device_id: &str) -> Option<String> {
+        let reg = self.read();
+        reg.entities()
+            .filter(|e| e.device_id.as_deref() == Some(device_id))
+            .find_map(|e| e.ui.area.clone().filter(|area| !area.trim().is_empty()))
     }
 
     /// The discovery `device.identifiers` of device `device_id`, taken from the first of its

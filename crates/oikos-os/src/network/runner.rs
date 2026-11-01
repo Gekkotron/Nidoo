@@ -19,6 +19,9 @@ use crate::hub::Hub;
 /// How long the retained sync must stay silent before the first loops start.
 const SETTLE_QUIET: Duration = Duration::from_millis(1500);
 
+/// The most the supervisor waits for the retained sync to go quiet; a busy broker may never.
+const SETTLE_CAP: Duration = Duration::from_secs(15);
+
 /// The longest a ping waits for its reply.
 const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -60,8 +63,13 @@ impl Hub {
             }
         }
         let mut seen = self.subscribe_state_seen();
+        let deadline = Instant::now() + SETTLE_CAP;
         loop {
-            match timeout(SETTLE_QUIET, seen.recv()).await {
+            let wait = SETTLE_QUIET.min(deadline.saturating_duration_since(Instant::now()));
+            if wait.is_zero() {
+                break;
+            }
+            match timeout(wait, seen.recv()).await {
                 Err(_) => break,
                 Ok(Ok(_)) | Ok(Err(RecvError::Lagged(_))) => {}
                 Ok(Err(RecvError::Closed)) => return,

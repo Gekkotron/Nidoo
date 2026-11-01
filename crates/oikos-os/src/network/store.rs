@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use oikos_api::NetworkWatchSpec;
 
+use super::topics::validate_spec;
 use crate::groups::ApplyOutcome;
 
 /// The retained definitions by id, and a revision that moves on every change.
@@ -26,6 +27,9 @@ impl NetworkStore {
                 Ok(spec) => spec,
                 Err(err) => return ApplyOutcome::Rejected(err.to_string()),
             };
+            if let Err(reason) = validate_spec(&spec) {
+                return ApplyOutcome::Rejected(reason);
+            }
             match self.defs.insert(id.to_owned(), spec.clone()) {
                 None => ApplyOutcome::Created,
                 Some(old) if old == spec => ApplyOutcome::Unchanged,
@@ -85,6 +89,24 @@ mod tests {
         ));
         assert_eq!(store.get("nas").unwrap().host, "nas.local");
         assert_eq!(store.rev(), rev);
+    }
+
+    #[test]
+    fn invalid_definition_rejected_state_unchanged() {
+        let mut store = NetworkStore::default();
+        let zero = br#"{"name":"NAS","host":"nas.local","intervalS":0}"#;
+        assert!(matches!(
+            store.apply("nas", zero),
+            ApplyOutcome::Rejected(_)
+        ));
+        assert!(store.get("nas").is_none());
+        assert_eq!(store.rev(), 0);
+        store.apply("nas", NAS);
+        assert!(matches!(
+            store.apply("nas", zero),
+            ApplyOutcome::Rejected(_)
+        ));
+        assert_eq!(store.get("nas").unwrap().interval_s, 30);
     }
 
     #[test]

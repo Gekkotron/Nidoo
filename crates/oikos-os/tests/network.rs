@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
-use oikos_api::{ConnectionStatus, NetworkWatchSpec, WatchState};
+use oikos_api::{ConnectionStatus, NetworkWatchSpec, WatchState, WsEvent};
 use oikos_core::command::Publish;
 use oikos_os::config::Config;
 use oikos_os::hub::{Hub, HubError};
@@ -117,6 +117,31 @@ async fn device_watch_joins_the_device() {
         config["device"]["identifiers"],
         serde_json::json!(["vac_1"])
     );
+}
+
+#[tokio::test]
+async fn device_watch_takes_the_device_room() {
+    let (hub, _rx) = network_hub();
+    feed_vacuum(&hub);
+    hub.ingest("oikos/ui/vac_1_switch", br#"{"area":"office"}"#);
+    let mut s = spec("192.168.1.42");
+    s.device = Some("vac_1".into());
+    hub.set_network_watch("vac_1", s).await.unwrap();
+    let entity = hub.entity_view("network_vac_1").unwrap();
+    assert_eq!(entity.ui.area.as_deref(), Some("office"));
+}
+
+#[tokio::test]
+async fn standalone_no_room_clears_the_old_area() {
+    let (hub, _rx) = network_hub();
+    let mut s = spec("nas.local");
+    s.area = Some("office".into());
+    hub.set_network_watch("nas", s).await.unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    let entity = hub.entity_view("network_nas").unwrap();
+    assert_eq!(entity.ui.area, None);
 }
 
 #[tokio::test]
@@ -421,4 +446,110 @@ async fn failed_publish_is_retried() {
     run_for(35).await;
     let after = drain(&mut rx);
     assert_eq!(payloads(&after, "oikos/network/nas"), ["OFF"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn busy_broker_does_not_hold_the_supervisor_forever() {
+    let (hub, _rx) = network_hub();
+    feed_vacuum(&hub);
+    let feeder = {
+        let hub = Arc::clone(&hub);
+        tokio::spawn(async move {
+            for n in 0u32..=u32::MAX {
+                let payload = format!(r#"{{"state":"{}"}}"#, if n % 2 == 0 { "ON" } else { "OFF" });
+                hub.ingest("vac/1", payload.as_bytes());
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        })
+    };
+    let prober = FakeProber::new(vec![REPLY; 10]);
+    let _task = hub.start_network_with(prober.clone()).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    run_for(60).await;
+    feeder.abort();
+    assert!(prober.calls() >= 1, "no ping within the settle cap");
+}
+
+const NETWORK_FLOW: &str = r#"{
+    "id": "nas_down", "name": "NAS down", "enabled": true, "mode": "restart",
+    "nodes": [
+        { "id": "t", "type": "trigger.state", "params": { "entity": "network_nas", "to": false } },
+        { "id": "w", "type": "delay", "params": { "for": "1s" } }
+    ],
+    "edges": [ { "from": "t", "to": "w" } ]
+}"#;
+
+/// Plays the broker for the network topics: feeds every retained publish back, and logs the
+/// state payloads.
+fn loopback(mut rx: mpsc::Receiver<Publish>, hub: Arc<Hub>) -> Arc<Mutex<Vec<String>>> {
+    let states = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&states);
+    tokio::spawn(async move {
+        while let Some(p) = rx.recv().await {
+            if p.topic == "oikos/network/nas" {
+                log.lock().unwrap().push(p.payload.clone());
+            }
+            if p.topic == "oikos/network/nas" || p.topic == "oikos/network/nas/avail" {
+                hub.ingest(&p.topic, p.payload.as_bytes());
+            }
+        }
+    });
+    states
+}
+
+/// Runs a watch with a `trigger.state` flow on it through `script`; returns the number of flow
+/// runs (each checked to start only after OFF was published) and the state payloads published.
+async fn flow_runs_for(script: Vec<Probe>, seconds: u64) -> (usize, Vec<String>) {
+    let (hub, rx) = network_hub();
+    let states = loopback(rx, Arc::clone(&hub));
+    let _engine = hub.start_engine();
+    let _task = hub.start_network_with(FakeProber::new(script)).unwrap();
+    hub.set_network_watch("nas", spec("nas.local"))
+        .await
+        .unwrap();
+    hub.ingest("oikos/automation/nas_down", NETWORK_FLOW.as_bytes());
+    let mut events = hub.subscribe();
+    let mut runs = 0;
+    for _ in 0..seconds {
+        run_for(1).await;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event, WsEvent::FlowRunChanged { .. }) {
+                assert!(
+                    states.lock().unwrap().iter().any(|s| s == "OFF"),
+                    "a run started before OFF was published"
+                );
+                runs += 1;
+            }
+        }
+    }
+    let seen = states.lock().unwrap().clone();
+    (runs, seen)
+}
+
+#[tokio::test(start_paused = true)]
+async fn flow_does_not_fire_on_the_first_value_after_boot() {
+    let (runs, states) = flow_runs_for(vec![Probe::Miss, Probe::Miss, REPLY], 150).await;
+    assert_eq!(states, ["ON"]);
+    assert_eq!(runs, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn flow_does_not_fire_when_only_availability_flips() {
+    let (runs, states) = flow_runs_for(
+        vec![REPLY, Probe::CannotPing("no socket".into()), REPLY],
+        150,
+    )
+    .await;
+    assert_eq!(states, ["ON"]);
+    assert_eq!(runs, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn flow_fires_on_a_real_on_to_off() {
+    let (runs, states) =
+        flow_runs_for(vec![REPLY, Probe::Miss, Probe::Miss, Probe::Miss], 200).await;
+    assert_eq!(states, ["ON", "OFF"]);
+    assert!(runs >= 1, "the flow never ran");
 }
