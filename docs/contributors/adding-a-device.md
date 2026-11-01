@@ -123,7 +123,7 @@ Vacuum wire format:
 
 A second example is Suez2Mqtt (https://github.com/Gekkotron/Suez2Mqtt). It reads a water meter from the Suez cloud and publishes `sensor` entities with `device_class: water`. It publishes no availability topic, so its availability shows `unknown`.
 
-A device whose firmware already speaks MQTT but publishes no discovery needs no bridge at all: publish its discovery once, retained, by hand. WaterHeaterController (https://github.com/Gekkotron/WaterHeaterController) works this way; [Zigbee2MQTT](../users/zigbee2mqtt.md) holds its one-line `mosquitto_pub`. Its `water_heater` entity derives everything from the firmware's `water-heater/data` JSON with templates: the tank temperature, a mode of `heat` or `off`, and the card attributes below.
+A device whose firmware already speaks MQTT but publishes no discovery needs no bridge at all: publish its discovery once, retained, by hand. WaterHeaterController (https://github.com/Gekkotron/WaterHeaterController) works this way; [WaterHeaterController](../users/water-heater-controller.md) holds its one-line `mosquitto_pub`. Its `water_heater` entity derives everything from the firmware's `water-heater/data` JSON with templates: the tank temperature, a mode of `heat` or `off`, and the card attributes below.
 
 Water heater card attributes, read from `json_attributes_topic` (after `json_attributes_template`) when present:
 
