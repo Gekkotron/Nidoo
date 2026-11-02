@@ -46,10 +46,13 @@ impl ServiceStatus {
     }
 }
 
-/// The broker is up while the hub's MQTT connection is.
-pub fn broker_state(online: bool) -> ServiceState {
+/// The broker is up while the hub's MQTT connection is. Before the link was ever online or
+/// lost (`link_epoch` 0, still connecting at boot) nothing is known yet: unknown, not down.
+pub fn broker_state(online: bool, link_epoch: u64) -> ServiceState {
     if online {
         ServiceState::Up
+    } else if link_epoch == 0 {
+        ServiceState::Unknown
     } else {
         ServiceState::Down
     }
@@ -97,7 +100,14 @@ mod tests {
         assert_eq!(bridge_state(Availability::Online), ServiceState::Up);
         assert_eq!(bridge_state(Availability::Offline), ServiceState::Down);
         assert_eq!(bridge_state(Availability::Unknown), ServiceState::Unknown);
-        assert_eq!(broker_state(true), ServiceState::Up);
-        assert_eq!(broker_state(false), ServiceState::Down);
+        assert_eq!(broker_state(true, 0), ServiceState::Up);
+        assert_eq!(broker_state(true, 3), ServiceState::Up);
+        assert_eq!(broker_state(false, 1), ServiceState::Down);
+    }
+
+    #[test]
+    fn broker_never_answered_since_boot_is_unknown() {
+        // The first tick can run before the ConnAck: no answer yet is not an outage.
+        assert_eq!(broker_state(false, 0), ServiceState::Unknown);
     }
 }

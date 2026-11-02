@@ -411,6 +411,25 @@ async fn system_view_reports_unknown_retained_before_sys() {
     );
 }
 
+#[tokio::test]
+async fn broker_reads_unknown_before_the_first_connack() {
+    let (tx, _rx) = mpsc::channel(256);
+    let hub = Hub::new(&Config::default(), tx);
+    hub.tick_with(T0, resources(None)).await;
+    let broker = &hub.system_view().services[0];
+    assert_eq!((broker.state, broker.since), (ServiceState::Unknown, None));
+
+    hub.set_connection(ConnectionStatus::Offline {
+        reason: "connection refused".into(),
+    });
+    hub.tick_with(T0 + 60, resources(None)).await;
+    let broker = &hub.system_view().services[0];
+    assert_eq!(
+        (broker.state, broker.since),
+        (ServiceState::Down, Some(T0 + 60))
+    );
+}
+
 fn with_history(hub: &Hub, url: &str) {
     let cfg = HistoryConfig {
         url: url.to_owned(),

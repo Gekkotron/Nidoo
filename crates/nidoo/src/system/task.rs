@@ -258,19 +258,19 @@ impl Hub {
         let today = local_day(self.zone(), now);
         let db = self.system_db_round(now).await;
         let (entities, devices) = self.counts();
+        let online = matches!(*self.connection().borrow(), ConnectionStatus::Online);
+        let bridge = self.read().bridge().state;
+        let epoch = self.link_epoch();
         let readings = Readings {
             entities,
             devices,
-            broker: broker_state(matches!(
-                *self.connection().borrow(),
-                ConnectionStatus::Online
-            )),
-            zigbee2mqtt: bridge_state(self.read().bridge().state),
+            broker: broker_state(online, epoch),
+            zigbee2mqtt: bridge_state(bridge),
             retained: self.retained_count(),
             commands_total: self.commands_sent(),
             notify: self.system_notify(),
             today,
-            epoch: self.link_epoch(),
+            epoch,
         };
         let (alerts, configs) = {
             let mut state = self.system_state();
