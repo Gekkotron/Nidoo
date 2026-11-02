@@ -1157,6 +1157,43 @@ fn restore_state_skips_an_entity_touched_since_boot() {
     assert_eq!(state.value, StateValue::Unknown);
 }
 
+/// Every Z2M entity reads `zigbee2mqtt/bridge/state` for its availability, and the bridge
+/// says `online` at boot before any device speaks. That stamps `last_update` but is not a
+/// report: a sensor without a retained state must still get its recorded value back.
+#[test]
+fn restore_state_fills_an_entity_that_only_heard_its_availability() {
+    let mut registry = Registry::new(config());
+    let config = json!({
+        "unique_id": "test_motion",
+        "state_topic": "zigbee2mqtt/test_motion",
+        "value_template": "{{ value_json.occupancy }}",
+        "payload_on": true,
+        "payload_off": false,
+        "device_class": "occupancy",
+        "availability": [{"topic": "zigbee2mqtt/bridge/state", "value_template": "{{ value_json.state }}"}],
+        "device": {"identifiers": ["zigbee2mqtt_0xmotion"], "name": "test_motion"}
+    });
+    registry.apply(Inbound::Discovery(
+        discovery_topic("nidoo/binary_sensor/test_motion/config"),
+        config.to_string().into_bytes(),
+    ));
+    let inbound = registry.route(
+        "zigbee2mqtt/bridge/state",
+        br#"{"state":"online"}"#.to_vec(),
+        AT,
+    );
+    registry.apply(inbound);
+
+    let changes = registry.restore_state("test_motion", StateValue::OnOff(false), AT - 100);
+    assert_eq!(
+        changes,
+        vec![Change::StateChanged("test_motion".to_owned())]
+    );
+    let state = registry.state("test_motion").expect("state");
+    assert_eq!(state.value, StateValue::OnOff(false));
+    assert_eq!(state.last_update, Some(AT - 100));
+}
+
 #[test]
 fn restore_state_keeps_a_value_already_read() {
     let mut registry = switch_registry();
