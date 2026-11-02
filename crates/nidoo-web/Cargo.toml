@@ -25,6 +25,7 @@ leptos.workspace = true
 leptos_router.workspace = true
 nidoo-alarm = { path = "../nidoo-alarm" }
 nidoo-api = { path = "../nidoo-api" }
+nidoo-assist = { path = "../nidoo-assist" }
 nidoo-climate = { path = "../nidoo-climate" }
 nidoo-core = { path = "../nidoo-core" }
 nidoo-frigate = { path = "../nidoo-frigate" }

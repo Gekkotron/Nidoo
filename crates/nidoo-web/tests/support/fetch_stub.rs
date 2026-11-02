@@ -50,7 +50,8 @@ const STUB_SOURCE: &str = r#"
         if (route.delay) {
             await new Promise((resolve) => setTimeout(resolve, route.delay));
         }
-        return new Response(route.body, {
+        // A 204 has no body; a Response refuses one, even an empty string.
+        return new Response(route.status === 204 ? null : route.body, {
             status: route.status,
             headers: { "content-type": "application/json" },
         });

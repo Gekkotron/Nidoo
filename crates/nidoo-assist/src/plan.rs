@@ -108,9 +108,9 @@ impl Plan {
         }
     }
 
-    fn with_trace(mut self: Box<Self>, trace: Trace) -> Self {
+    fn with_trace(mut self, trace: Trace) -> Self {
         *self.trace_mut() = trace;
-        *self
+        self
     }
 
     pub fn trace_mut(&mut self) -> &mut Trace {
@@ -235,7 +235,7 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
     };
     let (area, how) = match pick_room(req, room, &areas_of(&candidates, house), none, house) {
         Ok(found) => found,
-        Err(plan) => return plan.with_trace(trace),
+        Err(plan) => return (*plan).with_trace(trace),
     };
     let area_name = house.area_name(&area).to_string();
     trace.room = Some(area.clone());
@@ -433,7 +433,7 @@ fn read_temp(req: &Request, room: &[String], outdoor: bool, house: &House) -> Pl
     let none = "Pas de thermomètre dans la maison.".to_string();
     let (area, how) = match pick_room(req, room, &candidates, none, house) {
         Ok(found) => found,
-        Err(plan) => return plan.with_trace(trace),
+        Err(plan) => return (*plan).with_trace(trace),
     };
     let name = house.area_name(&area).to_string();
     trace.room = Some(area.clone());
@@ -526,7 +526,7 @@ fn pick_zone<'a>(
     let none = "Aucun chauffage piloté n'est actif.".to_string();
     let (area, how) = match pick_room(req, room, &active_zones(house), none, house) {
         Ok(found) => found,
-        Err(plan) => return Err(Box::new(plan.with_trace(trace.clone()))),
+        Err(plan) => return Err(Box::new((*plan).with_trace(trace.clone()))),
     };
     let name = house.area_name(&area).to_string();
     trace.room = Some(area.clone());

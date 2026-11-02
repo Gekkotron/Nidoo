@@ -2325,6 +2325,7 @@ dependencies = [
  "leptos_router",
  "nidoo-alarm",
  "nidoo-api",
+ "nidoo-assist",
  "nidoo-climate",
  "nidoo-core",
  "nidoo-frigate",

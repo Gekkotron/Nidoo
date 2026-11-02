@@ -1,6 +1,6 @@
 //! Which sidebar entry is active for a path, and the breadcrumb trail of a page.
 
-use crate::i18n::{Key, Lang, text};
+use crate::i18n::{AssistantText, Key, Lang, assistant_text, text};
 use crate::screens::settings::SettingsPage;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,6 +14,7 @@ pub enum Section {
     Security,
     Climate,
     Alerts,
+    Assistant,
     Settings,
     None,
 }
@@ -96,6 +97,7 @@ pub fn section_for(path: &str, back: &[String]) -> Section {
         ["weather", ..] | ["solar", ..] => Section::Overview,
         ["alerts", ..] => Section::Alerts,
         ["search", ..] => Section::Overview,
+        ["assistant", ..] => Section::Assistant,
         ["settings", ..] | ["devices", ..] => Section::Settings,
         ["entity", ..] | ["history", ..] => back
             .iter()
@@ -165,6 +167,10 @@ pub fn crumbs(path: &str, lang: Lang, name_of: impl Fn(Lookup) -> Option<String>
         ["weather", ..] => push(t(Key::Weather), String::new()),
         ["solar", ..] => push(t(Key::Solar), String::new()),
         ["search"] => push(t(Key::Search), String::new()),
+        ["assistant", ..] => push(
+            assistant_text(lang, AssistantText::Title).to_string(),
+            String::new(),
+        ),
         ["alerts"] => push(t(Key::Alerts), String::new()),
         ["alerts", id, ..] => {
             push(t(Key::Alerts), "/alerts".into());
@@ -313,6 +319,15 @@ mod tests {
             ["Ma maison", "Recherche"]
         );
         assert_eq!(section_for("/search", &[]), Section::Overview);
+    }
+
+    #[test]
+    fn assistant_route_crumb_and_section() {
+        assert_eq!(
+            labels(&crumbs("/assistant", Lang::En, names)),
+            ["My home", "Assistant"]
+        );
+        assert_eq!(section_for("/assistant", &[]), Section::Assistant);
     }
 
     #[test]
