@@ -242,9 +242,22 @@ pub fn draft_to_settings(draft: &Draft) -> Result<HomeSettings, Field> {
         off_peak: off_peak_windows(&draft.off_peak),
         off_peak_history: Vec::new(),
         off_peak_device: off_peak_device(draft),
-        // Not on this panel: Save puts the stored choice back.
+        // Not on this panel: Save puts the stored values back (see `keep_stored_fields`).
         energy_view: Default::default(),
+        assist_min_c: None,
+        assist_max_c: None,
     })
+}
+
+/// `edited` with the fields this panel does not edit taken from `stored`: the Energy view and
+/// the assistant's range.
+pub fn keep_stored_fields(stored: &HomeSettings, edited: HomeSettings) -> HomeSettings {
+    HomeSettings {
+        energy_view: stored.energy_view,
+        assist_min_c: stored.assist_min_c,
+        assist_max_c: stored.assist_max_c,
+        ..edited
+    }
 }
 
 /// The field a hub validation message names; `None` when it names none of them.
@@ -502,10 +515,9 @@ pub fn HomeSettingsPanel() -> impl IntoView {
             .with_untracked(|s| Draft::new(untrack(current), s));
         let merged = merge(&base.get_untracked(), &draft.get_untracked(), &latest);
         let settings = match draft_to_settings(&merged) {
-            Ok(s) => HomeSettings {
-                energy_view: house.home_settings.with_untracked(|s| s.energy_view),
-                ..s
-            },
+            Ok(s) => house
+                .home_settings
+                .with_untracked(|stored| keep_stored_fields(stored, s)),
             Err(field) => {
                 error.set(Some((field, Message::Key(HomeText::NotANumber))));
                 return;
@@ -660,6 +672,27 @@ mod tests {
             off_peak: vec![],
             off_peak_device: None,
         }
+    }
+
+    #[test]
+    fn save_keeps_the_fields_this_panel_does_not_edit() {
+        let stored = HomeSettings {
+            energy_view: nidoo_api::EnergyView::Orbite,
+            assist_min_c: Some(17.0),
+            assist_max_c: Some(24.0),
+            ..HomeSettings::default()
+        };
+        let edited = HomeSettings {
+            eco_setpoint: Some(15.0),
+            ..HomeSettings::default()
+        };
+        let saved = keep_stored_fields(&stored, edited);
+        assert_eq!(saved.eco_setpoint, Some(15.0));
+        assert_eq!(saved.energy_view, nidoo_api::EnergyView::Orbite);
+        assert_eq!(
+            (saved.assist_min_c, saved.assist_max_c),
+            (Some(17.0), Some(24.0))
+        );
     }
 
     #[test]

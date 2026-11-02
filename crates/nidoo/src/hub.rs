@@ -72,6 +72,8 @@ pub enum HubError {
     UnknownDashboard(String),
     #[error("unknown ambiance `{0}`")]
     UnknownAmbiance(String),
+    #[error("unknown assistant turn `{0}`")]
+    UnknownTurn(String),
     /// The flow cannot be saved or run: it does not validate, or names something the house
     /// does not have.
     #[error("invalid flow: {0}")]
@@ -290,6 +292,8 @@ pub struct Hub {
     pub(crate) ambiances_running: Mutex<BTreeSet<String>>,
     /// The home settings document, retained on `<ui_prefix>/_home`.
     pub(crate) home_settings: Mutex<nidoo_api::HomeSettings>,
+    /// The assistant's pending questions and turn log.
+    pub(crate) assist: crate::assist::AssistState,
     /// The topic prefix flows are retained under, one topic per flow id.
     automation_prefix: String,
     /// The time zone schedules and their preview run in.
@@ -447,6 +451,7 @@ impl Hub {
             ambiance_store: Mutex::new(AmbianceStore::new()),
             ambiances_running: Mutex::new(BTreeSet::new()),
             home_settings: Mutex::new(nidoo_api::HomeSettings::default()),
+            assist: crate::assist::AssistState::default(),
             automation_prefix: cfg.topics.automation_prefix.clone(),
             zone: crate::flows::house_zone(&cfg.flows),
             house_point: cfg.flows.house_point(),

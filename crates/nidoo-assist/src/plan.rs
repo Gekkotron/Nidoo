@@ -501,13 +501,18 @@ fn ask_value(name: &str) -> String {
     )
 }
 
-/// The active zones' ids, in the house's order.
+/// The active zones' ids, in the house's room order.
 fn active_zones(house: &House) -> Vec<String> {
     house
-        .zones
+        .areas
         .iter()
-        .filter(|z| z.settings.state == ZoneState::Active && !z.orphan)
-        .map(|z| z.zone.clone())
+        .filter(|a| {
+            house
+                .zones
+                .iter()
+                .any(|z| z.zone == a.id && z.settings.state == ZoneState::Active && !z.orphan)
+        })
+        .map(|a| a.id.clone())
         .collect()
 }
 
@@ -1103,6 +1108,16 @@ mod tests {
         assert_eq!(
             setpoint_of(&plan_request(&yes, &f.house())),
             ("chambre_lea".into(), 15.0)
+        );
+    }
+
+    #[test]
+    fn zone_choices_follow_the_room_order() {
+        let mut f = fixture::house();
+        f.zones.reverse();
+        assert_eq!(
+            labels(&plan("mets le chauffage à 20", &f.house())),
+            ["Salon", "Chambre Léa"]
         );
     }
 }

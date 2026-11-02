@@ -18,6 +18,7 @@ futures-util.workspace = true
 iana-time-zone = "0.1"
 mime_guess.workspace = true
 nidoo-api = { path = "../nidoo-api" }
+nidoo-assist = { path = "../nidoo-assist", features = ["schemars"] }
 nidoo-alarm = { path = "../nidoo-alarm", features = ["schemars"] }
 nidoo-climate = { path = "../nidoo-climate", features = ["schemars"] }
 nidoo-core = { path = "../nidoo-core", features = ["schemars"] }

@@ -1021,7 +1021,7 @@ impl Hub {
 
     /// How long a hand change on `zone` is held: until the zone's next scheduled change, at most
     /// `manual_hold_max_min` from `now`. The assistant's setpoints get the same hold.
-    pub(crate) fn hand_hold_until(&self, zone: &str, now: u64) -> u64 {
+    pub fn hand_hold_until(&self, zone: &str, now: u64) -> u64 {
         let settings = self.zone_settings(zone);
         // "Until the next scheduled change" is the zone's schedule for the season's mode, not
         // whatever mode the device was put in.

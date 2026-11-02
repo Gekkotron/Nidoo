@@ -30,6 +30,26 @@ pub struct HomeSettings {
     pub off_peak_device: Option<OffPeakDevice>,
     /// How the web Energy page draws the live power, the same for every browser.
     pub energy_view: EnergyView,
+    /// °C, the lowest setpoint the assistant applies without asking (5 to 35); unset = 16.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assist_min_c: Option<f64>,
+    /// °C, the highest setpoint the assistant applies without asking (5 to 35); unset = 23.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assist_max_c: Option<f64>,
+}
+
+/// The assistant's range when the home settings leave it unset, in °C.
+pub const ASSIST_DEFAULT_MIN_C: f64 = 16.0;
+pub const ASSIST_DEFAULT_MAX_C: f64 = 23.0;
+
+impl HomeSettings {
+    /// The setpoints the assistant applies without asking: `(min, max)` in °C.
+    pub fn assist_range(&self) -> (f64, f64) {
+        (
+            self.assist_min_c.unwrap_or(ASSIST_DEFAULT_MIN_C),
+            self.assist_max_c.unwrap_or(ASSIST_DEFAULT_MAX_C),
+        )
+    }
 }
 
 /// The web Energy page's live diagram.
