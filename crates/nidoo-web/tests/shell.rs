@@ -86,7 +86,7 @@ async fn sidebar_lists_the_main_entries() {
     let m = mount(Lang::En, Some("3")).await;
     let sidebar = text_of(&m.host, "aside.sidebar#sidebar");
     for label in [
-        "nidoo.",
+        "Nidoo.",
         "Overview",
         "Automations",
         "Groups",
