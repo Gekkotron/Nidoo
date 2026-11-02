@@ -16,6 +16,7 @@ pub mod history;
 mod home;
 mod network;
 pub mod picker;
+mod search;
 pub mod security;
 pub mod settings;
 pub mod setup;
@@ -29,6 +30,7 @@ pub use ambiances::*;
 pub use dashboards::*;
 pub use home::*;
 pub use network::*;
+pub use search::*;
 pub use solar::*;
 pub use system::*;
 pub use weather::*;
@@ -234,6 +236,7 @@ pub enum Key {
     AmbCommand,
     AmbValue,
     Alerts,
+    Search,
     Settings,
     Devices,
     Appearance,
@@ -379,6 +382,7 @@ impl Key {
         Key::AmbCommand,
         Key::AmbValue,
         Key::Alerts,
+        Key::Search,
         Key::Settings,
         Key::Devices,
         Key::Appearance,
@@ -543,6 +547,7 @@ pub fn text(lang: Lang, key: Key) -> &'static str {
         Key::AmbCommand => ("Command", "Commande"),
         Key::AmbValue => ("Value", "Valeur"),
         Key::Alerts => ("Alerts", "Alertes"),
+        Key::Search => ("Search", "Recherche"),
         Key::Settings => ("Settings", "Réglages"),
         Key::Devices => ("Devices", "Appareils"),
         Key::Appearance => ("Appearance", "Apparence"),
@@ -803,6 +808,7 @@ mod tests {
             | Key::AmbCommand
             | Key::AmbValue
             | Key::Alerts
+            | Key::Search
             | Key::Settings
             | Key::Devices
             | Key::Appearance
@@ -872,7 +878,7 @@ mod tests {
         for &k in Key::ALL {
             assert!(listed(k));
         }
-        assert_eq!(Key::ALL.len(), 140);
+        assert_eq!(Key::ALL.len(), 141);
     }
     #[test]
     fn every_key_differs_between_languages() {

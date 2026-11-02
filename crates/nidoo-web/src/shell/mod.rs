@@ -6,7 +6,7 @@ pub mod sidebar;
 
 use leptos::ev;
 use leptos::prelude::*;
-use leptos_router::hooks::use_location;
+use leptos_router::hooks::{use_location, use_navigate};
 use wasm_bindgen::JsCast;
 
 use header::ContentHeader;
@@ -43,9 +43,37 @@ pub fn Shell(
             drawer_open.try_set(false);
         }
     });
+    // `/` opens the search from anywhere but a text field, where it is just a character.
+    // Already on the search, it puts the cursor back in the field instead of starting over. Not
+    // under an open dialog, nor when something else already handled the key.
+    let navigate = use_navigate();
+    let pathname = location.pathname;
+    let slash = window_event_listener(ev::keydown, move |event| {
+        let modifier = event.ctrl_key() || event.meta_key() || event.alt_key();
+        if event.default_prevented()
+            || dialog_open()
+            || !opens_search(&event.key(), typing(&event), modifier)
+        {
+            return;
+        }
+        event.prevent_default();
+        if pathname.try_get_untracked().as_deref() == Some("/search") {
+            let field = document()
+                .query_selector("input.search__input")
+                .ok()
+                .flatten()
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok());
+            if let Some(field) = field {
+                let _ = field.focus();
+            }
+        } else {
+            navigate("/search", Default::default());
+        }
+    });
     // The listeners go with the shell.
     on_cleanup(move || {
         escape.remove();
+        slash.remove();
         widen.remove();
     });
     // Focus follows the drawer: into it when it opens, back to the menu button when it closes.
@@ -95,9 +123,50 @@ fn closes_on_resize(open: bool, width: f64) -> bool {
     open && width >= 900.0
 }
 
+/// Whether a key press opens the search: a bare `/` that is not typing into a text field.
+pub(crate) fn opens_search(key: &str, target_is_text: bool, modifier: bool) -> bool {
+    key == "/" && !target_is_text && !modifier
+}
+
+/// Whether a key event comes from somewhere keys are typed: a form field or editable text. Keys
+/// there are characters, not shortcuts.
+pub(crate) fn typing(event: &web_sys::KeyboardEvent) -> bool {
+    let Some(target) = event.target() else {
+        return false;
+    };
+    if let Some(el) = target.dyn_ref::<web_sys::HtmlElement>()
+        && el.is_content_editable()
+    {
+        return true;
+    }
+    target.dyn_ref::<web_sys::Element>().is_some_and(|el| {
+        matches!(
+            el.tag_name().to_ascii_lowercase().as_str(),
+            "input" | "textarea" | "select"
+        )
+    })
+}
+
+/// Whether a modal dialog (a popup, the camera viewer) is open over the page.
+fn dialog_open() -> bool {
+    document()
+        .query_selector("dialog[open]")
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::closes_on_resize;
+    use super::{closes_on_resize, opens_search};
+
+    #[test]
+    fn opens_search_only_outside_text_fields() {
+        assert!(opens_search("/", false, false));
+        assert!(!opens_search("/", true, false));
+        assert!(!opens_search("/", false, true));
+        assert!(!opens_search("a", false, false));
+    }
 
     #[test]
     fn widening_closes_only_an_open_drawer() {

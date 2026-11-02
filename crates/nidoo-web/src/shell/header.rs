@@ -1,12 +1,12 @@
-//! The content header: the breadcrumb of the page, then the theme and language buttons.
+//! The content header: the breadcrumb of the page, then the search, theme and language buttons.
 
 use leptos::prelude::*;
 use leptos_router::hooks::use_location;
 
 use super::route::{Lookup, crumbs};
 use crate::house::House;
-use crate::i18n::{Key, Lang, text, use_text};
-use crate::icons::{HOUSE, MOON, SUN, SUN_MOON};
+use crate::i18n::{Key, Lang, SearchText, search_text, text, use_text};
+use crate::icons::{HOUSE, MAGNIFIER, MOON, SUN, SUN_MOON};
 use crate::theme::Theme;
 
 /// The name the user gave the item a crumb points at, from what the house already holds. The
@@ -107,6 +107,15 @@ pub fn ContentHeader(drawer_open: RwSignal<bool>) -> impl IntoView {
                 </ol>
             </nav>
             <div class="content-header__tools">
+                <a
+                    href="/search"
+                    class="content-header__search"
+                    aria-label=move || search_text(lang.get(), SearchText::Open)
+                    aria-current=move || {
+                        location.pathname.with(|p| p == "/search").then_some("page")
+                    }
+                    inner_html=MAGNIFIER
+                ></a>
                 <button
                     type="button"
                     class="content-header__theme"

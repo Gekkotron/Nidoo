@@ -159,7 +159,7 @@ fn HouseCameras() -> impl IntoView {
 
 /// Scrolls the element the address's fragment names to the top of the view, at once (so reduced
 /// motion has nothing to tone down). The fragment is decoded once, as the router does.
-fn scroll_to_fragment() {
+pub(crate) fn scroll_to_fragment() {
     let Some(window) = web_sys::window() else {
         return;
     };

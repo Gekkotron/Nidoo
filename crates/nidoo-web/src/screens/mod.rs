@@ -24,6 +24,7 @@ pub mod home_settings_panel;
 pub mod network_panel;
 pub mod network_settings;
 pub mod room;
+pub mod search;
 pub mod security;
 pub mod settings;
 pub mod solar;

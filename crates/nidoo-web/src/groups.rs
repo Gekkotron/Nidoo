@@ -24,6 +24,16 @@ fn shown<'a>(entities: impl Iterator<Item = &'a EntityView>) -> Vec<&'a EntityVi
     shown
 }
 
+/// Members of a group with `hide_members` lose their own card on Home; a member that is in
+/// several groups is hidden when any of them says so.
+pub(crate) fn hidden_member_ids(groups: &BTreeMap<String, GroupView>) -> HashSet<&str> {
+    groups
+        .values()
+        .filter(|g| g.hide_members)
+        .flat_map(|g| g.members.iter().map(|m| m.id.as_str()))
+        .collect()
+}
+
 /// What Home shows under `chip`, in display order: pinned cards first, then by room. A room
 /// chip shows the whole room; Favorites shows the favourite entities.
 pub fn home_items<'a>(
@@ -32,13 +42,7 @@ pub fn home_items<'a>(
     chip: &str,
     groups: &BTreeMap<String, GroupView>,
 ) -> Vec<HomeItem> {
-    // Members of a group with `hide_members` lose their own card on Home; a member that is in
-    // several groups is hidden when any of them says so.
-    let hidden_member_ids: HashSet<&str> = groups
-        .values()
-        .filter(|g| g.hide_members)
-        .flat_map(|g| g.members.iter().map(|m| m.id.as_str()))
-        .collect();
+    let hidden_member_ids = hidden_member_ids(groups);
     let candidates: Vec<&EntityView> = shown(entities)
         .into_iter()
         .filter(|e| {

@@ -33,6 +33,7 @@ use crate::screens::group_wizard::GroupWizardScreen;
 use crate::screens::groups::GroupsScreen;
 use crate::screens::history_detail::HistoryDetailScreen;
 use crate::screens::room::RoomScreen;
+use crate::screens::search::SearchScreen;
 use crate::screens::security::SecurityScreen;
 use crate::screens::settings::{SettingsPageScreen, SettingsScreen};
 use crate::screens::solar::SolarScreen;
@@ -214,6 +215,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/climate") view=ClimateScreen />
                     <Route path=path!("/weather") view=WeatherScreen />
                     <Route path=path!("/solar") view=SolarScreen />
+                    <Route path=path!("/search") view=SearchScreen />
                     <Route path=path!("/alerts") view=AlertsScreen />
                     <Route path=path!("/alerts/:id") view=AlertDetailScreen />
                     <Route path=path!("/ambiances") view=AmbiancesScreen />
