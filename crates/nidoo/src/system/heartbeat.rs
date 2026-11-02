@@ -84,15 +84,17 @@ pub fn write_heartbeat(dir: &Path, now: u64) -> io::Result<()> {
 }
 
 /// Record a deliberate stop, keeping the previous heartbeat value. Later heartbeats of this
-/// process into `dir` are skipped, so the marker stays.
+/// process into `dir` are skipped, so the marker stays. Without a heartbeat file (a first
+/// start, setup mode) nothing is written: the next boot stays a first start.
 pub fn write_clean_stop(dir: &Path, now: u64) -> io::Result<()> {
     let mut stopped = stopped();
     if !stopped.iter().any(|d| d == dir) {
         stopped.push(dir.to_path_buf());
     }
     let heartbeat = match read(dir) {
+        Previous::None => return Ok(()),
         Previous::Found(h) => h.heartbeat,
-        _ => now,
+        Previous::Corrupt => now,
     };
     write(
         dir,
@@ -170,5 +172,15 @@ mod tests {
         write_clean_stop(dir.path(), 20).unwrap();
         write_heartbeat(dir.path(), 30).unwrap();
         assert_eq!(read(dir.path()), found(10, Some(20)));
+    }
+
+    #[test]
+    fn clean_stop_without_a_heartbeat_writes_nothing() {
+        // First start or setup mode: no run left a heartbeat, so the next boot stays "first".
+        let dir = tempfile::tempdir().unwrap();
+        write_clean_stop(dir.path(), 20).unwrap();
+        assert_eq!(read(dir.path()), Previous::None);
+        write_heartbeat(dir.path(), 30).unwrap();
+        assert_eq!(read(dir.path()), Previous::None);
     }
 }
