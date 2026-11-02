@@ -55,6 +55,7 @@ struct Mounted {
 }
 
 fn mount(path_: &str) -> Mounted {
+    nidoo_web::api::series_cache::forget_day_series();
     let document = web_sys::window().unwrap().document().unwrap();
     let host = document.create_element("div").unwrap();
     document.body().unwrap().append_child(&host).unwrap();
@@ -308,4 +309,127 @@ async fn double_click_sends_one_put() {
         switch.get_attribute("aria-checked").as_deref(),
         Some("true")
     );
+}
+
+/// A series as the hub serves it: `n` hourly points ending now, all at `level`.
+fn series_json(level: f64, n: i64) -> String {
+    let end = now() as i64;
+    let points: Vec<Value> = (0..n)
+        .map(|i| json!([end - (n - 1 - i) * 3600, level, level, level]))
+        .collect();
+    json!({"window": 86_400, "points": points}).to_string()
+}
+
+/// The address the page asks for (gloo leaves a trailing `&` on a query-less request builder).
+fn series_url(id: &str, range: &str) -> String {
+    format!("/api/v1/history/series?entity={id}&range={range}&")
+}
+
+#[wasm_bindgen_test]
+async fn cpu_tile_opens_two_line_chart() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/system", 200, &view_json().to_string());
+    stub.reply(
+        "GET",
+        &series_url("system_cpu", "24h"),
+        200,
+        &series_json(40.0, 6),
+    );
+    stub.reply(
+        "GET",
+        &series_url("system_cpu_hub", "24h"),
+        200,
+        &series_json(5.0, 6),
+    );
+    let m = mount("/settings/system?show=cpu");
+    wait_for(&m.host, "path.history-chart__line", 2).await;
+    assert_eq!(all(&m.host, "path.history-chart__line").len(), 2);
+    let key = texts(&m.host, ".history-chart__key-item");
+    assert_eq!(key.len(), 2, "{key:?}");
+    assert_eq!(key[0].trim(), "Server");
+    assert_eq!(key[1].trim(), "Hub");
+    // The overview is gone; the range chips are the three the page offers.
+    assert!(all(&m.host, ".system__tile").is_empty());
+    let chips = texts(&m.host, ".system__chips .chip");
+    assert_eq!(chips, ["24h", "7d", "30d"]);
+    // A longer range asks the hub for it.
+    stub.reply(
+        "GET",
+        &series_url("system_cpu", "7d"),
+        200,
+        &series_json(40.0, 6),
+    );
+    stub.reply(
+        "GET",
+        &series_url("system_cpu_hub", "7d"),
+        200,
+        &series_json(5.0, 6),
+    );
+    all(&m.host, ".system__chips .chip")[1].click();
+    wait_for(&m.host, "path.history-chart__line", 2).await;
+    assert_eq!(
+        requests_to(&stub, "GET", &series_url("system_cpu_hub", "7d")).len(),
+        1
+    );
+}
+
+#[wasm_bindgen_test]
+async fn temperature_chart_has_one_line() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/system", 200, &view_json().to_string());
+    stub.reply(
+        "GET",
+        &series_url("system_temperature", "24h"),
+        200,
+        &series_json(51.0, 6),
+    );
+    let m = mount("/settings/system?show=temperature");
+    wait_for(&m.host, "path.history-chart__line", 1).await;
+    assert_eq!(all(&m.host, "path.history-chart__line").len(), 1);
+    assert_eq!(texts(&m.host, ".history-chart__key-item").len(), 1);
+}
+
+#[wasm_bindgen_test]
+async fn restarts_list_newest_first_with_unknown_downtime() {
+    let stub = FetchStub::install();
+    let mut view = view_json();
+    view["restarts"][0]["downSecs"] = Value::Null;
+    stub.reply("GET", "/api/v1/system", 200, &view.to_string());
+    let m = mount("/settings/system?show=restarts");
+    wait_for(&m.host, ".system__restart", 3).await;
+    assert_eq!(
+        texts(&m.host, ".system__restart-stop"),
+        ["Unexpected stop", "Clean stop", "First start"]
+    );
+    assert_eq!(
+        texts(&m.host, ".system__restart-down"),
+        ["down ?", "down 30 s", ""]
+    );
+}
+
+#[wasm_bindgen_test]
+async fn tiles_draw_a_two_line_trend() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/system", 200, &view_json().to_string());
+    stub.reply(
+        "GET",
+        &series_url("system_cpu", "24h"),
+        200,
+        &series_json(40.0, 6),
+    );
+    stub.reply(
+        "GET",
+        &series_url("system_cpu_hub", "24h"),
+        200,
+        &series_json(5.0, 6),
+    );
+    let m = mount("/settings/system");
+    wait_for(&m.host, ".system__tile", 10).await;
+    wait_for(&m.host, ".system__tile .spark__hub", 1).await;
+    let cpu = tile(&m.host, "CPU");
+    assert!(cpu.query_selector(".spark__server").unwrap().is_some());
+    assert!(cpu.query_selector(".spark__hub").unwrap().is_some());
+    // No history for the disk: its trend takes no room.
+    let disk = tile(&m.host, "Disk");
+    assert!(disk.query_selector(".spark__server").unwrap().is_none());
 }

@@ -16,4 +16,5 @@ pub mod robot;
 pub mod room_title;
 pub mod sparkline;
 pub mod status_pill;
+pub mod system_chart;
 pub mod toast;

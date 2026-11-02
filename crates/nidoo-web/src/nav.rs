@@ -83,7 +83,12 @@ fn visit(stack: &mut Vec<String>, path: &str, search: &str) {
 }
 
 /// Where Back goes from a page opened with nothing before it (a shared link, a reload).
-fn parent_of(path: &str) -> String {
+fn parent_of(entry: &str) -> String {
+    let path = path_of(entry);
+    // A chart or list of the System page goes back to its tiles.
+    if path == "/settings/system" && entry.contains("?show=") {
+        return path.to_owned();
+    }
     let child = |prefix: &str| path.strip_prefix(prefix).filter(|rest| !rest.is_empty());
     if let Some(id) = child("/history/") {
         format!("/entity/{id}")
@@ -106,7 +111,7 @@ fn parent_of(path: &str) -> String {
 fn back_target(stack: &[String]) -> String {
     match stack {
         [.., previous, _] => previous.clone(),
-        [current] => parent_of(path_of(current)),
+        [current] => parent_of(current),
         [] => "/".to_owned(),
     }
 }
@@ -238,6 +243,12 @@ mod tests {
         assert_eq!(back_target(&walk(&["/entity/lamp"])), "/");
         assert_eq!(back_target(&[]), "/");
         assert_eq!(parent_of("/alerts"), "/");
+        // A shared link to a system chart goes back to the tiles, and they go back to Settings.
+        assert_eq!(
+            back_target(&walk(&["/settings/system?show=cpu"])),
+            "/settings/system"
+        );
+        assert_eq!(back_target(&walk(&["/settings/system"])), "/settings");
     }
 
     #[test]

@@ -34,6 +34,16 @@ pub enum SystemText {
     UnitMinute,
     UnitGb,
     UnitMb,
+    Back,
+    Server,
+    HubLine,
+    RestartsHeading,
+    NoRestarts,
+    DownFor,
+    StopClean,
+    StopUnexpected,
+    StopFirst,
+    UnitSecond,
 }
 
 /// A fixed word of the system page.
@@ -75,6 +85,16 @@ pub fn system_text(lang: Lang, k: SystemText) -> &'static str {
         UnitMinute => ("min", "min"),
         UnitGb => ("GB", "Go"),
         UnitMb => ("MB", "Mo"),
+        Back => ("Back", "Retour"),
+        Server => ("Server", "Serveur"),
+        HubLine => ("Hub", "Hub"),
+        RestartsHeading => ("Restarts", "Redémarrages"),
+        NoRestarts => ("No restart recorded", "Aucun redémarrage enregistré"),
+        DownFor => ("down", "arrêt de"),
+        StopClean => ("Clean stop", "Arrêt propre"),
+        StopUnexpected => ("Unexpected stop", "Arrêt inattendu"),
+        StopFirst => ("First start", "Premier démarrage"),
+        UnitSecond => ("s", "s"),
     };
     if lang == Lang::Fr { fr } else { en }
 }
@@ -96,7 +116,9 @@ mod tests {
             Up | Down | Unknown | Since | UpOver30Days | Restart | Restarts | Cpu | Ram | Disk
             | Temperature | Devices | Entities | Retained | CommandsToday | Broker | Zigbee
             | Database | Hub | DatabaseSize | NotifyMe | NotifyHint | Loading | CouldNotLoad
-            | UnitDay | UnitHour | UnitMinute | UnitGb | UnitMb => true,
+            | UnitDay | UnitHour | UnitMinute | UnitGb | UnitMb | Back | Server | HubLine
+            | RestartsHeading | NoRestarts | DownFor | StopClean | StopUnexpected | StopFirst
+            | UnitSecond => true,
         }
     }
 
@@ -132,6 +154,16 @@ mod tests {
             UnitMinute,
             UnitGb,
             UnitMb,
+            Back,
+            Server,
+            HubLine,
+            RestartsHeading,
+            NoRestarts,
+            DownFor,
+            StopClean,
+            StopUnexpected,
+            StopFirst,
+            UnitSecond,
         ]
     };
 
@@ -146,6 +178,8 @@ mod tests {
                 SystemText::Hub,
                 SystemText::UnitHour,
                 SystemText::UnitMinute,
+                SystemText::HubLine,
+                SystemText::UnitSecond,
             ],
         );
     }

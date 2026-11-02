@@ -7,10 +7,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
-use nidoo_api::{ServiceState, ServiceView, StopKind, SystemService, SystemView};
+use leptos_router::hooks::use_location;
+use nidoo_api::system::ids;
+use nidoo_api::{
+    HistoryRange, RestartView, ServiceState, ServiceView, StopKind, SystemService, SystemView,
+};
 
 use crate::api;
+use crate::components::sparkline::SparklePair;
+use crate::components::system_chart::SystemChart;
 use crate::i18n::format::{date_time, decimal, decimal_grouped, local_date_time};
+use crate::i18n::history::range_chip;
 use crate::i18n::{Lang, SystemText, system_text, use_lang, use_system_text};
 use crate::screens::alarm_settings::SwitchRow;
 
@@ -97,11 +104,22 @@ fn Tile(
     #[prop(into)] value: Signal<String>,
     #[prop(into, optional)] sub: Signal<String>,
     #[prop(optional)] href: Option<String>,
+    /// The entities of the tile's 24 h trend: the server's and, when there is one, the hub's.
+    #[prop(optional)]
+    trend: Option<(&'static str, Option<&'static str>)>,
 ) -> impl IntoView {
     let body = view! {
         <span class="system__label">{move || label.get()}</span>
         <span class="system__value">{move || value.get()}</span>
         <span class="system__sub">{move || sub.get()}</span>
+        {trend
+            .map(|(server, hub)| match hub {
+                Some(hub) => {
+                    view! { <SparklePair server=server.to_owned() hub=hub.to_owned() /> }
+                        .into_any()
+                }
+                None => view! { <SparklePair server=server.to_owned() /> }.into_any(),
+            })}
     };
     match href {
         Some(href) => {
@@ -162,6 +180,7 @@ fn tiles(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
                 value=percent(lang, c.server_pct)
                 sub=format!("{} {}", t(SystemText::Hub), percent(lang, c.hub_pct))
                 href=link("cpu")
+                trend=(ids::CPU, Some(ids::CPU_HUB))
             />
         }
         .into_any(),
@@ -175,6 +194,7 @@ fn tiles(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
                     .map_or_else(|| unknown.clone(), |p| percent(lang, p))
                 sub=format!("{} {}", t(SystemText::Hub), size(lang, r.hub_bytes))
                 href=link("ram")
+                trend=(ids::RAM_USED, Some(ids::RAM_HUB))
             />
         }
         .into_any(),
@@ -191,6 +211,7 @@ fn tiles(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
                     None => format!("{} / {}", size(lang, d.used_bytes), size(lang, d.total_bytes)),
                 }
                 href=link("disk")
+                trend=(ids::DISK_USED, Some(ids::DB_SIZE))
             />
         }
         .into_any(),
@@ -202,6 +223,7 @@ fn tiles(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
                 label=t(SystemText::Temperature)
                 value=format!("{} °C", whole(lang, c))
                 href=link("temperature")
+                trend=(ids::TEMPERATURE, None)
             />
         }
     });
@@ -267,6 +289,164 @@ fn hero(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
     }
 }
 
+/// What `?show=` asks the page to draw instead of the overview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Show {
+    Cpu,
+    Ram,
+    Disk,
+    Temperature,
+    Restarts,
+}
+
+impl Show {
+    fn parse(raw: &str) -> Option<Self> {
+        Some(match raw {
+            "cpu" => Self::Cpu,
+            "ram" => Self::Ram,
+            "disk" => Self::Disk,
+            "temperature" => Self::Temperature,
+            "restarts" => Self::Restarts,
+            _ => return None,
+        })
+    }
+
+    /// The page's heading.
+    fn title(self) -> SystemText {
+        match self {
+            Self::Cpu => SystemText::Cpu,
+            Self::Ram => SystemText::Ram,
+            Self::Disk => SystemText::Disk,
+            Self::Temperature => SystemText::Temperature,
+            Self::Restarts => SystemText::RestartsHeading,
+        }
+    }
+
+    /// The server's and the hub's entities, and the words that name them in the key.
+    fn lines(self) -> Option<(&'static str, Option<&'static str>, SystemText, SystemText)> {
+        use SystemText::*;
+        match self {
+            Self::Cpu => Some((ids::CPU, Some(ids::CPU_HUB), Server, HubLine)),
+            Self::Ram => Some((ids::RAM_USED, Some(ids::RAM_HUB), Server, HubLine)),
+            Self::Disk => Some((ids::DISK_USED, Some(ids::DB_SIZE), Disk, Database)),
+            Self::Temperature => Some((ids::TEMPERATURE, None, Server, HubLine)),
+            Self::Restarts => None,
+        }
+    }
+}
+
+/// The ranges a system chart offers.
+const RANGES: [HistoryRange; 3] = [HistoryRange::Day, HistoryRange::Week, HistoryRange::Month];
+
+/// A downtime as "30 s", "2 min" or "1 h 5 min".
+fn down_text(lang: Lang, secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs} {}", system_text(lang, SystemText::UnitSecond))
+    } else {
+        uptime_text(lang, secs)
+    }
+}
+
+/// One line of the restart list: when the hub started, how long it was down, how the run before
+/// ended.
+#[component]
+fn RestartRow(restart: RestartView) -> impl IntoView {
+    let lang = use_lang();
+    let first = restart.stop == StopKind::First;
+    let stop = match restart.stop {
+        StopKind::First => SystemText::StopFirst,
+        StopKind::Clean => SystemText::StopClean,
+        StopKind::Unexpected => SystemText::StopUnexpected,
+    };
+    let down = move || {
+        let l = lang();
+        let how_long = restart
+            .down_secs
+            .map_or_else(|| "?".to_owned(), |s| down_text(l, s));
+        format!("{} {how_long}", system_text(l, SystemText::DownFor))
+    };
+    view! {
+        <li class="system__restart">
+            <span class="system__restart-when">
+                {move || date_time(lang(), local_date_time(restart.started_at))}
+            </span>
+            <span class="system__restart-stop">{move || system_text(lang(), stop)}</span>
+            <span class="system__restart-down">{move || (!first).then(down)}</span>
+        </li>
+    }
+}
+
+/// The chart or the restart list the page shows for `?show=`, under a link back to the tiles.
+#[component]
+fn Detail(show: Show, data: RwSignal<Option<SystemView>>) -> impl IntoView {
+    let t = use_system_text();
+    let lang = use_lang();
+    let range = RwSignal::new(HistoryRange::Day);
+    let body = match show.lines() {
+        Some((server, hub, server_label, hub_label)) => view! {
+            <div class="chips system__chips">
+                {RANGES
+                    .iter()
+                    .map(|&r| {
+                        view! {
+                            <button
+                                type="button"
+                                class="chip"
+                                class:chip--selected=move || range.get() == r
+                                aria-pressed=move || (range.get() == r).to_string()
+                                on:click=move |_| range.set(r)
+                            >
+                                {move || range_chip(lang(), r)}
+                            </button>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+            <SystemChart
+                server=server.to_owned()
+                hub=hub.map(str::to_owned)
+                range=range
+                server_label=Signal::derive(move || t(server_label).to_owned())
+                hub_label=Signal::derive(move || t(hub_label).to_owned())
+            />
+        }
+        .into_any(),
+        None => view! {
+            {move || {
+                data.get()
+                    .map(|v| {
+                        if v.restarts.is_empty() {
+                            view! { <p class="system__hint">{move || t(SystemText::NoRestarts)}</p> }
+                                .into_any()
+                        } else {
+                            view! {
+                                <ul class="system__restarts">
+                                    {v
+                                        .restarts
+                                        .into_iter()
+                                        .map(|restart| view! { <RestartRow restart /> })
+                                        .collect_view()}
+                                </ul>
+                            }
+                                .into_any()
+                        }
+                    })
+            }}
+        }
+        .into_any(),
+    };
+    view! {
+        <div class="system__detail">
+            <A href=HREF attr:class="system__back">
+                "←"
+                <span>{move || t(SystemText::Back)}</span>
+            </A>
+            <h2 class="system__heading">{move || t(show.title())}</h2>
+            {body}
+        </div>
+    }
+}
+
 /// The Settings → System page. The view is fetched on mount and every minute while it is open.
 #[component]
 pub fn SystemSettingsPage() -> impl IntoView {
@@ -279,6 +459,9 @@ pub fn SystemSettingsPage() -> impl IntoView {
     // Bumped by every toggle, so a read that started before one cannot overwrite it.
     let epoch = RwSignal::new(0u32);
     let save_error = RwSignal::new(None::<String>);
+    // The location's own query: it follows a link to this same page with another `?show=`.
+    let query = use_location().query;
+    let show = Memo::new(move |_| query.read().get("show").and_then(|raw| Show::parse(&raw)));
     let reload = Callback::new(move |()| {
         let started = epoch.get_untracked();
         spawn_local(async move {
@@ -347,33 +530,45 @@ pub fn SystemSettingsPage() -> impl IntoView {
                         }
                     })
             }}
-            {move || match data.get() {
-                Some(v) => {
-                    let l = lang();
+            {move || match show.get() {
+                Some(show) => view! { <Detail show data /> }.into_any(),
+                None => {
                     view! {
-                        {hero(&v, l)}
-                        <div class="system__tiles">{tiles(&v, l)}</div>
+                        {move || match data.get() {
+                            Some(v) => {
+                                let l = lang();
+                                view! {
+                                    {hero(&v, l)}
+                                    <div class="system__tiles">{tiles(&v, l)}</div>
+                                }
+                                    .into_any()
+                            }
+                            None if failed.with(Option::is_none) => {
+                                view! {
+                                    <p class="system__loading">{move || t(SystemText::Loading)}</p>
+                                }
+                                    .into_any()
+                            }
+                            None => ().into_any(),
+                        }}
+                        <div class="system__notify">
+                            <SwitchRow
+                                label=Signal::derive(move || t(SystemText::NotifyMe).to_owned())
+                                on=notify
+                                on_toggle=toggle
+                                busy=saving
+                            />
+                            <p class="system__hint">{move || t(SystemText::NotifyHint)}</p>
+                            {move || {
+                                save_error
+                                    .get()
+                                    .map(|e| view! { <p class="home-settings__error">{e}</p> })
+                            }}
+                        </div>
                     }
                         .into_any()
                 }
-                None if failed.with(Option::is_none) => {
-                    view! { <p class="system__loading">{move || t(SystemText::Loading)}</p> }
-                        .into_any()
-                }
-                None => ().into_any(),
             }}
-            <div class="system__notify">
-                <SwitchRow
-                    label=Signal::derive(move || t(SystemText::NotifyMe).to_owned())
-                    on=notify
-                    on_toggle=toggle
-                    busy=saving
-                />
-                <p class="system__hint">{move || t(SystemText::NotifyHint)}</p>
-                {move || {
-                    save_error.get().map(|e| view! { <p class="home-settings__error">{e}</p> })
-                }}
-            </div>
         </div>
     }
 }
