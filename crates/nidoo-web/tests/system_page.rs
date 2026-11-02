@@ -165,7 +165,7 @@ async fn tiles_show_values_and_units() {
     let hero = texts(&m.host, ".system__hero").remove(0);
     assert!(hero.contains("Up 12 d 4 h"), "{hero}");
     assert!(hero.contains("99.8 % up over 30 days"), "{hero}");
-    assert!(hero.contains("3 restarts"), "{hero}");
+    assert!(hero.contains("2 restarts"), "{hero}");
     let hero_link = all(&m.host, ".system__hero").remove(0);
     assert_eq!(
         hero_link.get_attribute("href").as_deref(),
@@ -289,5 +289,23 @@ async fn notify_switch_puts_and_reverts_on_503() {
     assert!(
         errors.iter().any(|e| e.contains("database unavailable")),
         "{errors:?}"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn double_click_sends_one_put() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/system", 200, &view_json().to_string());
+    stub.reply("PUT", "/api/v1/system/notify", 200, r#"{"notify":true}"#);
+    let m = mount("/settings/system");
+    wait_for(&m.host, "[role=switch]", 1).await;
+    let switch = all(&m.host, "[role=switch]").remove(0);
+    switch.click();
+    switch.click();
+    settle().await;
+    assert_eq!(requests_to(&stub, "PUT", "/api/v1/system/notify").len(), 1);
+    assert_eq!(
+        switch.get_attribute("aria-checked").as_deref(),
+        Some("true")
     );
 }

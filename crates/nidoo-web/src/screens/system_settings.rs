@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
-use nidoo_api::{ServiceState, ServiceView, SystemService, SystemView};
+use nidoo_api::{ServiceState, ServiceView, StopKind, SystemService, SystemView};
 
 use crate::api;
 use crate::i18n::format::{date_time, decimal, decimal_grouped, local_date_time};
@@ -56,7 +56,13 @@ pub fn status_label(view: &SystemView, now: u64, lang: Lang) -> String {
 
 /// A percentage as "23 %".
 fn percent(lang: Lang, v: f64) -> String {
-    format!("{} %", decimal(lang, v.round(), 0))
+    format!("{} %", whole(lang, v))
+}
+
+/// `v` rounded to a whole number, never "-0".
+fn whole(lang: Lang, v: f64) -> String {
+    let r = v.round();
+    decimal(lang, if r == 0.0 { 0.0 } else { r }, 0)
 }
 
 /// A byte count as "180 MB", or "3.2 GB" from one gigabyte up.
@@ -194,7 +200,7 @@ fn tiles(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
         view! {
             <Tile
                 label=t(SystemText::Temperature)
-                value=format!("{} °C", decimal(lang, c.round(), 0))
+                value=format!("{} °C", whole(lang, c))
                 href=link("temperature")
             />
         }
@@ -234,7 +240,11 @@ fn tiles(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
 /// The uptime card: "Up 12 d 4 h", when the hub started, its 30-day availability and restarts.
 fn hero(view: &SystemView, lang: Lang) -> impl IntoView + use<> {
     let t = move |k| system_text(lang, k);
-    let restarts = view.restarts.len();
+    let restarts = view
+        .restarts
+        .iter()
+        .filter(|r| r.stop != StopKind::First)
+        .count();
     let word = if restarts == 1 {
         SystemText::Restart
     } else {
@@ -266,13 +276,16 @@ pub fn SystemSettingsPage() -> impl IntoView {
     let failed = RwSignal::new(None::<String>);
     let notify = RwSignal::new(false);
     let saving = RwSignal::new(false);
+    // Bumped by every toggle, so a read that started before one cannot overwrite it.
+    let epoch = RwSignal::new(0u32);
     let save_error = RwSignal::new(None::<String>);
     let reload = Callback::new(move |()| {
+        let started = epoch.get_untracked();
         spawn_local(async move {
             match api::get_system().await {
                 Ok(v) => {
                     failed.try_set(None);
-                    if !saving.get_untracked() {
+                    if !saving.get_untracked() && epoch.get_untracked() == started {
                         notify.try_set(v.notify);
                     }
                     data.try_set(Some(v));
@@ -299,9 +312,13 @@ pub fn SystemSettingsPage() -> impl IntoView {
     }
     on_cleanup(move || stop.store(true, Ordering::Relaxed));
     let toggle = Callback::new(move |on: bool| {
+        if saving.get_untracked() {
+            return;
+        }
         let before = notify.get_untracked();
         notify.set(on);
         saving.set(true);
+        epoch.update(|e| *e += 1);
         save_error.set(None);
         spawn_local(async move {
             match api::set_system_notify(on).await {
@@ -313,6 +330,7 @@ pub fn SystemSettingsPage() -> impl IntoView {
                     save_error.try_set(Some(e.error));
                 }
             }
+            epoch.try_update(|e| *e += 1);
             saving.try_set(false);
         });
     });
@@ -349,6 +367,7 @@ pub fn SystemSettingsPage() -> impl IntoView {
                     label=Signal::derive(move || t(SystemText::NotifyMe).to_owned())
                     on=notify
                     on_toggle=toggle
+                    busy=saving
                 />
                 <p class="system__hint">{move || t(SystemText::NotifyHint)}</p>
                 {move || {
@@ -378,6 +397,12 @@ mod tests {
         assert_eq!(size(Lang::En, 180 * 1_048_576), "180 MB");
         assert_eq!(size(Lang::En, 3_435_973_837), "3.2 GB");
         assert_eq!(size(Lang::Fr, 3_435_973_837), "3,2 Go");
+    }
+
+    #[test]
+    fn whole_never_prints_negative_zero() {
+        assert_eq!(whole(Lang::En, -0.4), "0");
+        assert_eq!(whole(Lang::En, -1.6), "-2");
     }
 
     #[test]

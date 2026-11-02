@@ -258,6 +258,9 @@ pub(crate) fn SwitchRow(
     #[prop(into)] label: Signal<String>,
     #[prop(into)] on: Signal<bool>,
     on_toggle: Callback<bool>,
+    /// While true the switch ignores clicks.
+    #[prop(into, optional)]
+    busy: Signal<bool>,
 ) -> impl IntoView {
     view! {
         <label class="override__flag">
@@ -268,6 +271,7 @@ pub(crate) fn SwitchRow(
                 class="switch"
                 class:switch--on=move || on.get()
                 aria-checked=move || on.get().to_string()
+                disabled=move || busy.get()
                 on:click=move |_| on_toggle.run(!on.get_untracked())
             >
                 <span class="switch__knob"></span>
