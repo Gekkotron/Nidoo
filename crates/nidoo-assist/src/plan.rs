@@ -3,11 +3,13 @@
 use nidoo_api::EntityView;
 use nidoo_api::search::fold;
 use nidoo_api::{Category, CategoryAction, Target, category_members};
+use nidoo_climate::doc::{Setpoint, ZoneState};
+use nidoo_climate::view::ZoneView;
 use nidoo_core::model::{Command, EntityCategory, Kind, StateValue};
 
 use crate::house::House;
-use crate::intent::{Intent, parse};
-use crate::reply::{dans, de, number, temp};
+use crate::intent::{Change, Intent, parse};
+use crate::reply::{dans, de, le, number, temp};
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
 use crate::view::Trace;
@@ -150,7 +152,8 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
             on, names, room, ..
         } => lights(req, *on, names, room, house),
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
-        _ => not_understood(house),
+        Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
+        Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
     }
 }
 
@@ -453,6 +456,228 @@ fn read_temp(req: &Request, room: &[String], outdoor: bool, house: &House) -> Pl
     }
 }
 
+/// The most a setpoint may differ from the room's reading before the assistant asks.
+pub const MAX_FROM_READING: f64 = 3.0;
+
+/// The step when no device says.
+const DEFAULT_STEP: f64 = 0.5;
+
+/// The zone's step and range over its climate devices: the coarsest step and the narrowest
+/// range.
+fn zone_limits(zone: &ZoneView, house: &House) -> (f64, Option<f64>, Option<f64>) {
+    let caps = zone
+        .entities
+        .iter()
+        .filter_map(|id| house.entity(id))
+        .map(|e| &e.capabilities);
+    let (mut step, mut min, mut max): (Option<f64>, Option<f64>, Option<f64>) = (None, None, None);
+    for c in caps {
+        if let Some(s) = c.temp_step.filter(|s| *s > 0.0) {
+            step = Some(step.map_or(s, |x| x.max(s)));
+        }
+        if let Some(m) = c.min_temp {
+            min = Some(min.map_or(m, |x| x.max(m)));
+        }
+        if let Some(m) = c.max_temp {
+            max = Some(max.map_or(m, |x| x.min(m)));
+        }
+    }
+    (step.unwrap_or(DEFAULT_STEP), min, max)
+}
+
+fn round_to(value: f64, step: f64) -> f64 {
+    ((value / step).round() * step * 100.0).round() / 100.0
+}
+
+/// An example sentence for a room: "mets le salon à 19".
+fn example_for(name: &str) -> String {
+    format!("mets {} à 19", le(name).to_lowercase())
+}
+
+fn ask_value(name: &str) -> String {
+    format!(
+        "Dis-moi une température, par exemple « {} ».",
+        example_for(name)
+    )
+}
+
+/// The active zones' ids, in the house's order.
+fn active_zones(house: &House) -> Vec<String> {
+    house
+        .zones
+        .iter()
+        .filter(|z| z.settings.state == ZoneState::Active && !z.orphan)
+        .map(|z| z.zone.clone())
+        .collect()
+}
+
+/// The zone of the heating request, or the answer that says why there is none.
+fn pick_zone<'a>(
+    req: &Request,
+    room: &[String],
+    house: &House<'a>,
+    trace: &mut Trace,
+) -> Result<(&'a ZoneView, String), Box<Plan>> {
+    let none = "Aucun chauffage piloté n'est actif.".to_string();
+    let (area, how) = match pick_room(req, room, &active_zones(house), none, house) {
+        Ok(found) => found,
+        Err(plan) => return Err(Box::new(plan.with_trace(trace.clone()))),
+    };
+    let name = house.area_name(&area).to_string();
+    trace.room = Some(area.clone());
+    trace.room_how = Some(how);
+    let Some(zone) = house.zones.iter().find(|z| z.zone == area && !z.orphan) else {
+        return Err(Box::new(answer(
+            format!("Pas de chauffage piloté {}.", dans(&name)),
+            trace.clone(),
+        )));
+    };
+    if zone.settings.state != ZoneState::Active {
+        return Err(Box::new(answer(
+            format!("Le chauffage {} n'est pas encore actif.", de(&name)),
+            trace.clone(),
+        )));
+    }
+    trace.entities = zone.entities.clone();
+    Ok((zone, name))
+}
+
+fn heating_no_value(req: &Request, room: &[String], house: &House) -> Plan {
+    let mut trace = Trace {
+        intent: Some("heating_no_value".into()),
+        ..Default::default()
+    };
+    let name = match resolve_room(house, room) {
+        RoomMatch::One(area) => house.area_name(&area).to_string(),
+        _ => req
+            .area
+            .clone()
+            .or_else(|| active_zones(house).into_iter().next())
+            .map_or("la pièce".into(), |a| house.area_name(&a).to_string()),
+    };
+    trace.room = Some(name.clone());
+    answer(ask_value(&name), trace)
+}
+
+fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Plan {
+    let mut trace = Trace {
+        intent: Some("set_temp".into()),
+        ..Default::default()
+    };
+    let (zone, name) = match pick_zone(req, room, house, &mut trace) {
+        Ok(found) => found,
+        Err(plan) => return *plan,
+    };
+    let current = zone.decision.as_ref().and_then(|d| d.setpoint);
+    let from = match current {
+        Some(Setpoint::Temp(t)) => Some(t),
+        _ => None,
+    };
+    let wanted = match change {
+        Change::Absolute(t) => {
+            trace.value = Some(temp(t));
+            t
+        }
+        Change::Relative(delta) => {
+            let Some(base) = from else {
+                let why = if current == Some(Setpoint::Off) {
+                    format!("Le chauffage {} est sur arrêt", de(&name))
+                } else {
+                    format!("Je ne connais pas la consigne {}", de(&name))
+                };
+                return answer(
+                    format!(
+                        "{why} : dis-moi une température, par exemple « {} ».",
+                        example_for(&name)
+                    ),
+                    trace,
+                );
+            };
+            let sign = if delta < 0.0 { "−" } else { "+" };
+            let t = base + delta;
+            trace.value = Some(format!(
+                "{} {sign} {} = {}",
+                number(base),
+                number(delta.abs()),
+                temp(t)
+            ));
+            t
+        }
+    };
+    let (step, min, max) = zone_limits(zone, house);
+    let target = round_to(wanted, step);
+    if target != round_to(wanted, 0.01) {
+        let shown = trace.value.take().unwrap_or_default();
+        trace.value = Some(format!(
+            "{shown} → {} (pas de {})",
+            temp(target),
+            number(step)
+        ));
+    }
+    if min.is_some_and(|m| target < m) || max.is_some_and(|m| target > m) {
+        let range = match (min, max) {
+            (Some(lo), Some(hi)) => format!("de {} à {}", number(lo), temp(hi)),
+            (Some(lo), None) => format!("à partir de {}", temp(lo)),
+            (None, Some(hi)) => format!("jusqu'à {}", temp(hi)),
+            (None, None) => unreachable!(),
+        };
+        trace.gate = Some(format!("hors des limites de l'appareil ({range})"));
+        return answer(
+            format!(
+                "Le chauffage {} accepte {range} : {} est hors limites.",
+                de(&name),
+                temp(target)
+            ),
+            trace,
+        );
+    }
+    let in_range = (house.range.min..=house.range.max).contains(&target);
+    let near_reading = zone
+        .reading
+        .is_none_or(|r| (target - r).abs() <= MAX_FROM_READING);
+    let range = format!("{}–{}", number(house.range.min), temp(house.range.max));
+    if !(in_range && near_reading) && !req.confirmed {
+        trace.gate = Some(if in_range {
+            format!(
+                "à plus de {} de la mesure ({}) : demander",
+                temp(MAX_FROM_READING),
+                temp(zone.reading.unwrap_or_default())
+            )
+        } else {
+            format!("hors de {range} : demander")
+        });
+        // A yes applies exactly the value asked about, even if the schedule moves meanwhile.
+        let mut request = req.clone();
+        request.area = Some(zone.zone.clone());
+        request.intent = Intent::SetTemp {
+            change: Change::Absolute(target),
+            room: Vec::new(),
+        };
+        return Plan::Confirm {
+            question: format!("Passer {} à {} ?", le(&name), temp(target)),
+            request,
+            trace,
+        };
+    }
+    trace.gate = Some(if req.confirmed {
+        "confirmé".into()
+    } else {
+        format!("dans {range}, près de la mesure : ok")
+    });
+    Plan::Act {
+        actions: vec![Action::Setpoint {
+            zone: zone.zone.clone(),
+            setpoint: target,
+        }],
+        done: Done::Setpoint {
+            zone: zone.zone.clone(),
+            from,
+            to: target,
+        },
+        trace,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,6 +912,197 @@ mod tests {
         assert_eq!(
             labels(&p("quelle température fait-il ?")),
             ["Salon", "Bureau", "Chambre Léa"]
+        );
+    }
+
+    fn setpoint_of(plan: &Plan) -> (String, f64) {
+        match plan {
+            Plan::Act { actions, .. } => match actions.as_slice() {
+                [Action::Setpoint { zone, setpoint }] => (zone.clone(), *setpoint),
+                other => panic!("not one setpoint: {other:?}"),
+            },
+            other => panic!("not an act: {other:?}"),
+        }
+    }
+
+    fn confirm_of(plan: &Plan) -> (String, Request) {
+        match plan {
+            Plan::Confirm {
+                question, request, ..
+            } => (question.clone(), request.clone()),
+            other => panic!("not a confirmation: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn absolute_in_range_acts() {
+        let plan = p("mets le salon à 20 degrés");
+        assert_eq!(setpoint_of(&plan), ("salon".into(), 20.0));
+        let Plan::Act { done, .. } = plan else {
+            unreachable!()
+        };
+        assert_eq!(
+            done,
+            Done::Setpoint {
+                zone: "salon".into(),
+                from: Some(19.0),
+                to: 20.0
+            }
+        );
+    }
+
+    #[test]
+    fn relative_from_decided_setpoint() {
+        assert_eq!(
+            setpoint_of(&p("baisse un peu le chauffage du salon")),
+            ("salon".into(), 18.5)
+        );
+        let plan = p("monte le chauffage d'un degré chez Léa");
+        let (question, request) = confirm_of(&plan);
+        assert_eq!(question, "Passer la Chambre Léa à 15 °C ?");
+        let f = fixture::house();
+        let mut yes = request;
+        yes.confirmed = true;
+        assert_eq!(
+            setpoint_of(&plan_request(&yes, &f.house())),
+            ("chambre_lea".into(), 15.0)
+        );
+        assert_eq!(plan.trace().value.as_deref(), Some("14 + 1 = 15 °C"));
+    }
+
+    #[test]
+    fn outside_range_confirms() {
+        let (question, request) = confirm_of(&p("mets le salon à 25"));
+        assert_eq!(question, "Passer le Salon à 25 °C ?");
+        let f = fixture::house();
+        let mut yes = request;
+        yes.confirmed = true;
+        assert_eq!(
+            setpoint_of(&plan_request(&yes, &f.house())),
+            ("salon".into(), 25.0)
+        );
+    }
+
+    #[test]
+    fn far_from_reading_confirms() {
+        // Within 16–23 °C, but 3,8 °C above the reading of 18,2 °C.
+        confirm_of(&p("mets le salon à 22"));
+        setpoint_of(&p("mets le salon à 21"));
+    }
+
+    #[test]
+    fn range_comes_from_the_house() {
+        let mut f = fixture::house();
+        f.range.max = 25.0;
+        f.zone_mut("salon").reading = Some(22.0);
+        assert_eq!(
+            setpoint_of(&plan("mets le salon à 24", &f.house())),
+            ("salon".into(), 24.0)
+        );
+    }
+
+    #[test]
+    fn rounds_to_device_step() {
+        assert_eq!(
+            setpoint_of(&p("mets le salon à 19,3")),
+            ("salon".into(), 19.5)
+        );
+        let mut f = fixture::house();
+        f.entity_mut("climate_salon").capabilities.temp_step = Some(1.0);
+        assert_eq!(
+            setpoint_of(&plan("mets le salon à 19,4", &f.house())),
+            ("salon".into(), 19.0)
+        );
+    }
+
+    #[test]
+    fn outside_device_range_refused() {
+        let r = reply_of(&p("mets le salon à 40"));
+        assert!(
+            r.contains("10") && r.contains("30") && r.contains("40"),
+            "{r}"
+        );
+        let r = reply_of(&p("mets le salon à 40 degrés"));
+        assert!(r.contains("30"), "{r}");
+    }
+
+    #[test]
+    fn no_zone() {
+        assert_eq!(
+            reply_of(&p("mets le bureau à 19")),
+            "Pas de chauffage piloté dans le Bureau."
+        );
+    }
+
+    #[test]
+    fn zone_not_active() {
+        assert_eq!(
+            reply_of(&p("mets la chambre de Tom à 19")),
+            "Le chauffage de la Chambre Tom n'est pas encore actif."
+        );
+    }
+
+    #[test]
+    fn off_setpoint_needs_absolute() {
+        let mut f = fixture::house();
+        f.zone_mut("salon").decision.as_mut().unwrap().setpoint =
+            Some(nidoo_climate::doc::Setpoint::Off);
+        let r = reply_of(&plan("monte le chauffage du salon", &f.house()));
+        assert!(r.contains("température"), "{r}");
+        f.zone_mut("salon").decision = None;
+        let r = reply_of(&plan("monte le chauffage du salon", &f.house()));
+        assert!(r.contains("température"), "{r}");
+        // An absolute value still works.
+        setpoint_of(&plan("mets le salon à 19", &f.house()));
+    }
+
+    #[test]
+    fn heating_without_value() {
+        assert_eq!(
+            reply_of(&p("allume le chauffage du salon")),
+            "Dis-moi une température, par exemple « mets le salon à 19 »."
+        );
+    }
+
+    #[test]
+    fn single_zone_house_needs_no_room() {
+        let mut f = fixture::house();
+        f.zone_mut("chambre_lea").settings.state = nidoo_climate::doc::ZoneState::Pending;
+        assert_eq!(
+            setpoint_of(&plan("mets le chauffage à 20", &f.house())),
+            ("salon".into(), 20.0)
+        );
+    }
+
+    #[test]
+    fn no_room_asks_active_zones() {
+        assert_eq!(
+            labels(&p("mets le chauffage à 20")),
+            ["Salon", "Chambre Léa"]
+        );
+    }
+
+    #[test]
+    fn light_count_is_not_a_setpoint() {
+        let got = lights_of(&p("allume les 3 lumières du salon"));
+        assert_eq!(got.len(), 4);
+    }
+
+    #[test]
+    fn confirmed_value_is_the_one_asked() {
+        let (_, request) = confirm_of(&p("monte le chauffage d'un degré chez Léa"));
+        let mut f = fixture::house();
+        // The schedule moved on before the answer came.
+        f.zone_mut("chambre_lea")
+            .decision
+            .as_mut()
+            .unwrap()
+            .setpoint = Some(nidoo_climate::doc::Setpoint::Temp(17.0));
+        let mut yes = request;
+        yes.confirmed = true;
+        assert_eq!(
+            setpoint_of(&plan_request(&yes, &f.house())),
+            ("chambre_lea".into(), 15.0)
         );
     }
 }
