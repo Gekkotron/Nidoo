@@ -7,7 +7,6 @@ use std::time::Duration;
 use nidoo_api::ConnectionStatus;
 use tokio::task::JoinHandle;
 
-use super::is_expired;
 use super::open_meteo::{self, Endpoints, FetchError, Place};
 use crate::clock;
 use crate::hub::Hub;
@@ -77,31 +76,30 @@ pub async fn run(hub: Arc<Hub>, endpoints: Endpoints) {
         }
     };
 
-    let mut last_success: Option<u64> = None;
-    let mut warned = false;
+    // Consecutive failed fetches: the next try comes sooner than a full refresh period.
+    let mut failures: u32 = 0;
     loop {
         match open_meteo::forecast(&client, &endpoints, &place).await {
             Ok(forecast) => {
-                let now = clock::now();
-                hub.apply_weather(open_meteo::build_view(&forecast, &place, now));
-                last_success = Some(now);
-                warned = false;
+                hub.apply_weather(open_meteo::build_view(&forecast, &place, clock::now()));
+                failures = 0;
             }
             Err(e) => {
-                if !warned {
+                if failures == 0 {
                     tracing::warn!(error = %e, "weather: fetching the forecast failed; keeping the last one");
-                    warned = true;
                 }
-                if last_success.is_some_and(|at| is_expired(at, clock::now())) {
-                    hub.set_weather_offline();
-                }
+                failures = failures.saturating_add(1);
+                hub.weather_fetch_failed();
             }
         }
-        tokio::time::sleep(refresh_delay(
-            hub.weather_refresh_minutes(),
-            clock::random_roll(),
-        ))
-        .await;
+        let minutes = hub.weather_refresh_minutes();
+        let roll = clock::random_roll();
+        let delay = if failures == 0 {
+            refresh_delay(minutes, roll)
+        } else {
+            retry_delay(failures, minutes, roll)
+        };
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -141,6 +139,17 @@ async fn resolve(
     }
 }
 
+/// The first wait after a failed fetch; it doubles with each further failure.
+const RETRY_START: Duration = Duration::from_secs(60);
+
+/// The wait after the `failures`-th failed fetch in a row: [`RETRY_START`] doubled each time,
+/// never longer than the regular refresh delay.
+fn retry_delay(failures: u32, minutes: u64, roll: u64) -> Duration {
+    let doublings = failures.saturating_sub(1).min(16);
+    let backoff = RETRY_START.saturating_mul(1 << doublings);
+    backoff.min(refresh_delay(minutes, roll))
+}
+
 /// `minutes` minutes, plus or minus 10 %, from a random `roll`; never below [`MIN_SLEEP`].
 fn refresh_delay(minutes: u64, roll: u64) -> Duration {
     let base_ms = minutes.saturating_mul(60_000);
@@ -160,6 +169,20 @@ mod tests {
         assert_eq!(low, Duration::from_secs(15 * 54));
         assert!(high <= Duration::from_secs(15 * 66));
         assert!(high > Duration::from_secs(15 * 60));
+    }
+
+    #[test]
+    fn retry_delay_doubles_from_a_minute() {
+        assert_eq!(retry_delay(1, 60, 0), Duration::from_secs(60));
+        assert_eq!(retry_delay(2, 60, 0), Duration::from_secs(120));
+        assert_eq!(retry_delay(3, 60, 0), Duration::from_secs(240));
+    }
+
+    #[test]
+    fn retry_delay_never_exceeds_the_refresh_period() {
+        assert_eq!(retry_delay(5, 15, 0), refresh_delay(15, 0));
+        assert_eq!(retry_delay(64, 15, 7), refresh_delay(15, 7));
+        assert_eq!(retry_delay(1, 0, 0), MIN_SLEEP);
     }
 
     #[test]

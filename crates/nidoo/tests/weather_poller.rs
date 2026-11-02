@@ -315,3 +315,43 @@ async fn lowercase_country_is_sent_uppercase() {
     let hub = Hub::new(&cfg, tx);
     assert_eq!(hub.weather_country().as_deref(), Some("FR"));
 }
+
+#[tokio::test]
+async fn restored_cache_is_served_while_open_meteo_fails() {
+    // A previous run left its view retained; this run's fetches all fail.
+    let previous = app(true).await;
+    let stub = Stub::new(GEOCODING, usize::MAX);
+    let task = spawn_with(&previous.hub, serve_stub(stub).await);
+    let hub = Arc::clone(&previous.hub);
+    until("the first view", || hub.weather_view().is_ok()).await;
+    task.abort();
+    let cache = previous
+        .published
+        .lock()
+        .unwrap()
+        .iter()
+        .rfind(|(t, _)| t == "nidoo/weather/cache")
+        .map(|(_, p)| p.clone())
+        .expect("a cache");
+
+    let app = app(true).await;
+    let failing = Stub::new(GEOCODING, 0);
+    let task = spawn_with(&app.hub, serve_stub(Arc::clone(&failing)).await);
+    app.hub
+        .ingest_message("nidoo/weather/cache", cache.as_bytes(), true);
+    until("a failed fetch", || {
+        failing.forecast_calls.load(Ordering::SeqCst) >= 2
+    })
+    .await;
+    let response = get_weather(&app).await;
+    assert_eq!(response.status(), 200);
+    let view: WeatherView = response.json().await.unwrap();
+    assert_eq!(view.place.name, "Paris");
+    let hub = Arc::clone(&app.hub);
+    until("the entities back online", || {
+        hub.entity_view("weather_temperature")
+            .is_some_and(|e| e.state.availability == nidoo_core::model::Availability::Online)
+    })
+    .await;
+    task.abort();
+}

@@ -7,7 +7,7 @@ use std::sync::MutexGuard;
 use nidoo_api::{WeatherView, WsEvent};
 use nidoo_core::command::Publish;
 
-use super::{entities, is_stale};
+use super::{entities, is_expired, is_stale};
 use crate::clock;
 use crate::hub::{Hub, HubError};
 
@@ -126,9 +126,7 @@ impl Hub {
             );
             (changed, data_changed)
         };
-        if self.weather_slot().online != Some(true) && self.publish_availability(true) {
-            self.weather_slot().online = Some(true);
-        }
+        self.set_weather_online();
         for (key, payload) in changed {
             let topic = entities::state_topic(&self.discovery_prefix, key);
             if self.publish_weather(topic, payload.clone()) {
@@ -140,8 +138,72 @@ impl Hub {
                 }
             }
         }
+        self.publish_weather_cache(&view);
         if data_changed {
             self.broadcast(WsEvent::WeatherChanged);
+        }
+    }
+
+    /// Publishes `view` retained on the cache topic. A refused publish is retried by the next
+    /// fetch.
+    fn publish_weather_cache(&self, view: &WeatherView) {
+        match serde_json::to_string(view) {
+            Ok(payload) => {
+                let _ = self.publish(Publish {
+                    topic: entities::cache_topic(&self.discovery_prefix),
+                    payload,
+                    retain: true,
+                });
+            }
+            Err(error) => tracing::warn!(%error, "weather: could not serialise the retained cache"),
+        }
+    }
+
+    /// Loads the retained cache while `[weather]` is on and no view is held yet, so a restart
+    /// serves the last forecast before its first fetch. Whether `topic` is the cache topic.
+    pub(crate) fn ingest_weather_cache(&self, topic: &str, payload: &[u8]) -> bool {
+        if topic != entities::cache_topic(&self.discovery_prefix) {
+            return false;
+        }
+        if !self.weather_enabled || payload.is_empty() {
+            return true;
+        }
+        let view: WeatherView = match serde_json::from_slice(payload) {
+            Ok(view) => view,
+            Err(error) => {
+                tracing::warn!(%error, "weather: ignoring a malformed retained cache");
+                return true;
+            }
+        };
+        let restored = {
+            let mut slot = self.weather_slot();
+            let empty = slot.view.is_none();
+            if empty {
+                slot.view = Some(view);
+            }
+            empty
+        };
+        if restored {
+            self.broadcast(WsEvent::WeatherChanged);
+        }
+        true
+    }
+
+    /// A fetch failed: the entities stay online while the held view is under an hour old, and
+    /// go offline once it is older. Without any view they keep the boot-time `offline`.
+    pub fn weather_fetch_failed(&self) {
+        let fetched_at = self.weather_slot().view.as_ref().map(|v| v.fetched_at);
+        match fetched_at {
+            Some(at) if !is_expired(at, clock::now()) => self.set_weather_online(),
+            Some(_) => self.set_weather_offline(),
+            None => {}
+        }
+    }
+
+    /// Marks the entities available, once per transition.
+    fn set_weather_online(&self) {
+        if self.weather_slot().online != Some(true) && self.publish_availability(true) {
+            self.weather_slot().online = Some(true);
         }
     }
 
