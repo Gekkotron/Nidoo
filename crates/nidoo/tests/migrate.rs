@@ -7,6 +7,11 @@ use common::db::fresh_db;
 use nidoo::migrate::db::{rename_db_and_role, rename_entity_ids, rename_settings};
 use sqlx::{Connection, PgConnection, PgPool};
 
+/// `rename_db_and_role` creates and drops one fixed-name temp role, so two of these tests in
+/// parallel race on the same `pg_authid` row ("tuple concurrently updated"). They take this
+/// lock for their whole body.
+static ROLE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn count(pool: &PgPool, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
@@ -195,6 +200,7 @@ async fn renames_settings_prefixes() {
 
 #[tokio::test]
 async fn renames_database_and_role() {
+    let _lock = ROLE_LOCK.lock().await;
     let Some(t) = fresh_db().await else { return };
     let mut base = url::Url::parse(&std::env::var("TEST_DATABASE_URL").unwrap()).unwrap();
     let suffix = format!("{}_{}", std::process::id(), t.name.len());
@@ -292,6 +298,7 @@ const NO_TMP: &str = "SELECT count(*) FROM pg_roles WHERE rolname = 'nidoo_migra
 
 #[tokio::test]
 async fn failed_rename_still_drops_the_temp_role() {
+    let _lock = ROLE_LOCK.lock().await;
     let Some(t) = fresh_db().await else { return };
     let (base, from, to) = throwaway(&t, "f").await;
     // An open session on the database makes ALTER DATABASE ... RENAME fail.
@@ -306,6 +313,7 @@ async fn failed_rename_still_drops_the_temp_role() {
 
 #[tokio::test]
 async fn refuses_an_existing_target() {
+    let _lock = ROLE_LOCK.lock().await;
     let Some(t) = fresh_db().await else { return };
     let (base, from, to) = throwaway(&t, "e").await;
     sqlx::query(&format!("CREATE DATABASE \"{to}\""))
