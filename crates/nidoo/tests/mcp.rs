@@ -644,6 +644,37 @@ async fn send_command_search_areas_and_the_small_tools() {
     assert!(ids.contains(&SWITCH_ID), "{ids:?}");
     assert!(ids.contains(&LINKQUALITY_ID), "{ids:?}");
 
+    // A room is found by its name, accents, case and articles aside, and every word must
+    // match: the switch moved to the room is found, the link quality left behind is not.
+    call(
+        &client,
+        "set_areas",
+        json!({"areas": [
+            {"id": "stair", "name": "Stair", "order": 2},
+            {"id": "living", "name": "Séjour", "order": 0},
+        ]}),
+    )
+    .await;
+    server.publisher.try_recv().expect("the areas publish");
+    call(
+        &client,
+        "set_override",
+        json!({"id": SWITCH_ID, "patch": {"area": "living"}}),
+    )
+    .await;
+    server.publisher.try_recv().expect("the override publish");
+    let in_room = json_of(
+        "search",
+        &call(&client, "search", json!({"query": "stair du SEJOUR"})).await,
+    );
+    let ids: Vec<&str> = in_room["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert_eq!(ids, [SWITCH_ID]);
+
     let devices = json_of(
         "list_devices",
         &call(&client, "list_devices", json!({"query": "zbmini"})).await,

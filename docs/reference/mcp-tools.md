@@ -26,7 +26,7 @@ Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio --server http:
 | `list_devices` | The Zigbee devices with availability, battery and link quality. Args: optional `area` (an area id), `query` (case-insensitive, matched against name, model and vendor). |
 | `list_entities` | A page of entities with their state. By default only what the app shows (`include: "primary"`: no diagnostic, config, disabled-by-default, folded or hidden entity); `include: "all"` for everything. Args: `area`, `kind`, `device_id`, `query` (entity name and id), `changed_since` (unix seconds), `include`, `limit` (100 by default, 500 at most), `offset`. The reply has `total` (matches before paging) and `items`. |
 | `get_entity` | One entity with its state, its MQTT `bindings` (the expanded discovery config) and its `raw_override`. Args: `id`. |
-| `search` | Devices (name, model, vendor) and entities (name, id, or belonging to a matching device) containing the query. Args: `query`, optional `limit` (20 by default, 500 at most). |
+| `search` | Devices and entities found from a few words, French or English, case and accents ignored (`température salon`, `volet cuisine`). Articles and prepositions are dropped; every other word must match. An entity matches on its name, id, room (id or name), kind, device class (with their French words) or its device; a device on its name, model or vendor. Args: `query`, optional `limit` (20 by default, 500 at most). |
 | `list_ignored` | The discovery topics that did not become an entity, with the reason. |
 
 ## Overrides

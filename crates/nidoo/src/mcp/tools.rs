@@ -26,6 +26,7 @@ use super::params::{
     SetGroupParams, SetHomeSettingsParams, SetNetworkWatchParams, SetOverrideParams,
     SetSettingsParams, SetVirtualParams,
 };
+use super::search::{EntityMatcher, Query};
 use super::{NidooMcp, ToolError};
 use crate::history::query as history_query;
 use crate::setup::settings::{ApiError, read_section, write_section};
@@ -300,36 +301,30 @@ impl NidooMcp {
         Ok(Json(response))
     }
 
-    /// Finds devices (by friendly name, model or vendor) and entities (by name or id, or
-    /// belonging to a matching device) whose text contains the query, case-insensitively.
+    /// Finds devices and entities from a few words, case- and accent-insensitively, French or
+    /// English ("température salon", "volet cuisine"). Articles and prepositions are ignored;
+    /// every other word must be found. An entity is found by its name, id, room (id or name),
+    /// kind, device class (with their French words) or its device; a device by its friendly
+    /// name, model or vendor.
     #[tool(name = "search", annotations(read_only_hint = true))]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> Json<SearchResult> {
-        let query = params.query.to_lowercase();
+        let query = Query::parse(&params.query);
         let limit = params.limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_LIMIT);
         let snapshot = self.hub.snapshot();
-        let matched_devices: BTreeSet<String> = snapshot
-            .devices
-            .iter()
-            .filter(|device| device_matches(device, &query))
-            .map(|device| device.id.clone())
-            .collect();
+        let matcher = EntityMatcher::new(&query, &snapshot.areas, &snapshot.devices);
         let entities = snapshot
             .entities
-            .into_iter()
-            .filter(|entity| {
-                entity_matches(entity, &query)
-                    || entity
-                        .device_id
-                        .as_deref()
-                        .is_some_and(|id| matched_devices.contains(id))
-            })
+            .iter()
+            .filter(|entity| matcher.matches(entity))
             .take(limit)
+            .cloned()
             .collect();
         let devices = snapshot
             .devices
-            .into_iter()
-            .filter(|device| matched_devices.contains(&device.id))
+            .iter()
+            .filter(|device| query.device_matches(device))
             .take(limit)
+            .cloned()
             .collect();
         Json(SearchResult { devices, entities })
     }
