@@ -1,5 +1,6 @@
-//! The twenty-two tools of the house (the six flow tools are in `flow_tools.rs`). Read tools work on one snapshot (one read lock, released before any
-//! await); write tools log their arguments and go through the hub's writers.
+//! The house's general tools; flows, the alarm, ambiances and climate have their own
+//! `*_tools.rs`. Read tools work on one snapshot (one read lock, released before any await);
+//! write tools log their arguments and go through the hub's writers.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
