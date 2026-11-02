@@ -35,7 +35,7 @@ pub const TICK_SECS: u64 = 60;
 /// The longest one database call of a tick may take.
 const DB_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The longest the daily retention purge may take; it runs after the sensors are out.
+/// The longest the daily retention purge may take; it runs detached from the tick.
 const PURGE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// How long the restart push stays relevant, in seconds.
@@ -102,8 +102,10 @@ pub struct SystemState {
     resources: Option<Resources>,
     db_bytes: Option<u64>,
     started_at: u64,
-    /// This start, until the restart log took it.
+    /// This start, until a read of the restart log returns it.
     pending: Option<RestartView>,
+    /// Whether the restart log took `pending`; the insert is not repeated.
+    pending_logged: bool,
     /// The restart log of the last 30 days, newest first, as last read.
     restarts: Vec<RestartView>,
     first_start: Option<u64>,
@@ -112,7 +114,7 @@ pub struct SystemState {
     published: BTreeMap<&'static str, Published>,
     /// The broker link epoch the published memory belongs to.
     epoch: Option<u64>,
-    /// The local day of the last retention purge.
+    /// The local day of the last retention purge attempt.
     purged_on: Option<NaiveDate>,
 }
 
@@ -128,6 +130,7 @@ impl SystemState {
             db_bytes: None,
             started_at,
             pending: None,
+            pending_logged: false,
             restarts: Vec::new(),
             first_start: None,
             uptime_pct: 100.0,
@@ -137,7 +140,16 @@ impl SystemState {
         }
     }
 
-    /// The logged starts plus this one while the log has not taken it, newest first.
+    /// Whether the retention purge is due on local day `today`; marks the day when it is.
+    fn purge_due(&mut self, today: NaiveDate) -> bool {
+        if self.purged_on == Some(today) {
+            return false;
+        }
+        self.purged_on = Some(today);
+        true
+    }
+
+    /// The logged starts plus this one while the log has not returned it, newest first.
     fn all_restarts(&self) -> Vec<RestartView> {
         let mut all = self.restarts.clone();
         if let Some(pending) = &self.pending
@@ -245,7 +257,6 @@ impl Hub {
     pub async fn tick_with(&self, now: u64, resources: Resources) {
         let today = local_day(self.zone(), now);
         let db = self.system_db_round(now).await;
-        let database_up = matches!(db.database, Some(Ok(_)));
         let (entities, devices) = self.counts();
         let readings = Readings {
             entities,
@@ -274,9 +285,7 @@ impl Hub {
         for (topic, payload) in configs {
             self.ingest(&topic, payload.as_bytes());
         }
-        if database_up {
-            self.system_purge(now, today).await;
-        }
+        self.start_purge(now, today);
     }
 
     /// The system page, from the last tick.
@@ -343,7 +352,10 @@ impl Hub {
             database: Some(Ok(size)),
             ..DbRound::default()
         };
-        let pending = self.system_state().pending.clone();
+        let pending = {
+            let state = self.system_state();
+            state.pending.clone().filter(|_| !state.pending_logged)
+        };
         if let Some(start) = pending {
             match timeout(DB_TIMEOUT, db.insert_restart(&start)).await {
                 Ok(Ok(())) => round.inserted = Some(start.started_at),
@@ -363,23 +375,26 @@ impl Hub {
         round
     }
 
-    /// Once per local day, deletes the system history and restart log past the 90 days.
-    async fn system_purge(&self, now: u64, today: NaiveDate) {
-        if self.system_state().purged_on == Some(today) {
-            return;
+    /// Once per local day, starts deleting the system history and restart log past the 90
+    /// days, detached so the tick never waits on it. The day is marked before the attempt: a
+    /// failure is logged once and waits for the next local day. `None` when nothing started.
+    fn start_purge(&self, now: u64, today: NaiveDate) -> Option<JoinHandle<()>> {
+        let db = self.history().and_then(|h| h.db().ok())?.clone();
+        if !self.system_state().purge_due(today) {
+            return None;
         }
-        let Some(db) = self.history().and_then(|h| h.db().ok()) else {
-            return;
-        };
         let cutoff = now.saturating_sub(KEEP_SECS);
-        match timeout(PURGE_TIMEOUT, db.purge_system_before(cutoff)).await {
-            Ok(Ok(removed)) => {
-                tracing::debug!(removed, "purged the old system history");
-                self.system_state().purged_on = Some(today);
+        Some(tokio::spawn(async move {
+            match timeout(PURGE_TIMEOUT, db.purge_system_before(cutoff)).await {
+                Ok(Ok(removed)) => tracing::debug!(removed, "purged the old system history"),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "could not purge the old system history; next try tomorrow");
+                }
+                Err(_) => {
+                    tracing::warn!("purging the old system history timed out; next try tomorrow")
+                }
             }
-            Ok(Err(error)) => tracing::warn!(%error, "could not purge the old system history"),
-            Err(_) => tracing::warn!("purging the old system history timed out"),
-        }
+        }))
     }
 
     /// Publishes what changed; returns the configs published, for the local registry. A
@@ -466,11 +481,19 @@ impl SystemState {
                 .as_ref()
                 .is_some_and(|p| p.started_at == started_at)
         {
-            self.pending = None;
+            self.pending_logged = true;
         }
         if let Some((restarts, first_start)) = db.restarts {
             self.restarts = restarts;
             self.first_start = first_start;
+            if let Some(pending) = &self.pending
+                && self
+                    .restarts
+                    .iter()
+                    .any(|r| r.started_at == pending.started_at)
+            {
+                self.pending = None;
+            }
         }
         self.uptime_pct = uptime_pct(&self.all_restarts(), self.first_start, now, WINDOW_SECS);
 
@@ -618,6 +641,105 @@ mod tests {
             nidoo_push::normalize::normalize("system", &restart_alert(1_000, Some(600)), 1_000)
                 .expect("a valid alert");
         assert!(alert.loc.is_some(), "the loc hint was dropped");
+    }
+
+    fn readings(today: NaiveDate) -> Readings {
+        Readings {
+            entities: 0,
+            devices: 0,
+            broker: ServiceState::Up,
+            zigbee2mqtt: ServiceState::Unknown,
+            retained: None,
+            commands_total: 0,
+            notify: false,
+            today,
+            epoch: 0,
+        }
+    }
+
+    fn no_resources() -> Resources {
+        Resources {
+            cpu: None,
+            ram: None,
+            disk: None,
+            temperature_c: None,
+        }
+    }
+
+    const T0: u64 = 1_800_000_000;
+
+    #[test]
+    fn start_stays_until_the_log_reads_it() {
+        let today = local_day(chrono_tz::UTC, T0);
+        let start = RestartView {
+            started_at: T0,
+            down_secs: Some(600),
+            stop: StopKind::Unexpected,
+        };
+        let mut state = SystemState::new(false, T0);
+        state.pending = Some(start.clone());
+
+        // Logged, but the read of the log failed this tick: the start still shows.
+        let logged = DbRound {
+            database: Some(Ok(1)),
+            inserted: Some(T0),
+            restarts: None,
+        };
+        state.absorb(T0 + 60, no_resources(), logged, &readings(today));
+        assert!(state.pending_logged);
+        assert_eq!(state.all_restarts(), vec![start.clone()]);
+        assert!(state.uptime_pct < 100.0);
+
+        let read = DbRound {
+            database: Some(Ok(1)),
+            inserted: None,
+            restarts: Some((vec![start.clone()], Some(T0))),
+        };
+        state.absorb(T0 + 120, no_resources(), read, &readings(today));
+        assert_eq!(state.pending, None);
+        assert_eq!(state.all_restarts(), vec![start]);
+    }
+
+    #[test]
+    fn purge_is_due_once_per_local_day() {
+        let day1 = NaiveDate::from_ymd_opt(2026, 11, 2).expect("date");
+        let day2 = NaiveDate::from_ymd_opt(2026, 11, 3).expect("date");
+        let mut state = SystemState::new(false, T0);
+        assert!(state.purge_due(day1));
+        assert!(!state.purge_due(day1));
+        assert!(state.purge_due(day2));
+        assert!(!state.purge_due(day2));
+    }
+
+    #[tokio::test]
+    async fn failing_purge_waits_for_the_next_day() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(256);
+        let hub = Hub::new(&crate::config::Config::default(), tx);
+        let cfg = crate::config::HistoryConfig {
+            url: "postgres://u:p@127.0.0.1:1/x".to_owned(),
+            ..crate::config::HistoryConfig::default()
+        };
+        hub.set_history(crate::history::History::start(&cfg, hub.zone()).expect("a lazy pool"));
+        let today = local_day(hub.zone(), T0);
+
+        // The size query waits out the pool's 5 s acquire timeout; a purge awaited inline
+        // would add as much again.
+        let started = std::time::Instant::now();
+        hub.tick_with(T0, no_resources()).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(hub.system_state().purged_on, Some(today));
+
+        // The attempt (failing in the background) took the day.
+        assert!(hub.start_purge(T0 + 60, today).is_none());
+        let tomorrow = today.succ_opt().expect("a next day");
+        let next = hub
+            .start_purge(T0 + 86_400, tomorrow)
+            .expect("tomorrow's purge");
+        next.abort();
     }
 
     #[test]

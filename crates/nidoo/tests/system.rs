@@ -285,6 +285,11 @@ async fn unexpected_boot_pushes_when_notify_on() {
     let view = hub.system_view();
     assert_eq!(view.restarts.len(), 1);
     assert_eq!(view.restarts[0].stop, nidoo_api::StopKind::Unexpected);
+
+    // Later ticks never push the restart again.
+    hub.tick_with(T0, resources(None)).await;
+    hub.tick_with(T0 + 60, resources(None)).await;
+    assert!(history(&drain(&mut rx)).is_empty());
 }
 
 #[tokio::test(start_paused = true)]

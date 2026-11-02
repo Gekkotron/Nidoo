@@ -149,7 +149,7 @@ impl Outage {
             "loc": {"key": "service.unreachable", "args": {
                 "service": service.key(),
                 "reason": self.reason,
-                "minutes": minutes,
+                "minutes": minutes.to_string(),
             }},
         })
     }
@@ -172,7 +172,7 @@ impl Outage {
             "ttl": TTL,
             "loc": {"key": "service.reachable_again", "args": {
                 "service": service.key(),
-                "minutes": minutes,
+                "minutes": minutes.to_string(),
             }},
         })
     }
@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(alert["loc"]["key"], "service.unreachable");
         assert_eq!(alert["loc"]["args"]["service"], "weather");
         assert_eq!(alert["loc"]["args"]["reason"], "timeout");
-        assert_eq!(alert["loc"]["args"]["minutes"], 30);
+        assert_eq!(alert["loc"]["args"]["minutes"], "30");
         assert!(o.tick(T0 + 31 * MIN).is_none());
         o.failed(T0 + 40 * MIN, "timeout");
         assert!(o.tick(T0 + 90 * MIN).is_none());
@@ -391,7 +391,7 @@ mod tests {
         assert!(o.tick(T0 + 5 * MIN - 1).is_none());
         let alert = o.tick(T0 + 5 * MIN).expect("down alert");
         assert_eq!(alert["loc"]["args"]["service"], "broker");
-        assert_eq!(alert["loc"]["args"]["minutes"], 5);
+        assert_eq!(alert["loc"]["args"]["minutes"], "5");
         assert_eq!(alert["title"], "The MQTT broker unreachable");
     }
 
@@ -409,6 +409,23 @@ mod tests {
         assert!(o.tick(T0 + 5 * MIN).is_some());
         o.set_notify(false);
         assert!(o.succeeded(T0 + 6 * MIN).is_none());
+    }
+
+    #[test]
+    fn service_alerts_keep_their_loc() {
+        let mut o = Outage::new(Service::Zigbee2mqtt, true);
+        o.failed(T0, "the bridge is offline");
+        let down = o.tick(T0 + 5 * MIN).expect("down alert");
+        let back = o.succeeded(T0 + 12 * MIN).expect("back alert");
+        assert_eq!(back["loc"]["args"]["minutes"], "12");
+        for alert in [down, back] {
+            let normalized =
+                nidoo_push::normalize::normalize("system", &alert, T0).expect("a valid alert");
+            assert!(
+                normalized.loc.is_some(),
+                "the loc hint was dropped: {alert}"
+            );
+        }
     }
 
     #[test]
