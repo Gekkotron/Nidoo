@@ -2229,6 +2229,7 @@ name = "nidoo-assist"
 version = "0.1.0"
 dependencies = [
  "nidoo-api",
+ "nidoo-assist",
  "nidoo-climate",
  "nidoo-core",
  "schemars",

@@ -14,5 +14,10 @@ serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
 
+[dev-dependencies]
+nidoo-assist = { path = ".", features = ["fixture"] }
+
 [features]
 schemars = ["dep:schemars", "nidoo-climate/schemars"]
+# The fictional test house, for integration tests.
+fixture = []

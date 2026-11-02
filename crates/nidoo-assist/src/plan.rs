@@ -157,10 +157,10 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
     }
 }
 
-fn not_understood(_house: &House) -> Plan {
+fn not_understood(house: &House) -> Plan {
     Plan::NotUnderstood {
         reply: "Je n'ai pas compris.".into(),
-        examples: Vec::new(),
+        examples: crate::pending::examples(house),
         trace: Trace::default(),
     }
 }
