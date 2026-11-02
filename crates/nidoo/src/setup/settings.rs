@@ -65,8 +65,10 @@ fn unprocessable(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message)
 }
 
+/// The sections the generic routes edit (and restart for). "system" is stored by
+/// `Hub::set_system_notify` without a restart, so it is not one of them.
 fn known(section: &str) -> bool {
-    SECTION_KEYS.contains(&section)
+    section != "system" && SECTION_KEYS.contains(&section)
 }
 
 /// The project id a service-account key JSON names. The JSON and any parse error stay unlogged.
@@ -125,7 +127,8 @@ fn view(section: &str, s: &Sections) -> Value {
             })
         }
         "climate" => to(&s.climate),
-        _ => to(&s.advanced),
+        "advanced" => to(&s.advanced),
+        _ => Value::Null,
     }
 }
 
@@ -258,7 +261,8 @@ fn merge(section: &str, body: Value, next: &mut Sections, file: &HubFile) -> Res
             };
         }
         "climate" => next.climate = parse(body, section)?,
-        _ => next.advanced = parse::<AdvancedSection>(body, section)?,
+        "advanced" => next.advanced = parse::<AdvancedSection>(body, section)?,
+        _ => return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown section")),
     }
     Ok(())
 }
@@ -400,5 +404,26 @@ mod tests {
         );
         assert_eq!(project_id("{not json"), None);
         assert_eq!(project_id(r#"{"project_id":3}"#), None);
+    }
+
+    #[tokio::test]
+    async fn the_system_section_is_not_a_generic_section() {
+        let ctx = SetupCtx::inert();
+        let before = ctx.sections.lock().await.clone();
+        let read = read_section(&ctx, "system").await.unwrap_err();
+        assert_eq!(read.status, StatusCode::NOT_FOUND);
+        let write = write_section(&ctx, "system", json!({})).await.unwrap_err();
+        assert_eq!(write.status, StatusCode::NOT_FOUND);
+        assert_eq!(*ctx.sections.lock().await, before);
+        assert!(!ctx.restarting.load(Ordering::SeqCst));
+        let mut next = before.clone();
+        let file = HubFile::default();
+        assert_eq!(
+            merge("system", json!({}), &mut next, &file)
+                .unwrap_err()
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(next, before);
     }
 }

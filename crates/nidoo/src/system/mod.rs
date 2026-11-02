@@ -43,9 +43,14 @@ impl Hub {
             tracing::warn!(%error, "could not store the system notify switch");
             return Err(unavailable("the database did not take the write"));
         }
-        // The row is saved; a cache failure is only logged, the cache heals on the next write.
         if let Err(error) = store::write_cache(&ctx.data_dir, &next) {
-            tracing::warn!(%error, "could not refresh the settings cache");
+            // Boot reads the cache while the database is down, so a switch the cache lacks
+            // could revert silently: put the row back and report the failure.
+            tracing::error!(error = %error.kind(), "could not refresh the settings cache");
+            if let Err(error) = store::save_section(db, "system", &held).await {
+                tracing::warn!(%error, "could not restore the system row after a cache failure");
+            }
+            return Err(unavailable("the settings cache could not be written"));
         }
         *held = next;
         self.system_notify.store(notify, Ordering::Relaxed);
