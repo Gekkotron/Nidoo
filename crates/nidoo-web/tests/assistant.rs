@@ -1,17 +1,8 @@
 #![cfg(target_arch = "wasm32")]
-//! The Assistant page: the conversation, the answer chips, the trace panel and Faux, over a
-//! stubbed hub.
+//! The Assistant page: the conversation, the answer chips, the trace panel and Faux, and where
+//! the floating button shows, over a stubbed hub.
 
-use leptos::prelude::*;
-use leptos::task::tick;
-use leptos_router::components::{Route, Router, Routes};
-use leptos_router::path;
-use nidoo_web::components::toast::Toasts;
-use nidoo_web::house::House;
-use nidoo_web::i18n::Lang;
-use nidoo_web::screens::assistant::AssistantScreen;
 use serde_json::{Value, json};
-use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -19,128 +10,9 @@ wasm_bindgen_test_configure!(run_in_browser);
 mod fetch_stub;
 use fetch_stub::FetchStub;
 
-/// gloo-net leaves a trailing `&` on a query written in the URL.
-const TURNS: &str = "/api/v1/assist/turns?limit=50&";
-
-struct Mounted {
-    _app: Box<dyn std::any::Any>,
-    host: web_sys::Element,
-}
-
-fn mount() -> Mounted {
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
-    let host = document.create_element("div").unwrap();
-    document.body().unwrap().append_child(&host).unwrap();
-    window
-        .history()
-        .unwrap()
-        .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/assistant"))
-        .unwrap();
-    let app = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
-        provide_context(House::new());
-        provide_context(Toasts::new());
-        provide_context(RwSignal::new(Lang::En));
-        nidoo_web::nav::install_nav();
-        view! {
-            <Router>
-                <Routes fallback=|| "fallback">
-                    <Route path=path!("/assistant") view=AssistantScreen />
-                </Routes>
-            </Router>
-        }
-    });
-    Mounted {
-        _app: Box::new(app),
-        host,
-    }
-}
-
-async fn settle() {
-    tick().await;
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    tick().await;
-}
-
-fn find(host: &web_sys::Element, selector: &str) -> Option<web_sys::HtmlElement> {
-    host.query_selector(selector)
-        .unwrap()
-        .map(|e| e.unchecked_into())
-}
-
-fn all(host: &web_sys::Element, selector: &str) -> Vec<web_sys::HtmlElement> {
-    let nodes = host.query_selector_all(selector).unwrap();
-    (0..nodes.length())
-        .map(|i| nodes.item(i).unwrap().unchecked_into())
-        .collect()
-}
-
-async fn wait_for(host: &web_sys::Element, selector: &str) -> web_sys::HtmlElement {
-    for _ in 0..80 {
-        if let Some(e) = find(host, selector) {
-            settle().await;
-            return e;
-        }
-        gloo_timers::future::TimeoutFuture::new(25).await;
-    }
-    panic!("waited for {selector:?}: {}", host.inner_html());
-}
-
-fn text(host: &web_sys::Element) -> String {
-    host.text_content().unwrap_or_default()
-}
-
-fn turn(id: &str, outcome: &str, reply: &str, question: Value) -> Value {
-    json!({
-        "id": id,
-        "at": 1800000000u64,
-        "client": "c",
-        "text": "mets le salon à 25",
-        "simulate": false,
-        "outcome": outcome,
-        "reply": reply,
-        "question": question,
-        "trace": {
-            "words": ["mets", "le", "salon", "a", "25"],
-            "intent": "set_temp",
-            "room": "salon",
-            "roomHow": "mots : salon",
-            "entities": ["climate_salon"],
-            "value": "19 − 0,5 = 18,5 °C",
-            "gate": "hors de 16–23 °C : demander",
-            "actions": [{ "target": "salon", "what": "consigne 25 °C", "result": "ok" }],
-            "elapsedUs": 120
-        },
-        "wrong": false
-    })
-}
-
-/// Types `sentence` in the field and presses Enter.
-fn send(host: &web_sys::Element, sentence: &str) {
-    let input: web_sys::HtmlInputElement = find(host, ".assist__input").unwrap().unchecked_into();
-    input.set_value(sentence);
-    let init = web_sys::EventInit::new();
-    init.set_bubbles(true);
-    input
-        .dispatch_event(&web_sys::Event::new_with_event_init_dict("input", &init).unwrap())
-        .unwrap();
-    let key = web_sys::KeyboardEventInit::new();
-    key.set_key("Enter");
-    key.set_bubbles(true);
-    input
-        .dispatch_event(
-            &web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &key).unwrap(),
-        )
-        .unwrap();
-}
-
-fn posts(stub: &FetchStub) -> Vec<Value> {
-    stub.requests()
-        .into_iter()
-        .filter(|r| r.method == "POST" && r.url == "/api/v1/assist")
-        .map(|r| serde_json::from_str(&r.body).unwrap())
-        .collect()
-}
+#[path = "support/assist_harness.rs"]
+mod harness;
+use harness::*;
 
 #[wasm_bindgen_test]
 async fn assistant_route_renders() {
@@ -286,4 +158,26 @@ async fn faux_marks_turn() {
         button.get_attribute("aria-pressed").as_deref(),
         Some("true")
     );
+}
+
+// The floating button.
+
+#[wasm_bindgen_test]
+async fn fab_hidden_on_assistant() {
+    let stub = FetchStub::install();
+    stub.reply("GET", TURNS, 200, r#"{"turns":[],"kept":true}"#);
+    let m = mount_shell("/assistant");
+    wait_for(&m.host, ".assist__input").await;
+    assert!(find(&m.host, ".assist-fab").is_none());
+}
+
+#[wasm_bindgen_test]
+async fn fab_hidden_while_the_drawer_is_out() {
+    let stub = FetchStub::install();
+    stub.reply("GET", TURNS, 200, r#"{"turns":[],"kept":true}"#);
+    let m = mount_shell("/");
+    wait_for(&m.host, ".assist-fab").await;
+    find(&m.host, ".content-header__menu").unwrap().click();
+    settle().await;
+    assert!(find(&m.host, ".assist-fab").is_none());
 }

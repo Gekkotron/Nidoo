@@ -9,6 +9,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::{use_location, use_navigate};
 use wasm_bindgen::JsCast;
 
+use crate::components::assist_fab::AssistFab;
 use header::ContentHeader;
 use sidebar::Sidebar;
 
@@ -114,6 +115,7 @@ pub fn Shell(
                 </Show>
                 <main class="screen">{children()}</main>
             </div>
+            <AssistFab drawer_open />
         </div>
     }
 }

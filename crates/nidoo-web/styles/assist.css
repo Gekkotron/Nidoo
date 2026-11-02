@@ -143,3 +143,40 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The floating button: above the page and the phone widget library (40), under the edit
+   sheets (45), the phone drawer (46/47) and the toasts (50). Dialogs sit in the top layer. */
+.assist-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 44;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--btn-dark-bg);
+  color: var(--btn-dark-ink);
+  box-shadow: var(--shadow);
+  transition: transform var(--motion-short) var(--ease);
+}
+
+.assist-fab:hover {
+  transform: scale(1.05);
+}
+
+.assist-fab:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 3px;
+}
+
+.assist-fab svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* Editing a dashboard puts its widget library in that corner. */
+.shell:has(.dashboard-edit-layout) .assist-fab {
+  display: none;
+}
