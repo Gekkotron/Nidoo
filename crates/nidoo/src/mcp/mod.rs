@@ -9,6 +9,7 @@ mod ambiance_tools;
 mod climate_tools;
 mod flow_tools;
 mod params;
+mod search;
 mod stdio_proxy;
 mod tools;
 
@@ -131,7 +132,7 @@ fn instructions() -> String {
          Zigbee nodes, entities are their Home Assistant discovery entries (lights, switches, \
          covers, climates, sensors and so on) and areas are the rooms. `list_entities` hides \
          diagnostic, config, disabled-by-default and folded entities unless you pass \
-         `include: \"all\"`; use `search` to find a device or an entity by name and `get_entity` \
+         `include: \"all\"`; use `search` to find a device or an entity from a few words (a name, a room, a kind, French or English) and `get_entity` \
          to see an entity's MQTT bindings (topics, templates) and its raw override. \
          `set_override` writes the Android app's `nidoo/ui/<id>` override (fields: {fields}; \
          `null` clears a field) and `clear_override` removes it. `send_command` publishes to \

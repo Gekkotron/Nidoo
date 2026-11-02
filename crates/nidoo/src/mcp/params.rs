@@ -116,8 +116,8 @@ pub struct SetAreasParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchParams {
-    /// Case-insensitive substring matched against device friendly names, models and vendors
-    /// and against entity names and ids.
+    /// A few words, French or English, case and accents ignored ("température salon"); every
+    /// word that is not an article or a preposition must match.
     pub query: String,
     /// At most this many devices and this many entities: 20 by default, 500 at most.
     pub limit: Option<usize>,
