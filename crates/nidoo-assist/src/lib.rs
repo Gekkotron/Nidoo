@@ -7,8 +7,13 @@ pub mod fixture;
 pub mod house;
 pub mod intent;
 pub mod lexicon;
+pub mod plan;
+pub mod reply;
 pub mod room;
 pub mod text;
+pub mod view;
 
 pub use house::{HeatRange, House};
+pub use plan::{Action, Done, Plan, Request, plan, plan_request};
+pub use reply::ActionResult;
 pub use room::{RoomMatch, resolve_room};
