@@ -17,6 +17,12 @@ const EXIT_PAD: f64 = 14.0;
 pub const COL_GAP: f64 = 96.0;
 /// Vertical space between two cards of a column.
 pub const ROW_GAP: f64 = 28.0;
+/// Horizontal space between two columns when a card on either side has several wires
+/// crossing that gap, so the fanned-out wires have room to curve apart.
+pub const FAN_COL_GAP: f64 = 160.0;
+/// Vertical space between two cards of a column when either has several wires in or out, or
+/// both are wired to the same card.
+pub const FAN_ROW_GAP: f64 = 64.0;
 /// Margin the auto layout leaves above and left of the graph.
 pub const PAD: f64 = 40.0;
 /// Vertical space between cards added one after another from the library.
@@ -139,7 +145,8 @@ struct Slot {
 /// The layered layout, ignoring stored positions. Columns come from [`Flow::layers`]; an edge
 /// that skips columns reserves a half-height slot in each column it crosses. Each column is
 /// ordered by four down-and-up barycenter sweeps (fewer crossings), then stacked and centred on
-/// its predecessors, never above `PAD`.
+/// its predecessors, never above `PAD`. Wherever a card is wired to several others the gaps
+/// around it widen ([`FAN_ROW_GAP`], [`FAN_COL_GAP`]) so its wires stay apart.
 pub fn auto_layout(flow: &Flow) -> BTreeMap<String, Pt> {
     let mut slots: Vec<Slot> = Vec::new();
     let mut columns: Vec<Vec<usize>> = Vec::new();
@@ -204,15 +211,28 @@ pub fn auto_layout(flow: &Flow) -> BTreeMap<String, Pt> {
         }
     }
 
+    // A card wired to several others, on either side, is a fan.
+    let degree = |side: &[Vec<usize>], s: usize| side[s].len();
+    let fans = |s: usize| degree(&left, s) > 1 || degree(&right, s) > 1;
+    let shares_neighbour = |a: usize, b: usize| {
+        left[a].iter().any(|n| left[b].contains(n)) || right[a].iter().any(|n| right[b].contains(n))
+    };
     let mut top = vec![0.0; slots.len()];
     for column in &columns {
         let mut offsets = Vec::with_capacity(column.len());
         let mut height = 0.0;
-        for &s in column {
+        for (i, &s) in column.iter().enumerate() {
+            if i > 0 {
+                let above = column[i - 1];
+                height += if fans(above) || fans(s) || shares_neighbour(above, s) {
+                    FAN_ROW_GAP
+                } else {
+                    ROW_GAP
+                };
+            }
             offsets.push(height);
-            height += slots[s].h + ROW_GAP;
+            height += slots[s].h;
         }
-        height = (height - ROW_GAP).max(0.0);
         let mut preds: Vec<usize> = column.iter().flat_map(|&s| left[s].clone()).collect();
         preds.sort_unstable();
         preds.dedup();
@@ -231,13 +251,36 @@ pub fn auto_layout(flow: &Flow) -> BTreeMap<String, Pt> {
         }
     }
 
+    // The gap after a column widens when a slot there has several wires leaving it, or a slot
+    // of the next column several wires entering it.
+    let mut lefts = Vec::with_capacity(columns.len());
+    let mut x = PAD;
+    for (col, column) in columns.iter().enumerate() {
+        lefts.push(x);
+        let fans_out = column.iter().any(|&s| degree(&right, s) > 1);
+        let fans_in = columns
+            .get(col + 1)
+            .is_some_and(|next| next.iter().any(|&s| degree(&left, s) > 1));
+        x += NODE_W
+            + if fans_out || fans_in {
+                FAN_COL_GAP
+            } else {
+                COL_GAP
+            };
+    }
+
     slots
         .iter()
         .zip(top)
         .filter_map(|(slot, y)| {
             let id = slot.node.clone()?;
-            let x = PAD + slot.col as f64 * (NODE_W + COL_GAP);
-            Some((id, Pt { x, y }))
+            Some((
+                id,
+                Pt {
+                    x: lefts[slot.col],
+                    y,
+                },
+            ))
         })
         .collect()
 }
@@ -1150,5 +1193,86 @@ mod tests {
             wire_under(&routes_past(&flow, &pos, Some("n")), pos["n"], NODE_H),
             None
         );
+    }
+
+    /// Three triggers into one `if` whose two exits go to two commands, then a plain chain.
+    fn fan_flow() -> Flow {
+        Flow::decode(
+            br#"{
+          "id": "f", "name": "F",
+          "nodes": [
+            { "id": "t1", "type": "trigger.state", "params": { "entity": "a" } },
+            { "id": "t2", "type": "trigger.state", "params": { "entity": "b" } },
+            { "id": "t3", "type": "trigger.state", "params": { "entity": "c" } },
+            { "id": "check", "type": "if", "params": { "op": "eq", "value": true } },
+            { "id": "yes", "type": "command", "params": { "entity": "l", "command": { "type": "turn_on" } } },
+            { "id": "no", "type": "delay", "params": { "for": "1m" } },
+            { "id": "off", "type": "command", "params": { "entity": "l", "command": { "type": "turn_off" } } }
+          ],
+          "edges": [
+            { "from": "t1", "to": "check" }, { "from": "t2", "to": "check" }, { "from": "t3", "to": "check" },
+            { "from": "check", "port": "true", "to": "yes" },
+            { "from": "check", "port": "false", "to": "no" },
+            { "from": "no", "to": "off" }
+          ]
+        }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn fans_get_wider_gaps() {
+        let pos = auto_layout(&fan_flow());
+        // Fan-in: the triggers sit further apart, and so do their column and the if's.
+        let mut ys: Vec<f64> = ["t1", "t2", "t3"].iter().map(|id| pos[*id].y).collect();
+        ys.sort_by(f64::total_cmp);
+        for w in ys.windows(2) {
+            assert_eq!(w[1] - w[0], NODE_H + FAN_ROW_GAP, "{ys:?}");
+        }
+        assert_eq!(pos["check"].x - pos["t1"].x, NODE_W + FAN_COL_GAP);
+        // Fan-out: the if's two exits sit further apart, one column further right.
+        assert_eq!((pos["yes"].y - pos["no"].y).abs(), NODE_H + FAN_ROW_GAP);
+        assert_eq!(pos["yes"].x - pos["check"].x, NODE_W + FAN_COL_GAP);
+        // A plain one-to-one wire keeps the standard gap.
+        assert_eq!(pos["off"].x - pos["no"].x, NODE_W + COL_GAP);
+    }
+
+    #[test]
+    fn plain_column_keeps_the_standard_row_gap() {
+        // Two independent chains: their cards share no neighbour and none fans.
+        let flow = Flow::decode(
+            br#"{
+          "id": "p", "name": "P",
+          "nodes": [
+            { "id": "a", "type": "trigger.state", "params": { "entity": "a" } },
+            { "id": "b", "type": "trigger.state", "params": { "entity": "b" } },
+            { "id": "c", "type": "command", "params": { "entity": "l", "command": { "type": "turn_on" } } },
+            { "id": "d", "type": "command", "params": { "entity": "l", "command": { "type": "turn_off" } } }
+          ],
+          "edges": [ { "from": "a", "to": "c" }, { "from": "b", "to": "d" } ]
+        }"#,
+        )
+        .unwrap();
+        let pos = auto_layout(&flow);
+        assert_eq!((pos["b"].y - pos["a"].y).abs(), NODE_H + ROW_GAP);
+        assert_eq!(pos["c"].x - pos["a"].x, NODE_W + COL_GAP);
+    }
+
+    #[test]
+    fn fan_layout_has_no_overlaps_and_routes_avoid_cards() {
+        let flow = fan_flow();
+        let pos = auto_layout(&flow);
+        for ((from, port, to), route) in &routes(&flow, &pos) {
+            for p in route_samples(&route.d, 48) {
+                for (id, at) in &pos {
+                    if id != from && id != to {
+                        assert!(
+                            !inside(p, card(*at, NODE_H)),
+                            "{from} -{port:?}-> {to} crosses {id}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
