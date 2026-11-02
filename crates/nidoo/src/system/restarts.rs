@@ -10,6 +10,8 @@ use crate::history::db::Db;
 pub const WINDOW_SECS: u64 = 30 * 86_400;
 /// System sensors and the restart log are kept this long.
 pub const KEEP_SECS: u64 = 90 * 86_400;
+/// How far before its cutoff the daily purge deletes history rows.
+pub const PURGE_SPAN_SECS: u64 = 7 * 86_400;
 
 /// Share of the last `window_secs` the hub was up, 0–100. The window never starts before
 /// `first_start`, so a young hub is not penalised for time before it existed.
@@ -103,22 +105,32 @@ impl Db {
     }
 
     /// Deletes the system sensors' history and the restart log older than `cutoff`
-    /// (Unix seconds). Returns the number of rows removed.
+    /// (Unix seconds). Returns the number of rows removed. The history deletes only look
+    /// [`PURGE_SPAN_SECS`] back from `cutoff`: the purge runs daily, and an unbounded delete
+    /// would visit (and decompress) every old compressed chunk of the whole house's history.
     pub async fn purge_system_before(&self, cutoff: u64) -> Result<u64, sqlx::Error> {
         let ids: Vec<String> = ids::ALL.iter().map(|s| (*s).to_string()).collect();
+        let floor = secs(cutoff.saturating_sub(PURGE_SPAN_SECS));
         let cutoff = secs(cutoff);
         let mut removed = 0;
         for sql in [
             "DELETE FROM entity_state
-             WHERE entity_id = ANY($1) AND time < to_timestamp($2::double precision)",
+             WHERE entity_id = ANY($1)
+               AND time >= to_timestamp($3::double precision)
+               AND time < to_timestamp($2::double precision)",
             "DELETE FROM entity_availability
-             WHERE entity_id = ANY($1) AND time < to_timestamp($2::double precision)",
+             WHERE entity_id = ANY($1)
+               AND time >= to_timestamp($3::double precision)
+               AND time < to_timestamp($2::double precision)",
             "DELETE FROM history_hourly
-             WHERE entity_id = ANY($1) AND bucket < to_timestamp($2::double precision)",
+             WHERE entity_id = ANY($1)
+               AND bucket >= to_timestamp($3::double precision)
+               AND bucket < to_timestamp($2::double precision)",
         ] {
             removed += sqlx::query(sql)
                 .bind(&ids)
                 .bind(cutoff)
+                .bind(floor)
                 .execute(self.pool())
                 .await?
                 .rows_affected();
