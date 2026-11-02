@@ -67,7 +67,7 @@ Sixteen components are covered:
 
 ### Publication
 
-The hub publishes the whole table retained on `<ui_prefix>/_types` (default `oikos/ui/_types`) on every connection, next to `oikos/ui/_areas` and the per-entity `oikos/ui/<id>` overrides, so the Android app reads the same vocabulary. Its own echo is ignored.
+The hub publishes the whole table retained on `<ui_prefix>/_types` (default `nidoo/ui/_types`) on every connection, next to `nidoo/ui/_areas` and the per-entity `nidoo/ui/<id>` overrides, so the Android app reads the same vocabulary. Its own echo is ignored.
 
 ## Behaviours
 

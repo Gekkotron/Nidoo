@@ -51,7 +51,6 @@ Everything the stack writes lives in `./data/` next to `compose.yml`:
 | `data/bundled.json` | The generated broker and database passwords, readable only by its owner (mode 0600). The wizard pre-fills them from here. |
 | `data/mosquitto/` | The broker's config, retained messages and log. |
 | `data/timescaledb/` | The database files. |
-| `data/secrets/` | Only on upgraded installs: the old key files moved from `secrets/` (see [Upgrading from `oikos.toml`](#upgrading-from-oikostoml)). Keys you upload in the wizard are stored in the database, not here. |
 
 Back up `./data/`, and keep `data/bundled.json`: without it `tools/update.sh` rebuilds only the hub, so you would have to use `tools/update.sh --all`. If it is lost, the database password is still in `data/bundled/db-password` and in the database URL of `data/hub.json`, but `init` refuses to write a new password for a database that already exists.
 
@@ -62,7 +61,7 @@ The bundled broker listens on port 1883 on every interface and does not accept a
 ```yaml
 mqtt:
   server: mqtt://192.168.1.20:1883
-  user: oikos
+  user: nidoo
   password: <mqtt_password from data/bundled.json>   # sudo jq -r .mqtt_password data/bundled.json
 ```
 
@@ -101,8 +100,6 @@ If your own database or broker container is already named `nidoo-timescaledb` or
 Error response from daemon: Conflict. The container name "/nidoo-timescaledb" is already in use by container "<id>". You have to remove (or rename) that container to be able to reuse that name.
 ```
 
-If they are named `oikos-timescaledb` or `oikos-mosquitto`, the stack's names before the rename, Docker no longer stops: a plain `docker compose up` starts the bundled `nidoo-*` ones beside yours, where they restart in a loop or take the ports after a reboot. `tools/update.sh` refuses the whole stack in that case and points here. Either way, the answer is the same.
-
 That container is your own database (or broker), not a leftover from the stack. **Do not remove or rename it** as Docker suggests. The bundled service would then start on an empty `data/timescaledb/`, and your history would be left in a volume nothing uses any more, where a `docker volume prune` deletes it for good. Start the hub alone instead:
 
 ```bash
@@ -123,52 +120,17 @@ cd Nidoo   # or the folder you cloned it into
 tools/update.sh
 ```
 
-The first time you upgrade past the change that introduced this stack, run `git pull --rebase` yourself, then `tools/update.sh`: the copy of the script on your host predates it. The old script would otherwise start the new `compose.yml` without moving your files. If you already ran the old script, see [Recovering from the old update script](#recovering-from-the-old-update-script).
+The first time you upgrade past the change that introduced this stack, run `git pull --rebase` yourself, then `tools/update.sh`: the copy of the script on your host predates it. The old script would otherwise start the new `compose.yml` without moving your files.
 
 The script runs `git pull --rebase`, then re-runs itself from the pulled version, then rebuilds. It decides what to rebuild:
 
 - the whole stack (`docker compose up -d --build`) when `data/bundled.json` or a `compose.override.yml` exists, or on a fresh install;
-- the hub only (`docker compose up -d --build hub`) when you have `data/oikos.toml` or `data/hub.json` but no bundled stack, which means you run your own broker and database.
+- the hub only (`docker compose up -d --build hub`) when you have `data/hub.json` but no bundled stack, which means you run your own broker and database.
 
-Force one with `tools/update.sh --all` or `tools/update.sh --hub-only`. If you run your own broker and database but have not finished the first start yet, there is no `hub.json` or `oikos.toml` to go by, so the script would pick the full stack: use `tools/update.sh --hub-only`. It ends by printing the last lines of the hub's log.
+Force one with `tools/update.sh --all` or `tools/update.sh --hub-only`. If you run your own broker and database but have not finished the first start yet, there is no `hub.json` to go by, so the script would pick the full stack: use `tools/update.sh --hub-only`. It ends by printing the last lines of the hub's log.
 
-The containers used to be named `oikos-hub`, `oikos-mosquitto` and `oikos-timescaledb`; they are now `nidoo-*`. The first upgrade past that change builds the images, stops the old containers of this stack gracefully and starts them again under the new names, on the same data. It never touches a container of another project or one started by hand, even with an old name, and keeps any old name your `compose.override.yml` still sets. When your own broker or database is named `oikos-mosquitto` or `oikos-timescaledb`, the whole stack would start the bundled ones beside it, so the script refuses and asks for `--hub-only` (see [If Docker says a container name is already in use](#if-docker-says-a-container-name-is-already-in-use)). `OIKOS_*` variables in `.env` keep working; the hub logs a warning until you rename them to `NIDOO_*`.
-
-## Upgrading from `oikos.toml`
-
-Older installs were configured by `oikos.toml` and kept keys in `secrets/`. The hub now reads everything from `./data/`, and `compose.yml` no longer mounts the old locations, except that it mounts the checkout read-only at `/checkout` so a `./oikos.toml` that has not moved yet is still imported. `tools/update.sh` moves them for you, never overwriting anything already in `./data/`:
-
-- `./oikos.toml` becomes `data/oikos.toml`;
-- every key in `./secrets/` (not its `README.md`) goes to `data/secrets/`.
-
-It uses `sudo` for these moves when `data/` is owned by root, which Docker did on older installs. To do it by hand:
-
-```bash
-sudo mkdir -p -m 700 data/secrets
-sudo mv -n oikos.toml data/oikos.toml
-sudo mv -n secrets/firebase.json data/secrets/    # one line per key file you actually have
-sudo mv -n secrets/solcast.key data/secrets/
-```
-
-`sudo` is needed when `data/` is owned by root; drop it otherwise. Skip the lines for files you do not have.
-
-On its first start the hub imports `data/oikos.toml` into its database without asking anything, and logs:
-
-```text
-oikos.toml imported into the database; it is no longer read and can be deleted
-```
-
-After that line you can delete the file. The import reads the push and Solcast keys from `data/secrets/` once, by default, and stores them in the database. If the old file has no `[history] url`, the hub imports only MQTT and the location, then opens the wizard at the Database step so you can finish there. If your TOML names key files under `/etc/oikos/secrets`, change those paths to `/data/secrets/...` or delete the lines; `update.sh` warns when it sees them.
 
 If you run your own broker and database, keep using `docker compose up -d --build hub` (or `tools/update.sh`, which picks it). A plain `docker compose up` would start a second broker and database next to yours.
-
-## Recovering from the old update script
-
-If you ran the old `tools/update.sh` on a host still configured by `./oikos.toml`, `init` may have generated bundled credentials and `docker compose up` started `oikos-mosquitto` and `oikos-timescaledb`, which restart in a loop when your own broker or database holds the ports. Clean up:
-
-1. Remove the failed services: `docker compose rm -sf init mosquitto timescaledb`. If `docker compose up` stopped on "container name already in use", that container is your own: leave it alone (see [If Docker says a container name is already in use](#if-docker-says-a-container-name-is-already-in-use)).
-2. If you never used the bundled services, remove their files: `sudo rm -rf data/bundled.json data/bundled data/mosquitto data/timescaledb`.
-3. Upgrade properly: `git pull --rebase && tools/update.sh --hub-only`.
 
 ## Logs and status
 

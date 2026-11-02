@@ -14,7 +14,7 @@ Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio --server http:
 
 | URI | Content |
 | --- | --- |
-| `oikos://snapshot` | The whole house as one JSON document (`application/json`): connection, bridge, areas, devices, entities with their states, ignored discovery topics. |
+| `nidoo://snapshot` | The whole house as one JSON document (`application/json`): connection, bridge, areas, devices, entities with their states, ignored discovery topics. |
 
 ## House
 
@@ -22,7 +22,7 @@ Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio --server http:
 | --- | --- |
 | `bridge_info` | The Zigbee2MQTT bridge (version, coordinator, permit join, online or not) and the state of the link to the broker. |
 | `list_areas` | The rooms, each with its entity count and the count of entities shown by default (`primary_count`): declared areas first, then those only carried by entities, then `Unassigned`. |
-| `set_areas` | Replaces the declared rooms (retained on `oikos/ui/_areas`) and returns the resulting list. Args: `areas` (each with `id`, `name`, optional `icon`, `order`, `groupNames`, `groupFavorites`). A room kept by id keeps the fields you leave out. |
+| `set_areas` | Replaces the declared rooms (retained on `nidoo/ui/_areas`) and returns the resulting list. Args: `areas` (each with `id`, `name`, optional `icon`, `order`, `groupNames`, `groupFavorites`). A room kept by id keeps the fields you leave out. |
 | `list_devices` | The Zigbee devices with availability, battery and link quality. Args: optional `area` (an area id), `query` (case-insensitive, matched against name, model and vendor). |
 | `list_entities` | A page of entities with their state. By default only what the app shows (`include: "primary"`: no diagnostic, config, disabled-by-default, folded or hidden entity); `include: "all"` for everything. Args: `area`, `kind`, `device_id`, `query` (entity name and id), `changed_since` (unix seconds), `include`, `limit` (100 by default, 500 at most), `offset`. The reply has `total` (matches before paging) and `items`. |
 | `get_entity` | One entity with its state, its MQTT `bindings` (the expanded discovery config) and its `raw_override`. Args: `id`. |
@@ -33,7 +33,7 @@ Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio --server http:
 
 | Tool | What it does |
 | --- | --- |
-| `set_override` | Changes fields of the entity's `oikos/ui/<id>` override and returns the entity. Args: `id`, `patch` (an object; `null` clears a field). Unknown fields and invalid values are refused and nothing is written. The fields are listed in [Entity types](entity-types.md#overrides). |
+| `set_override` | Changes fields of the entity's `nidoo/ui/<id>` override and returns the entity. Args: `id`, `patch` (an object; `null` clears a field). Unknown fields and invalid values are refused and nothing is written. The fields are listed in [Entity types](entity-types.md#overrides). |
 | `clear_override` | Removes the override entirely and returns the entity as discovered. Args: `id`. |
 
 ## Commands
@@ -52,7 +52,7 @@ See [Flow nodes](flow-nodes.md) for the document format.
 | --- | --- |
 | `list_flows` | The flows, one summary each: `id`, `name`, `enabled`, `area`, `invalid` (why it cannot run), `nodes` (count) and `last_run`. |
 | `get_flow` | One flow in full: definition, why it is invalid, the run in progress and the recent runs (newest first) with each node's outcome. Args: `id`. |
-| `set_flow` | Creates or replaces a flow, validated against the house and saved retained on `oikos/automation/<id>`. Args: `flow` (the whole document). Returns `{flow, warning}`; `warning` is set when the flow reads the sun against the Paris fallback. |
+| `set_flow` | Creates or replaces a flow, validated against the house and saved retained on `nidoo/automation/<id>`. Args: `flow` (the whole document). Returns `{flow, warning}`; `warning` is set when the flow reads the sun against the Paris fallback. |
 | `delete_flow` | Removes a flow, valid or not. Args: `id`. |
 | `set_flow_enabled` | Turns a flow on or off without touching its definition. Args: `id`, `enabled`. |
 | `run_flow` | Starts a manual run and returns the run as it starts. Refused when the flow is disabled, invalid or already running, except that a card press (`node`) on a `restart` flow replaces the active run instead. Args: `id`, optional `node` (the id of a `trigger.manual` card to start from; the run carries its value, and a card that is not a manual trigger of the flow is refused). |
@@ -119,7 +119,7 @@ Network presence needs `network.enabled`, on by default; otherwise these tools a
 | Tool | What it does |
 | --- | --- |
 | `get_home_settings` | The home settings: `eco_setpoint` (°C), `mode_entity` (a select) and `indoor_entity` (a temperature sensor), `cold_below` and `hot_above` (°C); a field that is not set is `null`. `off_peak` lists the off-peak windows in force, `off_peak_history` the dated windows of past days. `energy_view` is `classic`, `flux` or `orbite`, the web Energy page's live diagram. `off_peak_device`, when set, is `{entity, values}`: the entity whose state says off-peak, the windows being its backup. |
-| `set_home_settings` | Replaces the home settings (retained on `oikos/ui/_home`) and returns them. Read them with `get_home_settings` first and send the whole document back. Args: `settings`. `eco_setpoint` must be from 5 to 30, `cold_below` and `hot_above` from 5 to 35 with `cold_below` lower (the web uses 15 and 26 when unset); an entity of the wrong kind is refused with the reason. `off_peak` takes `{start, end}` `HH:MM` windows (crossing midnight allowed, no overlap); a change applies from today and past days keep theirs; `off_peak_history` is kept by the hub and ignored when sent. `energy_view` is `classic` (the default), `flux` or `orbite`. `off_peak_device` (optional) is `{entity, values}`: an existing entity and at least one value. |
+| `set_home_settings` | Replaces the home settings (retained on `nidoo/ui/_home`) and returns them. Read them with `get_home_settings` first and send the whole document back. Args: `settings`. `eco_setpoint` must be from 5 to 30, `cold_below` and `hot_above` from 5 to 35 with `cold_below` lower (the web uses 15 and 26 when unset); an entity of the wrong kind is refused with the reason. `off_peak` takes `{start, end}` `HH:MM` windows (crossing midnight allowed, no overlap); a change applies from today and past days keep theirs; `off_peak_history` is kept by the hub and ignored when sent. `energy_view` is `classic` (the default), `flux` or `orbite`. `off_peak_device` (optional) is `{entity, values}`: an existing entity and at least one value. |
 | `get_settings` | One section of the service settings: `weather`, `solcast`, `frigate`, `push`, `climate` or `advanced`, as the settings page shows it. Secrets are write-only: the Solcast key, the Frigate password and the push service account read as `{"set": true or false}`, never the value. Args: `section`. |
 | `set_settings` | Replaces one section with `value`, checks it, saves it and restarts the hub (returns `{"restarting": true}`). Read the section with `get_settings` first and send the whole of it back: what is left out takes its default. A secret is set by a string, cleared by `null` and kept when left out (or sent back as `{"set": true}`). Changing a service's address (the Frigate URL) needs its secret sent again. Refused with a fixed reason, never containing a secret, in setup mode, while a restart is pending or when the database is unreachable. Args: `section`, `value`. |
 
@@ -148,13 +148,13 @@ See [Ambiances](../users/ambiances.md) for the action types, the category rules 
 | Tool | What it does |
 | --- | --- |
 | `list_ambiances` | Every stored ambiance with its actions, or the reason it cannot be read (`invalid`). |
-| `set_ambiance` | Creates or replaces an ambiance, validated against the house and retained on `oikos/ui/ambiances/<id>`. Args: `ambiance` (the whole document: `id`, `name`, optional `subtitle` and `icon`, `pinned`, `order` and `actions`). A refusal names the action by its index so you can fix it and retry. |
+| `set_ambiance` | Creates or replaces an ambiance, validated against the house and retained on `nidoo/ui/ambiances/<id>`. Args: `ambiance` (the whole document: `id`, `name`, optional `subtitle` and `icon`, `pinned`, `order` and `actions`). A refusal names the action by its index so you can fix it and retry. |
 | `delete_ambiance` | Removes an ambiance, valid or not. Args: `id`. |
 | `apply_ambiance` | Runs the actions once, in order, and returns one report line per action (`ok`, `failed` or `skipped`, with the entities and reasons). Args: `id`. Refused while the same ambiance is already running. |
 
 ## Alarm
 
-The native alarm (optional, off by default). Its settings are a whole document and are off until `enabled` is true. Arming and disarming are not tools: they are `send_command` on the alarm entity `oikos_alarm_house`, with `{"type":"arm","mode":"away"}` (or `home`, `night`) and `{"type":"disarm"}`. See [Alarm](../users/alarm.md).
+The native alarm (optional, off by default). Its settings are a whole document and are off until `enabled` is true. Arming and disarming are not tools: they are `send_command` on the alarm entity `nidoo_alarm_house`, with `{"type":"arm","mode":"away"}` (or `home`, `night`) and `{"type":"disarm"}`. See [Alarm](../users/alarm.md).
 
 | Tool | What it does |
 | --- | --- |

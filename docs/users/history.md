@@ -23,5 +23,5 @@ Every entity sheet has a **View history →** link to `/history/<id>`, a full-sc
 Back up with `pg_dump` from any client that can reach the database:
 
 ```sh
-pg_dump -h <host> -p <port> -U oikos -Fc oikos > oikos-history-$(date +%F).dump
+pg_dump -h <host> -p <port> -U <db-user> -Fc <db-name> > history-$(date +%F).dump
 ```

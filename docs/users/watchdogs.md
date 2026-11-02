@@ -4,7 +4,7 @@ sidebar_position: 12
 description: Two opt-in watchdogs that raise system alerts when the encryption gateway changes state or the broker denies an MQTT action.
 ---
 
-Two opt-in watchdogs raise `system` alerts (ported from OikosPush's `gateway_health_watchdog` and `broker_acl_watchdog`).
+Two opt-in watchdogs raise `system` alerts.
 
 They have no Settings page. Turn them on through `PUT /api/v1/settings/advanced` or the `set_settings` MCP tool: read the `advanced` section with `get_settings`, set `watchdog.gateway.enabled` or `watchdog.acl.enabled` to `true`, and send the whole section back. The hub restarts to start them. The fields are listed in the [Settings reference](../reference/configuration.md#advanced).
 
@@ -32,4 +32,3 @@ That is only the `watchdog` part of the `advanced` document, shown for the shape
 
 The broker user needs read on `<prefix>/+` and, for the topic source, on `$SYS/broker/log/#`.
 
-The switch-over from OikosPush turns these on step by step; see [Push notifications](push-notifications.md#switching-over-from-oikospush).

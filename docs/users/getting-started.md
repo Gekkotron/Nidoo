@@ -32,8 +32,6 @@ The wizard has six steps. Each one saves when you press Next, so closing the tab
 
 Everything can be changed later in Settings. **Run setup again** there reopens the wizard and never wipes anything.
 
-If you already have an `oikos.toml`, the hub imports it on its first start and skips the wizard. If the file has no `[history] url`, it imports only MQTT and the location and opens the wizard at the Database step. See [Upgrading from `oikos.toml`](install-on-linux.md#upgrading-from-oikostoml).
-
 ## Next steps
 
 - [Zigbee2MQTT](zigbee2mqtt.md): point Zigbee2MQTT's discovery at the hub.

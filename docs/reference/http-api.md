@@ -19,7 +19,7 @@ Ids in paths are the entity, flow, group or dashboard ids the API returns. Bodie
 | Route | What it does |
 | --- | --- |
 | `GET /health` | `{status, connection, entities}`: `status` is `"ok"`, `connection` the broker link (`{"type": "connecting" \| "online"}` or `{"type": "offline", "reason": "…"}`), `entities` the entity count. |
-| `GET /api/v1/snapshot` | The whole house: connection, bridge, areas, devices, entities with their state, ignored topics, alerts, flows and `generated_at` (unix seconds). The same document is the MCP resource `oikos://snapshot`. |
+| `GET /api/v1/snapshot` | The whole house: connection, bridge, areas, devices, entities with their state, ignored topics, alerts, flows and `generated_at` (unix seconds). The same document is the MCP resource `nidoo://snapshot`. |
 | `GET /api/v1/ignored` | The discovery topics that did not become an entity, each `{topic, reason}`. |
 
 ## Setup and settings
@@ -49,7 +49,7 @@ The setup `PUT`s and `POST /api/v1/setup/finish` also answer `500` `{"error": "c
 | Route | What it does |
 | --- | --- |
 | `POST /api/v1/entities/{id}/command` | Sends a command (`{"type": "turn_on", …}`) and reports `{accepted, reason, state}`: `accepted` is `true` once the entity's state echo confirms it within the `commands.confirm_timeout_ms` setting (default 5000), `false` with a `reason` when nothing came back in time. `404` for an unknown entity, `422` for a command the entity cannot take or an offline entity, `503` while the broker link is down. |
-| `PATCH /api/v1/entities/{id}/override` | Changes fields of the entity's `oikos/ui/<id>` override and returns the entity as it now appears. The body is a partial override; `null` clears a field. `400` for an unknown field or a bad value (the error names the valid ones), `404`, `503`. The fields are listed in [Entity types](entity-types.md#overrides). |
+| `PATCH /api/v1/entities/{id}/override` | Changes fields of the entity's `nidoo/ui/<id>` override and returns the entity as it now appears. The body is a partial override; `null` clears a field. `400` for an unknown field or a bad value (the error names the valid ones), `404`, `503`. The fields are listed in [Entity types](entity-types.md#overrides). |
 | `DELETE /api/v1/entities/{id}/override` | Removes the override (`204`). |
 | `GET /api/v1/entities/{id}/picture` | The picture of a camera or image entity: the stored bytes, or the bytes of its URL fetched by the hub now (10 s timeout, 5 MiB cap, no redirects followed). The reply is served as an image or as an opaque download, with `X-Content-Type-Options: nosniff`. `404` when the entity has no picture, `502` when the URL cannot be fetched. |
 
@@ -57,7 +57,7 @@ The setup `PUT`s and `POST /api/v1/setup/finish` also answer `500` `{"error": "c
 
 | Route | What it does |
 | --- | --- |
-| `PUT /api/v1/areas` | Replaces the declared rooms (`oikos/ui/_areas`) and returns the resulting list. |
+| `PUT /api/v1/areas` | Replaces the declared rooms (`nidoo/ui/_areas`) and returns the resulting list. |
 | `PATCH /api/v1/areas/{id}` | Renames a room: body `{"name": "…"}`; the room's other fields are kept. Returns the area list. `422` for a blank name or for `Unassigned`, `404` for an unknown area, `503` while the broker link is down. |
 
 ## Home settings
@@ -65,7 +65,7 @@ The setup `PUT`s and `POST /api/v1/setup/finish` also answer `500` `{"error": "c
 | Route | What it does |
 | --- | --- |
 | `GET /api/v1/home/settings` | The home settings document `{eco_setpoint, mode_entity, indoor_entity, cold_below, hot_above, off_peak, off_peak_history, energy_view}`, plus `off_peak_device` once one is set (numbers and ids `null`, lists empty and `energy_view` `classic` until saved). |
-| `PUT /api/v1/home/settings` | Replaces the document and returns it as stored (retained on `oikos/ui/_home`). `eco_setpoint` is a number from 5 to 30 (°C), `mode_entity` the id of a `select` entity, `indoor_entity` the id of a temperature sensor; `cold_below` and `hot_above` are numbers from 5 to 35 (°C) with `cold_below` lower than `hot_above` (the web reads cold below 15 and warm above 26 when unset); `null` clears a field. `off_peak` is a list of `{start, end}` local `HH:MM` windows (`end` before `start` crosses midnight; none empty or overlapping; empty for a single tariff). `off_peak_history` (`[{since: "YYYY-MM-DD", windows}, …]`) is kept by the hub: a change of `off_peak` adds an entry dated today, and a value sent by the client is ignored. `energy_view` is `classic`, `flux` or `orbite`: how the web Energy page draws the live power, the same in every browser. `off_peak_device` (optional, `{entity, values}`) is the entity whose state says off-peak and the values that mean it (matched as `on`/`off`, a plain number or the text); the windows are its backup, and either may be left out. The entity must exist and `values` must not be empty. `422` for a value that does not validate (the error names the field), `503` while the broker link is down. |
+| `PUT /api/v1/home/settings` | Replaces the document and returns it as stored (retained on `nidoo/ui/_home`). `eco_setpoint` is a number from 5 to 30 (°C), `mode_entity` the id of a `select` entity, `indoor_entity` the id of a temperature sensor; `cold_below` and `hot_above` are numbers from 5 to 35 (°C) with `cold_below` lower than `hot_above` (the web reads cold below 15 and warm above 26 when unset); `null` clears a field. `off_peak` is a list of `{start, end}` local `HH:MM` windows (`end` before `start` crosses midnight; none empty or overlapping; empty for a single tariff). `off_peak_history` (`[{since: "YYYY-MM-DD", windows}, …]`) is kept by the hub: a change of `off_peak` adds an entry dated today, and a value sent by the client is ignored. `energy_view` is `classic`, `flux` or `orbite`: how the web Energy page draws the live power, the same in every browser. `off_peak_device` (optional, `{entity, values}`) is the entity whose state says off-peak and the values that mean it (matched as `on`/`off`, a plain number or the text); the windows are its backup, and either may be left out. The entity must exist and `values` must not be empty. `422` for a value that does not validate (the error names the field), `503` while the broker link is down. |
 
 ## Groups
 
@@ -129,7 +129,7 @@ See [Flow nodes](flow-nodes.md) for the document format.
 | --- | --- |
 | `GET /api/v1/flows` | Every flow with its engine state: definition, why it is invalid, the active run and the recent runs. Each step of a run has `node`, `at`, `outcome`, `detail` and, for a succeeded `if`, `switch` or `time.between` step, `ports`, the output ports it followed. |
 | `GET /api/v1/flows/{id}` | One flow; `404` for an unknown id. |
-| `PUT /api/v1/flows/{id}` | Creates or replaces a flow (`oikos/automation/<id>`). The path id wins: a body without `id` takes it, another one is `422 id mismatch`. Returns `{flow, warning}`; `warning` is `null`, or a message when the flow reads the sun while the house point is the Paris fallback. `422` for a flow that does not validate against the house, `503` while the broker link is down. |
+| `PUT /api/v1/flows/{id}` | Creates or replaces a flow (`nidoo/automation/<id>`). The path id wins: a body without `id` takes it, another one is `422 id mismatch`. Returns `{flow, warning}`; `warning` is `null`, or a message when the flow reads the sun while the house point is the Paris fallback. `422` for a flow that does not validate against the house, `503` while the broker link is down. |
 | `DELETE /api/v1/flows/{id}` | Removes the flow (`204`), or `404`. |
 | `POST /api/v1/flows/{id}/enabled` | `{"enabled": bool}`; returns the flow. |
 | `POST /api/v1/flows/{id}/run` | Starts a run by hand; `202` with the run. Optional JSON body `{"node": "<card id>"}` starts from that `trigger.manual` card and the run carries its value. `422` when the flow is disabled, invalid or already running (a card press on a `restart` flow replaces the active run instead), or when `<card id>` is not a manual trigger of this flow. |
@@ -141,8 +141,8 @@ See [Flow nodes](flow-nodes.md) for the document format.
 
 | Route | What it does |
 | --- | --- |
-| `GET /api/v1/alerts` | The push alerts the hub keeps in its retained history (`oikos/push/history`), newest first. |
-| `POST /api/v1/alerts/{id}/actions/{action}` | Publishes the reply the app publishes when a button is tapped (`{"id","action","install_id":"oikos-web","ts"}` on `oikos/push/responses`); `202`, or `404` for an unknown alert or action, `503` while the broker link is down. |
+| `GET /api/v1/alerts` | The push alerts the hub keeps in its retained history (`nidoo/push/history`), newest first. |
+| `POST /api/v1/alerts/{id}/actions/{action}` | Publishes the reply the app publishes when a button is tapped (`{"id","action","install_id":"nidoo-web","ts"}` on `nidoo/push/responses`); `202`, or `404` for an unknown alert or action, `503` while the broker link is down. |
 | `GET /api/v1/push` | Push status: `{"state","installs","queued"}`. `state` is `off` (no usable Firebase key saved in **Settings → Notifications**), `syncing` (rebuilding the token map after a connect) or `ready`; `installs` counts the registered app installs, `queued` the alerts waiting in the retry queue. |
 
 ## Media

@@ -25,7 +25,7 @@ Zigbee2MQTT (Z2M) holds the per-device code for thousands of Zigbee devices. Whe
 1. Write an external converter for local use. It is a JavaScript file referenced in Z2M's configuration.
 2. Contribute it upstream to `Koenkk/zigbee-herdsman-converters` so every user gets it.
 
-Z2M publishes discovery under the `oikos` prefix. Once Z2M exposes the device, Nidoo picks it up with no change. See [Zigbee2MQTT](../users/zigbee2mqtt.md).
+Z2M publishes discovery under the `nidoo` prefix. Once Z2M exposes the device, Nidoo picks it up with no change. See [Zigbee2MQTT](../users/zigbee2mqtt.md).
 
 ## Writing a bridge
 
@@ -39,9 +39,9 @@ Discovery topic:
 <prefix>/<component>/[<node_id>/]<object_id>/config
 ```
 
-Between the component and `config` there is one or two segments. None may be empty. The default prefix is `oikos`.
+Between the component and `config` there is one or two segments. None may be empty. The default prefix is `nidoo`.
 
-A bridge that publishes under `homeassistant` works once the hub lists that prefix: add `"homeassistant"` to `topics.discovery_prefixes` in the `advanced` section (`["oikos", "homeassistant"]`), with `PUT /api/v1/settings/advanced` or the `set_settings` MCP tool. See the [Settings reference](../reference/configuration.md#advanced).
+A bridge that publishes under `homeassistant` works once the hub lists that prefix: add `"homeassistant"` to `topics.discovery_prefixes` in the `advanced` section (`["nidoo", "homeassistant"]`), with `PUT /api/v1/settings/advanced` or the `set_settings` MCP tool. See the [Settings reference](../reference/configuration.md#advanced).
 
 Rules:
 
@@ -49,7 +49,7 @@ Rules:
 - The hub expands Home Assistant abbreviations (`stat_t`, `cmd_t`, `dev`, `~`, and so on).
 - Device-based discovery is supported: component `device` with a `cmps` or `components` map, one entry per entity, each with a `platform`.
 - Remove an entity by publishing an empty retained payload on its config topic.
-- `ui`, `automation`, `virtual` and `push` directly under the prefix are reserved. `oikos/ui/<id>` holds overrides, `oikos/automation/<id>` holds flows, `oikos/virtual/<id>` the state of virtual entities and `oikos/push/...` the push topics. Never publish discovery there. See [MQTT topics](../reference/mqtt-topics.md).
+- `ui`, `automation`, `virtual` and `push` directly under the prefix are reserved. `nidoo/ui/<id>` holds overrides, `nidoo/automation/<id>` holds flows, `nidoo/virtual/<id>` the state of virtual entities and `nidoo/push/...` the push topics. Never publish discovery there. See [MQTT topics](../reference/mqtt-topics.md).
 
 Hand-written kinds (each becomes an entity):
 
@@ -189,7 +189,7 @@ A short example, the `device_tracker` entry:
 }
 ```
 
-The hub publishes the whole table retained on `oikos/ui/_types` (`{ui_prefix}/_types`) on every connection, so the Android app reads the same vocabulary. Its own echo is ignored. Camera and image entities carry their picture in the `picture` field. `GET /api/v1/entities/{id}/picture` serves the stored bytes, or the bytes of its URL fetched by the hub now (10 s timeout, 5 MiB cap, no redirects followed).
+The hub publishes the whole table retained on `nidoo/ui/_types` (`{ui_prefix}/_types`) on every connection, so the Android app reads the same vocabulary. Its own echo is ignored. Camera and image entities carry their picture in the `picture` field. `GET /api/v1/entities/{id}/picture` serves the stored bytes, or the bytes of its URL fetched by the hub now (10 s timeout, 5 MiB cap, no redirects followed).
 
 Check it with `GET /api/v1/ignored` (the component must no longer appear there) and `GET /api/v1/snapshot` (the entity must show its primary field). A type-table entry needs no other change to appear in the flow editor: `nidoo_core::vocabulary` turns its announced controls into actions and its primary field into the values an `if` card offers.
 
@@ -219,13 +219,13 @@ Before opening the PR, run the commands in [Development](development.md#checks):
 
 The override has twenty-one fields (`name`, `area`, `hidden`, `order`, `cardStyle`, `favorite`, `energyRole`, `energyInvert`, `securityHidden`, `energyIcon`, `energyMeter`, `homePinned`, `securityAction`, `securityAsk`, `ungrouped`, `showAs`, `lightOnPreset`, `lightOnBrightness`, `climatePresets`, `mainControl`, `invert`). `showAs` makes a switch show as a light, door, siren, chime or plug; `mainControl` is the name of an announced control, or `"none"` to hide the main control; `invert` swaps on and off for a switch wired the other way round. [Entity types](../reference/entity-types.md#overrides) lists every field with its values.
 
-Overrides are retained messages under `oikos/ui/<entity id>`. Set them from the web device sheet, `PATCH /api/v1/entities/{id}/override`, or MCP `set_override`.
+Overrides are retained messages under `nidoo/ui/<entity id>`. Set them from the web device sheet, `PATCH /api/v1/entities/{id}/override`, or MCP `set_override`.
 
 ## Virtual entities
 
 A virtual entity (see also [Groups and virtual entities](../users/groups-and-virtual-entities.md)) is a switch, a number or a button the hub owns, with no device behind it: a "force heating" flag, a setpoint, a manual trigger for a flow. Create one with `PUT /api/v1/virtual/{id}` (body `{"kind": "switch" | "number" | "button", "name": "…"}`, plus `min`, `max`, `step`, `unit` for a number and `initial` for either state) or MCP `set_virtual`; remove it with `DELETE /api/v1/virtual/{id}` or `delete_virtual`. The id is 1 to 48 characters of `a-z`, `0-9` and `_`, and the entity becomes `virtual_<id>`, on the device `Virtual`.
 
-Under the first discovery prefix `P` (normally `oikos`), the hub publishes, retained:
+Under the first discovery prefix `P` (normally `nidoo`), the hub publishes, retained:
 
 | What | Topic |
 |---|---|

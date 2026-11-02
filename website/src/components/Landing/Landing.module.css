@@ -11,7 +11,7 @@
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--oikos-amber-text);
+  color: var(--nidoo-amber-text);
 }
 .title {
   max-width: 22ch;
@@ -20,7 +20,7 @@
   letter-spacing: -0.02em;
   line-height: 1.1;
 }
-.title em { font-style: normal; color: var(--oikos-amber-text); }
+.title em { font-style: normal; color: var(--nidoo-amber-text); }
 
 .grid {
   display: grid;
@@ -34,10 +34,10 @@
   display: flex;
   flex-direction: column;
   padding: 1.5rem;
-  border: 1px solid var(--oikos-card-border);
-  border-radius: var(--oikos-radius);
-  background: var(--oikos-card);
-  box-shadow: var(--oikos-shadow);
+  border: 1px solid var(--nidoo-card-border);
+  border-radius: var(--nidoo-radius);
+  background: var(--nidoo-card);
+  box-shadow: var(--nidoo-shadow);
   transition: transform 200ms cubic-bezier(0.2, 0, 0, 1), border-color 200ms;
   animation: rise 700ms ease-out backwards;
 }
@@ -53,7 +53,7 @@
 }
 .cardTitle {
   margin: 0 0 0.4rem;
-  font-family: var(--oikos-font-body);
+  font-family: var(--nidoo-font-body);
   font-size: 1.1rem;
   font-weight: 600;
 }
@@ -61,8 +61,8 @@
   margin-left: 0.5rem;
   padding: 0.1rem 0.5rem;
   border-radius: 999px;
-  background: var(--oikos-amber-soft);
-  color: var(--oikos-amber-text);
+  background: var(--nidoo-amber-soft);
+  color: var(--nidoo-amber-text);
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -74,7 +74,7 @@
   margin: 0 0 1rem;
   font-size: 0.95rem;
   line-height: 1.6;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
 }
 .cardLink { font-weight: 600; font-size: 0.92rem; }
 
@@ -98,14 +98,14 @@
 .rowBody {
   margin: 0 0 1.2rem;
   line-height: 1.65;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
 }
 .rowMedia {
   overflow: hidden;
-  border: 1px solid var(--oikos-card-border);
-  border-radius: var(--oikos-radius);
-  background: var(--oikos-bg);
-  box-shadow: var(--oikos-shot-shadow);
+  border: 1px solid var(--nidoo-card-border);
+  border-radius: var(--nidoo-radius);
+  background: var(--nidoo-bg);
+  box-shadow: var(--nidoo-shot-shadow);
 }
 .rowImg { display: block; width: 100%; height: auto; }
 
@@ -116,11 +116,11 @@
   align-items: center;
   gap: clamp(1.5rem, 5vw, 4rem);
   padding: clamp(1.5rem, 4vw, 3rem);
-  border: 1px solid var(--oikos-card-border);
+  border: 1px solid var(--nidoo-card-border);
   border-radius: 28px;
   background:
-    radial-gradient(70% 90% at 100% 100%, var(--oikos-amber-soft), transparent 70%),
-    var(--oikos-card);
+    radial-gradient(70% 90% at 100% 100%, var(--nidoo-amber-soft), transparent 70%),
+    var(--nidoo-card);
 }
 .term {
   overflow: hidden;

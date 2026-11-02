@@ -1,7 +1,7 @@
 ---
 title: Settings reference
 sidebar_position: 1
-description: Where the hub keeps its settings, every section and field with its default, how secrets are handled, the environment variables that still apply and the one-time import of an old oikos.toml.
+description: Where the hub keeps its settings, every section and field with its default, how secrets are handled and the environment variables and flags that still apply.
 ---
 
 The hub is configured in the browser: the setup wizard on a first start, then the **Settings** pages. There is no file to edit. This page is the reference behind those screens: where each value is stored, every field with its default, and the few things that still come from the command line or the environment. The structs are in [`crates/nidoo/src/config.rs`](https://github.com/Gekkotron/Nidoo/blob/main/crates/nidoo/src/config.rs) and the sections in [`crates/nidoo/src/setup/sections.rs`](https://github.com/Gekkotron/Nidoo/blob/main/crates/nidoo/src/setup/sections.rs).
@@ -23,7 +23,7 @@ The documents the hub keeps on the broker (home settings, alarm, climate schedul
 
 You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. A value it could not start with is refused with the reason, and nothing is saved.
 
-The folder is `./data` by default. `nidoo --data <dir>` (or `NIDOO_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`. The compose file also mounts the checkout read-only at `/checkout` and starts the hub with `--config /checkout/oikos.toml`, which only matters for a host whose `oikos.toml` has not moved into `./data` yet.
+The folder is `./data` by default. `nidoo --data <dir>` (or `NIDOO_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`.
 
 ## Secrets
 
@@ -63,7 +63,7 @@ The wizard looks the city up and fills the rest, which you can correct. Sun node
 | `mqtt.port` | `1883` | Broker port. |
 | `mqtt.user` | none | Broker user. A password needs a user. |
 | `mqtt.password` | none | Broker password (a secret). |
-| `mqtt.client_id` | `"oikos-os"` | MQTT client id and session key. Two hubs on one broker must not share one: the broker would bounce them off each other and hand one the other's session. |
+| `mqtt.client_id` | `"nidoo"` | MQTT client id and session key. Two hubs on one broker must not share one: the broker would bounce them off each other and hand one the other's session. |
 | `z2m_base` | `"zigbee2mqtt"` | Zigbee2MQTT base topic; the hub reads `<z2m_base>/bridge/devices`, `/info` and `/state`. Under Advanced in the wizard. |
 | `database_url` | none | The Postgres URL, built from the Database page's host, port (5432 for the bundled one), database, user and password. TimescaleDB 2.17+ on Postgres 17 with the `timescaledb` extension. Without it the hub stays in setup mode. |
 
@@ -101,8 +101,6 @@ No screen. Set with `NIDOO_HTTP__BIND`, `NIDOO_LOG__LEVEL` and `NIDOO_LOG__JSON`
 
 Two underscores separate the levels, and the names are upper case. String values keep the raw text of the variable, so `NIDOO_MQTT__PASSWORD=007` stays `"007"` and is not read as a number; numbers and booleans are parsed. In Docker, put them in a git-ignored `.env` next to `compose.yml`. Variables for any other section (`NIDOO_WEATHER__ENABLED` and the like) are ignored: those settings live in the database.
 
-`OIKOS_*` names still work; `NIDOO_*` wins when both are set. The hub logs one warning at start while any `OIKOS_*` variable is set.
-
 Command line:
 
 | | |
@@ -111,7 +109,6 @@ Command line:
 | `nidoo mcp-stdio --server <url>` | Serve MCP over stdio, proxying to a running hub (for example `http://localhost:8081`). It reads the log level from `data/hub.json` when that exists. |
 | `nidoo init-bundled` | Create the bundled broker and database credentials in `data/` and exit. The compose `init` service runs it; it changes nothing once `data/bundled.json` exists. |
 | `--data <dir>` | The data folder (default `./data`, or `NIDOO_DATA_DIR`). Works with every command. |
-| `--config <path>` | A file to import once (see below). Used by `run`; `init-bundled` treats an existing one as a hub that is already set up. |
 
 ## Weather
 
@@ -166,8 +163,7 @@ The hub also keeps a connection timeout (5000 ms) that no screen or route sets. 
 | Field | Default | Description |
 | --- | --- | --- |
 | `service_account` | none | The Firebase service-account key JSON (a secret). A key with no `project_id` is refused. A read also shows `project_id`. |
-| `prefix` | `"oikos/push"` | No screen. Topic prefix: `<prefix>/notification/<source>`, `<prefix>/tokens/<installId>`, `<prefix>/responses`, `<prefix>/history`. |
-| `legacy_prefix` | `"oikos-push"` | No screen. OikosPush's topics, still read during the switch-over. An empty string turns them off. |
+| `prefix` | `"nidoo/push"` | No screen. Topic prefix: `<prefix>/notification/<source>`, `<prefix>/tokens/<installId>`, `<prefix>/responses`, `<prefix>/history`. |
 | `retry_interval` | `60` | No screen. Seconds between two passes of the retry queue. |
 | `max_retries` | `10` | No screen. Attempts before a queued alert is given up. |
 | `history_size` | `100` | No screen. Alerts kept in the history. |
@@ -180,7 +176,7 @@ The climate engine (beta, still being tested). Switched on from the Climate card
 | Field | Default | Description |
 | --- | --- | --- |
 | `enabled` | `false` | Turn the engine on. While `false`, `GET /api/v1/climate` answers 503 and the climate MCP tools answer `climate disabled`. |
-| `prefix` | `"oikos/climate"` | No screen. Topic prefix of the climate documents. When enabled it must not be empty or only `/`, and must not contain `+` or `#`. |
+| `prefix` | `"nidoo/climate"` | No screen. Topic prefix of the climate documents. When enabled it must not be empty or only `/`, and must not contain `+` or `#`. |
 
 ## Advanced
 
@@ -192,12 +188,12 @@ Where the hub looks for discovery and where it keeps its own retained documents.
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `discovery_prefixes` | `["oikos"]` | Home Assistant discovery prefixes the hub subscribes to (`<prefix>/#`). The first one is also where the hub publishes the discovery of its own virtual entities and groups. |
-| `ui_prefix` | `"oikos/ui"` | Entity overrides (`<ui_prefix>/<id>`), rooms (`<ui_prefix>/_areas`), the type table (`<ui_prefix>/_types`) and dashboards (`<ui_prefix>/dashboards/<id>`). |
+| `discovery_prefixes` | `["nidoo"]` | Home Assistant discovery prefixes the hub subscribes to (`<prefix>/#`). The first one is also where the hub publishes the discovery of its own virtual entities and groups. |
+| `ui_prefix` | `"nidoo/ui"` | Entity overrides (`<ui_prefix>/<id>`), rooms (`<ui_prefix>/_areas`), the type table (`<ui_prefix>/_types`) and dashboards (`<ui_prefix>/dashboards/<id>`). |
 | `z2m_base` | `"zigbee2mqtt"` | Zigbee2MQTT base topic. The one in `hub.json` (the MQTT step's Advanced field) wins when it is set. |
-| `automation_prefix` | `"oikos/automation"` | Flow definitions: one retained JSON document per flow at `<automation_prefix>/<flow id>`. |
+| `automation_prefix` | `"nidoo/automation"` | Flow definitions: one retained JSON document per flow at `<automation_prefix>/<flow id>`. |
 
-Until Zigbee2MQTT publishes under `oikos`, list the Home Assistant prefix next to it so the discovery topics it still retains under `homeassistant/` are picked up too: `"discovery_prefixes": ["oikos", "homeassistant"]`.
+Until Zigbee2MQTT publishes under `nidoo`, list the Home Assistant prefix next to it so the discovery topics it still retains under `homeassistant/` are picked up too: `"discovery_prefixes": ["nidoo", "homeassistant"]`.
 
 ### `commands`
 
@@ -232,7 +228,7 @@ The native alarm's topic prefix. The alarm itself is switched on in its settings
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `prefix` | `"oikos/alarm"` | Topic prefix of the alarm's retained documents (`<prefix>/settings`, `<prefix>/state`) and of its panel topics. Must not be empty or only `/`, and must not contain `+` or `#`. |
+| `prefix` | `"nidoo/alarm"` | Topic prefix of the alarm's retained documents (`<prefix>/settings`, `<prefix>/state`) and of its panel topics. Must not be empty or only `/`, and must not contain `+` or `#`. |
 
 ### `watchdog`
 
@@ -253,13 +249,3 @@ Two opt-in watchdogs that raise `system` alerts, both off by default. See [Watch
 | Field | Default | Description |
 | --- | --- | --- |
 | `history_buffer_rows` | `100000` | States the history writer keeps while the database is unreachable, before it drops the oldest (one warning per outage). See [History](../users/history.md). |
-
-## Importing an old `oikos.toml`
-
-Older installs were configured by an `oikos.toml` and key files in `secrets/`. The hub reads neither any more, except once. When there is no `data/hub.json` yet, the first start looks for a file to import, in this order: the `--config` file if it exists, `data/oikos.toml`, then (with no `--config`) `oikos.toml` in the working directory. It loads and validates that file as the old hub did, then maps it into the new shape without asking anything:
-
-- the broker connection and `[history] url` go to `hub.json`; the other sections go to the settings rows, with the home location built from `[flows]` (or the weather coordinates) and the city from `[weather]`;
-- the push and Solcast key files (`secrets/firebase.json` and `secrets/solcast.key` next to the TOML, or the paths it names) are read into the settings, so no key file is needed afterwards;
-- a login written inside a Frigate address moves into the user and password fields.
-
-When it is done the hub logs `oikos.toml imported into the database; it is no longer read and can be deleted`. A hub that already has a `data/hub.json` never imports; a hub still in setup mode that finds an `oikos.toml` in its working directory warns that the file is not read. A file that does not load or validate stops the hub at start with the reason, and nothing is written. The migration steps for a Docker install are in [Upgrading from `oikos.toml`](../users/install-on-linux.md#upgrading-from-oikostoml).

@@ -14,7 +14,7 @@ Nidoo is one Cargo workspace (`crates/*`) with one binary, `nidoo`. The hub keep
 | [`nidoo-api`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-api) | The wire types shared by the hub and the web UI: views over the registry, the snapshot, WebSocket events and REST bodies. Pure data. Also builds for wasm. |
 | [`nidoo`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo) | The hub binary and library: config, the MQTT task, the `Hub`, the HTTP/WebSocket/MCP server, the flow engine, groups, virtual entities, dashboards, history, the climate engine's hub side, the Frigate media proxy. |
 | [`nidoo-web`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-web) | The browser UI, a Leptos app compiled to wasm with Trunk. The hub embeds its build output (`dist/`) and serves it. |
-| [`nidoo-push`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-push) | Push notifications, ported from OikosPush: payload normalisation, the token map, the retry queue, the alert history and the FCM transport. Pure at the bottom; the service takes the clock and a publisher as arguments. |
+| [`nidoo-push`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-push) | Push notifications: payload normalisation, the token map, the retry queue, the alert history and the FCM transport. Pure at the bottom; the service takes the clock and a publisher as arguments. |
 | [`nidoo-frigate`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-frigate) | The Frigate event bridge: a pure translator from `<frigate>/events` messages to v1 push alerts, with per-event and per-camera memory. |
 | [`nidoo-watchdog`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-watchdog) | The gateway-health and broker-ACL watchdogs as pure translators to `system` push alerts, plus a Mosquitto log tailer. |
 | [`nidoo-climate`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-climate) | The climate engine's documents, decision tree, schedule learning and topics. Pure data and logic, no I/O; the hub and the web UI share it. |
@@ -28,7 +28,7 @@ Nidoo is one Cargo workspace (`crates/*`) with one binary, `nidoo`. The hub keep
             |  discovery, state                  |  tokens, notifications
             v                                    v
         +-------------------- MQTT broker (Mosquitto) --------------------+
-        |   retained: discovery, oikos/ui/*, oikos/automation/*, ...       |
+        |   retained: discovery, nidoo/ui/*, nidoo/automation/*, ...       |
         +-----------------------------+------------------------------------+
                                       ^ subscribe / publish
                                [ mqtt task ]  (nidoo)
@@ -46,7 +46,7 @@ Nidoo is one Cargo workspace (`crates/*`) with one binary, `nidoo`. The hub keep
 ### Discovery to state
 
 1. The MQTT task subscribes to `<discovery prefix>/#`, `<z2m_base>/bridge/#`, `<ui_prefix>/#`, `<automation_prefix>/#` and the push, climate, Frigate and watchdog topics that are on (see [MQTT topics](../reference/mqtt-topics.md)).
-2. Every message goes to `Hub::ingest`. The registry classifies it: a discovery config upserts or removes entities, an `oikos/ui/<id>` message is an override, `_areas` is the room list, and a topic an entity listed as its state topic is a state message.
+2. Every message goes to `Hub::ingest`. The registry classifies it: a discovery config upserts or removes entities, an `nidoo/ui/<id>` message is an override, `_areas` is the room list, and a topic an entity listed as its state topic is a state message.
 3. The registry applies discovery configs (expanding Home Assistant abbreviations and device-based configs), computes the folding of entities into each other, and maps each state payload through the entity's templates into a typed state.
 4. The hub turns the registry's changes into events (`entity_upserted`, `state_changed`, `areas_changed`, and so on) on a broadcast channel, and feeds changed states to the history writer.
 
@@ -54,7 +54,7 @@ After a restart the registry only knows what the broker replays as retained, so 
 
 ### Reads: HTTP, WebSocket, MCP
 
-`/api/v1/snapshot` and the `oikos://snapshot` MCP resource build the same `Snapshot` from the registry. `/ws` sends that snapshot, then every broadcast event. The web UI loads the snapshot, applies the events, and reads and writes through the same REST routes the assistants use. The MCP tools call the same `Hub` methods as the REST handlers, so both surfaces share validation and error mapping. A write refused because the broker link is down is a `503` over HTTP and an in-band tool error over MCP. See [HTTP API](../reference/http-api.md) and [MCP tools](../reference/mcp-tools.md).
+`/api/v1/snapshot` and the `nidoo://snapshot` MCP resource build the same `Snapshot` from the registry. `/ws` sends that snapshot, then every broadcast event. The web UI loads the snapshot, applies the events, and reads and writes through the same REST routes the assistants use. The MCP tools call the same `Hub` methods as the REST handlers, so both surfaces share validation and error mapping. A write refused because the broker link is down is a `503` over HTTP and an in-band tool error over MCP. See [HTTP API](../reference/http-api.md) and [MCP tools](../reference/mcp-tools.md).
 
 ### Commands
 
@@ -71,7 +71,7 @@ The flow store keeps the decoded definitions read from `<automation_prefix>/#` a
 
 ### Push
 
-`nidoo-push` normalises an alert (from a producer on `oikos/push/notification/<source>`, or raised in process by the Frigate bridge, the watchdogs, flows or MCP), adds it to the history, and sends it through FCM to every registered install. Failed sends are retried from memory. The history is the retained `<prefix>/history` topic itself. The hub waits for the subscription acknowledgement and the retained tokens before it sends after a connect.
+`nidoo-push` normalises an alert (from a producer on `nidoo/push/notification/<source>`, or raised in process by the Frigate bridge, the watchdogs, flows or MCP), adds it to the history, and sends it through FCM to every registered install. Failed sends are retried from memory. The history is the retained `<prefix>/history` topic itself. The hub waits for the subscription acknowledgement and the retained tokens before it sends after a connect.
 
 ### History writer
 

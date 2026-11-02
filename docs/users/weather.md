@@ -17,7 +17,7 @@ Set the home location first (the city step of the setup wizard, or **Settings â†
 - The city and country come from your home location: the city is required, and the country is an optional two-letter code (`FR`) that keeps the lookup to one country, so `Paris` is not Paris, Texas.
 - A value the hub cannot run with (a refresh below 10, a three-letter country) is refused when you save, and nothing is changed.
 
-With a home location set, the hub uses its coordinates and makes no lookup. A city imported from an old `oikos.toml` without coordinates is looked up once at start, and the hub logs the place it chose (name, region, country and coordinates). If it finds nothing, it logs an error naming the city and the weather stays unavailable until you fix the location in Settings. If the lookup fails because of the network, the hub retries after 30 seconds, then waits twice as long each time, up to 15 minutes between tries. The rest of the house keeps running either way.
+With a home location set, the hub uses its coordinates and makes no lookup. A city saved without coordinates is looked up once at start, and the hub logs the place it chose (name, region, country and coordinates). If it finds nothing, it logs an error naming the city and the weather stays unavailable until you fix the location in Settings. If the lookup fails because of the network, the hub retries after 30 seconds, then waits twice as long each time, up to 15 minutes between tries. The rest of the house keeps running either way.
 
 See the [Settings reference](../reference/configuration.md#weather) for the stored fields, and `get_settings` / `set_settings` in [MCP tools](../reference/mcp-tools.md) to change them from an assistant.
 
