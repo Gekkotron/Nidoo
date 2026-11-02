@@ -155,10 +155,19 @@ done
 [ "$tables" -eq 1 ] || { echo "hub created no tables after 60 s" >&2; exit 1; }
 docker exec nidoo-mosquitto mosquitto_pub -h localhost -u oikos -P "$mqtt_password" \
   -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
-docker compose stop hub
 migrate() {
   docker compose run --rm --no-deps -T hub --data /data migrate-oikos "$@"
 }
+# While the hub answers, the command refuses (dry run and apply), writing nothing.
+if migrate --backup /data/refused.jsonl --apply; then
+  echo "migrate-oikos --apply ran while the hub was up" >&2
+  exit 1
+fi
+if [ -e data/refused.jsonl ] || docker compose run --rm --no-deps -T --entrypoint test hub -e /data/refused.jsonl; then
+  echo "a refused apply left a backup behind" >&2
+  exit 1
+fi
+docker compose stop hub
 migrate
 migrate --backup /data/backup.jsonl --apply
 got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_password" \

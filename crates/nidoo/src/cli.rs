@@ -48,7 +48,7 @@ enum RawCommand {
         #[arg(long, conflicts_with = "restore")]
         verify: bool,
         /// Write the retained messages to this file first.
-        #[arg(long, value_name = "FILE", conflicts_with = "restore")]
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["restore", "verify"])]
         backup: Option<PathBuf>,
         /// Republish the retained messages of a backup file, then exit.
         #[arg(long, value_name = "FILE")]
@@ -336,6 +336,17 @@ mod tests {
                     "b"
                 ])
                 .is_err()
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn migrate_backup_conflicts_with_verify() {
+        figment::Jail::expect_with(|_| {
+            assert!(
+                Cli::try_parse_from(["nidoo", "migrate-oikos", "--verify", "--backup", "b"])
+                    .is_err()
             );
             Ok(())
         });
