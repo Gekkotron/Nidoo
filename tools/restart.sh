@@ -10,8 +10,8 @@
 #
 # A warning is printed when target/ is over TARGET_WARN_GB (default 10).
 #
-# The hub runs detached from this shell, from the repo root (so it reads
-# ./oikos.toml), and logs to target/nidoo.log (OIKOS_LOG overrides).
+# The hub runs detached from this shell, from the repo root (so it finds
+# ./data), and logs to target/nidoo.log (NIDOO_LOG overrides).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,10 +34,10 @@ TARGET_DIR="$(cd "$ROOT" && cargo metadata --no-deps --format-version=1 2>/dev/n
   | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p' | head -1)"
 TARGET_DIR="${TARGET_DIR:-$ROOT/target}"
 BIN="$TARGET_DIR/$PROFILE/nidoo"
-LOG="${OIKOS_LOG:-$TARGET_DIR/nidoo.log}"
+LOG="${NIDOO_LOG:-$TARGET_DIR/nidoo.log}"
 BIND="$(sed -n 's/.*"bind": *"\([^"]*\)".*/\1/p' "$ROOT/data/hub.json" 2>/dev/null | head -1)"
 if [ -z "$BIND" ]; then
-  BIND="$(sed -n 's/^bind *= *"\(.*\)"/\1/p' "$ROOT/oikos.toml" 2>/dev/null | head -1)"
+  BIND="$(sed -n 's/^bind *= *"\(.*\)"/\1/p' "$ROOT/nidoo.toml" 2>/dev/null | head -1)"
 fi
 HEALTH="http://${BIND:-127.0.0.1:8081}/health"
 

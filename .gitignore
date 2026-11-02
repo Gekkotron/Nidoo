@@ -1,5 +1,5 @@
 /target
-oikos.toml
+nidoo.toml
 crates/nidoo-web/dist
 .DS_Store
 .superpowers/

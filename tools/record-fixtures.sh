@@ -13,7 +13,7 @@ trap 'rm -f "$RAW"' EXIT
 args=(-h "$MQTT_HOST" -p "${MQTT_PORT:-1883}" -W 6 -F '%r %t %p')
 [ -n "${MQTT_USER:-}" ] && args+=(-u "$MQTT_USER")
 [ -n "${MQTT_PASS:-}" ] && args+=(-P "$MQTT_PASS")
-for t in 'homeassistant/#' 'oikos/#' 'zigbee2mqtt/bridge/info' \
+for t in 'homeassistant/#' 'nidoo/#' 'zigbee2mqtt/bridge/info' \
          'zigbee2mqtt/bridge/devices' 'zigbee2mqtt/bridge/state' 'zigbee2mqtt/#'; do
   args+=(-t "$t")
 done
@@ -80,10 +80,10 @@ for topic in sorted(msgs):
     elif topic.startswith("homeassistant/") and topic.endswith("/config"):
         name = topic[len("homeassistant/"):-len("/config")].replace("/", "__")
         write("discovery/%s.json" % name, payload)
-    elif topic == "oikos/ui/_areas":
+    elif topic == "nidoo/ui/_areas":
         write("ui/_areas.json", payload)
-    elif topic.startswith("oikos/ui/"):
-        write("ui/%s.json" % topic[len("oikos/ui/"):].replace("/", "__"), payload)
+    elif topic.startswith("nidoo/ui/"):
+        write("ui/%s.json" % topic[len("nidoo/ui/"):].replace("/", "__"), payload)
     elif topic.startswith("zigbee2mqtt/") and not topic.startswith("zigbee2mqtt/bridge/") \
             and not re.search(r"/(set|get|availability)$", topic):
         write("states/%s.json" % topic[len("zigbee2mqtt/"):].replace("/", "__"), payload)

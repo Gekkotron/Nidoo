@@ -24,13 +24,10 @@ services:
     # Same tag as the hub, so a fresh `docker compose up` builds it once
     # instead of trying to pull it.
     image: nidoo:local
-    # `--config` points at the repository's oikos.toml: a host upgraded by an
-    # older update.sh still has it there, and init then leaves it alone.
-    command: ["init-bundled", "--config", "/checkout/oikos.toml"]
+    command: ["init-bundled"]
     restart: "no"
     volumes:
       - ./data:/data
-      - ./:/checkout:ro
 
   mosquitto:
     image: eclipse-mosquitto:2.0.22
@@ -78,17 +75,12 @@ services:
     container_name: nidoo-hub
     restart: unless-stopped
     network_mode: host
-    # Optional, git-ignored: any NIDOO_* override (OIKOS_* still works).
+    # Optional, git-ignored: any NIDOO_* override.
     env_file:
       - path: .env
         required: false
-    # A host upgraded by an older update.sh still has its oikos.toml at the
-    # repository root, and the hub imports it from there (once update.sh
-    # moves it into ./data, the flag is ignored).
-    command: ["run", "--config", "/checkout/oikos.toml"]
     volumes:
       # hub.json, settings-cache.json and the history live here. The push
       # key is stored in the database once uploaded in the wizard;
       # data/secrets/ exists only on upgraded installs.
       - ./data:/data
-      - ./:/checkout:ro

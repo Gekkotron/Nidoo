@@ -129,8 +129,8 @@ pub fn weather_text(lang: Lang, k: WeatherText) -> &'static str {
             "La météo n'est pas disponible.",
         ),
         EnableHint => (
-            "Enable [weather] in oikos.toml to see it here.",
-            "Activez [weather] dans oikos.toml pour la voir ici.",
+            "Enable the weather in the settings to see it here.",
+            "Activez la météo dans les réglages pour la voir ici.",
         ),
         Credit => (
             "Data Open-Meteo (CC BY 4.0)",

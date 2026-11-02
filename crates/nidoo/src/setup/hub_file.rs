@@ -9,8 +9,8 @@ use nidoo_api::{Location, SetupStep};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    BOOTSTRAP_ENV_PREFIXES, ENV_PREFIX, HttpConfig, LEGACY_ENV_PREFIX, LogConfig, MqttConfig,
-    mask_url_password, merge_env,
+    BOOTSTRAP_ENV_PREFIXES, ENV_PREFIX, HttpConfig, LogConfig, MqttConfig, mask_url_password,
+    merge_env,
 };
 
 pub const HUB_FILE: &str = "hub.json";
@@ -36,15 +36,14 @@ pub struct HubFile {
     pub z2m_base: Option<String>,
     pub database_url: Option<String>,
     pub location: Option<Location>,
-    /// A city (and country) to geocode into `location`; set only by the import.
+    /// A city (and country) to geocode into `location`; set by the setup.
     pub pending_city: Option<(String, Option<String>)>,
-    /// An imported `[flows] timezone`, kept while `location` is `None`.
+    /// A `[flows] timezone`, kept while `location` is `None`.
     pub timezone: Option<String>,
     pub http: HttpConfig,
     pub log: LogConfig,
     pub step: SetupStep,
     pub finished: bool,
-    pub settings_imported: bool,
 }
 
 impl fmt::Debug for HubFile {
@@ -61,7 +60,6 @@ impl fmt::Debug for HubFile {
             .field("log", &self.log)
             .field("step", &self.step)
             .field("finished", &self.finished)
-            .field("settings_imported", &self.settings_imported)
             .finish()
     }
 }
@@ -114,15 +112,13 @@ impl HubFile {
         self.mqtt.is_some() && self.database_url.is_some()
     }
 
-    /// Applies the env overrides (`OIKOS_*`, then `NIDOO_*` over them) to the bootstrap keys
+    /// Applies the env overrides (`NIDOO_*`) to the bootstrap keys
     /// only. `mqtt` is filled only when at least one `*_MQTT__*` variable is set.
     #[allow(clippy::result_large_err)]
     pub fn with_bootstrap_env(mut self) -> Result<HubFile, figment::Error> {
         let mqtt_env = std::env::vars().any(|(k, _)| {
             let k = k.to_uppercase();
-            [LEGACY_ENV_PREFIX, ENV_PREFIX]
-                .iter()
-                .any(|p| k.starts_with(&format!("{p}MQTT__")))
+            k.starts_with(&format!("{ENV_PREFIX}MQTT__"))
         });
         let view = BootstrapView {
             mqtt: self.mqtt.clone().unwrap_or_default(),
@@ -172,7 +168,6 @@ mod tests {
             pending_city: Some(("Lyon".into(), None)),
             step: SetupStep::Devices,
             finished: true,
-            settings_imported: true,
             ..HubFile::default()
         }
     }
@@ -233,11 +228,11 @@ mod tests {
     #[test]
     fn env_overrides_bootstrap_keys_only() {
         figment::Jail::expect_with(|jail| {
-            jail.set_env("OIKOS_MQTT__HOST", "192.0.2.5");
-            jail.set_env("OIKOS_MQTT__PASSWORD", "123456");
-            jail.set_env("OIKOS_MQTT__PORT", "1884");
-            jail.set_env("OIKOS_HISTORY__URL", "postgres://u:p@192.0.2.6/nidoo");
-            jail.set_env("OIKOS_WEATHER__ENABLED", "true");
+            jail.set_env("NIDOO_MQTT__HOST", "192.0.2.5");
+            jail.set_env("NIDOO_MQTT__PASSWORD", "123456");
+            jail.set_env("NIDOO_MQTT__PORT", "1884");
+            jail.set_env("NIDOO_HISTORY__URL", "postgres://u:p@192.0.2.6/nidoo");
+            jail.set_env("NIDOO_WEATHER__ENABLED", "true");
             let f = HubFile::default().with_bootstrap_env().unwrap();
             let mqtt = f.mqtt.unwrap();
             assert_eq!(mqtt.host, "192.0.2.5");
@@ -254,7 +249,7 @@ mod tests {
     #[test]
     fn no_mqtt_env_leaves_mqtt_unset() {
         figment::Jail::expect_with(|jail| {
-            jail.set_env("OIKOS_LOG__LEVEL", "debug");
+            jail.set_env("NIDOO_LOG__LEVEL", "debug");
             let f = HubFile::default().with_bootstrap_env().unwrap();
             assert!(f.mqtt.is_none());
             assert_eq!(f.log.level, "debug");

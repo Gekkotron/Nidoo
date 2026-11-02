@@ -31,7 +31,7 @@ pub(crate) type LimitCounts =
     BTreeMap<(String, String), (u32, Duration, VecDeque<chrono::DateTime<chrono::Utc>>)>;
 
 /// The warning attached to a sun flow written while the house point is the Paris fallback.
-const PARIS_FALLBACK_WARNING: &str = "Running sun flows against the Paris fallback. Set `[flows] latitude` and `[flows] longitude` in `oikos.toml` to use your house's point.";
+const PARIS_FALLBACK_WARNING: &str = "Running sun flows against the Paris fallback. Set the house location in the settings to use your house's point.";
 
 impl Hub {
     /// Applies a retained flow payload. A change (or removal) is broadcast and tells the engine

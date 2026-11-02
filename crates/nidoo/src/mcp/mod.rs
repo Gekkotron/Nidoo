@@ -211,7 +211,7 @@ fn instructions() -> String {
          a hub restart. A typical alive check is `trigger.silent` then `limit` then `notify`. A `trigger.state` \
          with a `to` (and no `from`) also fires when the value was unknown, confirmed by an \
          earlier state message on its topic, and then becomes `to`; it never fires on the first value seen after boot. \
-         Set `[flows] latitude` and `[flows] longitude` in `oikos.toml`; the hub falls back to \
+         Set the house location in the settings; the hub falls back to \
          Paris otherwise and reports a warning on save. `get_history` returns one slice of an entity's history — a chart \
          series (`what: series` with `range`), kWh per day (`daily` with `days` and \
          `kind`), kWh since midnight (`today` with `kind`), or `last_change` — when \

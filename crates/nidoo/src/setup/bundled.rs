@@ -88,18 +88,13 @@ pub fn random_secret() -> String {
 }
 
 /// Creates the bundled broker and database credentials unless they, or a hub that does not
-/// use them, already exist. `legacy_toml` is the `--config` file: a host upgraded by an older
-/// `update.sh` still has its `oikos.toml` at the repository root, outside `dir`, and counts as
-/// a hub that is already set up. `bundled.json` is written last: a run that stops earlier
+/// use them, already exist. `bundled.json` is written last: a run that stops earlier
 /// leaves no `bundled.json`, so the next run starts over.
-pub fn init_bundled(dir: &Path, legacy_toml: Option<&Path>) -> anyhow::Result<InitOutcome> {
+pub fn init_bundled(dir: &Path) -> anyhow::Result<InitOutcome> {
     if dir.join(BUNDLED_FILE).exists() {
         return Ok(InitOutcome::Kept);
     }
-    if dir.join(HUB_FILE).exists()
-        || dir.join("oikos.toml").exists()
-        || legacy_toml.is_some_and(Path::is_file)
-    {
+    if dir.join(HUB_FILE).exists() {
         return Ok(InitOutcome::HubConfigured);
     }
     if dir.join("timescaledb/PG_VERSION").exists() {
@@ -172,7 +167,7 @@ mod tests {
     fn creates_everything_in_an_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        assert_eq!(init_bundled(dir, None).unwrap(), InitOutcome::Created);
+        assert_eq!(init_bundled(dir).unwrap(), InitOutcome::Created);
         let b = load(dir).unwrap();
         assert_eq!(b.mqtt_user, "nidoo");
         assert_eq!(b.db_user, "nidoo");
@@ -213,12 +208,9 @@ mod tests {
     #[test]
     fn second_run_changes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(
-            init_bundled(tmp.path(), None).unwrap(),
-            InitOutcome::Created
-        );
+        assert_eq!(init_bundled(tmp.path()).unwrap(), InitOutcome::Created);
         let before = std::fs::read(tmp.path().join(BUNDLED_FILE)).unwrap();
-        assert_eq!(init_bundled(tmp.path(), None).unwrap(), InitOutcome::Kept);
+        assert_eq!(init_bundled(tmp.path()).unwrap(), InitOutcome::Kept);
         assert_eq!(
             std::fs::read(tmp.path().join(BUNDLED_FILE)).unwrap(),
             before
@@ -227,36 +219,14 @@ mod tests {
 
     #[test]
     fn init_skips_a_configured_hub() {
-        for file in [HUB_FILE, "oikos.toml"] {
-            let tmp = tempfile::tempdir().unwrap();
-            std::fs::write(tmp.path().join(file), "").unwrap();
-            assert_eq!(
-                init_bundled(tmp.path(), None).unwrap(),
-                InitOutcome::HubConfigured
-            );
-            assert!(!tmp.path().join(BUNDLED_FILE).exists());
-            assert!(!tmp.path().join("mosquitto").exists());
-        }
-    }
-
-    #[test]
-    fn init_skips_a_legacy_toml_outside_the_data_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let data = tmp.path().join("data");
-        std::fs::create_dir_all(&data).unwrap();
-        let toml = tmp.path().join("oikos.toml");
-        std::fs::write(&toml, "").unwrap();
+        std::fs::write(tmp.path().join(HUB_FILE), "").unwrap();
         assert_eq!(
-            init_bundled(&data, Some(&toml)).unwrap(),
+            init_bundled(tmp.path()).unwrap(),
             InitOutcome::HubConfigured
         );
-        assert!(!data.join(BUNDLED_FILE).exists());
-        assert!(!data.join("mosquitto").exists());
-        // A path that does not exist is no hub: the credentials are created.
-        assert_eq!(
-            init_bundled(&data, Some(&tmp.path().join("nope.toml"))).unwrap(),
-            InitOutcome::Created
-        );
+        assert!(!tmp.path().join(BUNDLED_FILE).exists());
+        assert!(!tmp.path().join("mosquitto").exists());
     }
 
     #[test]
@@ -265,7 +235,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("timescaledb")).unwrap();
         std::fs::write(tmp.path().join("timescaledb/PG_VERSION"), "16\n").unwrap();
         assert_eq!(
-            init_bundled(tmp.path(), None).unwrap(),
+            init_bundled(tmp.path()).unwrap(),
             InitOutcome::DatabaseWithoutCredentials
         );
         assert!(!tmp.path().join(BUNDLED_FILE).exists());
@@ -279,7 +249,7 @@ mod tests {
         std::fs::write(dir.join("mosquitto/config/passwd"), "stale").unwrap();
         std::fs::create_dir_all(dir.join("bundled")).unwrap();
         std::fs::write(dir.join("bundled/db-password"), "stale").unwrap();
-        assert_eq!(init_bundled(dir, None).unwrap(), InitOutcome::Created);
+        assert_eq!(init_bundled(dir).unwrap(), InitOutcome::Created);
         let b = load(dir).unwrap();
         assert_eq!(read(dir, "bundled/db-password"), b.db_password);
         let passwd = read(dir, "mosquitto/config/passwd");
@@ -300,7 +270,7 @@ mod tests {
         let dir = tmp.path();
         std::fs::create_dir_all(dir.join("mosquitto/config")).unwrap();
         std::fs::write(dir.join("mosquitto/config/mosquitto.conf"), "# mine").unwrap();
-        assert_eq!(init_bundled(dir, None).unwrap(), InitOutcome::Created);
+        assert_eq!(init_bundled(dir).unwrap(), InitOutcome::Created);
         assert_eq!(read(dir, "mosquitto/config/mosquitto.conf"), "# mine");
     }
 }

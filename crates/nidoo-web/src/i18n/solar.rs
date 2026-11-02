@@ -59,8 +59,8 @@ pub fn solar_text(lang: Lang, k: SolarText) -> &'static str {
             "Les prévisions solaires sont indisponibles.",
         ),
         EnableHint => (
-            "Enable [solcast] in oikos.toml and put the API key in secrets/solcast.key.",
-            "Activez [solcast] dans oikos.toml et placez la clé d'API dans secrets/solcast.key.",
+            "Enable Solcast in the settings and put the API key in secrets/solcast.key.",
+            "Activez Solcast dans les réglages et placez la clé d'API dans secrets/solcast.key.",
         ),
         Credit => ("Forecasts by Solcast", "Prévisions Solcast"),
         LegendRange => ("Likely range", "Fourchette probable"),

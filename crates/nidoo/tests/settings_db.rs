@@ -55,42 +55,6 @@ async fn save_twice_overwrites() {
 }
 
 #[tokio::test]
-async fn import_copy_fills_the_table_and_sets_the_flag() {
-    use std::sync::Arc;
-
-    use nidoo::history::db::Db;
-    use nidoo::setup::boot::spawn_import_copy;
-    use nidoo::setup::{HubFile, Mode, RestartHook, SetupCtx};
-
-    let Some(tdb) = fresh_db().await else { return };
-    let tmp = tempfile::tempdir().unwrap();
-    let file = HubFile {
-        database_url: Some(tdb.url.clone()),
-        ..HubFile::default()
-    };
-    file.save(tmp.path()).unwrap();
-    let imported = sample();
-    let ctx = Arc::new(SetupCtx::new(
-        tmp.path().to_path_buf(),
-        Mode::Run,
-        file,
-        Some(Db::connect_lazy(&tdb.url).unwrap()),
-        imported.clone(),
-        RestartHook::Exec,
-    ));
-    spawn_import_copy(Arc::clone(&ctx)).await.unwrap();
-    assert_eq!(load_sections(&tdb.db).await.unwrap(), imported);
-    assert!(ctx.file.lock().await.settings_imported);
-    assert!(
-        HubFile::load(tmp.path())
-            .unwrap()
-            .unwrap()
-            .settings_imported
-    );
-    tdb.drop_db().await;
-}
-
-#[tokio::test]
 async fn database_probe_reports_timescale_and_history_since() {
     use nidoo::setup::probe;
 
@@ -388,25 +352,6 @@ mod put {
     }
 
     #[tokio::test]
-    async fn a_put_and_the_import_copy_do_not_overwrite_each_other() {
-        use nidoo::setup::boot::spawn_import_copy;
-        let Some(tdb) = fresh_db().await else { return };
-        let s = serve(&tdb.url, sample()).await;
-        let copy = spawn_import_copy(Arc::clone(&s.ctx));
-        let (code, _) = s
-            .put("weather", json!({"enabled": true, "refresh_minutes": 45}))
-            .await;
-        assert_eq!(code, StatusCode::OK);
-        copy.await.unwrap();
-        // Whichever ran last, the table holds the PUT's value: the copy snapshots the
-        // sections under the same lock the PUT replaces them under.
-        let stored = load_sections(&tdb.db).await.unwrap();
-        assert_eq!(stored.weather.refresh_minutes, 45);
-        assert_eq!(stored, *s.ctx.sections.lock().await);
-        tdb.drop_db().await;
-    }
-
-    #[tokio::test]
     async fn a_put_rewrites_only_its_own_row() {
         let Some(tdb) = fresh_db().await else { return };
         // The table holds real settings, but the hub booted from the defaults (the database
@@ -445,7 +390,6 @@ mod boot {
         HubFile {
             mqtt: Some(MqttConfig::default()),
             database_url: Some(url.to_owned()),
-            settings_imported: true,
             finished: true,
             ..HubFile::default()
         }
@@ -457,7 +401,7 @@ mod boot {
         let tmp = tempfile::tempdir().unwrap();
         complete(&tdb.url).save(tmp.path()).unwrap();
         write_cache(tmp.path(), &sample()).unwrap();
-        let Boot::Run { cfg, ctx } = resolve(tmp.path(), None).await.unwrap() else {
+        let Boot::Run { cfg, ctx } = resolve(tmp.path()).await.unwrap() else {
             panic!("expected normal mode")
         };
         assert_eq!(*ctx.sections.lock().await, sample());
@@ -476,7 +420,7 @@ mod boot {
         let mut one = Sections::default();
         one.weather.refresh_minutes = 45;
         save_section(&tdb.db, "weather", &one).await.unwrap();
-        let Boot::Run { ctx, .. } = resolve(tmp.path(), None).await.unwrap() else {
+        let Boot::Run { ctx, .. } = resolve(tmp.path()).await.unwrap() else {
             panic!("expected normal mode")
         };
         // The missing rows are defaults; the cache is refreshed from the table.

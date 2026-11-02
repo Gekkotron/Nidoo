@@ -2,7 +2,7 @@
 #
 # Multi-stage build of the Nidoo hub.
 # Uses cargo-chef to cache the dependency graph in its own layer so
-# incremental rebuilds only recompile the workspace crates (oikos-*),
+# incremental rebuilds only recompile the workspace crates (nidoo-*),
 # not the hundreds of crates they pull in from crates.io.
 #
 # Stage layout:
@@ -86,7 +86,7 @@ RUN apt-get update \
 COPY --from=builder /src/target/release/nidoo /usr/local/bin/nidoo
 
 # No ENV defaults: the hub's own (0.0.0.0:8081, ./data = /data from here) fit,
-# and an image NIDOO_* value would beat a user's OIKOS_* override in .env.
+# and an image NIDOO_* value would beat a user's override in .env.
 WORKDIR /
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/nidoo"]

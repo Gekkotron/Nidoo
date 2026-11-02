@@ -106,7 +106,7 @@ async fn pool(url: &str) -> Result<PgPool> {
 pub async fn run(args: MigrateArgs, data_dir: &Path) -> Result<()> {
     let raw = HubFile::load(data_dir)?
         .with_context(|| format!("no hub.json in {}", data_dir.display()))?;
-    // What the hub boots with: hub.json under the NIDOO_* / OIKOS_* environment overrides.
+    // What the hub boots with: hub.json under the NIDOO_* environment overrides.
     let file = raw.clone().with_bootstrap_env()?;
     let mqtt = file.mqtt.clone().context("hub.json has no mqtt section")?;
     let url = file
@@ -333,5 +333,17 @@ mod tests {
         let addrs = probe_addrs("0.0.0.0:8081").unwrap();
         assert_eq!(addrs, vec!["127.0.0.1:8081".parse().unwrap()]);
         assert!(probe_addrs("not an address").is_err());
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)] // figment::Jail closures return figment::Error
+    fn old_env_prefix_is_ignored() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OIKOS_MQTT__HOST", "x");
+            let file = HubFile::default().with_bootstrap_env()?;
+            let cfg = crate::setup::sections::assemble(&file, &Default::default());
+            assert_eq!(cfg.mqtt.host, crate::config::Config::default().mqtt.host);
+            Ok(())
+        });
     }
 }

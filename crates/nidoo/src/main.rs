@@ -11,7 +11,7 @@ use nidoo::history::History;
 use nidoo::hub::Hub;
 use nidoo::setup::boot::{Boot, resolve, spawn_location_lookup};
 use nidoo::setup::bundled::{self, InitOutcome};
-use nidoo::setup::{HubFile, SetupCtx, banner, import};
+use nidoo::setup::{HubFile, SetupCtx, banner};
 use nidoo::weather::open_meteo::Endpoints;
 use nidoo::{http, logging, mcp, mqtt};
 use tokio::sync::mpsc;
@@ -44,19 +44,12 @@ fn spawn_acl_tail(cfg: &Config, hub: &Arc<Hub>) -> Vec<tokio::task::JoinHandle<(
 }
 
 /// The log settings, read before anything else so the boot itself can log: `hub.json` when it
-/// exists, else the TOML about to be imported, else the defaults (plus `NIDOO_LOG__*` / `OIKOS_LOG__*`).
-fn early_log_config(data_dir: &Path, config_flag: Option<&Path>) -> LogConfig {
+/// exists, else the defaults, under the `NIDOO_LOG__*` overrides.
+fn early_log_config(data_dir: &Path) -> LogConfig {
     // A broken file is reported by `resolve`.
-    let file = HubFile::load(data_dir).unwrap_or_default();
-    if let Some(file) = file {
-        return file.with_bootstrap_env().map(|f| f.log).unwrap_or_default();
-    }
-    if let Some(path) = import::toml_candidate(data_dir, config_flag)
-        && let Ok(cfg) = Config::load(Some(&path))
-    {
-        return cfg.log;
-    }
-    HubFile::default()
+    HubFile::load(data_dir)
+        .unwrap_or_default()
+        .unwrap_or_default()
         .with_bootstrap_env()
         .map(|f| f.log)
         .unwrap_or_default()
@@ -80,14 +73,9 @@ async fn run_setup(ctx: Arc<SetupCtx>) -> anyhow::Result<ExitCode> {
 async fn main() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse_args();
     match cli {
-        Cli::Run { config, data_dir } => {
-            logging::init(&early_log_config(&data_dir, config.as_deref()));
-            if nidoo::config::legacy_env_in_use() {
-                tracing::warn!(
-                    "OIKOS_* environment variables are deprecated; rename them to NIDOO_*"
-                );
-            }
-            let (cfg, setup_ctx) = match resolve(&data_dir, config.as_deref()).await? {
+        Cli::Run { data_dir } => {
+            logging::init(&early_log_config(&data_dir));
+            let (cfg, setup_ctx) = match resolve(&data_dir).await? {
                 Boot::Setup(ctx) => return run_setup(ctx).await,
                 Boot::Run { cfg, ctx } => (*cfg, ctx),
             };
@@ -169,9 +157,9 @@ async fn main() -> anyhow::Result<ExitCode> {
             tracing::info!("stopped");
             Ok(ExitCode::SUCCESS)
         }
-        Cli::InitBundled { data_dir, config } => {
+        Cli::InitBundled { data_dir } => {
             logging::init(&LogConfig::default());
-            match bundled::init_bundled(&data_dir, config.as_deref())? {
+            match bundled::init_bundled(&data_dir)? {
                 InitOutcome::Created => println!(
                     "bundled credentials created in {}",
                     data_dir.join(bundled::BUNDLED_FILE).display()
