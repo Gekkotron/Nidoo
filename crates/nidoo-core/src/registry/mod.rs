@@ -259,10 +259,11 @@ impl Registry {
     }
 
     /// Puts a recorded value back on an entity that has never spoken since boot: it exists,
-    /// its value is [`StateValue::Unknown`], `last_update` is `None` and no message reached its
-    /// state topic. `at_secs` is when the value was recorded, not now. Anything else (an
-    /// unknown id, a value already read, a message that rendered nothing) is left alone.
-    /// Availability is not touched.
+    /// its value is [`StateValue::Unknown`] and no message reached its state topic. An
+    /// availability message (Z2M's `bridge/state` at boot) stamps `last_update` but is not a
+    /// report, so it does not count. `at_secs` is when the value was recorded, not now.
+    /// Anything else (an unknown id, a value already read, a message that rendered nothing)
+    /// is left alone. Availability is not touched.
     pub fn restore_state(
         &mut self,
         unique_id: &str,
@@ -275,10 +276,7 @@ impl Registry {
         let Some(state) = self.states.get_mut(unique_id) else {
             return Vec::new();
         };
-        if state.value != StateValue::Unknown
-            || state.last_update.is_some()
-            || self.spoken.contains(unique_id)
-        {
+        if state.value != StateValue::Unknown || self.spoken.contains(unique_id) {
             return Vec::new();
         }
         state.value = value;
