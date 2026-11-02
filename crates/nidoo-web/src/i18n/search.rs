@@ -5,6 +5,8 @@ use super::*;
 /// A fixed word or sentence of the search page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchText {
+    /// The top bar's magnifying glass.
+    Open,
     Placeholder,
     Hint,
     Clear,
@@ -15,6 +17,7 @@ pub enum SearchText {
 pub fn search_text(lang: Lang, k: SearchText) -> &'static str {
     use SearchText::*;
     let (en, fr) = match k {
+        Open => ("Search", "Rechercher"),
         Placeholder => (
             "Search a device, a room…",
             "Chercher un appareil, une pièce…",
@@ -70,7 +73,7 @@ mod tests {
     #[test]
     fn every_text_has_both_languages() {
         use SearchText::*;
-        assert_table(&[Placeholder, Hint, Clear, Rooms], search_text, &[]);
+        assert_table(&[Open, Placeholder, Hint, Clear, Rooms], search_text, &[]);
     }
 
     #[test]

@@ -44,11 +44,29 @@ pub fn Shell(
         }
     });
     // `/` opens the search from anywhere but a text field, where it is just a character.
+    // Already on the search, it puts the cursor back in the field instead of starting over. Not
+    // under an open dialog, nor when something else already handled the key.
     let navigate = use_navigate();
+    let pathname = location.pathname;
     let slash = window_event_listener(ev::keydown, move |event| {
         let modifier = event.ctrl_key() || event.meta_key() || event.alt_key();
-        if opens_search(&event.key(), targets_text(&event), modifier) {
-            event.prevent_default();
+        if event.default_prevented()
+            || dialog_open()
+            || !opens_search(&event.key(), typing(&event), modifier)
+        {
+            return;
+        }
+        event.prevent_default();
+        if pathname.try_get_untracked().as_deref() == Some("/search") {
+            let field = document()
+                .query_selector("input.search__input")
+                .ok()
+                .flatten()
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok());
+            if let Some(field) = field {
+                let _ = field.focus();
+            }
+        } else {
             navigate("/search", Default::default());
         }
     });
@@ -110,8 +128,9 @@ pub(crate) fn opens_search(key: &str, target_is_text: bool, modifier: bool) -> b
     key == "/" && !target_is_text && !modifier
 }
 
-/// Whether the key event's target is somewhere `/` is typed: a field, a menu, or editable text.
-fn targets_text(event: &web_sys::KeyboardEvent) -> bool {
+/// Whether a key event comes from somewhere keys are typed: a form field or editable text. Keys
+/// there are characters, not shortcuts.
+pub(crate) fn typing(event: &web_sys::KeyboardEvent) -> bool {
     let Some(target) = event.target() else {
         return false;
     };
@@ -126,6 +145,15 @@ fn targets_text(event: &web_sys::KeyboardEvent) -> bool {
             "input" | "textarea" | "select"
         )
     })
+}
+
+/// Whether a modal dialog (a popup, the camera viewer) is open over the page.
+fn dialog_open() -> bool {
+    document()
+        .query_selector("dialog[open]")
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 #[cfg(test)]

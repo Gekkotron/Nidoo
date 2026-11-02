@@ -36,3 +36,17 @@ async fn slash_on_page_opens_search() {
     assert_eq!(window().location().pathname().unwrap(), "/search");
     drop(m);
 }
+
+/// Under an open dialog, `/` does nothing.
+#[wasm_bindgen_test]
+async fn slash_under_a_dialog_does_nothing() {
+    let m = mount_shell("/room/kitchen").await;
+    let document = window().document().unwrap();
+    let dialog = document.create_element("dialog").unwrap();
+    dialog.set_attribute("open", "").unwrap();
+    m.host.append_child(&dialog).unwrap();
+    press_slash_on(&document.body().unwrap());
+    settle().await;
+    assert_eq!(window().location().pathname().unwrap(), "/room/kitchen");
+    dialog.remove();
+}

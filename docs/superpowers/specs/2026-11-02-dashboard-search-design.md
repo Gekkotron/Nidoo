@@ -127,7 +127,8 @@ Top to bottom:
    `home_items`). Cards drawn by `card_for`.
 3. **Rooms**: one small tile per matching room — name and the room's sidebar count
    (`home_counts`, as the sidebar shows it) — that opens `/rooms/<id>`. The virtual Unassigned
-   area never gets a tile.
+   area never gets a tile. A room where Home shows no card (only Energy or Security devices) gets no
+   tile either: the room page would be empty. Its matching devices are still listed.
 
 **Card grid.** Search sections use the same section markup and grid classes as a room
 (`section.room`, `grid grid--home`) and draw each card with `card_for`, so the cards are the

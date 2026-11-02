@@ -13,14 +13,15 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::api::encode_id;
 use crate::components::card_place::{CardPlace, provide_card_place};
 use crate::format::area_name;
+use crate::groups::favorites_count;
 use crate::house::House;
 use crate::i18n::{
     Key, SearchText, search_capped, search_count, search_no_match, search_text, use_lang, use_text,
 };
 use crate::icons::{MAGNIFIER, X_MARK};
 use crate::nav::{use_back, use_back_anchor};
-use crate::rooms::{FAVORITES, use_group_refresh};
-use crate::screens::home::card_for;
+use crate::rooms::{FAVORITES, use_group_refresh, use_loaded};
+use crate::screens::home::{card_for, scroll_to_fragment};
 use crate::screens::room::RoomSection;
 use crate::search::{SearchResults, search_results};
 
@@ -233,8 +234,18 @@ pub fn SearchScreen() -> impl IntoView {
         }
     };
     let input = NodeRef::<leptos::html::Input>::new();
+    let loaded = use_loaded();
+    // A fresh arrival puts the cursor in the field. Back from a card's sheet comes with
+    // `#room-<id>` instead: the router looks the fragment up before the rooms are drawn, so the page
+    // scrolls to it itself, and leaves the field alone (on a phone, focus would raise the keyboard
+    // and pull the page back to the top).
     Effect::new(move |_| {
-        if let Some(field) = input.get() {
+        let returning = window().location().hash().is_ok_and(|h| h.len() > 1);
+        if returning {
+            if loaded.get() {
+                request_animation_frame(scroll_to_fragment);
+            }
+        } else if let Some(field) = input.get() {
             let _ = field.focus();
         }
     });
@@ -249,7 +260,8 @@ pub fn SearchScreen() -> impl IntoView {
     let on_keydown = {
         let clear = clear.clone();
         move |ev: web_sys::KeyboardEvent| {
-            if ev.key() != "Escape" {
+            // Esc while composing (an input method) cancels the composition, not the search.
+            if ev.key() != "Escape" || ev.is_composing() {
                 return;
             }
             ev.prevent_default();
@@ -274,6 +286,15 @@ pub fn SearchScreen() -> impl IntoView {
         })
     });
     let searching = Memo::new(move |_| results.with(Option::is_some));
+    let has_favorites = Memo::new(move |_| {
+        house.areas.with(|areas| {
+            house.groups.with(|groups| {
+                house
+                    .entities
+                    .with(|m| favorites_count(m.values(), areas, groups) > 0)
+            })
+        })
+    });
 
     view! {
         <div class="search">
@@ -316,7 +337,9 @@ pub fn SearchScreen() -> impl IntoView {
                         <p class="search__line search__hint">
                             {move || search_text(lang(), SearchText::Hint)}
                         </p>
-                        <RoomSection id=FAVORITES.to_owned() anchored=true />
+                        <Show when=move || has_favorites.get()>
+                            <RoomSection id=FAVORITES.to_owned() anchored=true />
+                        </Show>
                     }
                 }
             >

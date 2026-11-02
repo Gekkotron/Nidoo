@@ -21,13 +21,25 @@ async fn empty_shows_hint_and_favorites() {
 }
 
 #[wasm_bindgen_test]
+async fn empty_without_favorites_shows_only_the_hint() {
+    let (areas, entities) = kitchen_house();
+    let m = mount("/search", areas, entities).await;
+    assert!(text_of(&m).contains("Type a name, a room or a kind of device"));
+    assert!(!text_of(&m).contains("Favorites"));
+    assert!(!text_of(&m).contains("Nothing here"));
+    assert_eq!(card_count(&m), 0);
+}
+
+#[wasm_bindgen_test]
 async fn typing_filters_after_debounce() {
     let (areas, entities) = kitchen_house();
     let m = mount("/search", areas, entities).await;
     let before = window().history().unwrap().length().unwrap();
     type_in(&input(&m), "kitchen");
-    // Not before the debounce.
-    assert_eq!(window().location().pathname().unwrap(), "/search");
+    // Not before the debounce: the address and the results still show the empty search.
+    settle().await;
+    assert_eq!(window().location().search().unwrap(), "");
+    assert!(text_of(&m).contains("Type a name, a room or a kind of device"));
     debounce().await;
     settle().await;
     assert_eq!(window().location().pathname().unwrap(), "/search");

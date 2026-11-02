@@ -42,6 +42,7 @@ use crate::i18n::flows::{FlowText, flow_text};
 use crate::i18n::{Key, current_lang, text, use_lang};
 use crate::layout::canvas_inset_style;
 use crate::screens::flow_schedule::SaveBlocked;
+use crate::shell::typing;
 use library::Library;
 pub use library::{Dragging, Fresh};
 use settings::NodeEditor;
@@ -113,20 +114,6 @@ impl Editor {
         self.restored.update(|n| *n += 1);
         true
     }
-}
-
-/// Whether a key event comes from a form field (typing there must not delete a card).
-fn typing(ev: &web_sys::KeyboardEvent) -> bool {
-    let Some(el) = ev
-        .target()
-        .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
-    else {
-        return false;
-    };
-    matches!(
-        el.tag_name().to_ascii_lowercase().as_str(),
-        "input" | "textarea" | "select"
-    ) || el.is_content_editable()
 }
 
 /// Each node a run visited, with the time of its latest step since the run started.

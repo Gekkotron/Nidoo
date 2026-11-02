@@ -5,7 +5,7 @@ use leptos_router::hooks::use_location;
 
 use super::route::{Lookup, crumbs};
 use crate::house::House;
-use crate::i18n::{Key, Lang, text, use_text};
+use crate::i18n::{Key, Lang, SearchText, search_text, text, use_text};
 use crate::icons::{HOUSE, MAGNIFIER, MOON, SUN, SUN_MOON};
 use crate::theme::Theme;
 
@@ -110,7 +110,7 @@ pub fn ContentHeader(drawer_open: RwSignal<bool>) -> impl IntoView {
                 <a
                     href="/search"
                     class="content-header__search"
-                    aria-label=move || t(Key::Search)
+                    aria-label=move || search_text(lang.get(), SearchText::Open)
                     aria-current=move || {
                         location.pathname.with(|p| p == "/search").then_some("page")
                     }

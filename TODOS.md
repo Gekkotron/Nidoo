@@ -23,7 +23,7 @@ Spec: `docs/superpowers/specs/2026-10-22-climate-engine-design.md`. Plan: `docs/
 
 ### Hub & web polish
 
-- [x] Dashboard-wide search bar — the current search is only on the Z2M diagnostics screen (`screens/devices.rs`); add an equivalent on the dashboard/Home so any entity can be found by name across rooms. Landed: branch feat/dashboard-search, 2026-11-02.
+- [x] Dashboard-wide search bar — the current search is only on the Z2M diagnostics screen (`screens/devices.rs`); add an equivalent on the dashboard/Home so any entity can be found by name across rooms. Done on branch feat/dashboard-search (2026-11-02).
 - [ ] Address the ~47 deferred minors from the flow-canvas redesign SDD ledger (`.superpowers/sdd/2026-10-20-flow-canvas-redesign/`).
 - [ ] Housekeeping: cap/clean `target/` so it stops filling the disk.
 
