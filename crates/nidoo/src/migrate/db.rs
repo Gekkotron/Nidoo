@@ -92,6 +92,28 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
     for table in tables {
         let keys = key_columns(&mut tx, &table).await?;
         let t = quote_ident(&table);
+        // A DELETE ... USING self-join cannot see rows inside a compressed chunk: the planner
+        // has no filter to decompress the target batches with, so the collision rows survive
+        // and the UPDATE below then renames into a duplicate. Decompress first. The UPDATE
+        // would decompress most of the history anyway, and the compression policy
+        // recompresses after the commit.
+        let compressed: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM timescaledb_information.hypertables \
+             WHERE hypertable_schema = 'public' AND hypertable_name = $1 \
+               AND compression_enabled)",
+        )
+        .bind(&table)
+        .fetch_one(&mut *tx)
+        .await?;
+        if compressed {
+            sqlx::query(&format!(
+                "SELECT decompress_chunk(c, if_compressed => true) \
+                 FROM show_chunks('public.{}'::regclass) c",
+                quote_ident(&table).replace('\'', "''")
+            ))
+            .execute(&mut *tx)
+            .await?;
+        }
         let mut delete = format!(
             "DELETE FROM {t} o USING {t} n \
              WHERE o.entity_id LIKE 'oikos\\_%' \
