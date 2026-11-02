@@ -9,7 +9,6 @@ mod ambiance_tools;
 mod climate_tools;
 mod flow_tools;
 mod params;
-mod search;
 mod stdio_proxy;
 mod tools;
 

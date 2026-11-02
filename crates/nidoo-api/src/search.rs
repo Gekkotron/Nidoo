@@ -1,5 +1,6 @@
-//! The word matching behind the `search` tool, written for models that phrase a question
-//! ("température du salon") rather than an exact name.
+//! The word matching shared by the MCP `search` tool and the web search page, written for
+//! people and models that phrase a question ("température du salon") rather than an exact
+//! name.
 //!
 //! The query is lowercased, folded to ASCII (`é` → `e`) and split into words; articles and
 //! prepositions are dropped. An entity matches when every remaining word is found in its
@@ -8,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use nidoo_api::{AreaView, DeviceView, EntityView};
+use crate::{AreaView, DeviceView, EntityView};
 use nidoo_core::model::{Kind, SwitchType};
 
 /// Words that carry no meaning for a search, in French and English.
@@ -18,12 +19,12 @@ const STOP_WORDS: &[&str] = &[
 ];
 
 /// A parsed query: folded words, stop words removed.
-pub(super) struct Query {
+pub struct Query {
     words: Vec<String>,
 }
 
 impl Query {
-    pub(super) fn parse(query: &str) -> Self {
+    pub fn parse(query: &str) -> Self {
         let words = fold(query)
             .split(|c: char| !c.is_alphanumeric() && c != '_')
             .filter(|word| !word.is_empty() && !STOP_WORDS.contains(word))
@@ -32,26 +33,36 @@ impl Query {
         Self { words }
     }
 
+    /// True when the query has no words left (empty, or only stop words).
+    pub fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
     /// True when every word is in `text` (already folded). A query of stop words only
     /// matches everything, like an empty query did.
     fn all_in(&self, text: &str) -> bool {
         self.words.iter().all(|word| text.contains(word.as_str()))
     }
 
-    pub(super) fn device_matches(&self, device: &DeviceView) -> bool {
+    pub fn device_matches(&self, device: &DeviceView) -> bool {
         self.all_in(&device_text(device))
+    }
+
+    /// True when every word is in the room's id or name.
+    pub fn area_matches(&self, area: &AreaView) -> bool {
+        self.all_in(&fold(&format!("{}\n{}", area.id, area.name)))
     }
 }
 
 /// Matches entities against a query, with the rooms and devices of one snapshot.
-pub(super) struct EntityMatcher<'a> {
+pub struct EntityMatcher<'a> {
     query: &'a Query,
     areas: HashMap<&'a str, &'a str>,
     devices: HashMap<&'a str, String>,
 }
 
 impl<'a> EntityMatcher<'a> {
-    pub(super) fn new(query: &'a Query, areas: &'a [AreaView], devices: &'a [DeviceView]) -> Self {
+    pub fn new(query: &'a Query, areas: &'a [AreaView], devices: &'a [DeviceView]) -> Self {
         Self {
             query,
             areas: areas
@@ -65,7 +76,7 @@ impl<'a> EntityMatcher<'a> {
         }
     }
 
-    pub(super) fn matches(&self, entity: &EntityView) -> bool {
+    pub fn matches(&self, entity: &EntityView) -> bool {
         let mut text = entity_text(entity, self.areas.get(entity.area.as_str()).copied());
         if let Some(device) = entity
             .device_id
@@ -207,5 +218,32 @@ mod tests {
         assert!(kind_words(Kind::Cover).contains(&"volet"));
         assert!(class_words("humidity").contains(&"humidite"));
         assert!(class_words("unknown_class").is_empty());
+    }
+
+    fn area(id: &str, name: &str) -> AreaView {
+        AreaView {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            icon: None,
+            order: None,
+            entity_count: 0,
+            primary_count: 0,
+            group_names: Default::default(),
+            group_favorites: Default::default(),
+        }
+    }
+
+    #[test]
+    fn area_matches_name_or_id_every_word() {
+        let a = area("kitchen_1", "Cuisine d'été");
+        assert!(Query::parse("cuisine ete").area_matches(&a));
+        assert!(Query::parse("KITCHEN_1").area_matches(&a));
+        assert!(!Query::parse("cuisine garage").area_matches(&a));
+    }
+
+    #[test]
+    fn is_empty_after_stop_words() {
+        assert!(Query::parse("  le de the ").is_empty());
+        assert!(!Query::parse("le salon").is_empty());
     }
 }

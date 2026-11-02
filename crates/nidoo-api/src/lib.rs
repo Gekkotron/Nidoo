@@ -13,6 +13,7 @@ mod groups;
 mod history;
 mod home;
 mod network;
+pub mod search;
 mod setup;
 mod snapshot;
 mod solar;
