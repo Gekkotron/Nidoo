@@ -27,10 +27,10 @@ use super::params::{
     SetGroupParams, SetHomeSettingsParams, SetNetworkWatchParams, SetOverrideParams,
     SetSettingsParams, SetVirtualParams,
 };
-use super::search::{EntityMatcher, Query};
 use super::{NidooMcp, ToolError};
 use crate::history::query as history_query;
 use crate::setup::settings::{ApiError, read_section, write_section};
+use nidoo_api::search::{EntityMatcher, Query};
 
 pub(super) type ToolResult<T> = Result<Json<T>, ToolError>;
 
