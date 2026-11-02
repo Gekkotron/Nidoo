@@ -257,6 +257,8 @@ pub struct Hub {
     pub(crate) outages: Mutex<crate::outage::Outages>,
     /// `[system] notify`: push when the hub itself, or a service it depends on, goes down.
     pub(crate) system_notify: std::sync::atomic::AtomicBool,
+    /// Device commands published since boot (one per publish, group members each count).
+    pub(crate) commands_sent: AtomicU64,
     pub(crate) weather_refresh_minutes: u64,
     pub(crate) weather_city: String,
     pub(crate) weather_country: Option<String>,
@@ -414,6 +416,7 @@ impl Hub {
             weather_notify_unreachable: cfg.weather.notify_unreachable,
             solar_notify_unreachable: cfg.solcast.notify_unreachable,
             system_notify: std::sync::atomic::AtomicBool::new(cfg.system.notify),
+            commands_sent: AtomicU64::new(0),
             outages: Mutex::new(crate::outage::Outages::new(
                 cfg.weather.notify_unreachable,
                 cfg.solcast.notify_unreachable,
@@ -1281,6 +1284,7 @@ impl Hub {
         };
         for publish in publishes {
             self.publish(publish)?;
+            self.commands_sent.fetch_add(1, Ordering::Relaxed);
         }
         if no_echo_expected {
             return Ok(CommandResponse {
@@ -1417,6 +1421,7 @@ impl Hub {
             if let Err(err) = self.publish(publish) {
                 return reject(err.to_string());
             }
+            self.commands_sent.fetch_add(1, Ordering::Relaxed);
         }
         let window = Duration::from_millis(2000);
         let _ = tokio::time::timeout(window, async {

@@ -6,10 +6,38 @@ pub mod sample;
 
 use std::sync::atomic::Ordering;
 
+use chrono::NaiveDate;
+
 use crate::hub::{Hub, HubError};
 use crate::setup::store;
 
+/// A per-day view of a monotonic command counter: it reads 0 at each new local day.
+#[derive(Debug, Default)]
+pub struct CommandsToday {
+    day: Option<NaiveDate>,
+    baseline: u64,
+}
+
+impl CommandsToday {
+    /// Commands since the start of `today`, given the running `total`. The first call
+    /// counts from boot; a date change takes `total` as the new baseline.
+    pub fn count(&mut self, total: u64, today: NaiveDate) -> u64 {
+        if self.day != Some(today) {
+            if self.day.is_some() {
+                self.baseline = total;
+            }
+            self.day = Some(today);
+        }
+        total.saturating_sub(self.baseline)
+    }
+}
+
 impl Hub {
+    /// Device commands published since boot.
+    pub fn commands_sent(&self) -> u64 {
+        self.commands_sent.load(Ordering::Relaxed)
+    }
+
     /// Record a deliberate stop so the next boot counts it as a clean restart.
     /// No-op without a setup context; errors are logged and swallowed.
     pub fn mark_clean_stop(&self) {
@@ -67,6 +95,17 @@ mod tests {
     use crate::history::db::Db;
     use crate::setup::sections::Sections;
     use crate::setup::{HubFile, Mode, RestartHook, SetupCtx};
+
+    #[test]
+    fn commands_today_resets_at_midnight() {
+        let d1 = NaiveDate::from_ymd_opt(2026, 11, 2).expect("date");
+        let d2 = NaiveDate::from_ymd_opt(2026, 11, 3).expect("date");
+        let mut today = CommandsToday::default();
+        assert_eq!(today.count(5, d1), 5);
+        assert_eq!(today.count(8, d1), 8);
+        assert_eq!(today.count(9, d2), 0);
+        assert_eq!(today.count(12, d2), 3);
+    }
 
     fn hub_with(db: Option<Db>, dir: &std::path::Path) -> (Arc<Hub>, Arc<SetupCtx>) {
         let ctx = Arc::new(SetupCtx::new(

@@ -2175,3 +2175,29 @@ async fn a_service_without_its_switch_never_alerts() {
     hub.service_succeeded_at(Service::Solar, 1_000 + 4 * 3600);
     assert!(drain(&mut publisher).is_empty());
 }
+
+#[tokio::test]
+async fn light_command_counts_one() {
+    let (hub, _publisher) = hub();
+    feed_switch(&hub);
+    assert_eq!(hub.commands_sent(), 0);
+    hub.send_command(SWITCH_ID, Command::TurnOff)
+        .await
+        .expect("published");
+    assert_eq!(hub.commands_sent(), 1);
+}
+
+#[tokio::test]
+async fn group_command_counts_each_member() {
+    let (hub, mut rx) = groups_hub();
+    feed_hall_switch(&hub);
+    hub.set_group("living", two_switch_group())
+        .await
+        .expect("created");
+    drain(&mut rx);
+    let before = hub.commands_sent();
+    hub.send_command("group_living", Command::TurnOff)
+        .await
+        .expect("a response");
+    assert_eq!(hub.commands_sent() - before, 2);
+}
