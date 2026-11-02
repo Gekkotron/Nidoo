@@ -1052,3 +1052,82 @@ async fn grid_day_reads_text_device_rows_db() {
 
     tdb.drop_db().await;
 }
+
+#[tokio::test]
+async fn restart_log_round_trip() {
+    use nidoo_api::system::{RestartView, StopKind};
+    let Some(tdb) = fresh_db().await else { return };
+    let mk = |started_at, down_secs, stop| RestartView {
+        started_at,
+        down_secs,
+        stop,
+    };
+    let rows = [
+        mk(1_000_000, None, StopKind::First),
+        mk(2_000_000, Some(30), StopKind::Clean),
+        mk(3_000_000, None, StopKind::Unexpected),
+    ];
+    for r in &rows {
+        tdb.db.insert_restart(r).await.unwrap();
+    }
+    let got = tdb.db.restarts_since(1_500_000).await.unwrap();
+    assert_eq!(got, vec![rows[2].clone(), rows[1].clone()]);
+    let all = tdb.db.restarts_since(0).await.unwrap();
+    assert_eq!(all, vec![rows[2].clone(), rows[1].clone(), rows[0].clone()]);
+    assert_eq!(tdb.db.first_start().await.unwrap(), Some(1_000_000));
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn first_start_is_none_on_an_empty_log() {
+    let Some(tdb) = fresh_db().await else { return };
+    assert_eq!(tdb.db.first_start().await.unwrap(), None);
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn purge_removes_only_system_rows() {
+    use nidoo_api::system::{RestartView, StopKind};
+    let Some(tdb) = fresh_db().await else { return };
+    let old = 1_000_000_000_000; // micros = 1_000_000 s; cutoff below is 2_000_000 s
+    let rows = Rows {
+        values: vec![
+            value_row("system_cpu", old, 10.0),
+            value_row("light_x", old, 1.0),
+            value_row("system_cpu", 4_000_000_000_000, 20.0),
+        ],
+        availability: vec![
+            availability_row("system_cpu", old, Availability::Online),
+            availability_row("light_x", old, Availability::Online),
+        ],
+    };
+    tdb.db.insert(&rows).await.unwrap();
+    tdb.db
+        .insert_restart(&RestartView {
+            started_at: 1_000_000,
+            down_secs: None,
+            stop: StopKind::First,
+        })
+        .await
+        .unwrap();
+
+    let removed = tdb.db.purge_system_before(2_000_000).await.unwrap();
+    assert_eq!(removed, 3, "old system state + availability + restart");
+
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id || ':' || coalesce(num::text, '') FROM entity_state ORDER BY time",
+    )
+    .fetch_all(tdb.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(left, vec!["light_x:1", "system_cpu:20"]);
+    let avail: Vec<String> = sqlx::query_scalar("SELECT entity_id FROM entity_availability")
+        .fetch_all(tdb.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(avail, vec!["light_x"]);
+    assert_eq!(tdb.db.first_start().await.unwrap(), None);
+
+    tdb.drop_db().await;
+}

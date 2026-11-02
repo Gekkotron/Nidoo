@@ -1,6 +1,7 @@
 //! System health: machine figures, restart tracking and service status.
 
 pub mod heartbeat;
+pub mod restarts;
 pub mod sample;
 
 use crate::hub::Hub;
