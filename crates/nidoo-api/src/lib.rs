@@ -16,6 +16,7 @@ mod network;
 mod setup;
 mod snapshot;
 mod solar;
+pub mod system;
 mod views;
 mod virtual_entities;
 mod weather;
@@ -54,6 +55,10 @@ pub use snapshot::{Snapshot, area_views, device_views, entity_views, snapshot};
 pub use solar::{
     SolarDay, SolarForecastDay, SolarHistory, SolarNow, SolarPeak, SolarPeriod, SolarSite,
     SolarSpan, SolarToday, SolarView,
+};
+pub use system::{
+    CpuView, DiskView, MemView, NotifyInput, RestartView, ServiceState, ServiceView, StopKind,
+    SystemService, SystemView,
 };
 pub use views::{
     AreaView, BridgeView, DeviceView, EntityView, IgnoredView, UpdateView, mask_secret,

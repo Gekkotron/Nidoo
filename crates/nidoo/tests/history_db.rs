@@ -1052,3 +1052,123 @@ async fn grid_day_reads_text_device_rows_db() {
 
     tdb.drop_db().await;
 }
+
+#[tokio::test]
+async fn restart_log_round_trip() {
+    use nidoo_api::system::{RestartView, StopKind};
+    let Some(tdb) = fresh_db().await else { return };
+    let mk = |started_at, down_secs, stop| RestartView {
+        started_at,
+        down_secs,
+        stop,
+    };
+    let rows = [
+        mk(1_000_000, None, StopKind::First),
+        mk(2_000_000, Some(30), StopKind::Clean),
+        mk(3_000_000, None, StopKind::Unexpected),
+    ];
+    for r in &rows {
+        tdb.db.insert_restart(r).await.unwrap();
+    }
+    let got = tdb.db.restarts_since(1_500_000).await.unwrap();
+    assert_eq!(got, vec![rows[2].clone(), rows[1].clone()]);
+    let all = tdb.db.restarts_since(0).await.unwrap();
+    assert_eq!(all, vec![rows[2].clone(), rows[1].clone(), rows[0].clone()]);
+    assert_eq!(tdb.db.first_start().await.unwrap(), Some(1_000_000));
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn first_start_is_none_on_an_empty_log() {
+    let Some(tdb) = fresh_db().await else { return };
+    assert_eq!(tdb.db.first_start().await.unwrap(), None);
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn purge_removes_only_system_rows() {
+    use nidoo_api::system::{RestartView, StopKind};
+    let Some(tdb) = fresh_db().await else { return };
+    // The purge looks back one week from the cutoff (2_000_000 s): `recent` is inside that
+    // window, `older` before it (left to an earlier day's purge), `later` after the cutoff.
+    let older: i64 = 997_200; // 277 h
+    let recent: i64 = 1_911_600; // 531 h
+    let later: i64 = 4_000_000;
+    let us = |secs: i64| secs * 1_000_000;
+    let rows = Rows {
+        values: vec![
+            value_row("system_cpu", us(older), 5.0),
+            value_row("system_cpu", us(recent), 10.0),
+            value_row("light_x", us(recent), 1.0),
+            value_row("system_cpu", us(later), 20.0),
+        ],
+        availability: vec![
+            availability_row("system_cpu", us(recent), Availability::Online),
+            availability_row("light_x", us(recent), Availability::Online),
+        ],
+    };
+    tdb.db.insert(&rows).await.unwrap();
+    tdb.db
+        .upsert_hourly(&[
+            ("system_cpu".into(), make_bucket(us(older), 5.0, 5.0, 0.0)),
+            (
+                "system_cpu".into(),
+                make_bucket(us(recent), 10.0, 10.0, 0.0),
+            ),
+            ("light_x".into(), make_bucket(us(recent), 1.0, 1.0, 0.0)),
+        ])
+        .await
+        .unwrap();
+    tdb.db
+        .insert_restart(&RestartView {
+            started_at: 1_000_000,
+            down_secs: None,
+            stop: StopKind::First,
+        })
+        .await
+        .unwrap();
+    // The live database compresses old chunks: the purge must work on them too.
+    for table in ["entity_state", "entity_availability"] {
+        sqlx::query(&format!(
+            "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('{table}') c"
+        ))
+        .fetch_all(tdb.db.pool())
+        .await
+        .unwrap();
+    }
+
+    let removed = tdb.db.purge_system_before(2_000_000).await.unwrap();
+    assert_eq!(
+        removed, 4,
+        "recent system state + availability + hourly bucket + restart"
+    );
+
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id || ':' || coalesce(num::text, '') FROM entity_state
+         ORDER BY time, entity_id",
+    )
+    .fetch_all(tdb.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(left, vec!["system_cpu:5", "light_x:1", "system_cpu:20"]);
+    let avail: Vec<String> = sqlx::query_scalar("SELECT entity_id FROM entity_availability")
+        .fetch_all(tdb.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(avail, vec!["light_x"]);
+    let hourly: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id || '@' || extract(epoch FROM bucket)::bigint::text FROM history_hourly
+         ORDER BY bucket, entity_id",
+    )
+    .fetch_all(tdb.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        hourly,
+        vec![format!("system_cpu@{older}"), format!("light_x@{recent}")]
+    );
+    assert_eq!(tdb.db.first_start().await.unwrap(), None);
+
+    tdb.drop_db().await;
+}

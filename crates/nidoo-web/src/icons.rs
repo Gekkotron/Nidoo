@@ -472,6 +472,8 @@ pub const BROKER: &str = svg!(
 pub const DATABASE: &str = svg!(
     r#"<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>"#
 );
+/// A heartbeat line: the hub's health.
+pub const PULSE: &str = svg!(r#"<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>"#);
 pub const INFO: &str =
     svg!(r#"<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/>"#);
 pub const COPY: &str = svg!(

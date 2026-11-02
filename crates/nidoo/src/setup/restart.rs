@@ -34,9 +34,20 @@ pub fn schedule_restart(ctx: &Arc<SetupCtx>, after: Duration) {
                 // writer takes them, and keep both until the process image is replaced.
                 let _sections = ctx.sections.lock().await;
                 let _file = ctx.file.lock().await;
+                before_exec(&ctx);
                 exec_self();
             });
         }
+    }
+}
+
+/// What a restart writes before the image is replaced: the clean-stop marker, so the next
+/// boot counts a restart the hub asked for as clean, not as a crash.
+fn before_exec(ctx: &SetupCtx) {
+    if let Err(error) =
+        crate::system::heartbeat::write_clean_stop(&ctx.data_dir, crate::clock::now())
+    {
+        tracing::warn!(%error, "could not write the clean-stop marker");
     }
 }
 
@@ -76,5 +87,30 @@ mod tests {
         schedule_restart(&ctx, Duration::ZERO);
         schedule_restart(&ctx, Duration::ZERO);
         assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_restart_leaves_the_clean_stop_marker() {
+        use crate::system::heartbeat::{self, Heartbeat, Previous};
+        let dir = tempfile::tempdir().unwrap();
+        heartbeat::write_heartbeat(dir.path(), 10).unwrap();
+        let ctx = SetupCtx::new(
+            dir.path().to_path_buf(),
+            Mode::Run,
+            HubFile::default(),
+            None,
+            Sections::default(),
+            RestartHook::Exec,
+        );
+        before_exec(&ctx);
+        let Previous::Found(Heartbeat {
+            heartbeat,
+            clean_stop,
+        }) = heartbeat::read(dir.path())
+        else {
+            panic!("no heartbeat file");
+        };
+        assert_eq!(heartbeat, 10);
+        assert!(clean_stop.is_some(), "the next boot would read a crash");
     }
 }

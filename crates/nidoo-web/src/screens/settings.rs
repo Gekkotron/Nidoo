@@ -23,6 +23,7 @@ use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
 use crate::screens::network_settings::{NetworkSettingsPage, watched_label};
+use crate::screens::system_settings::{self, SystemSettingsPage};
 use crate::setup::connection::{DatabaseForm, MqttForm};
 use crate::setup::services::basic::WeatherForm;
 use crate::setup::services::keys::{FrigateForm, PushForm, SolcastForm};
@@ -289,6 +290,7 @@ pub enum SettingsPage {
     Push,
     Alarm,
     NetworkPresence,
+    System,
     Appearance,
     Zigbee2mqtt,
     Broker,
@@ -299,7 +301,7 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 14] = [
+    pub const ALL: [SettingsPage; 15] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
@@ -308,6 +310,7 @@ impl SettingsPage {
         SettingsPage::Push,
         SettingsPage::Alarm,
         SettingsPage::NetworkPresence,
+        SettingsPage::System,
         SettingsPage::Appearance,
         SettingsPage::Zigbee2mqtt,
         SettingsPage::Broker,
@@ -326,6 +329,7 @@ impl SettingsPage {
             SettingsPage::Push => "push-notifications",
             SettingsPage::Alarm => "alarm",
             SettingsPage::NetworkPresence => "network-presence",
+            SettingsPage::System => "system",
             SettingsPage::Appearance => "appearance",
             SettingsPage::Zigbee2mqtt => "zigbee2mqtt",
             SettingsPage::Broker => "broker",
@@ -350,6 +354,7 @@ impl SettingsPage {
             SettingsPage::Push => Key::PushNotifications,
             SettingsPage::Alarm => Key::Alarm,
             SettingsPage::NetworkPresence => Key::NetworkPresence,
+            SettingsPage::System => Key::System,
             SettingsPage::Appearance => Key::Appearance,
             SettingsPage::Zigbee2mqtt => Key::Zigbee2mqtt,
             SettingsPage::Broker => Key::Broker,
@@ -375,6 +380,7 @@ impl SettingsPage {
                 SettingsPage::Push => T::HintPush,
                 SettingsPage::Alarm => T::HintAlarm,
                 SettingsPage::NetworkPresence => T::HintNetworkPresence,
+                SettingsPage::System => T::HintSystem,
                 SettingsPage::Appearance => T::HintAppearance,
                 SettingsPage::Zigbee2mqtt => T::HintZigbee,
                 SettingsPage::Broker => T::HintBroker,
@@ -401,6 +407,7 @@ impl SettingsPage {
             SettingsPage::Push => (icons::BELL, "rose"),
             SettingsPage::Alarm => (icons::SHIELD, "mint"),
             SettingsPage::NetworkPresence => (icons::WIFI, "cyan"),
+            SettingsPage::System => (icons::PULSE, "mint"),
             SettingsPage::Appearance => (icons::SUN_MOON, "violet"),
             SettingsPage::Zigbee2mqtt => (icons::MESH, "amber"),
             SettingsPage::Broker => (icons::BROKER, "mint"),
@@ -421,7 +428,8 @@ impl SettingsPage {
             | SettingsPage::Push
             | SettingsPage::Alarm
             | SettingsPage::NetworkPresence => T::GroupHouse,
-            SettingsPage::Appearance
+            SettingsPage::System
+            | SettingsPage::Appearance
             | SettingsPage::Zigbee2mqtt
             | SettingsPage::Broker
             | SettingsPage::Database
@@ -504,6 +512,14 @@ pub fn SettingsScreen() -> impl IntoView {
             }
         });
     });
+    let system = RwSignal::new(None::<nidoo_api::SystemView>);
+    Effect::new(move |_| {
+        spawn_local(async move {
+            if let Ok(v) = crate::api::get_system().await {
+                system.try_set(Some(v));
+            }
+        });
+    });
     let status = move |page: SettingsPage| match page {
         SettingsPage::Home
         | SettingsPage::Location
@@ -517,6 +533,13 @@ pub fn SettingsScreen() -> impl IntoView {
             .unwrap_or_default(),
         SettingsPage::NetworkPresence => watches
             .with(|w| w.as_ref().map(|w| watched_label(w, lang())))
+            .unwrap_or_default(),
+        SettingsPage::System => system
+            .with(|s| {
+                s.as_ref().map(|s| {
+                    system_settings::status_label(s, (js_sys::Date::now() / 1000.0) as u64, lang())
+                })
+            })
             .unwrap_or_default(),
         SettingsPage::Appearance => theme.get().label().to_owned(),
         SettingsPage::Zigbee2mqtt => zigbee_status(
@@ -652,6 +675,7 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::NetworkPresence) => {
                     view! { <NetworkSettingsPage /> }.into_any()
                 }
+                Some(SettingsPage::System) => view! { <SystemSettingsPage /> }.into_any(),
                 Some(SettingsPage::Appearance) => view! { <AppearancePage /> }.into_any(),
                 Some(SettingsPage::Zigbee2mqtt) => view! { <ZigbeePage /> }.into_any(),
                 Some(SettingsPage::Broker) => view! { <BrokerPage /> }.into_any(),

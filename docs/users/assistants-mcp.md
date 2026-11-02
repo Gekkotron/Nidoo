@@ -51,5 +51,6 @@ You can ask in plain words, for example:
 - "Make a flow that turns the hall light on when the hall motion sensor sees movement, and off five minutes after the last movement."
 - "Show me the energy the house used today."
 - "Hold the bedroom at 19 degrees for the next two hours."
+- "How is the hub doing? Has it restarted recently?" (the `system_status` tool: uptime, restarts, the server's figures and the services; see [System health](system-health.md))
 
 Flows made this way appear on the [Flows](flows.md) page. Energy questions need the database connected (it is, after setup), and climate requests need the climate engine on (see [Climate](climate.md)); without them the tools answer with an error. An assistant can also read and change the service settings (weather, solar forecast, cameras, notifications, climate and the advanced ones) with `get_settings` and `set_settings`; see [MCP tools](../reference/mcp-tools.md).

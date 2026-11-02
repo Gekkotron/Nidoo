@@ -1,5 +1,6 @@
-//! The twenty-two tools of the house (the six flow tools are in `flow_tools.rs`). Read tools work on one snapshot (one read lock, released before any
-//! await); write tools log their arguments and go through the hub's writers.
+//! The house's general tools; flows, the alarm, ambiances and climate have their own
+//! `*_tools.rs`. Read tools work on one snapshot (one read lock, released before any await);
+//! write tools log their arguments and go through the hub's writers.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nidoo_api::{
     CommandResponse, DeviceView, EntityView, GridDay, GroupView, HomeSettings, NetworkWatchView,
-    WeatherView,
+    SystemView, WeatherView,
 };
 use nidoo_core::flow::{notify_channel_error, notify_severity_error};
 use nidoo_core::model::{AreasDocument, SwitchType};
@@ -126,6 +127,13 @@ impl NidooMcp {
             bridge: snapshot.bridge,
             connection: snapshot.connection,
         })
+    }
+
+    /// The hub's health: machine load, memory, disk, database size, the broker, Zigbee2MQTT and
+    /// database services with their uptime, and the restart log.
+    #[tool(name = "system_status", annotations(read_only_hint = true))]
+    async fn system_status(&self) -> Json<SystemView> {
+        Json(self.hub.system_view())
     }
 
     /// The rooms, each with the number of entities in it: the declared areas first, then the

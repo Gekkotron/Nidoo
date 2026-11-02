@@ -27,4 +27,5 @@ pub mod room;
 pub mod security;
 pub mod settings;
 pub mod solar;
+pub mod system_settings;
 pub mod weather;

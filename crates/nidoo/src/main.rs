@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nidoo::cli::Cli;
@@ -12,9 +13,10 @@ use nidoo::hub::Hub;
 use nidoo::setup::boot::{Boot, resolve, spawn_location_lookup};
 use nidoo::setup::bundled::{self, InitOutcome};
 use nidoo::setup::{HubFile, SetupCtx, banner};
+use nidoo::system::heartbeat;
 use nidoo::weather::open_meteo::Endpoints;
-use nidoo::{http, logging, mcp, mqtt};
-use tokio::sync::mpsc;
+use nidoo::{clock, http, logging, mcp, mqtt};
+use tokio::sync::{Notify, mpsc};
 
 /// Publishes waiting for the MQTT task before the hub refuses new ones.
 const PUBLISH_QUEUE: usize = 64;
@@ -55,14 +57,70 @@ fn early_log_config(data_dir: &Path) -> LogConfig {
         .unwrap_or_default()
 }
 
+/// Registers the Ctrl-C and, on Unix, SIGTERM (what `docker stop` and systemd
+/// send) handlers now; the returned future resolves when either fires.
+fn shutdown_listener() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    #[cfg(unix)]
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut ctrl_c = Box::pin(tokio::signal::ctrl_c());
+    Ok(async move {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = &mut ctrl_c => {}
+            _ = term.recv() => {}
+        }
+        #[cfg(not(unix))]
+        let _ = ctrl_c.await;
+    })
+}
+
+/// Stop request shared between the early signal listener and the final wait.
+struct Stop {
+    /// Set once startup is over; from then on the main task owns the shutdown.
+    running: AtomicBool,
+    requested: Notify,
+}
+
+/// Listen for Ctrl-C / SIGTERM from the very first moment. A signal that
+/// arrives during startup writes the clean-stop marker and exits at once; a
+/// later one wakes the main task, which shuts down in order.
+fn listen_for_stop(data_dir: std::path::PathBuf) -> std::io::Result<Arc<Stop>> {
+    let stop = Arc::new(Stop {
+        running: AtomicBool::new(false),
+        requested: Notify::new(),
+    });
+    let listener = shutdown_listener()?;
+    let task_stop = Arc::clone(&stop);
+    tokio::spawn(async move {
+        listener.await;
+        if task_stop.running.load(Ordering::SeqCst) {
+            task_stop.requested.notify_one();
+        } else {
+            if let Err(e) = heartbeat::write_clean_stop(&data_dir, clock::now()) {
+                eprintln!("could not write the clean-stop marker: {e}");
+            }
+            std::process::exit(0);
+        }
+    });
+    Ok(stop)
+}
+
+impl Stop {
+    /// Startup is done: wait for the stop request.
+    async fn wait(&self) {
+        self.running.store(true, Ordering::SeqCst);
+        self.requested.notified().await;
+    }
+}
+
 /// Setup mode: only HTTP, serving the setup API and the web UI.
-async fn run_setup(ctx: Arc<SetupCtx>) -> anyhow::Result<ExitCode> {
+async fn run_setup(ctx: Arc<SetupCtx>, stop: Arc<Stop>) -> anyhow::Result<ExitCode> {
     let http_cfg = ctx.file.lock().await.http.clone();
     tracing::info!("setup mode: the hub is not configured yet; MQTT and the engine are off");
     let finished = ctx.file.lock().await.finished;
     let http_task = http::serve(&http_cfg, http::setup_router(ctx)).await?;
     banner::log_banner(&http_cfg.bind, finished);
-    tokio::signal::ctrl_c().await?;
+    stop.wait().await;
     tracing::info!("shutting down");
     http_task.abort();
     tracing::info!("stopped");
@@ -74,9 +132,10 @@ async fn main() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse_args();
     match cli {
         Cli::Run { data_dir } => {
+            let stop = listen_for_stop(data_dir.clone())?;
             logging::init(&early_log_config(&data_dir));
             let (cfg, setup_ctx) = match resolve(&data_dir).await? {
-                Boot::Setup(ctx) => return run_setup(ctx).await,
+                Boot::Setup(ctx) => return run_setup(ctx, stop).await,
                 Boot::Run { cfg, ctx } => (*cfg, ctx),
             };
             cfg.validate_all()
@@ -117,14 +176,16 @@ async fn main() -> anyhow::Result<ExitCode> {
             let weather = hub.start_weather();
             let solar = hub.start_solar();
             let outage_watch = hub.start_outage_watch();
+            let system = hub.start_system();
             tokio::spawn(nidoo::groups::migrate::spawn(Arc::clone(&hub)));
             let finished = setup_ctx.file.lock().await.finished;
             let http_task =
                 http::serve(&cfg.http, http::router(Arc::clone(&hub), setup_ctx)).await?;
             banner::log_banner(&cfg.http.bind, finished);
 
-            tokio::signal::ctrl_c().await?;
+            stop.wait().await;
             tracing::info!("shutting down");
+            hub.mark_clean_stop();
             if link.disconnect() {
                 if tokio::time::timeout(SHUTDOWN_GRACE, &mut link_task)
                     .await
@@ -151,6 +212,9 @@ async fn main() -> anyhow::Result<ExitCode> {
                 task.abort();
             }
             if let Some(task) = &outage_watch {
+                task.abort();
+            }
+            if let Some(task) = &system {
                 task.abort();
             }
             push_retry.abort();

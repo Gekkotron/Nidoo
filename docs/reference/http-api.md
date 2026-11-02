@@ -98,6 +98,15 @@ Network presence needs `network.enabled`, on by default; while it is off every r
 
 The id is 1 to 48 characters of `a-z`, `0-9` and `_`. `intervalS` defaults to 30 and `enabled` to true; a paused watch keeps its definition and its entity reads offline.
 
+## System health
+
+The figures are read from memory, so these answer even while the broker or the database is down. The view is the one the Settings → System page shows; see [System health](../users/system-health.md).
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/v1/system` | The System view, camelCase: `startedAt` (unix seconds the hub started), `uptimePct` (0 to 100 over the last 30 days), `restarts` (newest first, last 30 days: `{startedAt, downSecs, stop}`, `downSecs` absent when unknown, `stop` one of `first`, `clean`, `unexpected`), `cpu` (`{serverPct, hubPct}`), `ram` (`{usedBytes, totalBytes, hubBytes}`), `disk` (`{usedBytes, totalBytes, dbBytes}`), `temperatureC`, `devices`, `entities`, `retained`, `commandsToday`, `services` (`broker`, `zigbee2mqtt` and `database`, each `{service, state, since}` with `state` `up`, `down` or `unknown`) and `notify`. A figure that cannot be measured is `null` (or `unknown` for a service), never `0`. |
+| `PUT /api/v1/system/notify` | Switches the outage and restart pushes: body `{"notify": true}` or `{"notify": false}`. Returns `{"notify": …}` with the saved value. Only the switch is saved; the hub is not restarted. `422` for a bad body or an unknown field, `503` while the database cannot save the setting (or its settings cache cannot be written, in which case nothing changes). |
+
 ## Dashboards
 
 | Route | What it does |

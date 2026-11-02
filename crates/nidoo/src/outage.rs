@@ -1,6 +1,6 @@
 //! "Notify me when a service is unreachable": a per-service tracker of continuous failures.
 //!
-//! A service that fails for [`THRESHOLD_SECS`] without a success in between raises one "down"
+//! A service that fails for its threshold ([`Service::threshold_secs`]) without a success in between raises one "down"
 //! alert; its next success raises one "reachable again" alert, only when the down alert went
 //! out. Shorter blips are silent both ways. The state lives in memory only.
 
@@ -11,11 +11,18 @@ use serde_json::{Value, json};
 use crate::clock;
 use crate::hub::Hub;
 
-/// Seconds of continuous failure before the down alert.
+/// Seconds of continuous failure before the down alert of an outside service.
 pub const THRESHOLD_SECS: u64 = 30 * 60;
+
+/// Seconds of continuous failure before the down alert of the broker, Zigbee2MQTT or the database.
+const LOCAL_THRESHOLD_SECS: u64 = 5 * 60;
 
 /// How often the hub's watch task checks for an outage that crossed the threshold.
 pub const WATCH_INTERVAL_SECS: u64 = 60;
+
+/// The longest failure reason an alert carries, in characters, before "…": the push
+/// validator drops a `loc` hint whose values exceed its own limit.
+const REASON_MAX_CHARS: usize = 160;
 
 /// How long an outage alert stays relevant, in seconds (a day, like the watchdog alerts).
 const TTL: u64 = 86_400;
@@ -25,6 +32,9 @@ const TTL: u64 = 86_400;
 pub enum Service {
     Weather,
     Solar,
+    Broker,
+    Zigbee2mqtt,
+    Database,
 }
 
 impl Service {
@@ -33,14 +43,20 @@ impl Service {
         match self {
             Service::Weather => "weather",
             Service::Solar => "solar",
+            Service::Broker => "broker",
+            Service::Zigbee2mqtt => "zigbee2mqtt",
+            Service::Database => "database",
         }
     }
 
-    /// The name the user knows the feature by.
+    /// The name the user knows the feature by, as a title starts with it.
     fn label(self) -> &'static str {
         match self {
             Service::Weather => "Weather",
             Service::Solar => "Solar forecast",
+            Service::Broker => "MQTT broker",
+            Service::Zigbee2mqtt => "Zigbee2MQTT",
+            Service::Database => "Database",
         }
     }
 
@@ -49,6 +65,17 @@ impl Service {
         match self {
             Service::Weather => "Open-Meteo",
             Service::Solar => "Solcast",
+            Service::Broker => "the MQTT broker",
+            Service::Zigbee2mqtt => "Zigbee2MQTT",
+            Service::Database => "the database",
+        }
+    }
+
+    /// Seconds of continuous failure before the down alert.
+    pub fn threshold_secs(self) -> u64 {
+        match self {
+            Service::Weather | Service::Solar => THRESHOLD_SECS,
+            Service::Broker | Service::Zigbee2mqtt | Service::Database => LOCAL_THRESHOLD_SECS,
         }
     }
 }
@@ -75,11 +102,17 @@ impl Outage {
         }
     }
 
+    /// Turns the alerts on or off; an outage in progress keeps its clock.
+    pub fn set_notify(&mut self, notify: bool) {
+        self.notify = notify;
+    }
+
     /// A fetch failed at `now`. The first failure of a run starts the clock; a later one keeps
     /// that start and only updates the reason.
+    /// A reason longer than [`REASON_MAX_CHARS`] is cut there and ends with "…".
     pub fn failed(&mut self, now: u64, reason: &str) {
         self.failing_since.get_or_insert(now);
-        self.reason = reason.to_owned();
+        self.reason = shortened(reason);
     }
 
     /// A fetch succeeded at `now`: ends the outage, and returns the "reachable again" alert
@@ -94,7 +127,8 @@ impl Outage {
     /// The periodic check: the down alert once the outage reached the threshold, never twice.
     pub fn tick(&mut self, now: u64) -> Option<Value> {
         let since = self.failing_since?;
-        if !self.notify || self.alerted || now.saturating_sub(since) < THRESHOLD_SECS {
+        if !self.notify || self.alerted || now.saturating_sub(since) < self.service.threshold_secs()
+        {
             return None;
         }
         self.alerted = true;
@@ -102,8 +136,8 @@ impl Outage {
     }
 
     fn down_alert(&self, since: u64) -> Value {
-        let minutes = THRESHOLD_SECS / 60;
         let service = self.service;
+        let minutes = service.threshold_secs() / 60;
         json!({
             "v": 1,
             "id": format!("service-{}-down-{since}", service.key()),
@@ -120,7 +154,7 @@ impl Outage {
             "loc": {"key": "service.unreachable", "args": {
                 "service": service.key(),
                 "reason": self.reason,
-                "minutes": minutes,
+                "minutes": minutes.to_string(),
             }},
         })
     }
@@ -136,16 +170,32 @@ impl Outage {
             "title": format!("{} reachable again", service.label()),
             "body": format!(
                 "{} answers again after {}",
-                service.provider(),
+                capitalized(service.provider()),
                 duration_text(minutes)
             ),
             "silent": false,
             "ttl": TTL,
             "loc": {"key": "service.reachable_again", "args": {
                 "service": service.key(),
-                "minutes": minutes,
+                "minutes": minutes.to_string(),
             }},
         })
+    }
+}
+
+/// `text` with its first letter in upper case (`the database` starts a sentence).
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// `reason` cut to [`REASON_MAX_CHARS`] characters plus "…" when longer.
+fn shortened(reason: &str) -> String {
+    match reason.char_indices().nth(REASON_MAX_CHARS) {
+        Some((end, _)) => format!("{}…", &reason[..end]),
+        None => reason.to_owned(),
     }
 }
 
@@ -172,10 +222,12 @@ impl Outages {
         }
     }
 
-    fn of(&mut self, service: Service) -> &mut Outage {
+    /// The tracker of `service`; the system module holds the other services' own.
+    fn of(&mut self, service: Service) -> Option<&mut Outage> {
         match service {
-            Service::Weather => &mut self.weather,
-            Service::Solar => &mut self.solar,
+            Service::Weather => Some(&mut self.weather),
+            Service::Solar => Some(&mut self.solar),
+            Service::Broker | Service::Zigbee2mqtt | Service::Database => None,
         }
     }
 }
@@ -199,7 +251,9 @@ impl Hub {
 
     /// [`Hub::service_failed`] at a given time.
     pub fn service_failed_at(&self, service: Service, now: u64, reason: &str) {
-        self.outages().of(service).failed(now, reason);
+        if let Some(outage) = self.outages().of(service) {
+            outage.failed(now, reason);
+        }
     }
 
     /// A fetch of `service` succeeded; sends the "reachable again" alert when due.
@@ -209,7 +263,10 @@ impl Hub {
 
     /// [`Hub::service_succeeded`] at a given time.
     pub fn service_succeeded_at(&self, service: Service, now: u64) {
-        let alert = self.outages().of(service).succeeded(now);
+        let alert = self
+            .outages()
+            .of(service)
+            .and_then(|outage| outage.succeeded(now));
         self.raise_system(alert);
     }
 
@@ -282,7 +339,7 @@ mod tests {
         assert_eq!(alert["loc"]["key"], "service.unreachable");
         assert_eq!(alert["loc"]["args"]["service"], "weather");
         assert_eq!(alert["loc"]["args"]["reason"], "timeout");
-        assert_eq!(alert["loc"]["args"]["minutes"], 30);
+        assert_eq!(alert["loc"]["args"]["minutes"], "30");
         assert!(o.tick(T0 + 31 * MIN).is_none());
         o.failed(T0 + 40 * MIN, "timeout");
         assert!(o.tick(T0 + 90 * MIN).is_none());
@@ -338,6 +395,91 @@ mod tests {
         o.failed(T0, "timeout");
         assert!(o.tick(T0 + 120 * MIN).is_none());
         assert!(o.succeeded(T0 + 121 * MIN).is_none());
+    }
+
+    #[test]
+    fn broker_alerts_after_five_minutes() {
+        let mut o = Outage::new(Service::Broker, true);
+        o.failed(T0, "connection refused");
+        assert!(o.tick(T0 + 5 * MIN - 1).is_none());
+        let alert = o.tick(T0 + 5 * MIN).expect("down alert");
+        assert_eq!(alert["loc"]["args"]["service"], "broker");
+        assert_eq!(alert["loc"]["args"]["minutes"], "5");
+        assert_eq!(alert["title"], "MQTT broker unreachable");
+        assert_eq!(
+            alert["body"],
+            "No answer from the MQTT broker for 5 min: connection refused"
+        );
+    }
+
+    #[test]
+    fn local_service_titles_read_without_an_article() {
+        let mut o = Outage::new(Service::Database, true);
+        o.failed(T0, "pool timed out");
+        let down = o.tick(T0 + 5 * MIN).expect("down alert");
+        assert_eq!(down["title"], "Database unreachable");
+        assert_eq!(
+            down["body"],
+            "No answer from the database for 5 min: pool timed out"
+        );
+        let back = o.succeeded(T0 + 12 * MIN).expect("back alert");
+        assert_eq!(back["title"], "Database reachable again");
+        assert_eq!(back["body"], "The database answers again after 12 min");
+
+        let mut o = Outage::new(Service::Zigbee2mqtt, true);
+        o.failed(T0, "the bridge is offline");
+        let down = o.tick(T0 + 5 * MIN).expect("down alert");
+        assert_eq!(down["title"], "Zigbee2MQTT unreachable");
+    }
+
+    #[test]
+    fn a_long_reason_is_shortened_and_keeps_the_loc() {
+        let mut o = Outage::new(Service::Database, true);
+        let reason = "é".repeat(300);
+        o.failed(T0, &reason);
+        let alert = o.tick(T0 + 5 * MIN).expect("down alert");
+        let normalized =
+            nidoo_push::normalize::normalize("system", &alert, T0).expect("a valid alert");
+        let loc = normalized.loc.expect("the loc hint was kept");
+        let shown = loc["args"]["reason"].as_str().expect("a reason");
+        assert_eq!(shown, format!("{}…", "é".repeat(REASON_MAX_CHARS)));
+        assert!(shown.chars().count() <= nidoo_push::normalize::LOC_MAX_VALUE);
+        // A reason that fits is kept whole.
+        let fits = "é".repeat(REASON_MAX_CHARS);
+        assert_eq!(shortened(&fits), fits);
+    }
+
+    #[test]
+    fn weather_still_waits_thirty_minutes() {
+        let mut o = weather();
+        o.failed(T0, "timeout");
+        assert!(o.tick(T0 + 5 * MIN).is_none());
+    }
+
+    #[test]
+    fn set_notify_off_silences_back_alert() {
+        let mut o = Outage::new(Service::Database, true);
+        o.failed(T0, "down");
+        assert!(o.tick(T0 + 5 * MIN).is_some());
+        o.set_notify(false);
+        assert!(o.succeeded(T0 + 6 * MIN).is_none());
+    }
+
+    #[test]
+    fn service_alerts_keep_their_loc() {
+        let mut o = Outage::new(Service::Zigbee2mqtt, true);
+        o.failed(T0, "the bridge is offline");
+        let down = o.tick(T0 + 5 * MIN).expect("down alert");
+        let back = o.succeeded(T0 + 12 * MIN).expect("back alert");
+        assert_eq!(back["loc"]["args"]["minutes"], "12");
+        for alert in [down, back] {
+            let normalized =
+                nidoo_push::normalize::normalize("system", &alert, T0).expect("a valid alert");
+            assert!(
+                normalized.loc.is_some(),
+                "the loc hint was dropped: {alert}"
+            );
+        }
     }
 
     #[test]

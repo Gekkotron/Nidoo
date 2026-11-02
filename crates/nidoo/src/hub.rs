@@ -255,6 +255,14 @@ pub struct Hub {
     pub(crate) weather_notify_unreachable: bool,
     pub(crate) solar_notify_unreachable: bool,
     pub(crate) outages: Mutex<crate::outage::Outages>,
+    /// `[system] notify`: push when the hub itself, or a service it depends on, goes down.
+    pub(crate) system_notify: std::sync::atomic::AtomicBool,
+    /// Device commands published since boot (one per publish, group members each count).
+    pub(crate) commands_sent: AtomicU64,
+    /// The broker's last retained-message report; `None` until the first one.
+    pub(crate) system_retained: Mutex<Option<crate::system::RetainedReport>>,
+    /// The system task's figures, service states and published sensors.
+    pub(crate) system: Mutex<crate::system::task::SystemState>,
     pub(crate) weather_refresh_minutes: u64,
     pub(crate) weather_city: String,
     pub(crate) weather_country: Option<String>,
@@ -411,6 +419,13 @@ impl Hub {
             weather_enabled: cfg.weather.enabled,
             weather_notify_unreachable: cfg.weather.notify_unreachable,
             solar_notify_unreachable: cfg.solcast.notify_unreachable,
+            system_notify: std::sync::atomic::AtomicBool::new(cfg.system.notify),
+            commands_sent: AtomicU64::new(0),
+            system_retained: Mutex::new(None),
+            system: Mutex::new(crate::system::task::SystemState::new(
+                cfg.system.notify,
+                clock::now(),
+            )),
             outages: Mutex::new(crate::outage::Outages::new(
                 cfg.weather.notify_unreachable,
                 cfg.solcast.notify_unreachable,
@@ -723,6 +738,10 @@ impl Hub {
     /// event: a non-retained message on the command topic of a button some flow watches
     /// broadcasts [`WsEvent::ButtonPressed`]. A retained one is a replay, never a press.
     pub fn ingest_message(&self, topic: &str, payload: &[u8], retain: bool) -> Vec<Change> {
+        // The broker's own figure, not a device.
+        if self.ingest_system_retained(topic, payload) {
+            return Vec::new();
+        }
         // A weather device left on the broker by an earlier run is cleared, not applied, and
         // the retained cache is the poller's data.
         if self.clear_disabled_weather(topic, payload, retain)
@@ -1058,6 +1077,9 @@ impl Hub {
             .chain(acl)
             .chain(climate)
             .chain(alarm)
+            .chain(std::iter::once(
+                crate::system::services::RETAINED_TOPIC.to_owned(),
+            ))
             .collect()
     }
 
@@ -1278,6 +1300,7 @@ impl Hub {
         };
         for publish in publishes {
             self.publish(publish)?;
+            self.commands_sent.fetch_add(1, Ordering::Relaxed);
         }
         if no_echo_expected {
             return Ok(CommandResponse {
@@ -1414,6 +1437,7 @@ impl Hub {
             if let Err(err) = self.publish(publish) {
                 return reject(err.to_string());
             }
+            self.commands_sent.fetch_add(1, Ordering::Relaxed);
         }
         let window = Duration::from_millis(2000);
         let _ = tokio::time::timeout(window, async {

@@ -21,6 +21,7 @@ pub mod settings;
 pub mod setup;
 mod solar;
 pub mod states;
+mod system;
 mod weather;
 
 pub use alarm::*;
@@ -29,6 +30,7 @@ pub use dashboards::*;
 pub use home::*;
 pub use network::*;
 pub use solar::*;
+pub use system::*;
 pub use weather::*;
 
 /// Checks a text table: every entry has both languages, and they differ unless listed in `same`.
@@ -237,6 +239,7 @@ pub enum Key {
     Appearance,
     Alarm,
     NetworkPresence,
+    System,
     Zigbee2mqtt,
     Broker,
     AiAssistants,
@@ -381,6 +384,7 @@ impl Key {
         Key::Appearance,
         Key::Alarm,
         Key::NetworkPresence,
+        Key::System,
         Key::Zigbee2mqtt,
         Key::Broker,
         Key::AiAssistants,
@@ -544,6 +548,7 @@ pub fn text(lang: Lang, key: Key) -> &'static str {
         Key::Appearance => ("Appearance", "Apparence"),
         Key::Alarm => ("Alarm", "Alarme"),
         Key::NetworkPresence => ("Network presence", "Présence réseau"),
+        Key::System => ("System", "Système"),
         Key::Zigbee2mqtt => ("Zigbee2MQTT", "Zigbee2MQTT"),
         Key::Broker => ("Broker", "Broker MQTT"),
         Key::AiAssistants => ("AI assistants (MCP)", "Assistants IA (MCP)"),
@@ -803,6 +808,7 @@ mod tests {
             | Key::Appearance
             | Key::Alarm
             | Key::NetworkPresence
+            | Key::System
             | Key::Zigbee2mqtt
             | Key::Broker
             | Key::AiAssistants
@@ -866,7 +872,7 @@ mod tests {
         for &k in Key::ALL {
             assert!(listed(k));
         }
-        assert_eq!(Key::ALL.len(), 139);
+        assert_eq!(Key::ALL.len(), 140);
     }
     #[test]
     fn every_key_differs_between_languages() {

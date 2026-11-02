@@ -41,6 +41,12 @@ After each (re)connect the hub waits for its subscription to be acknowledged, th
 
 Weather and the Solar forecast can each send a `system` alert when their outside service has been unreachable for 30 minutes ("Weather unreachable", `warning`), and one more when it answers again ("Weather reachable again", `info`). Each is a switch, off by default, in that service's settings. See [Weather](weather.md#tell-me-when-open-meteo-is-unreachable) and [Solar forecast](solar-forecast.md#tell-me-when-solcast-is-unreachable).
 
+The hub's own services use the same alerts with a shorter wait: the broker, Zigbee2MQTT and the database each send the "unreachable" alert after 5 minutes without an answer, and the "reachable again" alert when they answer. The service is named in the alert (`service` is `broker`, `zigbee2mqtt` or `database`), and `minutes` is sent as a string for every service. Their switch is **Notify me** on [System health](system-health.md#notify-me).
+
+## Hub restart pushes
+
+When the hub starts after an unexpected stop (a crash, a power cut, a kill), it sends one `system` alert, "Hub restarted", `warning`, with the minutes it was down when that is known. Its localisation key is `hub.restarted_unexpectedly`, with the argument `minutes` as a string; the argument is left out when the downtime is unknown. A clean restart, such as `docker compose restart`, sends nothing. The switch is **Notify me** on [System health](system-health.md#notify-me), off by default.
+
 ## Alarm pushes
 
 The native alarm sends on its own channel, `alarm`, from source `alarm`. A triggered alarm is a critical alert with a **Disarm** button: tapping it sends the reply on `nidoo/push/responses`, and the hub disarms the alarm. The hub listens on the reply topic at all times. Arming and disarming send an info push that names the mode and who did it, with any sensor left open at arm. See [Alarm](alarm.md#phone-push).

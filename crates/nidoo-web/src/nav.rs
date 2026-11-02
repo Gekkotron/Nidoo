@@ -59,6 +59,15 @@ fn is_form(path: &str) -> bool {
         || (path.starts_with("/groups/") && path.ends_with("/edit"))
 }
 
+/// Whether the query of `entry` has a `show` parameter.
+fn has_show(entry: &str) -> bool {
+    let query = entry.split_once('?').map_or("", |(_, q)| q);
+    let query = query.split('#').next().unwrap_or(query);
+    query
+        .split('&')
+        .any(|p| p.split('=').next() == Some("show"))
+}
+
 /// Records a visit to `path` with query `search` (without its `?`).
 fn visit(stack: &mut Vec<String>, path: &str, search: &str) {
     // "/" only redirects to a dashboard, which is recorded when it lands.
@@ -70,8 +79,24 @@ fn visit(stack: &mut Vec<String>, path: &str, search: &str) {
     } else {
         format!("{path}?{search}")
     };
+    // A drill-down (the same page, now with `show=` where it had none) is a step of its own, so
+    // Back returns to the page it was opened from. Any other revisit unwinds to the page.
+    let drill_down = stack.last().is_some_and(|top| {
+        path_of(top) == path && !has_show(top) && has_show(&format!("?{search}"))
+    });
     // Back to a page on the stack, or the same page with another query: unwind to it.
-    if let Some(at) = stack.iter().rposition(|e| path_of(e) == path) {
+    // One drill-down to another replaces it.
+    let sibling = stack.last().is_some_and(|top| {
+        path_of(top) == path && has_show(top) && has_show(&format!("?{search}"))
+    });
+    if drill_down {
+    } else if sibling {
+        stack.pop();
+    } else if let Some(mut at) = stack.iter().rposition(|e| path_of(e) == path) {
+        // A page and its drill-downs are one stop: unwind to the first of them.
+        while at > 0 && path_of(&stack[at - 1]) == path {
+            at -= 1;
+        }
         stack.truncate(at);
     } else if stack.last().is_some_and(|top| is_form(path_of(top))) {
         stack.pop();
@@ -83,7 +108,12 @@ fn visit(stack: &mut Vec<String>, path: &str, search: &str) {
 }
 
 /// Where Back goes from a page opened with nothing before it (a shared link, a reload).
-fn parent_of(path: &str) -> String {
+fn parent_of(entry: &str) -> String {
+    let path = path_of(entry);
+    // A chart or list of the System page goes back to its tiles.
+    if path == "/settings/system" && entry.contains("?show=") {
+        return path.to_owned();
+    }
     let child = |prefix: &str| path.strip_prefix(prefix).filter(|rest| !rest.is_empty());
     if let Some(id) = child("/history/") {
         format!("/entity/{id}")
@@ -106,7 +136,7 @@ fn parent_of(path: &str) -> String {
 fn back_target(stack: &[String]) -> String {
     match stack {
         [.., previous, _] => previous.clone(),
-        [current] => parent_of(path_of(current)),
+        [current] => parent_of(current),
         [] => "/".to_owned(),
     }
 }
@@ -238,6 +268,41 @@ mod tests {
         assert_eq!(back_target(&walk(&["/entity/lamp"])), "/");
         assert_eq!(back_target(&[]), "/");
         assert_eq!(parent_of("/alerts"), "/");
+        // A shared link to a system chart goes back to the tiles, and they go back to Settings.
+        assert_eq!(
+            back_target(&walk(&["/settings/system?show=cpu"])),
+            "/settings/system"
+        );
+        assert_eq!(back_target(&walk(&["/settings/system"])), "/settings");
+    }
+
+    #[test]
+    fn a_system_drill_down_is_a_step_back_goes_through() {
+        let mut stack = walk(&["/settings", "/settings/system", "/settings/system?show=cpu"]);
+        assert_eq!(stack.len(), 3);
+        assert_eq!(back_target(&stack), "/settings/system");
+        // Back lands on the tiles, which unwind to their entry; Back from there is Settings.
+        visit(&mut stack, "/settings/system", "");
+        assert_eq!(stack, ["/settings", "/settings/system"]);
+        assert_eq!(back_target(&stack), "/settings");
+        // One chart to another does not stack up.
+        let stack = walk(&[
+            "/settings/system",
+            "/settings/system?show=cpu",
+            "/settings/system?show=ram",
+        ]);
+        assert_eq!(stack, ["/settings/system", "/settings/system?show=ram"]);
+    }
+
+    #[test]
+    fn a_range_change_does_not_add_an_entry() {
+        let stack = walk(&[
+            "/entity/lamp",
+            "/history/lamp?range=24h",
+            "/history/lamp?range=7d",
+        ]);
+        assert_eq!(stack, ["/entity/lamp", "/history/lamp?range=7d"]);
+        assert_eq!(back_target(&stack), "/entity/lamp");
     }
 
     #[test]

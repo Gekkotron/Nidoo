@@ -1912,11 +1912,15 @@ async fn frigate_hub(bridge: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
 }
 
 /// The extra subscriptions of the bridges and watchdogs: without the alarm's documents and the
-/// push responses topic, which are always subscribed.
+/// push responses topic and the broker's retained count, which are always subscribed.
 fn bridge_filters(hub: &Hub) -> Vec<String> {
     hub.extra_filters()
         .into_iter()
-        .filter(|f| !f.starts_with("nidoo/alarm/") && f != "nidoo/push/responses")
+        .filter(|f| {
+            !f.starts_with("nidoo/alarm/")
+                && f != "nidoo/push/responses"
+                && f != nidoo::system::services::RETAINED_TOPIC
+        })
         .collect()
 }
 
@@ -2174,4 +2178,56 @@ async fn a_service_without_its_switch_never_alerts() {
     hub.check_outages_at(1_000 + 3 * 3600);
     hub.service_succeeded_at(Service::Solar, 1_000 + 4 * 3600);
     assert!(drain(&mut publisher).is_empty());
+}
+
+#[tokio::test]
+async fn light_command_counts_one() {
+    let (hub, _publisher) = hub();
+    feed_switch(&hub);
+    assert_eq!(hub.commands_sent(), 0);
+    hub.send_command(SWITCH_ID, Command::TurnOff)
+        .await
+        .expect("published");
+    assert_eq!(hub.commands_sent(), 1);
+}
+
+#[tokio::test]
+async fn group_command_counts_each_member() {
+    let (hub, mut rx) = groups_hub();
+    feed_hall_switch(&hub);
+    hub.set_group("living", two_switch_group())
+        .await
+        .expect("created");
+    drain(&mut rx);
+    let before = hub.commands_sent();
+    hub.send_command("group_living", Command::TurnOff)
+        .await
+        .expect("a response");
+    assert_eq!(hub.commands_sent() - before, 2);
+}
+
+#[tokio::test]
+async fn sys_retained_count_is_captured_not_routed() {
+    use nidoo::system::services::RETAINED_TOPIC;
+    let (hub, _publisher) = hub();
+    let changes = hub.ingest_message(RETAINED_TOPIC, b"2431", false);
+    assert!(changes.is_empty());
+    assert_eq!(hub.retained_count(), Some(2431));
+    hub.ingest_message(RETAINED_TOPIC, b"not a number", false);
+    assert_eq!(hub.retained_count(), Some(2431));
+}
+
+#[tokio::test]
+async fn retained_unknown_until_seen() {
+    let (hub, _publisher) = hub();
+    assert_eq!(hub.retained_count(), None);
+}
+
+#[tokio::test]
+async fn extra_filters_include_retained_topic() {
+    let (hub, _publisher) = hub();
+    assert!(
+        hub.extra_filters()
+            .contains(&nidoo::system::services::RETAINED_TOPIC.to_owned())
+    );
 }

@@ -2393,3 +2393,26 @@ async fn http_network_bad_interval_is_422() {
         .expect("PUT");
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn system_view_is_served() {
+    let server = Server::start().await;
+    let res = server.get("/api/v1/system").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let view: Value = res.json().await.expect("json");
+    assert!(view.get("startedAt").is_some(), "{view}");
+    assert_eq!(view["services"].as_array().map(Vec::len), Some(3));
+}
+
+#[tokio::test]
+async fn put_system_notify_rejects_unknown_fields() {
+    let server = Server::start().await;
+    let res = server
+        .client
+        .put(server.url("/api/v1/system/notify"))
+        .json(&json!({ "notify": true, "extra": 1 }))
+        .send()
+        .await
+        .expect("PUT");
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}

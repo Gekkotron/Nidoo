@@ -4,7 +4,7 @@ use gloo_net::http::{Request, Response};
 use nidoo_api::{
     ApiError, CamerasView, CommandResponse, Dashboard, DashboardReorder, DashboardView, EntityView,
     FlowView, FlowWriteOutcome, FlowsConfigView, GroupSpec, GroupView, NetworkWatchSpec,
-    NetworkWatchView, OverridePatch, RunView, SchedulePreview,
+    NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview, SystemView,
 };
 use nidoo_core::flow::Flow;
 use nidoo_core::model::{AreasDocument, Command};
@@ -209,6 +209,22 @@ pub async fn set_network_watch(
 ) -> Result<NetworkWatchView, ApiError> {
     let url = format!("/api/v1/network/{}", encode_id(id));
     let response = check(Request::put(&url).json(spec), None).await?;
+    read_json(response).await
+}
+
+/// The system health view: uptime, machine figures, counters and service states.
+pub async fn get_system() -> Result<SystemView, ApiError> {
+    let response = check(Request::get("/api/v1/system").build(), None).await?;
+    read_json(response).await
+}
+
+/// Switches outage pushes; the reply is the value the hub saved.
+pub async fn set_system_notify(notify: bool) -> Result<NotifyInput, ApiError> {
+    let response = check(
+        Request::put("/api/v1/system/notify").json(&NotifyInput { notify }),
+        None,
+    )
+    .await?;
     read_json(response).await
 }
 

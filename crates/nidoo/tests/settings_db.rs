@@ -429,3 +429,41 @@ mod boot {
         tdb.drop_db().await;
     }
 }
+
+#[tokio::test]
+async fn set_system_notify_writes_cache_without_restart() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use nidoo::config::Config;
+    use nidoo::hub::Hub;
+    use nidoo::setup::{HubFile, Mode, RestartHook, SetupCtx, store};
+
+    let Some(tdb) = fresh_db().await else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let restarts = Arc::new(AtomicUsize::new(0));
+    let ctx = Arc::new(SetupCtx::new(
+        dir.path().to_path_buf(),
+        Mode::Run,
+        HubFile::default(),
+        Some(nidoo::history::db::Db::connect_lazy(&tdb.url).unwrap()),
+        Sections::default(),
+        RestartHook::Record(Arc::clone(&restarts)),
+    ));
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let hub = Hub::new(&Config::default(), tx);
+    hub.set_setup(Arc::clone(&ctx));
+
+    assert!(!hub.system_notify());
+    assert!(hub.set_system_notify(true).await.unwrap());
+    assert!(hub.system_notify());
+    assert!(!ctx.restarting.load(Ordering::SeqCst));
+    assert_eq!(restarts.load(Ordering::SeqCst), 0);
+
+    let cache: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join(store::CACHE_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(cache["system"]["notify"], true);
+    assert!(load_sections(&tdb.db).await.unwrap().system.notify);
+    tdb.drop_db().await;
+}

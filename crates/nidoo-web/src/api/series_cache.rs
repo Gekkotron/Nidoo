@@ -81,6 +81,13 @@ pub fn cached_day_series(id: &str) -> Option<Series> {
     CACHE.with(|c| c.borrow().peek(id, unix_now()))
 }
 
+/// Forgets every cached series, so the next ask goes to the hub. Test-only: the wasm tests start
+/// each page with an empty cache.
+#[doc(hidden)]
+pub fn forget_day_series() {
+    CACHE.with(|c| *c.borrow_mut() = CacheState::default());
+}
+
 /// The last 24 hours of `id` as `(time, mean)`, from the cache or the hub. `None` when the hub
 /// has no history for it (no database, not recorded, an error, no points).
 pub async fn day_series(id: &str) -> Series {

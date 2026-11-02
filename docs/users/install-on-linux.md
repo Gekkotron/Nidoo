@@ -51,6 +51,7 @@ Everything the stack writes lives in `./data/` next to `compose.yml`:
 | `data/bundled.json` | The generated broker and database passwords, readable only by its owner (mode 0600). The wizard pre-fills them from here. |
 | `data/mosquitto/` | The broker's config, retained messages and log. |
 | `data/timescaledb/` | The database files. |
+| `data/system-heartbeat.json` | The hub's heartbeat, refreshed every minute, and the note of a clean stop. It tells the next start whether the last stop was clean; see [System health](system-health.md#clean-and-unexpected-stops). |
 
 Back up `./data/`, and keep `data/bundled.json`: without it `tools/update.sh` rebuilds only the hub, so you would have to use `tools/update.sh --all`. If it is lost, the database password is still in `data/bundled/db-password` and in the database URL of `data/hub.json`, but `init` refuses to write a new password for a database that already exists.
 
@@ -131,6 +132,12 @@ Force one with `tools/update.sh --all` or `tools/update.sh --hub-only`. If you r
 
 
 If you run your own broker and database, keep using `docker compose up -d --build hub` (or `tools/update.sh`, which picks it). A plain `docker compose up` would start a second broker and database next to yours.
+
+## System health figures
+
+The hub reads the machine's figures from the host. Inside the container these are the host's own totals, so the CPU, memory and disk tiles show the server, not the container. A host that exposes no temperature sensor, such as many virtual machines, has no Temperature tile; that is expected.
+
+The Retained tile counts the messages the broker keeps. The hub gets that count from the broker's `$SYS` topics, so the login the hub uses for the broker must be allowed to read `$SYS/#` (in the broker's access rules). Without it the tile reads unknown and nothing else changes. See [System health](system-health.md).
 
 ## Logs and status
 
