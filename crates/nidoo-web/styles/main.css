@@ -2301,8 +2301,97 @@ button.switch:disabled {
   overflow-wrap: break-word;
 }
 
-.sheet__copy {
+/* A block of text to paste somewhere (the MCP snippets): a title bar with the copy button, then
+   the code. */
+.snippet {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.snippet__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.snippet + .sheet__rows {
   margin-top: 8px;
+}
+
+.snippet__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 6px 4px 14px;
+  border-bottom: 1px solid var(--card-border);
+  background: var(--raised);
+}
+
+.snippet__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: var(--type-label);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snippet--inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 6px;
+}
+
+.snippet--inline .snippet__code {
+  flex: 1;
+  min-width: 0;
+}
+
+.snippet__code {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre;
+  user-select: all;
+}
+
+.snippet__copy {
+  min-height: 34px;
+  padding: 0 12px;
+  gap: 6px;
+}
+
+.snippet__copy-glyph {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+
+.snippet__copy-glyph svg {
+  width: 100%;
+  height: 100%;
+}
+
+.snippet__copy--done {
+  border-color: color-mix(in srgb, var(--connected) 50%, transparent);
+  background: var(--connected-bg);
+  color: var(--connected);
+}
+
+.snippet__copy--failed {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  color: var(--danger);
 }
 
 .sheet__updated {
@@ -2634,9 +2723,14 @@ p.override__hint {
   opacity: 0.7;
 }
 
-/* Settings */
+/* Settings: a header with the animated mark, then the sub-pages in two titled cards, side by side
+   when there is room. */
+.settings {
+  gap: 20px;
+}
+
 .settings__title {
-  margin-bottom: 4px;
+  margin: 0;
 }
 
 .settings__state {
@@ -2645,7 +2739,133 @@ p.override__hint {
   gap: 8px;
 }
 
-/* The Settings list: one card, one full-width row per sub-page, its status on the right. */
+.settings-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background:
+    radial-gradient(60% 140% at 0% 50%, color-mix(in srgb, var(--accent-cyan) 16%, transparent), transparent 70%),
+    radial-gradient(50% 120% at 100% 0%, color-mix(in srgb, var(--accent-amber) 12%, transparent), transparent 70%),
+    var(--card-bg);
+  box-shadow: var(--shadow);
+}
+
+.settings-hero__mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  border-radius: 26px;
+  background: radial-gradient(circle at 50% 70%, color-mix(in srgb, var(--accent-amber) 22%, transparent), transparent 70%);
+}
+
+.settings-hero__bird {
+  display: block;
+  user-select: none;
+}
+
+.settings-hero__bird--ivoire,
+[data-theme="light"] .settings-hero__bird--night {
+  display: none;
+}
+
+[data-theme="light"] .settings-hero__bird--ivoire {
+  display: block;
+}
+
+.settings-hero__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-hero__brand,
+.settings-hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.settings-hero__wordmark {
+  font: 700 17px/22px var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.settings-hero__version {
+  padding: 1px 8px;
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  font: var(--type-label);
+  color: var(--muted);
+}
+
+.settings-hero__meta {
+  font: var(--type-label);
+  color: var(--muted);
+}
+
+.settings-hero__host {
+  min-width: 0;
+  overflow: hidden;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-hero__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.settings-hero__dot--online {
+  background: var(--connected);
+  box-shadow: 0 0 0 3px var(--connected-bg);
+}
+
+.settings-hero__dot--connecting {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-bg);
+}
+
+.settings-hero__dot--offline {
+  background: var(--offline);
+}
+
+.settings__groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  align-items: start;
+  gap: 20px;
+}
+
+.settings__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings__group-title {
+  margin: 0 4px;
+  font: var(--type-label);
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* One card per group, one full-width row per sub-page, its status on the right. */
 .settings__list {
   margin: 0;
   padding: 0;
@@ -2664,11 +2884,12 @@ p.override__hint {
 .settings__item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-height: 64px;
-  padding: 10px 16px;
+  padding: 10px 14px;
   color: inherit;
   text-decoration: none;
+  transition: background var(--motion-short) var(--ease);
 }
 
 .settings__item:hover {
@@ -2678,6 +2899,48 @@ p.override__hint {
 .settings__item:focus-visible {
   outline: 2px solid var(--select);
   outline-offset: -2px;
+}
+
+/* The page's glyph on a tile tinted with its accent. */
+.settings__icon {
+  --tone: var(--muted);
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+  color: var(--tone);
+}
+
+.settings__icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.settings__icon--amber {
+  --tone: var(--accent-amber);
+}
+
+.settings__icon--rose {
+  --tone: var(--accent-rose);
+}
+
+.settings__icon--cyan {
+  --tone: var(--accent-cyan);
+}
+
+.settings__icon--violet {
+  --tone: var(--accent-violet);
+}
+
+.settings__icon--mint {
+  --tone: var(--accent-mint);
+}
+
+.settings__icon--blue {
+  --tone: var(--select);
 }
 
 .settings__item-text {
@@ -2702,19 +2965,63 @@ p.override__hint {
 .settings__item-status {
   flex: none;
   max-width: 40%;
+  padding: 3px 10px;
   overflow: hidden;
+  border-radius: 999px;
+  background: var(--raised);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings__item-status:empty {
+  display: none;
 }
 
 .settings__item-chevron {
   flex: none;
   font-size: 20px;
   color: var(--muted);
+  transition: transform var(--motion-short) var(--ease);
+}
+
+.settings__item:hover .settings__item-chevron {
+  transform: translateX(2px);
 }
 
 .settings__all {
   align-self: flex-start;
+}
+
+.settings-hero .settings__all {
+  align-self: center;
+}
+
+@media (max-width: 640px) {
+  .settings-hero {
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .settings-hero__mark {
+    width: 64px;
+    height: 64px;
+  }
+
+  .settings-hero__bird {
+    width: 64px;
+    height: 64px;
+  }
+
+  .settings-hero__sep {
+    display: none;
+  }
+
+  .settings-hero .settings__all {
+    box-sizing: border-box;
+    flex-basis: 100%;
+    justify-content: center;
+  }
 }
 
 /* Wraps rather than overflowing: the sun trigger's four French events don't fit the 360 px drawer. */

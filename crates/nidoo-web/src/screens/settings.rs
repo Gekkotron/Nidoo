@@ -87,56 +87,144 @@ fn claude_desktop_snippet(origin: &str) -> String {
     )
 }
 
-/// Writes `text` to the clipboard; false when the clipboard API is unavailable or refuses.
+/// Whether the async clipboard API is there: browsers only expose it in a secure context, so a
+/// hub opened over plain http from a LAN address (`http://192.168.1.10:8081`) has none.
 #[cfg(target_arch = "wasm32")]
-async fn write_clipboard(text: &str) -> bool {
-    let Some(window) = web_sys::window() else {
+fn clipboard_api() -> Option<web_sys::Clipboard> {
+    let navigator = web_sys::window()?.navigator();
+    let clipboard = js_sys::Reflect::get(&navigator, &"clipboard".into()).ok()?;
+    (!clipboard.is_undefined() && !clipboard.is_null()).then(|| navigator.clipboard())
+}
+
+/// Copies `text` through a hidden textarea and `execCommand("copy")`, the path left when the
+/// clipboard API is missing. Must run inside the click, while the page still has the gesture.
+#[cfg(target_arch = "wasm32")]
+fn copy_with_textarea(text: &str) -> bool {
+    use wasm_bindgen::JsCast;
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
         return false;
     };
-    let navigator = window.navigator();
-    let available = js_sys::Reflect::get(&navigator, &"clipboard".into())
-        .map(|c| !c.is_undefined() && !c.is_null())
-        .unwrap_or(false);
-    if !available {
+    let Some(body) = document.body() else {
+        return false;
+    };
+    let Some(area) = document
+        .create_element("textarea")
+        .ok()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+    else {
+        return false;
+    };
+    let focused = document
+        .active_element()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+    area.set_value(text);
+    let _ = area.set_attribute("readonly", "");
+    let _ = area.set_attribute("aria-hidden", "true");
+    let style = web_sys::HtmlElement::style(&area);
+    for (name, value) in [
+        ("position", "fixed"),
+        ("top", "0"),
+        ("left", "0"),
+        ("opacity", "0"),
+        ("pointer-events", "none"),
+    ] {
+        let _ = style.set_property(name, value);
+    }
+    if body.append_child(&area).is_err() {
         return false;
     }
-    let promise = navigator.clipboard().write_text(text);
-    wasm_bindgen_futures::JsFuture::from(promise).await.is_ok()
+    area.select();
+    let copied = document
+        .dyn_ref::<web_sys::HtmlDocument>()
+        .and_then(|d| d.exec_command("copy").ok())
+        .unwrap_or(false);
+    area.remove();
+    if let Some(focused) = focused {
+        let _ = focused.focus();
+    }
+    copied
 }
+
+/// A copy button's state: `None` at rest, then whether the last copy worked, for a moment.
+type CopyOutcome = Option<bool>;
 
 #[component]
 fn CopyButton(text: String) -> impl IntoView {
     let lang = use_lang();
-    let copied = RwSignal::new(false);
+    let outcome = RwSignal::new(None::<bool>);
     let on_click = move |_| {
         #[cfg(target_arch = "wasm32")]
         {
             let text = text.clone();
+            // The fallback runs now, inside the click; the clipboard API is async.
+            let api = clipboard_api();
+            let sync = api.is_none().then(|| copy_with_textarea(&text));
             spawn_local(async move {
-                if write_clipboard(&text).await {
-                    copied.set(true);
-                    gloo_timers::future::TimeoutFuture::new(1500).await;
-                    copied.set(false);
-                }
+                let ok = match (sync, api) {
+                    (Some(ok), _) => ok,
+                    (None, Some(api)) => {
+                        wasm_bindgen_futures::JsFuture::from(api.write_text(&text))
+                            .await
+                            .is_ok()
+                            || copy_with_textarea(&text)
+                    }
+                    (None, None) => false,
+                };
+                outcome.set(Some(ok));
+                gloo_timers::future::TimeoutFuture::new(if ok { 1500 } else { 3000 }).await;
+                outcome.try_set(None);
             });
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = &text;
     };
+    let label = move |o: CopyOutcome| match o {
+        None => T::Copy,
+        Some(true) => T::Copied,
+        Some(false) => T::CopyFailed,
+    };
     view! {
-        <button type="button" class="chip sheet__copy" on:click=on_click>
-            {move || settings_text(lang(), if copied.get() { T::Copied } else { T::Copy })}
+        <button
+            type="button"
+            class="chip snippet__copy"
+            class:snippet__copy--done=move || outcome.get() == Some(true)
+            class:snippet__copy--failed=move || outcome.get() == Some(false)
+            on:click=on_click
+        >
+            <span
+                class="snippet__copy-glyph"
+                inner_html=move || {
+                    if outcome.get() == Some(true) { crate::icons::CHECK } else { crate::icons::COPY }
+                }
+            ></span>
+            <span aria-live="polite">{move || settings_text(lang(), label(outcome.get()))}</span>
         </button>
     }
 }
 
+/// A block of text to paste somewhere, with its copy button in the corner. Without a title the
+/// button sits on the text's own line (a one-line value such as the endpoint).
 #[component]
-fn Snippet(title: T, text: String) -> impl IntoView {
+fn Snippet(#[prop(optional)] title: Option<T>, text: String) -> impl IntoView {
     let lang = use_lang();
-    view! {
-        <h3 class="sheet__subheading">{move || settings_text(lang(), title)}</h3>
-        <pre class="sheet__json">{text.clone()}</pre>
-        <CopyButton text=text />
+    match title {
+        Some(title) => view! {
+            <div class="snippet">
+                <div class="snippet__bar">
+                    <h3 class="snippet__title">{move || settings_text(lang(), title)}</h3>
+                    <CopyButton text=text.clone() />
+                </div>
+                <pre class="snippet__code">{text}</pre>
+            </div>
+        }
+        .into_any(),
+        None => view! {
+            <div class="snippet snippet--inline">
+                <pre class="snippet__code">{text.clone()}</pre>
+                <CopyButton text=text />
+            </div>
+        }
+        .into_any(),
     }
 }
 
@@ -300,6 +388,64 @@ impl SettingsPage {
     fn href(self) -> String {
         format!("/settings/{}", self.slug())
     }
+
+    /// The list's icon, and the accent its tile is tinted with (a `settings__icon--<tone>` class).
+    fn glyph(self) -> (&'static str, &'static str) {
+        use crate::icons;
+        match self {
+            SettingsPage::Home => (icons::HOUSE, "amber"),
+            SettingsPage::Location => (icons::PIN, "rose"),
+            SettingsPage::Weather => (icons::PARTLY_CLOUDY_DAY, "cyan"),
+            SettingsPage::SolarForecast => (icons::SUN, "amber"),
+            SettingsPage::Cameras => (icons::CAMERA, "violet"),
+            SettingsPage::Push => (icons::BELL, "rose"),
+            SettingsPage::Alarm => (icons::SHIELD, "mint"),
+            SettingsPage::NetworkPresence => (icons::WIFI, "cyan"),
+            SettingsPage::Appearance => (icons::SUN_MOON, "violet"),
+            SettingsPage::Zigbee2mqtt => (icons::MESH, "amber"),
+            SettingsPage::Broker => (icons::BROKER, "mint"),
+            SettingsPage::Database => (icons::DATABASE, "blue"),
+            SettingsPage::Mcp => (icons::SPARKLE, "violet"),
+            SettingsPage::About => (icons::INFO, "muted"),
+        }
+    }
+
+    /// The list section the page sits in: the house itself, or the hub and what it connects to.
+    fn group(self) -> T {
+        match self {
+            SettingsPage::Home
+            | SettingsPage::Location
+            | SettingsPage::Weather
+            | SettingsPage::SolarForecast
+            | SettingsPage::Cameras
+            | SettingsPage::Push
+            | SettingsPage::Alarm
+            | SettingsPage::NetworkPresence => T::GroupHouse,
+            SettingsPage::Appearance
+            | SettingsPage::Zigbee2mqtt
+            | SettingsPage::Broker
+            | SettingsPage::Database
+            | SettingsPage::Mcp
+            | SettingsPage::About => T::GroupHub,
+        }
+    }
+}
+
+/// The hub's address without its scheme, for the Settings header.
+fn host(origin: &str) -> &str {
+    origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+        .unwrap_or(origin)
+}
+
+/// The class suffix of the header's connection dot.
+fn connection_tone(status: &ConnectionStatus) -> &'static str {
+    match status {
+        ConnectionStatus::Connecting => "connecting",
+        ConnectionStatus::Online => "online",
+        ConnectionStatus::Offline { .. } => "offline",
+    }
 }
 
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
@@ -383,37 +529,86 @@ pub fn SettingsScreen() -> impl IntoView {
         SettingsPage::About => VERSION.to_owned(),
     };
 
+    let item = move |page: SettingsPage| {
+        let (glyph, tone) = page.glyph();
+        view! {
+            <li>
+                <A href=page.href() attr:class="settings__item">
+                    <span class=format!("settings__icon settings__icon--{tone}") inner_html=glyph></span>
+                    <span class="settings__item-text">
+                        <span class="settings__item-title">{move || page.title(lang())}</span>
+                        <span class="settings__item-hint">{move || page.hint(lang())}</span>
+                    </span>
+                    <span class="settings__item-status">{move || status(page)}</span>
+                    <span class="settings__item-chevron" aria-hidden="true">
+                        "›"
+                    </span>
+                </A>
+            </li>
+        }
+    };
+    let group = move |key: T| {
+        view! {
+            <section class="settings__group">
+                <h2 class="settings__group-title">{move || settings_text(lang(), key)}</h2>
+                <ul class="settings__list">
+                    {SettingsPage::ALL
+                        .into_iter()
+                        .filter(|p| p.group() == key)
+                        .map(item)
+                        .collect_view()}
+                </ul>
+            </section>
+        }
+    };
+    let origin = origin();
+
     view! {
-        <div class="sheet">
-            <h1 class="settings__title">{move || text(lang(), Key::Settings)}</h1>
-            <ul class="settings__list">
-                {SettingsPage::ALL
-                    .into_iter()
-                    .map(|page| {
-                        view! {
-                            <li>
-                                <A href=page.href() attr:class="settings__item">
-                                    <span class="settings__item-text">
-                                        <span class="settings__item-title">
-                                            {move || page.title(lang())}
-                                        </span>
-                                        <span class="settings__item-hint">
-                                            {move || page.hint(lang())}
-                                        </span>
-                                    </span>
-                                    <span class="settings__item-status">{move || status(page)}</span>
-                                    <span class="settings__item-chevron" aria-hidden="true">
-                                        "›"
-                                    </span>
-                                </A>
-                            </li>
-                        }
-                    })
-                    .collect_view()}
-            </ul>
-            <A href="/setup" attr:class="chip settings__all">
-                {move || setup_text(lang(), SetupText::RunSetupAgain)}
-            </A>
+        <div class="sheet settings">
+            <header class="settings-hero">
+                <div class="settings-hero__mark" aria-hidden="true">
+                    <img
+                        class="settings-hero__bird settings-hero__bird--night"
+                        src="/assets/mark-animated.svg"
+                        alt=""
+                        width="88"
+                        height="88"
+                        draggable="false"
+                    />
+                    <img
+                        class="settings-hero__bird settings-hero__bird--ivoire"
+                        src="/assets/mark-animated-ivoire.svg"
+                        alt=""
+                        width="88"
+                        height="88"
+                        draggable="false"
+                    />
+                </div>
+                <div class="settings-hero__text">
+                    <h1 class="settings__title">{move || text(lang(), Key::Settings)}</h1>
+                    <p class="settings-hero__brand">
+                        <span class="settings-hero__wordmark">"nidoo."</span>
+                        <span class="settings-hero__version">{VERSION}</span>
+                    </p>
+                    <p class="settings-hero__meta">
+                        <span class=move || {
+                            format!(
+                                "settings-hero__dot settings-hero__dot--{}",
+                                house.connection.with(connection_tone),
+                            )
+                        }></span>
+                        <span>{move || house.connection.with(|c| connection_word(lang(), c))}</span>
+                        <span class="settings-hero__sep" aria-hidden="true">
+                            "·"
+                        </span>
+                        <span class="settings-hero__host">{host(&origin).to_owned()}</span>
+                    </p>
+                </div>
+                <A href="/setup" attr:class="chip settings__all">
+                    {move || setup_text(lang(), SetupText::RunSetupAgain)}
+                </A>
+            </header>
+            <div class="settings__groups">{group(T::GroupHouse)} {group(T::GroupHub)}</div>
         </div>
     }
 }
@@ -756,8 +951,8 @@ fn McpPage() -> impl IntoView {
     let endpoint = format!("{origin}/mcp");
     view! {
         <Panel title=T::Endpoint>
+            <Snippet text=endpoint />
             <dl class="sheet__rows">
-                <Row label=T::Endpoint value=endpoint />
                 <Row
                     label=T::Transport
                     value=move || settings_text(lang(), T::TransportValue).to_owned()
@@ -765,9 +960,11 @@ fn McpPage() -> impl IntoView {
             </dl>
         </Panel>
         <Panel title=T::SetUpAssistant>
-            <Snippet title=T::ClaudeCode text=claude_code_snippet(&origin) />
-            <Snippet title=T::CodexCli text=codex_snippet(&origin) />
-            <Snippet title=T::ClaudeDesktop text=claude_desktop_snippet(&origin) />
+            <div class="snippet__list">
+                <Snippet title=T::ClaudeCode text=claude_code_snippet(&origin) />
+                <Snippet title=T::CodexCli text=codex_snippet(&origin) />
+                <Snippet title=T::ClaudeDesktop text=claude_desktop_snippet(&origin) />
+            </div>
         </Panel>
     }
 }
@@ -814,6 +1011,27 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["mcpServers"]["nidoo"]["args"][2], ORIGIN);
         assert_eq!(v["mcpServers"]["nidoo"]["command"], "<path>/nidoo");
+    }
+
+    #[test]
+    fn host_drops_the_scheme() {
+        assert_eq!(host(ORIGIN), "192.168.1.10:8081");
+        assert_eq!(host("https://hub.local"), "hub.local");
+        assert_eq!(host("—"), "—");
+    }
+
+    #[test]
+    fn every_page_has_a_group() {
+        let house = SettingsPage::ALL
+            .iter()
+            .filter(|p| p.group() == T::GroupHouse)
+            .count();
+        let hub = SettingsPage::ALL
+            .iter()
+            .filter(|p| p.group() == T::GroupHub)
+            .count();
+        assert_eq!(house + hub, SettingsPage::ALL.len());
+        assert!(house > 0 && hub > 0);
     }
 
     #[test]
