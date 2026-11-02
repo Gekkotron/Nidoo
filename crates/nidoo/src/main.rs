@@ -55,6 +55,23 @@ fn early_log_config(data_dir: &Path) -> LogConfig {
         .unwrap_or_default()
 }
 
+/// Resolves on Ctrl-C or, on Unix, SIGTERM (what `docker stop` and systemd send).
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = signal(SignalKind::terminate())?;
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => r,
+            _ = term.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
+}
+
 /// Setup mode: only HTTP, serving the setup API and the web UI.
 async fn run_setup(ctx: Arc<SetupCtx>) -> anyhow::Result<ExitCode> {
     let http_cfg = ctx.file.lock().await.http.clone();
@@ -62,7 +79,7 @@ async fn run_setup(ctx: Arc<SetupCtx>) -> anyhow::Result<ExitCode> {
     let finished = ctx.file.lock().await.finished;
     let http_task = http::serve(&http_cfg, http::setup_router(ctx)).await?;
     banner::log_banner(&http_cfg.bind, finished);
-    tokio::signal::ctrl_c().await?;
+    shutdown_signal().await?;
     tracing::info!("shutting down");
     http_task.abort();
     tracing::info!("stopped");
@@ -123,8 +140,9 @@ async fn main() -> anyhow::Result<ExitCode> {
                 http::serve(&cfg.http, http::router(Arc::clone(&hub), setup_ctx)).await?;
             banner::log_banner(&cfg.http.bind, finished);
 
-            tokio::signal::ctrl_c().await?;
+            shutdown_signal().await?;
             tracing::info!("shutting down");
+            hub.mark_clean_stop();
             if link.disconnect() {
                 if tokio::time::timeout(SHUTDOWN_GRACE, &mut link_task)
                     .await
