@@ -131,6 +131,38 @@ async fn availability_collision_keeps_new_row_when_compressed() {
 }
 
 #[tokio::test]
+async fn chunk_without_new_rows_is_renamed_without_a_full_decompress() {
+    let Some(t) = fresh_db().await else { return };
+    let pool = t.db.pool();
+    sqlx::query(
+        "INSERT INTO entity_state (time, entity_id, value) VALUES \
+         ('2026-01-01T00:00:00Z', 'oikos_x', '1'), ('2026-01-01T00:00:01Z', 'oikos_y', '2')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    compress_all(pool).await;
+    rename_entity_ids(pool, false).await.unwrap();
+    let ids: Vec<String> = sqlx::query_scalar("SELECT entity_id FROM entity_state ORDER BY time")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(ids, vec!["nidoo_x", "nidoo_y"]);
+    // The chunk had no `nidoo_` row, so the collision pass leaves it compressed (the UPDATE
+    // itself may decompress batches into a partial chunk, which still reports compressed).
+    assert_eq!(
+        count(
+            pool,
+            "SELECT count(*) FROM timescaledb_information.chunks \
+             WHERE hypertable_name = 'entity_state' AND is_compressed"
+        )
+        .await,
+        1
+    );
+    t.drop_db().await;
+}
+
+#[tokio::test]
 async fn dry_run_changes_nothing() {
     let Some(t) = fresh_db().await else { return };
     let pool = t.db.pool();

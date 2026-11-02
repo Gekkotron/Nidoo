@@ -94,9 +94,8 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
         let t = quote_ident(&table);
         // A DELETE ... USING self-join cannot see rows inside a compressed chunk: the planner
         // has no filter to decompress the target batches with, so the collision rows survive
-        // and the UPDATE below then renames into a duplicate. Decompress first. The UPDATE
-        // would decompress most of the history anyway, and the compression policy
-        // recompresses after the commit.
+        // and the UPDATE below then renames into a duplicate. Decompress first, but only where a
+        // collision is possible; the compression policy recompresses after the commit.
         let compressed: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM timescaledb_information.hypertables \
              WHERE hypertable_schema = 'public' AND hypertable_name = $1 \
@@ -106,13 +105,30 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
         .fetch_one(&mut *tx)
         .await?;
         if compressed {
-            sqlx::query(&format!(
-                "SELECT decompress_chunk(c, if_compressed => true) \
-                 FROM show_chunks('public.{}'::regclass) c",
+            // A colliding pair shares its time key, so both rows sit in one chunk: only a
+            // chunk that already holds a `nidoo_` row can hold a collision. The probe filters
+            // on the segmentby column. On a house with no `nidoo_` rows nothing is decompressed.
+            let chunks: Vec<String> = sqlx::query_scalar(&format!(
+                "SELECT c::text FROM show_chunks('public.{}'::regclass) c",
                 quote_ident(&table).replace('\'', "''")
             ))
-            .execute(&mut *tx)
+            .fetch_all(&mut *tx)
             .await?;
+            for chunk in chunks {
+                let has_new: bool = sqlx::query_scalar(&format!(
+                    "SELECT EXISTS (SELECT 1 FROM {chunk} WHERE entity_id LIKE 'nidoo\\_%')"
+                ))
+                .fetch_one(&mut *tx)
+                .await?;
+                if has_new {
+                    sqlx::query(
+                        "SELECT decompress_chunk($1::text::regclass, if_compressed => true)",
+                    )
+                    .bind(&chunk)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
         }
         let mut delete = format!(
             "DELETE FROM {t} o USING {t} n \
