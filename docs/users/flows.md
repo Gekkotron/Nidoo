@@ -4,7 +4,7 @@ sidebar_position: 5
 description: Automations as small graphs of triggers, checks, waits and actions, how a run walks the graph, and how to edit them in the web UI.
 ---
 
-A flow is an n8n-style automation: a small graph of nodes stored as one retained JSON document under `oikos/automation/<id>` on the broker (the id is `[a-z0-9_-]{1,64}`). The hub subscribes to that prefix, validates every document it reads, and runs the valid, enabled ones. An invalid document is kept and shown with the reason, but never runs. A flow needs at least one trigger node, no cycle, and valid parameters on every node.
+A flow is an n8n-style automation: a small graph of nodes stored as one retained JSON document under `nidoo/automation/<id>` on the broker (the id is `[a-z0-9_-]{1,64}`). The hub subscribes to that prefix, validates every document it reads, and runs the valid, enabled ones. An invalid document is kept and shown with the reason, but never runs. A flow needs at least one trigger node, no cycle, and valid parameters on every node.
 
 ```json
 {
@@ -132,7 +132,7 @@ The scalar is the one value of a state that triggers and `if` compare: the on/of
 
 `mode` says what a trigger does while a run of the same flow is still active. `single` (the default) ignores the new trigger and records a skipped run. `restart` cancels the active run and starts a new one, which is what makes "5 minutes after the last motion" work: motion coming back cancels the pending `delay`.
 
-Two low-level settings, in the `advanced` section (see the [Settings reference](../reference/configuration.md#advanced)): `topics.automation_prefix` (default `oikos/automation`) and `automation.runs_kept` (recent runs remembered per flow, default 20). Runs live in memory only: a hub restart forgets them, the flow definitions stay on the broker.
+Two low-level settings, in the `advanced` section (see the [Settings reference](../reference/configuration.md#advanced)): `topics.automation_prefix` (default `nidoo/automation`) and `automation.runs_kept` (recent runs remembered per flow, default 20). Runs live in memory only: a hub restart forgets them, the flow definitions stay on the broker.
 
 ## Alive checks
 

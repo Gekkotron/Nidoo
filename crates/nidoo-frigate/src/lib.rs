@@ -1,8 +1,7 @@
 //! Frigate event bridge: turns `<frigate>/events` messages into v1 push alerts.
 //!
-//! A pure translator ported from OikosPush's `frigate_bridge.py`: it holds the per-event and
-//! per-camera memory, takes the clock as an argument and returns the v1 JSON; the caller hands
-//! it to the push service.
+//! A pure translator: it holds the per-event and per-camera memory, takes the clock as an
+//! argument and returns the v1 JSON; the caller hands it to the push service.
 //!
 //! - the first time an event qualifies (usually `new`): an audible alert with the snapshot;
 //! - `end` with a clip: the same alert id again with `video_url`, sent silently, so the app

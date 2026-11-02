@@ -1,5 +1,5 @@
 //! Registered FCM tokens, fed by the retained `tokens/<installId>` messages. Keyed by the
-//! full topic, so a legacy and a new registration of one install are two entries.
+//! full topic, so two registrations of one install are two entries.
 
 use serde_json::Value;
 
@@ -178,8 +178,8 @@ mod tests {
     #[test]
     fn tokens_on_two_topics_with_one_token_yield_it_once() {
         let mut r = Tokens::default();
-        r.handle("oikos/push/tokens/a", &reg("t1"));
-        r.handle("oikos-push/tokens/a", &reg("t1"));
+        r.handle("nidoo/push/tokens/a", &reg("t1"));
+        r.handle("other/push/tokens/a", &reg("t1"));
         assert_eq!(r.tokens(), ["t1"]);
         assert_eq!(r.topics_for_token("t1").len(), 2);
         assert_eq!(r.len(), 2);

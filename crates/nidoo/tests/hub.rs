@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 /// A recorded ZBMINI switch: the `rooms/stair/light` device.
 const SWITCH_FIXTURE: &str = "discovery/switch__0x847127fffe24e322__switch.json";
 const SWITCH_ID: &str = "0x847127fffe24e322_switch_zigbee2mqtt";
-const SWITCH_TOPIC: &str = "oikos/switch/0x847127fffe24e322/switch/config";
+const SWITCH_TOPIC: &str = "nidoo/switch/0x847127fffe24e322/switch/config";
 
 fn fixtures() -> PathBuf {
     PathBuf::from(concat!(
@@ -33,7 +33,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn config() -> Config {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg
 }
 
@@ -145,7 +145,7 @@ async fn set_override_publishes_retained_and_applies() {
     assert_eq!(
         publisher.recv().await.expect("a publish"),
         Publish {
-            topic: format!("oikos/ui/{SWITCH_ID}"),
+            topic: format!("nidoo/ui/{SWITCH_ID}"),
             payload: r#"{"asLight":true,"showAs":"light"}"#.to_owned(),
             retain: true,
         }
@@ -163,7 +163,7 @@ async fn set_override_publishes_retained_and_applies() {
     assert_eq!(
         publisher.recv().await.expect("a publish"),
         Publish {
-            topic: format!("oikos/ui/{SWITCH_ID}"),
+            topic: format!("nidoo/ui/{SWITCH_ID}"),
             payload: String::new(),
             retain: true,
         }
@@ -584,10 +584,10 @@ async fn invalid_discovery_is_logged_once() {
     assert_eq!(hub.logged_ignored_len(), 0);
 
     let garbage: &[u8] = &[0xff, 0xfe, b'{'];
-    hub.ingest("oikos/sensor/garbage/x/config", garbage);
+    hub.ingest("nidoo/sensor/garbage/x/config", garbage);
     assert_eq!(hub.ignored().len(), 1);
     assert_eq!(hub.logged_ignored_len(), 1);
-    hub.ingest("oikos/sensor/garbage/x/config", garbage);
+    hub.ingest("nidoo/sensor/garbage/x/config", garbage);
     assert_eq!(
         hub.logged_ignored_len(),
         1,
@@ -595,7 +595,7 @@ async fn invalid_discovery_is_logged_once() {
     );
 
     hub.ingest(
-        "oikos/update/x/config",
+        "nidoo/update/x/config",
         br#"{"unique_id":"u","state_topic":"zigbee2mqtt/u"}"#,
     );
     assert_eq!(
@@ -606,7 +606,7 @@ async fn invalid_discovery_is_logged_once() {
     assert_eq!(hub.logged_ignored_len(), 1, "a valid config is not logged");
 
     hub.ingest(
-        "oikos/sensor/garbage/x/config",
+        "nidoo/sensor/garbage/x/config",
         br#"{"unique_id":"g","state_topic":"zigbee2mqtt/g"}"#,
     );
     assert_eq!(hub.ignored().len(), 0);
@@ -616,7 +616,7 @@ async fn invalid_discovery_is_logged_once() {
         "a topic that recovered is forgotten"
     );
 
-    hub.ingest("oikos/sensor/garbage/x/config", garbage);
+    hub.ingest("nidoo/sensor/garbage/x/config", garbage);
     assert_eq!(
         hub.logged_ignored_len(),
         1,
@@ -626,7 +626,7 @@ async fn invalid_discovery_is_logged_once() {
 
 // ----- push alerts -----
 
-const HISTORY_TOPIC: &str = "oikos/push/history";
+const HISTORY_TOPIC: &str = "nidoo/push/history";
 const ALERT_ENTRY: &str = r#"{"v":1,"id":"frigate-front-1696","channel":"camera","severity":"warning","title":"Front Door","body":"Person in Porch","image_url":"http://192.168.1.20:5000/api/events/1696/snapshot.jpg","actions":[{"id":"disarm","label":"Disarm"}],"silent":false,"sent_at":1760880000,"source":"frigate"}"#;
 
 fn history_payload() -> Vec<u8> {
@@ -711,12 +711,12 @@ async fn reply_publishes_the_app_payload() {
         .expect("reply accepted");
 
     let published = publisher.recv().await.expect("a publish");
-    assert_eq!(published.topic, "oikos/push/responses");
+    assert_eq!(published.topic, "nidoo/push/responses");
     assert!(!published.retain);
     let value: serde_json::Value = serde_json::from_str(&published.payload).expect("json");
     assert_eq!(value["id"], "frigate-front-1696");
     assert_eq!(value["action"], "disarm");
-    assert_eq!(value["install_id"], "oikos-web");
+    assert_eq!(value["install_id"], "nidoo-web");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
@@ -762,10 +762,6 @@ async fn push_history_topic_feeds_alert_store() {
     hub.ingest_message(HISTORY_TOPIC, &history_payload(), false);
     assert_eq!(hub.alerts().len(), 1);
     assert_eq!(hub.alerts()[0].id, "frigate-front-1696");
-
-    // OikosPush's list is no longer what the web reads.
-    hub.ingest_message("oikos-push/history", b"[]", true);
-    assert_eq!(hub.alerts().len(), 1);
 }
 
 #[tokio::test]
@@ -776,12 +772,12 @@ async fn push_topics_are_not_discovery() {
     );
     let (hub, _publisher) = hub();
     hub.ingest_message(
-        "oikos/push/tokens/a",
+        "nidoo/push/tokens/a",
         br#"{"token":"t","device_name":"Pixel","lang":"fr","updated_at":1}"#,
         true,
     );
-    hub.ingest_message("oikos/push/notification/flow", br#"{"title":"T"}"#, false);
-    hub.ingest_message("oikos/push/sensor/config", br#"{"name":"x"}"#, true);
+    hub.ingest_message("nidoo/push/notification/flow", br#"{"title":"T"}"#, false);
+    hub.ingest_message("nidoo/push/sensor/config", br#"{"name":"x"}"#, true);
     assert!(hub.ignored().is_empty(), "{:?}", hub.ignored());
     assert_eq!(hub.counts().0, 0);
 }
@@ -806,7 +802,7 @@ async fn notify_publishes_history_after_sync() {
     let last = published
         .iter()
         .rev()
-        .find(|p| p.topic == "oikos/push/history")
+        .find(|p| p.topic == "nidoo/push/history")
         .unwrap_or_else(|| panic!("a history publish in {published:?}"));
     assert!(last.retain);
     let list: serde_json::Value = serde_json::from_str(&last.payload).expect("json");
@@ -868,7 +864,7 @@ async fn alert_action_replies_on_new_responses_topic() {
 
     let published = publisher.recv().await.expect("a publish");
     assert_eq!(published.topic, hub.push().responses_topic());
-    assert_eq!(published.topic, "oikos/push/responses");
+    assert_eq!(published.topic, "nidoo/push/responses");
 }
 
 fn virtual_switch() -> VirtualSpec {
@@ -884,8 +880,8 @@ fn virtual_switch() -> VirtualSpec {
     }
 }
 
-const VIRTUAL_STATE: &str = "oikos/virtual/force_heating";
-const VIRTUAL_CONFIG: &str = "oikos/switch/virtual/force_heating/config";
+const VIRTUAL_STATE: &str = "nidoo/virtual/force_heating";
+const VIRTUAL_CONFIG: &str = "nidoo/switch/virtual/force_heating/config";
 
 fn drain(publisher: &mut mpsc::Receiver<Publish>) -> Vec<Publish> {
     let mut out = Vec::new();
@@ -956,8 +952,8 @@ async fn number_defaults_and_initial_override() {
         .expect("number");
     assert_eq!(view.kind, Kind::Number);
     let published = drain(&mut publisher);
-    assert_eq!(published[0].topic, "oikos/number/virtual/target/config");
-    assert_eq!(published[1].topic, "oikos/virtual/target");
+    assert_eq!(published[0].topic, "nidoo/number/virtual/target/config");
+    assert_eq!(published[1].topic, "nidoo/virtual/target");
     assert_eq!(published[1].payload, "10");
 
     let mut bad = spec.clone();
@@ -1028,8 +1024,8 @@ fn house_mode(options: &[&str]) -> VirtualSpec {
     }
 }
 
-const MODE_STATE: &str = "oikos/virtual/house_mode";
-const MODE_CONFIG: &str = "oikos/select/virtual/house_mode/config";
+const MODE_STATE: &str = "nidoo/virtual/house_mode";
+const MODE_CONFIG: &str = "nidoo/select/virtual/house_mode/config";
 
 #[tokio::test]
 async fn select_virtual_is_created_and_commanded() {
@@ -1132,8 +1128,8 @@ async fn select_reset_goes_to_the_first_option_not_initial() {
 #[tokio::test]
 async fn virtual_topics_are_not_ignored_discovery() {
     let (hub, _publisher) = hub();
-    hub.ingest("oikos/virtual/x", b"ON");
-    hub.ingest("oikos/virtual/x/extra/config", b"{}");
+    hub.ingest("nidoo/virtual/x", b"ON");
+    hub.ingest("nidoo/virtual/x/extra/config", b"{}");
     assert!(hub.ignored().is_empty(), "{:?}", hub.ignored());
 }
 
@@ -1181,7 +1177,7 @@ async fn virtual_button_has_no_state_and_no_retain() {
     assert_eq!(view.kind, Kind::Button);
     let published = drain(&mut publisher);
     assert_eq!(published.len(), 1, "{published:?}");
-    assert_eq!(published[0].topic, "oikos/button/virtual/boost/config");
+    assert_eq!(published[0].topic, "nidoo/button/virtual/boost/config");
 }
 
 #[tokio::test]
@@ -1242,7 +1238,7 @@ async fn offer_never_blocks_when_full() {
 
 /// Feeds a hand-written generic entity (`unique_id` `u1`) and returns its id.
 fn feed_generic(hub: &Hub, component: &str, config: serde_json::Value) -> String {
-    let topic = format!("oikos/{component}/u1/main/config");
+    let topic = format!("nidoo/{component}/u1/main/config");
     hub.ingest(&topic, config.to_string().as_bytes());
     let snapshot = hub.snapshot();
     snapshot
@@ -1265,12 +1261,12 @@ fn control(name: &str, value: Option<serde_json::Value>) -> Command {
 async fn retained_group_definition_is_loaded() {
     let (hub, _rx) = hub();
     let changes = hub.ingest(
-        "oikos/group/living/definition",
+        "nidoo/group/living/definition",
         br#"{"name":"Living lights","kind":"light","members":[]}"#,
     );
     assert!(changes.is_empty());
     assert!(hub.read_group_store().get("living").is_some());
-    hub.ingest("oikos/group/_migrated", b"1");
+    hub.ingest("nidoo/group/_migrated", b"1");
     assert!(hub.read_group_store().migrated());
 }
 
@@ -1391,7 +1387,7 @@ async fn type_table_is_published_retained_on_connect() {
     let (hub, mut publisher) = hub();
     hub.publish_types().await.expect("publish");
     let sent = publisher.try_recv().expect("a publish");
-    assert_eq!(sent.topic, "oikos/ui/_types");
+    assert_eq!(sent.topic, "nidoo/ui/_types");
     assert!(sent.retain);
     assert_eq!(sent.payload, nidoo_core::types::table_json());
 }
@@ -1401,7 +1397,7 @@ async fn type_table_echo_is_not_an_override() {
     let (hub, _publisher) = hub();
     let before = hub.snapshot();
     hub.ingest(
-        "oikos/ui/_types",
+        "nidoo/ui/_types",
         nidoo_core::types::table_json().as_bytes(),
     );
     assert_eq!(hub.snapshot(), before);
@@ -1451,10 +1447,10 @@ async fn set_group_publishes_definition_config_availability_and_state() {
     assert_eq!(
         topics,
         [
-            "oikos/switch/group/stair/config",
-            "oikos/group/stair/avail",
-            "oikos/group/stair/definition",
-            "oikos/group/stair",
+            "nidoo/switch/group/stair/config",
+            "nidoo/group/stair/avail",
+            "nidoo/group/stair/definition",
+            "nidoo/group/stair",
         ]
     );
     assert!(published.iter().all(|p| p.retain));
@@ -1467,7 +1463,7 @@ async fn set_group_publishes_definition_config_availability_and_state() {
     assert_eq!(again.id, "stair");
     let topics: Vec<String> = drain(&mut rx).into_iter().map(|p| p.topic).collect();
     assert!(
-        !topics.contains(&"oikos/group/stair".to_owned()),
+        !topics.contains(&"nidoo/group/stair".to_owned()),
         "{topics:?}"
     );
 }
@@ -1485,7 +1481,7 @@ async fn changing_the_kind_clears_the_old_config_topic() {
     assert!(
         published
             .iter()
-            .any(|p| p.topic == "oikos/switch/group/stair/config"
+            .any(|p| p.topic == "nidoo/switch/group/stair/config"
                 && p.payload.is_empty()
                 && p.retain),
         "{published:?}"
@@ -1493,7 +1489,7 @@ async fn changing_the_kind_clears_the_old_config_topic() {
     assert!(
         published
             .iter()
-            .any(|p| p.topic == "oikos/light/group/stair/config" && !p.payload.is_empty())
+            .any(|p| p.topic == "nidoo/light/group/stair/config" && !p.payload.is_empty())
     );
 }
 
@@ -1509,10 +1505,10 @@ async fn delete_group_clears_the_four_topics_in_order() {
     assert_eq!(
         topics,
         [
-            "oikos/group/stair/definition",
-            "oikos/switch/group/stair/config",
-            "oikos/group/stair",
-            "oikos/group/stair/avail",
+            "nidoo/group/stair/definition",
+            "nidoo/switch/group/stair/config",
+            "nidoo/group/stair",
+            "nidoo/group/stair/avail",
         ]
     );
     assert!(published.iter().all(|p| p.payload.is_empty() && p.retain));
@@ -1529,12 +1525,12 @@ async fn list_groups_names_the_flows_that_use_each_group() {
     let spec = switch_group();
     hub.set_group("stair", spec.clone()).await.expect("created");
     hub.ingest(
-        "oikos/automation/lamp",
+        "nidoo/automation/lamp",
         br#"{"id":"lamp","name":"Stair lamp","enabled":true,"nodes":[
             {"id":"t","type":"trigger.state","params":{"entity":"group_stair"}}],"edges":[]}"#,
     );
     hub.ingest(
-        "oikos/automation/other",
+        "nidoo/automation/other",
         br#"{"id":"other","name":"Other","enabled":true,"nodes":[
             {"id":"t","type":"trigger.state","params":{"entity":"somebody_else"}}],"edges":[]}"#,
     );
@@ -1548,7 +1544,7 @@ async fn list_groups_names_the_flows_that_use_each_group() {
 async fn list_groups_skips_groups_without_entities() {
     let (hub, _rx) = groups_hub();
     hub.ingest(
-        "oikos/group/ghost/definition",
+        "nidoo/group/ghost/definition",
         br#"{"name":"Ghost","kind":"switch","members":[]}"#,
     );
     let mut living = switch_group();
@@ -1568,7 +1564,7 @@ fn feed_hall_switch(hub: &Hub) {
         .replace("0x847127fffe24e322", "0xaaaaaaaaaaaaaaaa")
         .replace("rooms/stair/light", "rooms/hall/light");
     hub.ingest(
-        "oikos/switch/0xaaaaaaaaaaaaaaaa/switch/config",
+        "nidoo/switch/0xaaaaaaaaaaaaaaaa/switch/config",
         text.as_bytes(),
     );
 }
@@ -1608,7 +1604,7 @@ async fn group_command_with_every_member_offline_is_rejected() {
     assert!(
         drain(&mut rx)
             .iter()
-            .all(|p| p.topic != "oikos/group/living"),
+            .all(|p| p.topic != "nidoo/group/living"),
         "the group state is untouched"
     );
 }
@@ -1625,7 +1621,7 @@ async fn member_state_echo_republishes_the_group_state() {
     let initial = drain(&mut rx);
     let state = initial
         .iter()
-        .find(|p| p.topic == "oikos/group/living")
+        .find(|p| p.topic == "nidoo/group/living")
         .expect("initial state");
     assert_eq!(state.payload, r#"{"state":"OFF"}"#);
 
@@ -1633,7 +1629,7 @@ async fn member_state_echo_republishes_the_group_state() {
     let published = drain(&mut rx);
     let state = published
         .iter()
-        .find(|p| p.topic == "oikos/group/living")
+        .find(|p| p.topic == "nidoo/group/living")
         .expect("republished state");
     assert_eq!(state.payload, r#"{"state":"ON"}"#);
     assert!(state.retain);
@@ -1694,7 +1690,7 @@ async fn a_command_on_the_group_topic_fans_out_to_the_members() {
         .expect("created");
     drain(&mut rx);
 
-    let changes = hub.ingest_message("oikos/group/stair", br#"{"type":"turn_on"}"#, false);
+    let changes = hub.ingest_message("nidoo/group/stair", br#"{"type":"turn_on"}"#, false);
     assert!(changes.is_empty());
     let publish = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
@@ -1752,7 +1748,7 @@ async fn group_command_refused_when_switch_is_off() {
     let (hub, mut rx) = hub();
     feed_switch(&hub);
     let spec = serde_json::to_vec(&switch_group()).expect("json");
-    hub.ingest("oikos/group/stair/definition", &spec);
+    hub.ingest("nidoo/group/stair/definition", &spec);
     assert!(hub.read_group_store().get("stair").is_some());
     drain(&mut rx);
 
@@ -1788,7 +1784,7 @@ async fn feed_member(hub: &Hub, kind: Kind, n: u8, area: &str) -> String {
         .replace(old_id, &hw)
         .replace(old_path, &format!("rooms/{area}/{component}{n}"));
     hub.ingest(
-        &format!("oikos/{component}/{hw}/{component}/config"),
+        &format!("nidoo/{component}/{hw}/{component}/config"),
         text.as_bytes(),
     );
     let id = hub
@@ -1844,7 +1840,7 @@ async fn migration_builds_light_and_cover_groups_once_marker_absent() {
     let published = drain(&mut rx);
     let marker = published
         .iter()
-        .find(|p| p.topic == "oikos/group/_migrated")
+        .find(|p| p.topic == "nidoo/group/_migrated")
         .expect("marker");
     assert!(marker.retain && !marker.payload.is_empty());
     assert!(hub.read_group_store().migrated());
@@ -1863,7 +1859,7 @@ async fn migration_builds_light_and_cover_groups_once_marker_absent() {
 async fn migration_is_a_no_op_when_already_migrated() {
     let (hub, mut rx) = migration_hub(true);
     feed_living(&hub).await;
-    hub.ingest("oikos/group/_migrated", b"1");
+    hub.ingest("nidoo/group/_migrated", b"1");
     drain(&mut rx);
     let outcome = hub.run_group_migration_once().await;
     assert_eq!(outcome.skipped_reason, Some("already migrated"));
@@ -1887,7 +1883,7 @@ async fn migration_honours_group_names() {
     feed_member(&hub, Kind::Light, 1, "living").await;
     feed_member(&hub, Kind::Light, 2, "living").await;
     hub.ingest(
-        "oikos/ui/_areas",
+        "nidoo/ui/_areas",
         br#"{"areas":[{"id":"living","name":"Living","groupNames":{"light":"Main lamps"}}]}"#,
     );
     let outcome = hub.run_group_migration_once().await;
@@ -1920,7 +1916,7 @@ async fn frigate_hub(bridge: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
 fn bridge_filters(hub: &Hub) -> Vec<String> {
     hub.extra_filters()
         .into_iter()
-        .filter(|f| !f.starts_with("oikos/alarm/") && f != "oikos/push/responses")
+        .filter(|f| !f.starts_with("nidoo/alarm/") && f != "nidoo/push/responses")
         .collect()
 }
 
@@ -1935,7 +1931,7 @@ async fn frigate_event_becomes_history_alert_when_bridge_on() {
     let last = published
         .iter()
         .rev()
-        .find(|p| p.topic == "oikos/push/history")
+        .find(|p| p.topic == "nidoo/push/history")
         .unwrap_or_else(|| panic!("a history publish in {published:?}"));
     let list: serde_json::Value = serde_json::from_str(&last.payload).expect("json");
     assert_eq!(list[0]["id"], "frigate-1696.5-abc", "{list}");
@@ -1984,7 +1980,7 @@ fn history_ids(published: &[Publish]) -> Vec<String> {
     let Some(last) = published
         .iter()
         .rev()
-        .find(|p| p.topic == "oikos/push/history")
+        .find(|p| p.topic == "nidoo/push/history")
     else {
         return Vec::new();
     };

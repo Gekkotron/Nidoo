@@ -26,7 +26,7 @@ pub use ignored::Ignored;
 /// Where the registry listens.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegistryConfig {
-    /// Home Assistant discovery prefixes (`oikos`, `homeassistant`).
+    /// Home Assistant discovery prefixes (`nidoo`, `homeassistant`).
     pub discovery_prefixes: Vec<String>,
     /// The sub-tree holding overrides (`<ui_prefix>/<unique_id>`) and areas (`<ui_prefix>/_areas`).
     pub ui_prefix: String,
@@ -38,7 +38,7 @@ pub struct RegistryConfig {
 
 impl RegistryConfig {
     /// The reserved sub-trees under a discovery prefix: `ui`, `automation`, `virtual`,
-    /// `push` (the hub's notification topics, `oikos/push/...`) and `weather` (the hub's weather
+    /// `push` (the hub's notification topics, `nidoo/push/...`) and `weather` (the hub's weather
     /// states and availability), `solar` (the hub's solar forecast states, availability and cache)
     /// and `network` (the hub's network presence definitions, states and availability).
     pub fn default_reserved() -> Vec<String> {
@@ -57,8 +57,8 @@ impl RegistryConfig {
 impl Default for RegistryConfig {
     fn default() -> Self {
         Self {
-            discovery_prefixes: vec!["oikos".to_owned()],
-            ui_prefix: "oikos/ui".to_owned(),
+            discovery_prefixes: vec!["nidoo".to_owned()],
+            ui_prefix: "nidoo/ui".to_owned(),
             z2m_base: "zigbee2mqtt".to_owned(),
             reserved: Self::default_reserved(),
         }

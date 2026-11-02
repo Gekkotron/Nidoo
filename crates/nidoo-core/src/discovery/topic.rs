@@ -16,7 +16,7 @@ pub struct DiscoveryTopic {
 pub enum TopicClass {
     /// A discovery config topic for a supported or ignored component.
     Discovery(DiscoveryTopic),
-    /// A reserved sub-tree directly under a prefix (e.g. `ui` for `oikos/ui/<unique_id>`).
+    /// A reserved sub-tree directly under a prefix (e.g. `ui` for `nidoo/ui/<unique_id>`).
     Reserved(String),
     /// Anything else, including topics outside every prefix.
     Other,

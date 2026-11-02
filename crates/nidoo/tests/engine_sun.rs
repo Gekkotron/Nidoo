@@ -33,7 +33,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn test_hub_with_point(lat: f64, lon: f64, zone: &str) -> Arc<Hub> {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.flows.timezone = Some(zone.to_owned());
     cfg.flows.latitude = Some(lat);
     cfg.flows.longitude = Some(lon);
@@ -41,11 +41,11 @@ fn test_hub_with_point(lat: f64, lon: f64, zone: &str) -> Arc<Hub> {
     let hub = Hub::new(&cfg, tx);
     hub.set_connection(ConnectionStatus::Online);
     hub.ingest(
-        "oikos/light/0x60a423fffe94d1c6/light/config",
+        "nidoo/light/0x60a423fffe94d1c6/light/config",
         &fixture("discovery/light__0x60a423fffe94d1c6__light.json"),
     );
     hub.ingest(
-        "oikos/binary_sensor/0x00158d008b5a2d65/occupancy/config",
+        "nidoo/binary_sensor/0x00158d008b5a2d65/occupancy/config",
         &fixture("discovery/binary_sensor__0x00158d008b5a2d65__occupancy.json"),
     );
     let echo_hub = Arc::clone(&hub);
@@ -96,7 +96,7 @@ fn state_then_if_flow(id: &str, if_params: serde_json::Value) -> String {
 }
 
 fn publish_flow(hub: &Hub, id: &str, json: &str) {
-    hub.ingest(&format!("oikos/automation/{id}"), json.as_bytes());
+    hub.ingest(&format!("nidoo/automation/{id}"), json.as_bytes());
 }
 
 /// Lets the engine task drain what it has been sent (current-thread runtimes only).

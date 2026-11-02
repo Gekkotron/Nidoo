@@ -11,7 +11,7 @@ use crate::i18n::settings::{SettingsText, settings_text};
 
 /// Storage key for the persisted choice.
 #[cfg(target_arch = "wasm32")]
-const STORAGE_KEY: &str = "oikos.theme";
+const STORAGE_KEY: &str = "nidoo.theme";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Theme {

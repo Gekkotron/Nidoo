@@ -90,51 +90,51 @@ mod tests {
 
     #[test]
     fn builds_and_parses() {
-        assert_eq!(house_topic("oikos/climate"), "oikos/climate/house");
+        assert_eq!(house_topic("nidoo/climate"), "nidoo/climate/house");
         assert_eq!(
-            zone_topic("oikos/climate/", "living", ZoneDoc::Decision),
-            "oikos/climate/zone/living/decision"
+            zone_topic("nidoo/climate/", "living", ZoneDoc::Decision),
+            "nidoo/climate/zone/living/decision"
         );
         assert_eq!(
-            parse("oikos/climate", "oikos/climate/zone/living/override"),
+            parse("nidoo/climate", "nidoo/climate/zone/living/override"),
             Some(ClimateTopic::Zone {
                 zone: "living".into(),
                 doc: ZoneDoc::Override
             })
         );
         assert_eq!(
-            parse("oikos/climate", "oikos/climate/house"),
+            parse("nidoo/climate", "nidoo/climate/house"),
             Some(ClimateTopic::House)
         );
         assert_eq!(
-            parse("oikos/climate", "oikos/climate/group/g1/config"),
+            parse("nidoo/climate", "nidoo/climate/group/g1/config"),
             None
         );
         assert_eq!(
-            parse("oikos/climate", "oikos/climate/zone/living/config"),
+            parse("nidoo/climate", "nidoo/climate/zone/living/config"),
             None
         );
         assert_eq!(
-            parse("oikos/climate", "oikos/climate/zone/living/decision/x"),
+            parse("nidoo/climate", "nidoo/climate/zone/living/decision/x"),
             None
         );
-        assert_eq!(parse("oikos/climate", "other/zone/living/decision"), None);
+        assert_eq!(parse("nidoo/climate", "other/zone/living/decision"), None);
         assert_eq!(
-            zone_topic("oikos/climate", "living", ZoneDoc::Eco),
-            "oikos/climate/zone/living/eco"
+            zone_topic("nidoo/climate", "living", ZoneDoc::Eco),
+            "nidoo/climate/zone/living/eco"
         );
         assert_eq!(
-            parse("oikos/climate", "oikos/climate/zone/living/eco"),
+            parse("nidoo/climate", "nidoo/climate/zone/living/eco"),
             Some(ClimateTopic::Zone {
                 zone: "living".into(),
                 doc: ZoneDoc::Eco
             })
         );
         assert_eq!(
-            filters("oikos/climate"),
+            filters("nidoo/climate"),
             [
-                "oikos/climate/house".to_owned(),
-                "oikos/climate/zone/+/+".to_owned()
+                "nidoo/climate/house".to_owned(),
+                "nidoo/climate/zone/+/+".to_owned()
             ]
         );
     }

@@ -18,7 +18,7 @@ const MOTION_ID: &str = "0x00158d008b5a2d65_occupancy_zigbee2mqtt";
 const LED_STATE_TOPIC: &str = "zigbee2mqtt/rooms/living/led_ceiling";
 const MOTION_STATE_TOPIC: &str = "zigbee2mqtt/rooms/living/motion_north";
 const LED_COMMAND_TOPIC: &str = "zigbee2mqtt/rooms/living/led_ceiling/set";
-const FLOW_TOPIC: &str = "oikos/automation/living";
+const FLOW_TOPIC: &str = "nidoo/automation/living";
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(concat!(
@@ -31,7 +31,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     let (tx, rx) = mpsc::channel(64);
     let hub = Hub::new(&cfg, tx);
     hub.set_connection(ConnectionStatus::Online);
@@ -42,11 +42,11 @@ fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
 fn hub_with_entities() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let (hub, rx) = hub();
     hub.ingest(
-        "oikos/light/0x60a423fffe94d1c6/light/config",
+        "nidoo/light/0x60a423fffe94d1c6/light/config",
         &fixture("discovery/light__0x60a423fffe94d1c6__light.json"),
     );
     hub.ingest(
-        "oikos/binary_sensor/0x00158d008b5a2d65/occupancy/config",
+        "nidoo/binary_sensor/0x00158d008b5a2d65/occupancy/config",
         &fixture("discovery/binary_sensor__0x00158d008b5a2d65__occupancy.json"),
     );
     (hub, rx)
@@ -243,7 +243,7 @@ async fn set_flow_enabled_round_trips() {
         hub.set_flow_enabled("ghost", true).await,
         Err(HubError::UnknownFlow(_))
     ));
-    hub.ingest("oikos/automation/broken", b"not json");
+    hub.ingest("nidoo/automation/broken", b"not json");
     assert!(matches!(
         hub.set_flow_enabled("broken", true).await,
         Err(HubError::InvalidFlow(_))
@@ -258,7 +258,7 @@ async fn run_flow_rejects_disabled_invalid_unknown_and_active() {
         Err(HubError::UnknownFlow(_))
     ));
 
-    hub.ingest("oikos/automation/broken", b"not json");
+    hub.ingest("nidoo/automation/broken", b"not json");
     assert!(matches!(
         hub.run_flow("broken"),
         Err(HubError::InvalidFlow(_))
@@ -267,7 +267,7 @@ async fn run_flow_rejects_disabled_invalid_unknown_and_active() {
     let mut disabled = reference_flow();
     disabled.id = "off_flow".to_owned();
     disabled.enabled = false;
-    hub.ingest("oikos/automation/off_flow", disabled.encode().as_bytes());
+    hub.ingest("nidoo/automation/off_flow", disabled.encode().as_bytes());
     assert_eq!(
         hub.run_flow("off_flow"),
         Err(HubError::Rejected("flow is disabled".to_owned()))
@@ -364,7 +364,7 @@ async fn entity_scalar_reads_the_registry() {
 #[tokio::test]
 async fn nested_automation_topics_are_ignored() {
     let (hub, _publisher) = hub_with_entities();
-    hub.ingest("oikos/automation/a/b", reference_json().as_bytes());
+    hub.ingest("nidoo/automation/a/b", reference_json().as_bytes());
     assert!(hub.flows().is_empty());
 }
 
@@ -936,7 +936,7 @@ async fn missing_entity_at_run_time_fails_the_step() {
     let (hub, _publisher, _engine) = engine_hub();
     hub.ingest(FLOW_TOPIC, reference_json().as_bytes());
     settle().await;
-    hub.ingest("oikos/light/0x60a423fffe94d1c6/light/config", b"");
+    hub.ingest("nidoo/light/0x60a423fffe94d1c6/light/config", b"");
     let mut events = hub.subscribe();
 
     motion(&hub, false);
@@ -1031,7 +1031,7 @@ fn until_next_ten_minutes() -> Duration {
 async fn schedule_fires_each_tick_while_enabled() {
     let (hub, publisher, _engine) = engine_hub();
     let log = echo(publisher, Arc::clone(&hub));
-    hub.ingest("oikos/automation/tick", schedule_json(true).as_bytes());
+    hub.ingest("nidoo/automation/tick", schedule_json(true).as_bytes());
     settle().await;
     let mut events = hub.subscribe();
 
@@ -1052,7 +1052,7 @@ async fn schedule_fires_each_tick_while_enabled() {
 async fn schedule_never_fires_on_enable() {
     let (hub, publisher, _engine) = engine_hub();
     let log = echo(publisher, Arc::clone(&hub));
-    hub.ingest("oikos/automation/tick", schedule_json(true).as_bytes());
+    hub.ingest("nidoo/automation/tick", schedule_json(true).as_bytes());
     settle().await;
     assert!(published(&log).is_empty());
     tokio::time::advance(Duration::from_secs(1)).await;
@@ -1064,7 +1064,7 @@ async fn schedule_never_fires_on_enable() {
 async fn disabled_schedule_never_fires() {
     let (hub, publisher, _engine) = engine_hub();
     let log = echo(publisher, Arc::clone(&hub));
-    hub.ingest("oikos/automation/tick", schedule_json(true).as_bytes());
+    hub.ingest("nidoo/automation/tick", schedule_json(true).as_bytes());
     settle().await;
     hub.set_flow_enabled("tick", false).await.expect("disable");
     settle().await;
@@ -1077,7 +1077,7 @@ async fn disabled_schedule_never_fires() {
 async fn tick_while_offline_is_skipped() {
     let (hub, publisher, _engine) = engine_hub();
     let log = echo(publisher, Arc::clone(&hub));
-    hub.ingest("oikos/automation/tick", schedule_json(true).as_bytes());
+    hub.ingest("nidoo/automation/tick", schedule_json(true).as_bytes());
     settle().await;
     let mut events = hub.subscribe();
 
@@ -1130,11 +1130,11 @@ async fn flow_enable_enables_another_flow() {
     let flow_enable = serde_json::json!({ "id": "e", "type": "flow.enable",
         "params": { "flow": "b", "enabled": true } });
     hub.ingest(
-        "oikos/automation/a",
+        "nidoo/automation/a",
         chain_json("a", true, vec![flow_enable]).as_bytes(),
     );
     hub.ingest(
-        "oikos/automation/b",
+        "nidoo/automation/b",
         chain_json("b", false, vec![turn("on", "turn_on")]).as_bytes(),
     );
     settle().await;
@@ -1152,7 +1152,7 @@ async fn self_disable_keeps_the_running_run() {
     let flow_enable = serde_json::json!({ "id": "e", "type": "flow.enable",
         "params": { "enabled": false } });
     hub.ingest(
-        "oikos/automation/a",
+        "nidoo/automation/a",
         chain_json("a", true, vec![flow_enable, turn("on", "turn_on")]).as_bytes(),
     );
     settle().await;
@@ -1190,7 +1190,7 @@ fn missing_flow(missing: Option<&str>) -> String {
 async fn if_missing_false_takes_false() {
     let (hub, publisher, _engine) = engine_hub();
     let log = echo(publisher, Arc::clone(&hub));
-    hub.ingest("oikos/automation/a", missing_flow(Some("false")).as_bytes());
+    hub.ingest("nidoo/automation/a", missing_flow(Some("false")).as_bytes());
     settle().await;
     let mut events = hub.subscribe();
     hub.run_flow("a").expect("run");
@@ -1204,7 +1204,7 @@ async fn if_missing_false_takes_false() {
 async fn if_missing_default_still_fails() {
     let (hub, publisher, _engine) = engine_hub();
     let log = echo(publisher, Arc::clone(&hub));
-    hub.ingest("oikos/automation/a", missing_flow(None).as_bytes());
+    hub.ingest("nidoo/automation/a", missing_flow(None).as_bytes());
     settle().await;
     let mut events = hub.subscribe();
     hub.run_flow("a").expect("run");
@@ -1236,7 +1236,7 @@ async fn set_flow_rejects_unknown_target_flow() {
 }
 
 const BUTTON_ID: &str = "virtual_boost";
-const BUTTON_TOPIC: &str = "oikos/virtual/boost";
+const BUTTON_TOPIC: &str = "nidoo/virtual/boost";
 
 fn button_flow(trigger_params: serde_json::Value) -> Flow {
     Flow::decode(
@@ -1356,7 +1356,7 @@ async fn local_flow_writes_wake_the_resubscribe() {
 
     // The same flow again, and the broker's echo of it, change nothing.
     hub.set_flow(flow()).await.expect("set_flow again");
-    hub.ingest("oikos/automation/boost", flow().encode().as_bytes());
+    hub.ingest("nidoo/automation/boost", flow().encode().as_bytes());
     assert!(!woken(&wakeup).await, "an unchanged set must not wake it");
 
     hub.delete_flow("boost").await.expect("delete");
@@ -1379,7 +1379,7 @@ fn add_remote(hub: &Hub) {
             "device": {"identifiers": ["zigbee2mqtt_0xd4fe12345"], "name": "rooms/hall/remote"}
         });
         hub.ingest(
-            &format!("oikos/device_automation/0xd4fe12345/action_{payload}/config"),
+            &format!("nidoo/device_automation/0xd4fe12345/action_{payload}/config"),
             config.to_string().as_bytes(),
         );
     }
@@ -1715,7 +1715,7 @@ async fn set_flow_area_moves_and_clears() {
         hub.set_flow_area("nobody", None).await,
         Err(HubError::UnknownFlow(_))
     ));
-    hub.ingest("oikos/automation/broken", b"not json");
+    hub.ingest("nidoo/automation/broken", b"not json");
     assert!(matches!(
         hub.set_flow_area("broken", None).await,
         Err(HubError::InvalidFlow(_))
@@ -1742,7 +1742,7 @@ async fn run_notify(
 ) -> serde_json::Value {
     let notify = serde_json::json!({ "id": "n", "type": "notify", "params": params });
     hub.ingest(
-        &format!("oikos/automation/{id}"),
+        &format!("nidoo/automation/{id}"),
         chain_json(id, true, vec![notify]).as_bytes(),
     );
     settle().await;
@@ -1753,7 +1753,7 @@ async fn run_notify(
     settle().await;
     let mut last = None;
     while let Ok(publish) = publisher.try_recv() {
-        if publish.topic == "oikos/push/history" {
+        if publish.topic == "nidoo/push/history" {
             last = Some(publish);
         }
     }
@@ -1791,7 +1791,7 @@ async fn notify_step_submits_v1_alert() {
 }
 
 const TEMP_ID: &str = "0x00124b0008fd6568_temperature_1_zigbee2mqtt";
-const TEMP_CONFIG_TOPIC: &str = "oikos/sensor/0x00124b0008fd6568/temperature_1/config";
+const TEMP_CONFIG_TOPIC: &str = "nidoo/sensor/0x00124b0008fd6568/temperature_1/config";
 
 /// Adds a temperature sensor (°C) reading 10.14 to the hub.
 fn ingest_temperature(hub: &Hub) {
@@ -1930,7 +1930,7 @@ async fn run_now_carries_the_first_manual_card_value() {
         ]);
     });
     hub.ingest(
-        "oikos/automation/x",
+        "nidoo/automation/x",
         flow.replace("\"living\"", "\"x\"").as_bytes(),
     );
     settle().await;
@@ -2080,7 +2080,7 @@ async fn manual_notify_title(
         "edges": [{ "from": "go", "to": "n" }]
     });
     hub.ingest(
-        &format!("oikos/automation/{id}"),
+        &format!("nidoo/automation/{id}"),
         flow.to_string().as_bytes(),
     );
     settle().await;
@@ -2090,7 +2090,7 @@ async fn manual_notify_title(
     settle().await;
     let mut last = None;
     while let Ok(publish) = publisher.try_recv() {
-        if publish.topic == "oikos/push/history" {
+        if publish.topic == "nidoo/push/history" {
             last = Some(publish);
         }
     }
@@ -2120,8 +2120,8 @@ async fn manual_value_reaches_notify_text() {
 
 const METER_ID: &str = "virtual_meter";
 const TARGET_ID: &str = "virtual_target";
-const METER_TOPIC: &str = "oikos/virtual/meter";
-const TARGET_TOPIC: &str = "oikos/virtual/target";
+const METER_TOPIC: &str = "nidoo/virtual/meter";
+const TARGET_TOPIC: &str = "nidoo/virtual/target";
 
 async fn add_virtual_number(hub: &Hub, id: &str, min: f64, max: f64) {
     let spec = nidoo_api::VirtualSpec {
@@ -2164,7 +2164,7 @@ fn math_echo(
             sink.lock()
                 .expect("log")
                 .push((publish.topic.clone(), publish.payload.clone()));
-            if publish.topic.starts_with("oikos/virtual/")
+            if publish.topic.starts_with("nidoo/virtual/")
                 && !mute.contains(&publish.topic.as_str())
             {
                 hub.ingest_message(&publish.topic, publish.payload.as_bytes(), true);
@@ -2228,7 +2228,7 @@ fn port_edge(from: &str, port: &str, to: &str) -> serde_json::Value {
 /// Saves a flow (the meter already holds its initial -5000, so any other reading is a change)
 /// and returns the events.
 async fn arm_math_flow(hub: &Arc<Hub>, json: String) -> tokio::sync::broadcast::Receiver<WsEvent> {
-    hub.ingest("oikos/automation/m", json.as_bytes());
+    hub.ingest("nidoo/automation/m", json.as_bytes());
     settle().await;
     hub.subscribe()
 }
@@ -2322,7 +2322,7 @@ async fn math_result_feeds_command_if_and_notify() {
     assert_eq!(sent_to(&log, TARGET_TOPIC), ["30"]);
     settle().await;
     assert_eq!(target_number(&hub), 30.0);
-    let history = sent_to(&log, "oikos/push/history");
+    let history = sent_to(&log, "nidoo/push/history");
     let list: serde_json::Value =
         serde_json::from_str(history.last().expect("history")).expect("json");
     assert_eq!(list[0]["body"], "Half 30", "{list}");
@@ -2544,7 +2544,7 @@ async fn trigger_in_formula() {
         "edges": [edge("go", "calc")]
     })
     .to_string();
-    hub.ingest("oikos/automation/m", json.as_bytes());
+    hub.ingest("nidoo/automation/m", json.as_bytes());
     settle().await;
     let mut events = hub.subscribe();
     hub.run_flow("m").expect("run");
@@ -2612,11 +2612,11 @@ const CLIMATE_ID: &str = "daikin_192_168_1_150";
 fn hub_with_vacuum_and_climate() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let (hub, rx) = hub();
     hub.ingest(
-        "oikos/vacuum/roborock_40313ca8b964/config",
+        "nidoo/vacuum/roborock_40313ca8b964/config",
         &fixture("discovery/vacuum__roborock_40313ca8b964__roborock_40313ca8b964.json"),
     );
     hub.ingest(
-        "oikos/climate/daikin_192_168_1_150/config",
+        "nidoo/climate/daikin_192_168_1_150/config",
         &fixture("discovery/climate__daikin_192_168_1_150__climate.json"),
     );
     (hub, rx)

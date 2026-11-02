@@ -1,4 +1,4 @@
-//! FCM HTTP v1 client with service-account OAuth, ported from OikosPush `fcm_sender.py`.
+//! FCM HTTP v1 client with service-account OAuth.
 //!
 //! Secrets (private key, access token, full registration tokens) never reach logs or `Debug`.
 

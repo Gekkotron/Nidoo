@@ -18,7 +18,7 @@ fn network_hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
 }
 
 fn hub_with(mut cfg: Config) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     let (tx, rx) = mpsc::channel(64);
     let hub = Hub::new(&cfg, tx);
     hub.set_connection(ConnectionStatus::Online);
@@ -51,7 +51,7 @@ fn find<'a>(published: &'a [Publish], topic: &str) -> Option<&'a Publish> {
 const VACUUM: &[u8] = br#"{"name":"Cleaner","unique_id":"vac_1_switch","command_topic":"vac/1/set","state_topic":"vac/1","device":{"identifiers":["vac_1"],"name":"Vacuum"}}"#;
 
 fn feed_vacuum(hub: &Hub) {
-    hub.ingest("oikos/switch/vac_1/switch/config", VACUUM);
+    hub.ingest("nidoo/switch/vac_1/switch/config", VACUUM);
 }
 
 #[tokio::test]
@@ -63,20 +63,20 @@ async fn set_publishes_definition_config_and_availability() {
         .unwrap();
     let published = drain(&mut rx);
     assert!(
-        find(&published, "oikos/network/nas/definition")
+        find(&published, "nidoo/network/nas/definition")
             .unwrap()
             .retain
     );
     assert!(
-        find(&published, "oikos/binary_sensor/network/nas/config")
+        find(&published, "nidoo/binary_sensor/network/nas/config")
             .unwrap()
             .retain
     );
     assert_eq!(
-        find(&published, "oikos/network/nas/avail").unwrap().payload,
+        find(&published, "nidoo/network/nas/avail").unwrap().payload,
         "online"
     );
-    assert!(find(&published, "oikos/network/nas").is_none());
+    assert!(find(&published, "nidoo/network/nas").is_none());
     assert_eq!(view.status.state, WatchState::Waiting);
     let listed = hub.list_network_watches().unwrap();
     assert_eq!(listed.len(), 1);
@@ -93,7 +93,7 @@ async fn paused_watch_is_published_offline() {
     let view = hub.set_network_watch("nas", paused).await.unwrap();
     let published = drain(&mut rx);
     assert_eq!(
-        find(&published, "oikos/network/nas/avail").unwrap().payload,
+        find(&published, "nidoo/network/nas/avail").unwrap().payload,
         "offline"
     );
     assert_eq!(view.status.state, WatchState::Paused);
@@ -111,7 +111,7 @@ async fn device_watch_joins_the_device() {
     s.device = Some("vac_1".into());
     hub.set_network_watch("vac_1", s).await.unwrap();
     let published = drain(&mut rx);
-    let config = find(&published, "oikos/binary_sensor/network/vac_1/config").unwrap();
+    let config = find(&published, "nidoo/binary_sensor/network/vac_1/config").unwrap();
     let config: serde_json::Value = serde_json::from_str(&config.payload).unwrap();
     assert_eq!(
         config["device"]["identifiers"],
@@ -123,7 +123,7 @@ async fn device_watch_joins_the_device() {
 async fn device_watch_takes_the_device_room() {
     let (hub, _rx) = network_hub();
     feed_vacuum(&hub);
-    hub.ingest("oikos/ui/vac_1_switch", br#"{"area":"office"}"#);
+    hub.ingest("nidoo/ui/vac_1_switch", br#"{"area":"office"}"#);
     let mut s = spec("192.168.1.42");
     s.device = Some("vac_1".into());
     hub.set_network_watch("vac_1", s).await.unwrap();
@@ -149,7 +149,7 @@ async fn second_watch_on_same_device_rejected() {
     let (hub, _rx) = network_hub();
     feed_vacuum(&hub);
     hub.ingest(
-        "oikos/network/other/definition",
+        "nidoo/network/other/definition",
         br#"{"name":"Other","host":"192.168.1.43","device":"vac_1"}"#,
     );
     let mut s = spec("192.168.1.42");
@@ -192,10 +192,10 @@ async fn delete_clears_only_network_topics() {
     assert_eq!(
         topics,
         [
-            "oikos/binary_sensor/network/vac_1/config",
-            "oikos/network/vac_1",
-            "oikos/network/vac_1/avail",
-            "oikos/network/vac_1/definition",
+            "nidoo/binary_sensor/network/vac_1/config",
+            "nidoo/network/vac_1",
+            "nidoo/network/vac_1/avail",
+            "nidoo/network/vac_1/definition",
         ]
     );
     assert!(published.iter().all(|p| p.payload.is_empty() && p.retain));
@@ -220,7 +220,7 @@ async fn delete_unknown_watch_is_unknown_entity() {
 async fn retained_definition_is_loaded() {
     let (hub, _rx) = network_hub();
     hub.ingest(
-        "oikos/network/nas/definition",
+        "nidoo/network/nas/definition",
         br#"{"name":"NAS","host":"nas.local"}"#,
     );
     let listed = hub.list_network_watches().unwrap();
@@ -317,7 +317,7 @@ async fn three_misses_publish_off_once() {
         .unwrap();
     run_for(200).await;
     let published = drain(&mut rx);
-    assert_eq!(payloads(&published, "oikos/network/nas"), ["ON", "OFF"]);
+    assert_eq!(payloads(&published, "nidoo/network/nas"), ["ON", "OFF"]);
     let listed = hub.list_network_watches().unwrap();
     assert_eq!(listed[0].status.state, WatchState::Disconnected);
 }
@@ -336,7 +336,7 @@ async fn restart_publishes_nothing_before_the_first_verdict() {
     run_for(1).await;
     assert_eq!(prober.calls(), 2);
     let published = drain(&mut rx);
-    assert!(payloads(&published, "oikos/network/nas").is_empty());
+    assert!(payloads(&published, "nidoo/network/nas").is_empty());
 }
 
 #[tokio::test(start_paused = true)]
@@ -354,8 +354,8 @@ async fn cannot_ping_touches_only_availability() {
     for _ in 0..100 {
         run_for(1).await;
         let published = drain(&mut rx);
-        states.extend(payloads(&published, "oikos/network/nas"));
-        avails.extend(payloads(&published, "oikos/network/nas/avail"));
+        states.extend(payloads(&published, "nidoo/network/nas"));
+        avails.extend(payloads(&published, "nidoo/network/nas/avail"));
         saw_cannot_ping |=
             hub.list_network_watches().unwrap()[0].status.state == WatchState::CannotPing;
     }
@@ -383,7 +383,7 @@ async fn pausing_stops_the_loop_and_marks_offline() {
     run_for(150).await;
     assert_eq!(prober.calls(), calls);
     let published = drain(&mut rx);
-    assert!(payloads(&published, "oikos/network/nas").is_empty());
+    assert!(payloads(&published, "nidoo/network/nas").is_empty());
     let listed = hub.list_network_watches().unwrap();
     assert_eq!(listed[0].status.state, WatchState::Paused);
 }
@@ -441,11 +441,11 @@ async fn failed_publish_is_retried() {
     }
     run_for(1).await;
     let during = drain(&mut rx);
-    assert!(!payloads(&during, "oikos/network/nas").contains(&"OFF".to_owned()));
+    assert!(!payloads(&during, "nidoo/network/nas").contains(&"OFF".to_owned()));
     hub.set_connection(ConnectionStatus::Online);
     run_for(35).await;
     let after = drain(&mut rx);
-    assert_eq!(payloads(&after, "oikos/network/nas"), ["OFF"]);
+    assert_eq!(payloads(&after, "nidoo/network/nas"), ["OFF"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -488,10 +488,10 @@ fn loopback(mut rx: mpsc::Receiver<Publish>, hub: Arc<Hub>) -> Arc<Mutex<Vec<Str
     let log = Arc::clone(&states);
     tokio::spawn(async move {
         while let Some(p) = rx.recv().await {
-            if p.topic == "oikos/network/nas" {
+            if p.topic == "nidoo/network/nas" {
                 log.lock().unwrap().push(p.payload.clone());
             }
-            if p.topic == "oikos/network/nas" || p.topic == "oikos/network/nas/avail" {
+            if p.topic == "nidoo/network/nas" || p.topic == "nidoo/network/nas/avail" {
                 hub.ingest(&p.topic, p.payload.as_bytes());
             }
         }
@@ -509,7 +509,7 @@ async fn flow_runs_for(script: Vec<Probe>, seconds: u64) -> (usize, Vec<String>)
     hub.set_network_watch("nas", spec("nas.local"))
         .await
         .unwrap();
-    hub.ingest("oikos/automation/nas_down", NETWORK_FLOW.as_bytes());
+    hub.ingest("nidoo/automation/nas_down", NETWORK_FLOW.as_bytes());
     let mut events = hub.subscribe();
     let mut runs = 0;
     for _ in 0..seconds {

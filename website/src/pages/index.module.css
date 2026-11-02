@@ -56,7 +56,7 @@
   font-weight: 600;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--oikos-amber-text);
+  color: var(--nidoo-amber-text);
   opacity: 0;
   animation: rise 700ms ease-out 80ms forwards;
 }
@@ -68,7 +68,7 @@
   line-height: 1.04;
   letter-spacing: -0.035em;
   font-weight: 700;
-  color: var(--oikos-ink);
+  color: var(--nidoo-ink);
 }
 .line1, .line2 {
   display: block;
@@ -78,7 +78,7 @@
 .line1 { animation-delay: 180ms; }
 .line2 {
   animation-delay: 340ms;
-  color: var(--oikos-amber-text);
+  color: var(--nidoo-amber-text);
 }
 
 .subhead {
@@ -86,7 +86,7 @@
   margin: 1.6rem auto 2.2rem;
   font-size: clamp(1rem, 2.2vw, 1.2rem);
   line-height: 1.6;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
   opacity: 0;
   animation: rise 800ms ease-out 480ms forwards;
 }
@@ -101,33 +101,33 @@
   animation: rise 800ms ease-out 620ms forwards;
 }
 .ctaPrimary {
-  background: var(--oikos-cta-bg);
-  border-color: var(--oikos-cta-bg);
-  color: var(--oikos-cta-ink);
+  background: var(--nidoo-cta-bg);
+  border-color: var(--nidoo-cta-bg);
+  color: var(--nidoo-cta-ink);
   font-weight: 600;
-  box-shadow: 0 10px 30px -12px var(--oikos-cta-glow);
+  box-shadow: 0 10px 30px -12px var(--nidoo-cta-glow);
   transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 .ctaPrimary:hover {
-  color: var(--oikos-cta-ink);
+  color: var(--nidoo-cta-ink);
   transform: translateY(-1px);
   filter: brightness(1.08);
-  box-shadow: 0 14px 36px -12px var(--oikos-cta-glow);
+  box-shadow: 0 14px 36px -12px var(--nidoo-cta-glow);
 }
 .ctaGhost {
   background: transparent;
-  color: var(--oikos-ink);
-  border: 1px solid var(--oikos-chip-border);
+  color: var(--nidoo-ink);
+  border: 1px solid var(--nidoo-chip-border);
   font-weight: 500;
 }
 .ctaGhost:hover {
-  color: var(--oikos-ink);
-  border-color: var(--oikos-amber);
-  background: var(--oikos-card);
+  color: var(--nidoo-ink);
+  border-color: var(--nidoo-amber);
+  background: var(--nidoo-card);
 }
 .ctaText {
   font-weight: 500;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
 }
 .ctaText:hover { color: var(--ifm-link-color); text-decoration: none; }
 
@@ -144,11 +144,11 @@
 }
 .chip {
   padding: 0.28rem 0.85rem;
-  border: 1px solid var(--oikos-chip-border);
+  border: 1px solid var(--nidoo-chip-border);
   border-radius: 999px;
   font-size: 0.82rem;
   font-weight: 500;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
 }
 
 /* Product shot overlaps the hero's lower edge. */
@@ -162,10 +162,10 @@
   max-width: 1100px;
   margin: 0 auto;
   overflow: hidden;
-  border: 1px solid var(--oikos-card-border);
-  border-radius: var(--oikos-radius);
-  background: var(--oikos-bg);
-  box-shadow: var(--oikos-shot-shadow);
+  border: 1px solid var(--nidoo-card-border);
+  border-radius: var(--nidoo-radius);
+  background: var(--nidoo-bg);
+  box-shadow: var(--nidoo-shot-shadow);
   opacity: 0;
   animation: rise 900ms cubic-bezier(0.2, 0.7, 0.2, 1) 800ms forwards;
 }
@@ -174,17 +174,17 @@
   align-items: center;
   gap: 6px;
   padding: 0.65rem 0.9rem;
-  background: var(--oikos-raised);
-  border-bottom: 1px solid var(--oikos-card-border);
+  background: var(--nidoo-raised);
+  border-bottom: 1px solid var(--nidoo-card-border);
 }
-.light { width: 10px; height: 10px; border-radius: 50%; background: var(--oikos-chip-border); }
+.light { width: 10px; height: 10px; border-radius: 50%; background: var(--nidoo-chip-border); }
 .url {
   margin-left: 0.8rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 0.75rem;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
 }
 .shot { display: block; width: 100%; height: auto; }
 
@@ -192,20 +192,20 @@
 .closing {
   padding: clamp(3rem, 8vw, 6rem) 0 clamp(4rem, 9vw, 7rem);
   text-align: center;
-  background: radial-gradient(60% 80% at 50% 100%, var(--oikos-amber-soft), transparent 70%);
+  background: radial-gradient(60% 80% at 50% 100%, var(--nidoo-amber-soft), transparent 70%);
 }
 .closingTitle {
   font-size: clamp(2rem, 5vw, 3.2rem);
   letter-spacing: -0.02em;
   margin-bottom: 0.6rem;
 }
-.closingText { color: var(--oikos-ink-soft); margin-bottom: 1.8rem; }
+.closingText { color: var(--nidoo-ink-soft); margin-bottom: 1.8rem; }
 .closing .ctas { opacity: 1; animation: none; }
 .note {
   max-width: 34rem;
   margin: 2rem auto 0;
   font-size: 0.92rem;
-  color: var(--oikos-ink-soft);
+  color: var(--nidoo-ink-soft);
 }
 
 @media (max-width: 600px) {

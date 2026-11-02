@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Upgrade a Docker install: pull the latest code, move a legacy ./oikos.toml
-# and ./secrets/ into ./data/, then rebuild and restart.
+# Upgrade a Docker install: pull the latest code, move a legacy ./secrets/
+# into ./data/, then rebuild and restart.
 #
 # Usage: tools/update.sh [--hub-only|--all]
 #   --hub-only  rebuild and restart only the hub (you run your own broker and database)
 #   --all       rebuild and restart the whole compose stack (hub, Mosquitto, TimescaleDB)
 #
 # Without a flag the script picks: the whole stack when data/bundled.json or
-# compose.override.yml exists, the hub only when data/oikos.toml or
-# data/hub.json exists (own broker and database), the whole stack otherwise.
+# compose.override.yml exists, the hub only when data/hub.json
+# exists (own broker and database), the whole stack otherwise.
 #
 # Runs from the repo root whatever the current directory, so compose.yml and
 # ./data are the ones next to this checkout.
@@ -52,7 +52,6 @@ main() {
   fi
 
   migrate_legacy_files
-  warn_old_key_paths
 
   reason=""
   if [ -n "$mode" ]; then
@@ -60,7 +59,7 @@ main() {
   elif [ -e data/bundled.json ] || [ -e compose.override.yml ]; then
     mode=all
     reason="bundled stack or compose.override.yml found"
-  elif [ -e data/oikos.toml ] || [ -e data/hub.json ]; then
+  elif [ -e data/hub.json ]; then
     mode=hub
     reason="own broker and database"
   else
@@ -72,72 +71,14 @@ main() {
     echo "==> $reason: rebuilding the hub only"
     services=(hub)
   else
-    refuse_beside_own_old_containers
     echo "==> $reason: rebuilding the whole stack"
     services=()
   fi
-  switch_renamed_containers ${services[@]+"${services[@]}"}
   echo "==> docker compose up -d --build${services[*]+ ${services[*]}}"
   docker compose up -d --build ${services[@]+"${services[@]}"}
 
   echo "==> docker compose logs --tail 20 hub"
   docker compose logs --tail 20 hub
-}
-
-# Before the Nidoo rename the bundled broker and database were named like a
-# host's own oikos-mosquitto / oikos-timescaledb, so `docker compose up` stopped
-# on the name clash. Now they are nidoo-* and would start beside the host's own
-# (crash-looping, or fighting over the ports after a reboot). Refuse when compose
-# would start such a service while a container of that old name lives outside
-# this project and no override pins the name.
-refuse_beside_own_old_containers() {
-  local services ours config name service clash=()
-  services="$(docker compose config --services 2>/dev/null || true)"
-  ours="$(docker compose ps -a --format '{{.Name}}' 2>/dev/null || true)"
-  config="$(docker compose config 2>/dev/null || true)"
-  while IFS= read -r name; do
-    case "$name" in
-      oikos-mosquitto) service=mosquitto ;;
-      oikos-timescaledb) service=timescaledb ;;
-      *) continue ;;
-    esac
-    grep -Fxq "$service" <<<"$services" || continue
-    grep -Fxq "$name" <<<"$ours" && continue
-    grep -Eq "container_name: \"?$name\"?\$" <<<"$config" && continue
-    clash+=("$name")
-  done < <(docker ps -a --format '{{.Names}}')
-  [ "${#clash[@]}" -eq 0 ] && return 0
-  echo "This host runs its own ${clash[*]} outside this stack; the whole stack would now" >&2
-  echo "start the bundled one beside it. Run tools/update.sh --hub-only (your own broker" >&2
-  echo "and database), or move them in first: docs/users/move-into-the-stack.md" >&2
-  exit 1
-}
-
-# The containers were named oikos-* before the Nidoo rename. Compose finds them
-# by its own labels (`docker compose ps` lists this project's containers only,
-# for the services about to start), so a host's hand-made container that
-# happens to carry an old name is never touched, and neither is one that
-# compose.override.yml still names. The images are built first, so the old
-# containers stop only for the switch itself; the stop is graceful, so the
-# database flushes. Data stays where it is mounted.
-switch_renamed_containers() {
-  local old=() name config
-  config="$(docker compose config 2>/dev/null || true)"
-  while IFS= read -r name; do
-    case "$name" in
-      oikos-hub|oikos-mosquitto|oikos-timescaledb)
-        grep -Eq "container_name: \"?$name\"?\$" <<<"$config" || old+=("$name")
-        ;;
-    esac
-  done < <(docker compose ps -a --format '{{.Name}}' "$@")
-  [ "${#old[@]}" -gt 0 ] || return 0
-  echo "==> renamed containers: building first, then replacing ${old[*]}"
-  docker compose build "$@"
-  for name in "${old[@]}"; do
-    echo "==> docker stop -t 120 $name && docker rm $name"
-    docker stop -t 120 "$name"
-    docker rm "$name"
-  done
 }
 
 # Runs a command through sudo when data/ is not writable by this user.
@@ -150,23 +91,13 @@ priv() {
   fi
 }
 
-# Old installs kept ./oikos.toml and ./secrets/*; the hub now reads ./data/.
+# Old installs kept ./secrets/*; the hub now reads ./data/.
 # Never overwrite anything already in ./data/.
 migrate_legacy_files() {
   # The old compose bind-mounted ./data, so Docker created it as root.
   if [ -d data ] && [ ! -w data ]; then
     echo "data/ is owned by root; using sudo to move files into it"
     SUDO=sudo
-  fi
-
-  if [ -f oikos.toml ]; then
-    if [ -e data/oikos.toml ]; then
-      echo "data/oikos.toml already exists; ./oikos.toml left in place"
-    else
-      priv mkdir -p data
-      priv mv -n oikos.toml data/oikos.toml
-      echo "moved oikos.toml -> data/oikos.toml"
-    fi
   fi
 
   if [ -d secrets ]; then
@@ -182,14 +113,6 @@ migrate_legacy_files() {
         echo "moved $f -> data/secrets/$name"
       fi
     done
-  fi
-}
-
-# Once data/hub.json exists the TOML is never read again, so the warning
-# would only confuse.
-warn_old_key_paths() {
-  if [ ! -f data/hub.json ] && [ -f data/oikos.toml ] && grep -q '/etc/oikos/secrets' data/oikos.toml; then
-    echo "WARNING: data/oikos.toml names key files under /etc/oikos/secrets; change them to /data/secrets/... or delete those lines (the defaults find data/secrets/)" >&2
   fi
 }
 

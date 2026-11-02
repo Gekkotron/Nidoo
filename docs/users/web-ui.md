@@ -310,7 +310,7 @@ Every field that asks for an entity (the climate and home settings, the alarm's 
 
 ## Alerts
 
-Alerts (`/alerts`): the push alerts the hub keeps in `oikos/push/history`, with channel chips (All, Alarm, Security, Camera, Energy, Climate, System, Misc) and day groups (Today, Yesterday, then dates), and a "Recent alerts" section at the bottom of Home and of Security (the last five alerts of the camera, alarm and security channels). The detail (`/alerts/<id>`) shows the snapshot (a ▶ button plays the clip), the title and body, the channel and a "Resolved" badge when it is, the date, up to three of the alert's own buttons, **Open device** when the alert names one the house knows, and where it came from. These are the same screens as the Android app; the body stays in the producer's language. See [Push notifications](push-notifications.md) and [Cameras (Frigate)](cameras.md).
+Alerts (`/alerts`): the push alerts the hub keeps in `nidoo/push/history`, with channel chips (All, Alarm, Security, Camera, Energy, Climate, System, Misc) and day groups (Today, Yesterday, then dates), and a "Recent alerts" section at the bottom of Home and of Security (the last five alerts of the camera, alarm and security channels). The detail (`/alerts/<id>`) shows the snapshot (a ▶ button plays the clip), the title and body, the channel and a "Resolved" badge when it is, the date, up to three of the alert's own buttons, **Open device** when the alert names one the house knows, and where it came from. These are the same screens as the Android app; the body stays in the producer's language. See [Push notifications](push-notifications.md) and [Cameras (Frigate)](cameras.md).
 
 ## Flows
 

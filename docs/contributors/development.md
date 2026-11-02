@@ -31,7 +31,7 @@ Refresh the recording from a live house with:
 MQTT_HOST=<host> MQTT_USER=<user> MQTT_PASS=<password> tools/record-fixtures.sh
 ```
 
-The script needs `mosquitto_sub` and `python3`. It listens for six seconds to `homeassistant/#`, `oikos/#` and `zigbee2mqtt/…`, then rewrites the `discovery`, `states` and `ui` folders under `crates/nidoo-core/tests/fixtures`. It leaves the fixtures untouched when no retained message arrives. `MQTT_PORT` (default 1883) is optional. Credentials are read from the environment only and never written anywhere.
+The script needs `mosquitto_sub` and `python3`. It listens for six seconds to `homeassistant/#`, `nidoo/#` and `zigbee2mqtt/…`, then rewrites the `discovery`, `states` and `ui` folders under `crates/nidoo-core/tests/fixtures`. It leaves the fixtures untouched when no retained message arrives. `MQTT_PORT` (default 1883) is optional. Credentials are read from the environment only and never written anywhere.
 
 ## Run the hub
 
@@ -88,7 +88,7 @@ The other tests under `crates/nidoo-web/tests` (cards, flow canvas, group wizard
 
 ## `tools/restart.sh`
 
-[`tools/restart.sh`](https://github.com/Gekkotron/Nidoo/blob/main/tools/restart.sh) builds the web UI and the hub, stops the running hub and starts the new one, detached, from the repo root so it reads `./data`. It waits up to 20 seconds for `/health`, and logs to `<cargo target dir>/nidoo.log` (set `OIKOS_LOG` to log elsewhere).
+[`tools/restart.sh`](https://github.com/Gekkotron/Nidoo/blob/main/tools/restart.sh) builds the web UI and the hub, stops the running hub and starts the new one, detached, from the repo root so it reads `./data`. It waits up to 20 seconds for `/health`, and logs to `<cargo target dir>/nidoo.log` (set `NIDOO_LOG` to log elsewhere).
 
 | Flag | Effect |
 | --- | --- |

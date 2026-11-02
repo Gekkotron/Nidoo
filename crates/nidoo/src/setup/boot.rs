@@ -5,14 +5,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
 use nidoo_api::Location;
 use tokio::task::JoinHandle;
 
 use crate::config::Config;
 use crate::history::db::Db;
-use crate::history::writer::{INITIAL_BACKOFF, MAX_BACKOFF};
-use crate::setup::import::{cwd_toml, import_toml, toml_candidate};
 use crate::setup::restart::schedule_restart;
 use crate::setup::sections::{Sections, assemble};
 use crate::setup::store::{load_stored, read_cache, save_sections, write_cache};
@@ -24,9 +21,6 @@ use crate::weather::poller::{GEOCODE_BACKOFF_MAX, GEOCODE_BACKOFF_START};
 const DB_WAIT: Duration = Duration::from_secs(5);
 /// The pause before the hub restarts into a location it just found.
 const RESTART_DELAY: Duration = Duration::from_secs(1);
-/// The line that tells the user the old file is spent. Its wording is part of the contract.
-pub const IMPORTED_LINE: &str =
-    "oikos.toml imported into the database; it is no longer read and can be deleted";
 
 pub enum Boot {
     Setup(Arc<SetupCtx>),
@@ -36,48 +30,18 @@ pub enum Boot {
     },
 }
 
-/// Reads `hub.json` (importing `oikos.toml` the first time) and decides how the hub starts.
-/// A `hub.json` that cannot be read or parsed is an error naming the file: starting in setup
-/// mode would look as if the house had been wiped.
-pub async fn resolve(data_dir: &Path, config_flag: Option<&Path>) -> anyhow::Result<Boot> {
-    let mut imported: Option<Sections> = None;
-    let file = match HubFile::load(data_dir)? {
-        Some(file) => file,
-        None => match toml_candidate(data_dir, config_flag) {
-            Some(path) => {
-                tracing::info!(path = %path.display(), "importing the existing config");
-                let (file, sections) = import_toml(&path)
-                    .with_context(|| format!("cannot import {}", path.display()))?;
-                // The cache first, hub.json last: hub.json is the commit marker. A crash or a
-                // full disk in between leaves no hub.json, so the next boot imports again.
-                write_cache(data_dir, &sections).context("cannot write the settings cache")?;
-                file.save(data_dir).with_context(|| {
-                    format!("cannot write {}", HubFile::path(data_dir).display())
-                })?;
-                imported = Some(sections);
-                file
-            }
-            None => HubFile::default(),
-        },
-    };
-    let file = file
+/// Reads `hub.json` and decides how the hub starts. A `hub.json` that cannot be read or parsed
+/// is an error naming the file: starting in setup mode would look as if the house had been
+/// wiped.
+pub async fn resolve(data_dir: &Path) -> anyhow::Result<Boot> {
+    let file = HubFile::load(data_dir)?
+        .unwrap_or_default()
         .with_bootstrap_env()
-        .map_err(|e| anyhow::anyhow!("invalid NIDOO_* (or OIKOS_*) override: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid NIDOO_* override: {e}"))?;
 
     let restart = RestartHook::Exec;
     let Some(url) = file.database_url.clone().filter(|_| file.is_complete()) else {
-        if imported.is_none()
-            && let Some(path) = cwd_toml()
-        {
-            tracing::warn!(
-                path = %path.display(),
-                "setup mode: this oikos.toml is not read; the hub reads hub.json in its data \
-                 folder, and imports an oikos.toml only when there is no hub.json yet"
-            );
-        }
-        let sections = imported
-            .or_else(|| read_cache(data_dir))
-            .unwrap_or_default();
+        let sections = read_cache(data_dir).unwrap_or_default();
         let ctx = SetupCtx::new(
             data_dir.to_path_buf(),
             Mode::Setup,
@@ -96,19 +60,7 @@ pub async fn resolve(data_dir: &Path, config_flag: Option<&Path>) -> anyhow::Res
             None
         }
     };
-    // Only settings this boot imported, or the cache of an earlier import, are worth copying
-    // into the table. With neither there is nothing to import: the table (or the cache) rules.
-    let to_copy = if file.settings_imported {
-        None
-    } else {
-        imported.or_else(|| read_cache(data_dir))
-    };
-    let mark_imported = !file.settings_imported && to_copy.is_none();
-    let sections = match &to_copy {
-        Some(sections) => sections.clone(),
-        None => load_or_cached(db.as_ref(), data_dir).await,
-    };
-
+    let sections = load_or_cached(db.as_ref(), data_dir).await;
     let cfg = assemble(&file, &sections);
     let ctx = Arc::new(SetupCtx::new(
         data_dir.to_path_buf(),
@@ -118,13 +70,6 @@ pub async fn resolve(data_dir: &Path, config_flag: Option<&Path>) -> anyhow::Res
         sections,
         restart,
     ));
-    if to_copy.is_some() {
-        spawn_import_copy(Arc::clone(&ctx));
-    } else if mark_imported
-        && let Err(error) = ctx.update_file(|f| f.settings_imported = true).await
-    {
-        tracing::warn!(%error, "settings: cannot record that there was nothing to import");
-    }
     Ok(Boot::Run {
         cfg: Box::new(cfg),
         ctx,
@@ -143,7 +88,7 @@ async fn load_or_cached(db: Option<&Db>, data_dir: &Path) -> Sections {
                     tracing::warn!(
                         "settings: the database holds no settings; restoring them from the cached copy"
                     );
-                    // The import copy's save step. A failure leaves the table empty and the
+                    // A failure leaves the table empty and the
                     // cache as it is, so the next boot tries again.
                     match tokio::time::timeout(DB_WAIT, save_sections(db, &sections)).await {
                         Ok(Ok(())) => {}
@@ -191,40 +136,6 @@ fn from_table(stored: Option<Sections>, cached: Option<Sections>) -> (Sections, 
 async fn load_from_db(db: &Db) -> anyhow::Result<Option<Sections>> {
     db.migrate().await?;
     Ok(load_stored(db).await?)
-}
-
-/// Copies the sections into the `settings` table once the database answers, then marks the
-/// import done in `hub.json`. Retries forever with the history writer's backoff: the house
-/// runs from the cached copy meanwhile.
-pub fn spawn_import_copy(ctx: Arc<SetupCtx>) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let Some(db) = ctx.db.as_ref() else { return };
-        let mut backoff = INITIAL_BACKOFF;
-        loop {
-            // The lock is held from the snapshot to the save (and released before any
-            // sleep), so a `PUT /settings` can never be overwritten by a stale copy.
-            let copied = async {
-                db.migrate().await.map_err(anyhow::Error::from)?;
-                let sections = ctx.sections.lock().await;
-                save_sections(db, &sections)
-                    .await
-                    .map_err(anyhow::Error::from)
-            }
-            .await;
-            match copied {
-                Ok(()) => break,
-                Err(error) => {
-                    tracing::warn!(%error, retry_in = ?backoff, "settings: import copy waiting for the database");
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
-                }
-            }
-        }
-        match ctx.update_file(|f| f.settings_imported = true).await {
-            Ok(()) => tracing::info!("{IMPORTED_LINE}"),
-            Err(error) => tracing::error!(%error, "settings: cannot record the import in hub.json"),
-        }
-    })
 }
 
 /// Geocodes `pending_city` into `location` (the setup's weather place), then restarts so the
@@ -316,16 +227,16 @@ mod tests {
 
     use super::*;
 
-    /// `resolve` reads `OIKOS_*` and `Config::load` does too, so each call runs inside figment's
-    /// lock on a runtime of its own.
-    fn resolve_locked(dir: &Path, flag: Option<&Path>) -> anyhow::Result<Boot> {
+    /// `resolve` reads `NIDOO_*`, so each call runs inside figment's lock on a runtime of its
+    /// own.
+    fn resolve_locked(dir: &Path) -> anyhow::Result<Boot> {
         let mut out = None;
         figment::Jail::expect_with(|_| {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
-            out = Some(rt.block_on(resolve(dir, flag)));
+            out = Some(rt.block_on(resolve(dir)));
             Ok(())
         });
         out.unwrap()
@@ -337,65 +248,17 @@ mod tests {
         p
     }
 
-    const DOWN: &str = "postgres://u:p@127.0.0.1:1/oikos";
-
-    fn toml_with_history(url: &str) -> String {
-        format!(
-            "[mqtt]\nhost = \"192.0.2.1\"\n[history]\nurl = \"{url}\"\n[weather]\nenabled = true\ncity = \"Lyon\"\n"
-        )
-    }
+    const DOWN: &str = "postgres://u:p@127.0.0.1:1/nidoo";
 
     #[test]
     fn empty_dir_is_setup_mode() {
         let tmp = tempfile::tempdir().unwrap();
-        let boot = resolve_locked(tmp.path(), None).unwrap();
+        let boot = resolve_locked(tmp.path()).unwrap();
         let Boot::Setup(ctx) = boot else {
             panic!("expected setup mode")
         };
         assert_eq!(ctx.mode, Mode::Setup);
         assert!(ctx.db.is_none());
-    }
-
-    #[test]
-    fn toml_without_history_is_setup_mode_with_mqtt_kept() {
-        let tmp = tempfile::tempdir().unwrap();
-        let toml = write(tmp.path(), "oikos.toml", "[mqtt]\nhost = \"192.0.2.1\"\n");
-        let Boot::Setup(ctx) = resolve_locked(tmp.path(), Some(&toml)).unwrap() else {
-            panic!("expected setup mode")
-        };
-        let file = ctx.file.try_lock().unwrap();
-        assert_eq!(file.mqtt.as_ref().unwrap().host, "192.0.2.1");
-        assert!(file.database_url.is_none());
-        assert!(tmp.path().join("hub.json").exists());
-    }
-
-    #[test]
-    fn import_with_unreachable_db_boots_run_from_the_toml() {
-        let tmp = tempfile::tempdir().unwrap();
-        let toml = write(tmp.path(), "oikos.toml", &toml_with_history(DOWN));
-        let Boot::Run { cfg, ctx } = resolve_locked(tmp.path(), Some(&toml)).unwrap() else {
-            panic!("expected normal mode")
-        };
-        assert!(cfg.weather.enabled);
-        assert_eq!(cfg.mqtt.host, "192.0.2.1");
-        assert!(tmp.path().join("hub.json").exists());
-        assert!(tmp.path().join("settings-cache.json").exists());
-        // The copy has not happened: the flag stays off until the database takes the rows.
-        assert!(!ctx.file.try_lock().unwrap().settings_imported);
-    }
-
-    #[test]
-    fn a_city_only_weather_import_boots_a_config_that_validates() {
-        // `toml_with_history` turns weather on with a city and no coordinates (the documented
-        // setup): main validates the config before anything starts.
-        let tmp = tempfile::tempdir().unwrap();
-        let toml = write(tmp.path(), "oikos.toml", &toml_with_history(DOWN));
-        let Boot::Run { cfg, ctx } = resolve_locked(tmp.path(), Some(&toml)).unwrap() else {
-            panic!("expected normal mode")
-        };
-        assert_eq!(cfg.validate_all(), Ok(()));
-        assert_eq!(cfg.weather.city, "Lyon");
-        assert!(ctx.file.try_lock().unwrap().pending_city.is_some());
     }
 
     #[test]
@@ -421,7 +284,6 @@ mod tests {
         let file = HubFile {
             mqtt: Some(crate::config::MqttConfig::default()),
             database_url: Some(DOWN.into()),
-            settings_imported: true,
             finished: true,
             ..HubFile::default()
         };
@@ -429,7 +291,7 @@ mod tests {
         let mut cached = Sections::default();
         cached.weather.enabled = true;
         write_cache(tmp.path(), &cached).unwrap();
-        let Boot::Run { cfg, ctx } = resolve_locked(tmp.path(), None).unwrap() else {
+        let Boot::Run { cfg, ctx } = resolve_locked(tmp.path()).unwrap() else {
             panic!("expected normal mode")
         };
         assert!(cfg.weather.enabled);
@@ -442,11 +304,10 @@ mod tests {
         let file = HubFile {
             mqtt: Some(crate::config::MqttConfig::default()),
             database_url: Some(DOWN.into()),
-            settings_imported: true,
             ..HubFile::default()
         };
         file.save(tmp.path()).unwrap();
-        let Boot::Run { cfg, .. } = resolve_locked(tmp.path(), None).unwrap() else {
+        let Boot::Run { cfg, .. } = resolve_locked(tmp.path()).unwrap() else {
             panic!("expected normal mode")
         };
         assert_eq!(cfg.weather.enabled, Sections::default().weather.enabled);
@@ -456,7 +317,7 @@ mod tests {
     fn corrupt_hub_file_is_an_error_naming_it() {
         let tmp = tempfile::tempdir().unwrap();
         write(tmp.path(), "hub.json", "{\"mqtt\":");
-        let err = match resolve_locked(tmp.path(), None) {
+        let err = match resolve_locked(tmp.path()) {
             Ok(_) => panic!("a corrupt hub.json must not boot"),
             Err(e) => format!("{e:#}"),
         };
@@ -464,128 +325,23 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_hub_file_is_not_replaced_by_a_toml() {
-        let tmp = tempfile::tempdir().unwrap();
-        HubFile::default().save(tmp.path()).unwrap();
-        let toml = write(tmp.path(), "oikos.toml", &toml_with_history(DOWN));
-        let Boot::Setup(ctx) = resolve_locked(tmp.path(), Some(&toml)).unwrap() else {
-            panic!("the existing, empty hub.json decides")
-        };
-        assert!(ctx.file.try_lock().unwrap().mqtt.is_none());
-    }
-
-    #[test]
     fn env_alone_completes_the_bootstrap() {
         let tmp = tempfile::tempdir().unwrap();
         let mut out = None;
         figment::Jail::expect_with(|jail| {
-            jail.set_env("OIKOS_MQTT__HOST", "192.0.2.7");
-            jail.set_env("OIKOS_HISTORY__URL", DOWN);
+            jail.set_env("NIDOO_MQTT__HOST", "192.0.2.7");
+            jail.set_env("NIDOO_HISTORY__URL", DOWN);
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
-            out = Some(rt.block_on(resolve(tmp.path(), None)));
+            out = Some(rt.block_on(resolve(tmp.path())));
             Ok(())
         });
         let Boot::Run { cfg, .. } = out.unwrap().unwrap() else {
             panic!("expected normal mode")
         };
         assert_eq!(cfg.mqtt.host, "192.0.2.7");
-    }
-
-    #[test]
-    fn env_only_boot_marks_the_flag_without_a_copy() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut out = None;
-        figment::Jail::expect_with(|jail| {
-            jail.set_env("OIKOS_MQTT__HOST", "192.0.2.7");
-            jail.set_env("OIKOS_HISTORY__URL", DOWN);
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            out = Some(rt.block_on(resolve(tmp.path(), None)));
-            Ok(())
-        });
-        let Boot::Run { ctx, .. } = out.unwrap().unwrap() else {
-            panic!("expected normal mode")
-        };
-        // A copy against a down database could never have set the flag.
-        assert!(ctx.file.try_lock().unwrap().settings_imported);
-        assert!(
-            HubFile::load(tmp.path())
-                .unwrap()
-                .unwrap()
-                .settings_imported
-        );
-    }
-
-    #[test]
-    fn complete_file_without_cache_or_import_marks_the_flag_without_a_copy() {
-        let tmp = tempfile::tempdir().unwrap();
-        HubFile {
-            mqtt: Some(crate::config::MqttConfig::default()),
-            database_url: Some(DOWN.into()),
-            ..HubFile::default()
-        }
-        .save(tmp.path())
-        .unwrap();
-        let Boot::Run { ctx, .. } = resolve_locked(tmp.path(), None).unwrap() else {
-            panic!("expected normal mode")
-        };
-        assert!(ctx.file.try_lock().unwrap().settings_imported);
-        assert!(
-            HubFile::load(tmp.path())
-                .unwrap()
-                .unwrap()
-                .settings_imported
-        );
-    }
-
-    #[test]
-    fn an_uncopied_cache_still_gets_its_copy() {
-        let tmp = tempfile::tempdir().unwrap();
-        HubFile {
-            mqtt: Some(crate::config::MqttConfig::default()),
-            database_url: Some(DOWN.into()),
-            ..HubFile::default()
-        }
-        .save(tmp.path())
-        .unwrap();
-        let mut cached = Sections::default();
-        cached.weather.enabled = true;
-        write_cache(tmp.path(), &cached).unwrap();
-        let Boot::Run { cfg, ctx } = resolve_locked(tmp.path(), None).unwrap() else {
-            panic!("expected normal mode")
-        };
-        assert!(cfg.weather.enabled);
-        // The copy is waiting for the database: the flag stays off.
-        assert!(!ctx.file.try_lock().unwrap().settings_imported);
-    }
-
-    #[test]
-    fn a_failed_cache_write_leaves_no_hub_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        // A directory where the cache file goes makes its write fail.
-        std::fs::create_dir(tmp.path().join("settings-cache.json")).unwrap();
-        let toml = write(tmp.path(), "oikos.toml", &toml_with_history(DOWN));
-        assert!(resolve_locked(tmp.path(), Some(&toml)).is_err());
-        assert!(!tmp.path().join("hub.json").exists());
-    }
-
-    #[test]
-    fn setup_mode_keeps_the_imported_sections() {
-        let tmp = tempfile::tempdir().unwrap();
-        let toml = write(
-            tmp.path(),
-            "oikos.toml",
-            "[mqtt]\nhost = \"192.0.2.1\"\n[weather]\nenabled = true\ncity = \"Lyon\"\n",
-        );
-        let Boot::Setup(ctx) = resolve_locked(tmp.path(), Some(&toml)).unwrap() else {
-            panic!("expected setup mode")
-        };
-        assert!(ctx.sections.try_lock().unwrap().weather.enabled);
     }
 
     fn ctx_with(file: HubFile, dir: &Path) -> (Arc<SetupCtx>, Arc<AtomicUsize>) {

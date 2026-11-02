@@ -1,4 +1,4 @@
-//! The per-entity override retained on `oikos/ui/<unique_id>`, field for field as the app's `UiOverride`.
+//! The per-entity override retained on `nidoo/ui/<unique_id>`, field for field as the app's `UiOverride`.
 
 use std::collections::BTreeMap;
 
@@ -26,7 +26,7 @@ pub const SHOW_AS: &[&str] = &["light", "door", "siren", "chime", "plug"];
 /// `showAs: "light"` until the app reads `showAs` (device sheet spec §10, step 4).
 const LEGACY_AS_LIGHT: &str = "asLight";
 
-/// Retained JSON on `oikos/ui/<unique_id>`.
+/// Retained JSON on `nidoo/ui/<unique_id>`.
 ///
 /// Decoding is lenient (unknown keys are kept in [`UiOverride::extra`], nulls read as absent,
 /// enum-like values stay strings so a role this hub does not know survives a read-modify-write);

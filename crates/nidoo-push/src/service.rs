@@ -1,4 +1,4 @@
-//! The stateful push service, ported from OikosPush `oikos_push_service.py`. The hub routes
+//! The stateful push service. The hub routes
 //! its MQTT traffic here (`wants` / `on_message`, `on_connected`, `on_subscribed`) and the
 //! service publishes through the hub's channel. The broker is the database: the history is
 //! adopted from the retained `<prefix>/history` at the first sync, the queue is memory only.
@@ -25,7 +25,6 @@ const SETTLE: Duration = Duration::from_secs(2);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PushSettings {
     pub prefix: String,
-    pub legacy_prefix: String,
     pub retry_interval: u64,
     pub max_retries: u32,
     pub history_size: usize,
@@ -53,7 +52,7 @@ pub struct PushStatus {
 enum Route<'a> {
     Notification(&'a str),
     Token(&'a str),
-    History { legacy: bool },
+    History,
 }
 
 /// Not `Debug`: the token map holds secret FCM tokens.
@@ -68,8 +67,6 @@ struct State {
     settle_epoch: Option<u64>,
     /// Retained `<prefix>/history` seen before the first load.
     candidate: Option<Vec<u8>>,
-    /// Retained `<legacy>/history` seen before the first load.
-    seed: Option<Vec<u8>>,
     /// Alerts received before the first load, in arrival order.
     held: Vec<Alert>,
     history: History,
@@ -87,7 +84,6 @@ struct Job {
 
 pub struct PushService {
     prefix: String,
-    legacy_prefix: String,
     retry_interval: u64,
     publisher: mpsc::Sender<Publish>,
     transport: Option<Arc<dyn FcmTransport>>,
@@ -113,7 +109,6 @@ impl PushService {
             epoch: 0,
             settle_epoch: None,
             candidate: None,
-            seed: None,
             held: Vec::new(),
             history: History::new(settings.history_size, settings.history_days),
             tokens: Tokens::default(),
@@ -122,7 +117,6 @@ impl PushService {
         let (jobs, jobs_rx) = mpsc::unbounded_channel();
         Arc::new(PushService {
             prefix: settings.prefix.trim_matches('/').to_string(),
-            legacy_prefix: settings.legacy_prefix.trim_matches('/').to_string(),
             retry_interval: settings.retry_interval,
             publisher,
             transport,
@@ -137,35 +131,27 @@ impl PushService {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn prefixes(&self) -> impl Iterator<Item = (&str, bool)> {
-        std::iter::once((self.prefix.as_str(), false))
-            .chain((!self.legacy_prefix.is_empty()).then_some((self.legacy_prefix.as_str(), true)))
-    }
-
     /// The MQTT filters the hub subscribes to for this service.
     pub fn filters(&self) -> Vec<String> {
-        self.prefixes()
-            .flat_map(|(p, _)| {
-                [
-                    format!("{p}/notification/+"),
-                    format!("{p}/tokens/+"),
-                    format!("{p}/history"),
-                ]
-            })
-            .collect()
+        let p = &self.prefix;
+        vec![
+            format!("{p}/notification/+"),
+            format!("{p}/tokens/+"),
+            format!("{p}/history"),
+        ]
     }
 
     fn route<'a>(&self, topic: &'a str) -> Option<Route<'a>> {
-        self.prefixes().find_map(|(prefix, legacy)| {
-            let rest = topic.strip_prefix(prefix)?.strip_prefix('/')?;
-            if rest == "history" {
-                Some(Route::History { legacy })
-            } else if let Some(source) = rest.strip_prefix("notification/") {
-                Some(Route::Notification(source))
-            } else {
-                rest.strip_prefix("tokens/").map(Route::Token)
-            }
-        })
+        let rest = topic
+            .strip_prefix(self.prefix.as_str())?
+            .strip_prefix('/')?;
+        if rest == "history" {
+            Some(Route::History)
+        } else if let Some(source) = rest.strip_prefix("notification/") {
+            Some(Route::Notification(source))
+        } else {
+            rest.strip_prefix("tokens/").map(Route::Token)
+        }
     }
 
     pub fn wants(&self, topic: &str) -> bool {
@@ -198,7 +184,7 @@ impl PushService {
         match self.route(topic) {
             None => tracing::debug!(%topic, "push ignores this topic"),
             Some(Route::Token(install)) => self.on_token(topic, install, payload),
-            Some(Route::History { legacy }) => self.on_history(topic, legacy, payload, retain),
+            Some(Route::History) => self.on_history(topic, payload, retain),
             Some(Route::Notification(source)) => {
                 if source.is_empty() || source.contains('/') {
                     tracing::warn!(%topic, "ignoring notification on unexpected topic");
@@ -232,7 +218,7 @@ impl PushService {
         }
     }
 
-    fn on_history(&self, topic: &str, legacy: bool, payload: &[u8], retain: bool) {
+    fn on_history(&self, topic: &str, payload: &[u8], retain: bool) {
         if !retain {
             // Our own publish coming back, or a stray live message: never adopted.
             tracing::debug!(%topic, "ignoring non-retained history");
@@ -242,12 +228,7 @@ impl PushService {
         if st.loaded {
             return;
         }
-        let slot = if legacy {
-            &mut st.seed
-        } else {
-            &mut st.candidate
-        };
-        *slot = Some(payload.to_vec());
+        st.candidate = Some(payload.to_vec());
     }
 
     /// The in-process path (bridges, flows, MCP): like a notification arriving on MQTT.
@@ -357,27 +338,17 @@ impl PushService {
         }
     }
 
-    /// The first settle: adopt the retained list (or the legacy seed), apply the held alerts
+    /// The first settle: adopt the retained list, apply the held alerts
     /// and publish. Returns the held alerts, to be sent once synced.
     fn load(&self, st: &mut State) -> Vec<Alert> {
         let now = (self.clock)();
         let candidate = st.candidate.take();
-        let seed = st.seed.take();
-        // A retained JSON array on the new topic, even `[]`, is the list: the legacy seed is
-        // used only when the new topic is missing, cleared (empty payload) or not an array.
-        for (what, raw) in [("history", candidate), ("legacy history", seed)] {
-            let Some(raw) = raw.filter(|r| !r.trim_ascii().is_empty()) else {
-                continue;
-            };
+        if let Some(raw) = candidate.filter(|r| !r.trim_ascii().is_empty()) {
             if st.history.replace_from_json(&raw) {
-                tracing::info!(
-                    what,
-                    entries = st.history.entries().len(),
-                    "push history adopted"
-                );
-                break;
+                tracing::info!(entries = st.history.entries().len(), "push history adopted");
+            } else {
+                tracing::warn!("retained push history is not a JSON array");
             }
-            tracing::warn!(what, "retained push history is not a JSON array");
         }
         st.loaded = true;
         st.history.trim(now);

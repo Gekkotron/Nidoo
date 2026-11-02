@@ -117,4 +117,4 @@ The report is returned to whoever applied the ambiance and sent on the WebSocket
 
 In the web UI, the **My moods** page creates, edits, reorders, deletes and applies ambiances, and the house overview applies the pinned ones with one tap. See [Moods](web-ui.md#moods). They can also be managed through the REST API or the MCP tools. See [HTTP API](../reference/http-api.md#ambiances) and [MCP tools](../reference/mcp-tools.md#ambiances). An assistant connected through MCP can list, create, change, delete and apply them with `list_ambiances`, `set_ambiance`, `delete_ambiance` and `apply_ambiance`.
 
-Each ambiance is a retained message on `oikos/ui/ambiances/<id>`, so it survives a restart of the hub. An ambiance whose stored definition cannot be read is kept and listed with its reason, and it cannot be applied until it is fixed or deleted.
+Each ambiance is a retained message on `nidoo/ui/ambiances/<id>`, so it survives a restart of the hub. An ambiance whose stored definition cannot be read is kept and listed with its reason, and it cannot be applied until it is fixed or deleted.

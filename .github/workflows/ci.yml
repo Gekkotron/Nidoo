@@ -46,20 +46,20 @@ jobs:
     # throwaway TimescaleDB so they run here.
     services:
       timescaledb:
-        image: timescale/timescaledb:latest-pg17
+        image: timescale/timescaledb:2.17.2-pg17
         env:
-          POSTGRES_USER: oikos
-          POSTGRES_PASSWORD: oikos
-          POSTGRES_DB: oikos
+          POSTGRES_USER: nidoo
+          POSTGRES_PASSWORD: nidoo
+          POSTGRES_DB: nidoo
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U oikos"
+          --health-cmd "pg_isready -U nidoo"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      TEST_DATABASE_URL: postgres://oikos:oikos@localhost:5432/oikos
+      TEST_DATABASE_URL: postgres://nidoo:nidoo@localhost:5432/nidoo
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

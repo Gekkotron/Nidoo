@@ -118,8 +118,8 @@ fn write_bundled(dir: &Path) {
     std::fs::write(
         dir.join("bundled.json"),
         json!({
-            "mqtt_user": "oikos", "mqtt_password": "bundled-mqtt-secret",
-            "db_user": "oikos", "db_password": "bundled-db-secret", "db_name": "oikos"
+            "mqtt_user": "nidoo", "mqtt_password": "bundled-mqtt-secret",
+            "db_user": "nidoo", "db_password": "bundled-db-secret", "db_name": "nidoo"
         })
         .to_string(),
     )
@@ -160,16 +160,16 @@ async fn bundled_prefills_views_without_leaking() {
     assert!(!text.contains("bundled-mqtt-secret") && !text.contains("bundled-db-secret"));
     let body: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(body["bundled"], true);
-    assert_eq!(body["mqtt"]["user"], "oikos");
+    assert_eq!(body["mqtt"]["user"], "nidoo");
     assert_eq!(body["mqtt"]["password"], json!({"set": true}));
-    assert_eq!(body["database"]["database"], "oikos");
+    assert_eq!(body["database"]["database"], "nidoo");
     assert_eq!(body["database"]["password"], json!({"set": true}));
 }
 
 #[tokio::test]
 async fn stored_passwords_are_never_returned() {
     let mut file = mqtt_file("192.0.2.1");
-    file.database_url = Some("postgres://dbu:db-secret@192.0.2.2:5433/oikos".into());
+    file.database_url = Some("postgres://dbu:db-secret@192.0.2.2:5433/nidoo".into());
     let s = serve(Mode::Run, file, None, true).await;
     let r = s.client.get(s.url("")).send().await.unwrap();
     let text = r.text().await.unwrap();
@@ -414,14 +414,14 @@ async fn bundled_password_does_not_follow_a_new_host() {
 #[tokio::test]
 async fn database_new_host_without_password_is_422() {
     let file = HubFile {
-        database_url: Some("postgres://u:p@a.example.com:5432/oikos".into()),
+        database_url: Some("postgres://u:p@a.example.com:5432/nidoo".into()),
         ..HubFile::default()
     };
     let s = serve(Mode::Setup, file, None, false).await;
     let (code, body) = s
         .put(
             "/database",
-            json!({"host":"b.example.com","port":5432,"database":"oikos","user":"u"}),
+            json!({"host":"b.example.com","port":5432,"database":"nidoo","user":"u"}),
         )
         .await;
     assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
@@ -435,7 +435,7 @@ async fn failed_database_probe_saves_nothing() {
     let (code, body) = s
         .put(
             "/database",
-            json!({"host":"127.0.0.1","port":port,"database":"oikos","user":"u","password":"pw-secret-9"}),
+            json!({"host":"127.0.0.1","port":port,"database":"nidoo","user":"u","password":"pw-secret-9"}),
         )
         .await;
     assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
@@ -457,7 +457,7 @@ async fn step_put_never_finishes() {
 #[tokio::test]
 async fn finish_sets_finished_and_done() {
     let file = HubFile {
-        database_url: Some("postgres://u:p@192.0.2.2/oikos".into()),
+        database_url: Some("postgres://u:p@192.0.2.2/nidoo".into()),
         ..mqtt_file("192.0.2.1")
     };
     let s = serve(Mode::Setup, file, None, false).await;
@@ -611,7 +611,7 @@ async fn mqtt_put_saves_after_a_good_probe() {
 async fn mqtt_put_that_completes_the_file_restarts() {
     let port = fake_broker(0).await;
     let file = HubFile {
-        database_url: Some("postgres://u:p@192.0.2.2/oikos".into()),
+        database_url: Some("postgres://u:p@192.0.2.2/nidoo".into()),
         ..HubFile::default()
     };
     let s = serve(Mode::Setup, file, None, false).await;
@@ -741,7 +741,7 @@ async fn bundled_mqtt_password_stays_on_the_bundled_port() {
             .send(
                 method,
                 path,
-                json!({"host":"localhost","port":1884,"user":"oikos"}),
+                json!({"host":"localhost","port":1884,"user":"nidoo"}),
             )
             .await;
         assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
@@ -753,7 +753,7 @@ async fn bundled_mqtt_password_stays_on_the_bundled_port() {
 #[tokio::test]
 async fn database_same_host_other_port_needs_the_password() {
     let file = HubFile {
-        database_url: Some("postgres://u:p@127.0.0.1:5432/oikos".into()),
+        database_url: Some("postgres://u:p@127.0.0.1:5432/nidoo".into()),
         ..HubFile::default()
     };
     let s = serve(Mode::Setup, file, None, false).await;
@@ -765,7 +765,7 @@ async fn database_same_host_other_port_needs_the_password() {
             .send(
                 method,
                 path,
-                json!({"host":"127.0.0.1","port":5433,"database":"oikos","user":"u"}),
+                json!({"host":"127.0.0.1","port":5433,"database":"nidoo","user":"u"}),
             )
             .await;
         assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
@@ -785,7 +785,7 @@ async fn bundled_database_password_stays_on_the_bundled_port() {
             .send(
                 method,
                 path,
-                json!({"host":"localhost","port":5433,"database":"oikos","user":"oikos"}),
+                json!({"host":"localhost","port":5433,"database":"nidoo","user":"nidoo"}),
             )
             .await;
         assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
@@ -797,7 +797,7 @@ async fn bundled_database_password_stays_on_the_bundled_port() {
 async fn database_name_or_user_change_alone_is_not_a_new_address() {
     let port = closed_port().await;
     let file = HubFile {
-        database_url: Some(format!("postgres://u:p@127.0.0.1:{port}/oikos")),
+        database_url: Some(format!("postgres://u:p@127.0.0.1:{port}/nidoo")),
         ..HubFile::default()
     };
     let s = serve(Mode::Setup, file, None, false).await;
@@ -889,7 +889,7 @@ async fn serve_settings(
 }
 
 /// A database address nothing answers on.
-const DEAD_DB: &str = "postgres://u:p@127.0.0.1:1/oikos";
+const DEAD_DB: &str = "postgres://u:p@127.0.0.1:1/nidoo";
 
 #[tokio::test]
 async fn get_never_returns_secrets() {
@@ -1123,7 +1123,7 @@ async fn push_view_shows_project_id() {
     let s = serve_settings(Mode::Run, located(), secret_sections(), None, None).await;
     let push: Value = serde_json::from_str(&s.sget("/push").await.1).unwrap();
     assert_eq!(push["project_id"], "proj-42");
-    assert_eq!(push["prefix"], "oikos/push");
+    assert_eq!(push["prefix"], "nidoo/push");
     // A key that is not JSON shows no project id and is never echoed.
     let mut sections = Sections::default();
     sections.push.service_account = Some("not json, secret-pem".into());

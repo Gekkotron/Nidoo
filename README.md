@@ -44,7 +44,7 @@ Already run a broker or database? See [Bring your own broker and database](https
 `docker compose logs hub` prints the address to open (`Open http://<ip>:8081 to set up your home`); a browser wizard does the rest. Then connect an assistant:
 
 ```sh
-claude mcp add --transport http oikos http://<host>:8081/mcp
+claude mcp add --transport http nidoo http://<host>:8081/mcp
 ```
 
 From source, see [Getting started](https://gekkotron.github.io/Nidoo/docs/users/getting-started).

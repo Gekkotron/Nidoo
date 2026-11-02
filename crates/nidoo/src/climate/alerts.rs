@@ -230,10 +230,10 @@ mod tests {
             "silent": false, "source": "climate", "sent_at": now - ago - 600,
             "cancel": true, "resolved_at": now - ago,
         }]);
-        hub.ingest_message("oikos/push/history", history.to_string().as_bytes(), true);
+        hub.ingest_message("nidoo/push/history", history.to_string().as_bytes(), true);
         sync_safety(&hub, "living", || "Living".to_owned(), &frost(), now);
         while let Ok(p) = rx.try_recv() {
-            if p.topic == "oikos/push/history" {
+            if p.topic == "nidoo/push/history" {
                 hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
             }
         }

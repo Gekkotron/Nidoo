@@ -101,8 +101,8 @@ impl DatabaseDraft {
             None => DatabaseDraft {
                 host: "localhost".into(),
                 port: "5432".into(),
-                database: "oikos".into(),
-                user: "oikos".into(),
+                database: "nidoo".into(),
+                user: "nidoo".into(),
                 password: String::new(),
             },
         }
@@ -578,14 +578,14 @@ mod tests {
             json!({"host": "localhost", "port": 1883, "password": ""})
         );
         let full = MqttDraft {
-            user: "oikos".into(),
+            user: "nidoo".into(),
             client_id: "hub".into(),
             z2m_base: "zigbee2mqtt".into(),
             ..mqtt()
         }
         .body()
         .unwrap();
-        assert_eq!(full["user"], json!("oikos"));
+        assert_eq!(full["user"], json!("nidoo"));
         assert_eq!(full["client_id"], json!("hub"));
         assert_eq!(full["z2m_base"], json!("zigbee2mqtt"));
     }
@@ -643,7 +643,7 @@ mod tests {
                 d.database.as_str(),
                 d.user.as_str()
             ),
-            ("localhost", "5432", "oikos", "oikos")
+            ("localhost", "5432", "nidoo", "nidoo")
         );
     }
 }

@@ -4,7 +4,7 @@ sidebar_position: 4
 description: The flow document format and every node type with its parameters, outputs and rules.
 ---
 
-A flow is an n8n-style automation: a small graph of nodes stored as one retained JSON document under `<automation_prefix>/<id>` (default `oikos/automation/<id>`) on the broker. The hub subscribes to that prefix, validates every document it reads, and runs the valid, enabled ones. An invalid document is kept and shown with the reason, but never runs. For a guided introduction, see [Flows](../users/flows.md).
+A flow is an n8n-style automation: a small graph of nodes stored as one retained JSON document under `<automation_prefix>/<id>` (default `nidoo/automation/<id>`) on the broker. The hub subscribes to that prefix, validates every document it reads, and runs the valid, enabled ones. An invalid document is kept and shown with the reason, but never runs. For a guided introduction, see [Flows](../users/flows.md).
 
 The model is in [`crates/nidoo-core/src/flow`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-core/src/flow) (`model.rs`, `validate.rs`, `sun.rs`) and the engine in [`crates/nidoo/src/flows`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo/src/flows).
 

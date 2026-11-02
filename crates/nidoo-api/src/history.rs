@@ -1,8 +1,7 @@
 //! Wire types for the `/api/v1/history/*` routes and the MCP `get_history` tool.
 //!
-//! The shapes keep the OikosHistory names so the Android app's migration is a URL and
-//! parameter change: points are packed tuples (JSON arrays on the wire), windows and times
-//! are unix seconds, and absent timestamps serialise as `null`.
+//! The shapes are compact so a long window stays small: points are packed tuples (JSON arrays
+//! on the wire), windows and times are unix seconds, and absent timestamps serialise as `null`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

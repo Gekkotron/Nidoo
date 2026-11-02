@@ -24,6 +24,6 @@ pub fn build_config(alarm_prefix: &str) -> Value {
         "supported_features": ["arm_away", "arm_home", "arm_night"],
         "code_arm_required": false,
         "code_disarm_required": false,
-        "device": {"identifiers": ["oikos_alarm"], "name": "Alarm"},
+        "device": {"identifiers": ["nidoo_alarm"], "name": "Alarm"},
     })
 }

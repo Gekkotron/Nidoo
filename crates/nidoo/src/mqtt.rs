@@ -289,7 +289,7 @@ async fn outbound(
 
 /// The wildcards that are always subscribed: discovery, the Z2M bridge, the UI sub-tree, the
 /// flow definitions and the push topics. A push filter already inside one of the `#` wildcards
-/// (`oikos/push/...` under `oikos/#`) is left out: an overlapping subscription may make the
+/// (`nidoo/push/...` under `nidoo/#`) is left out: an overlapping subscription may make the
 /// broker deliver a notification twice, and so send it twice.
 fn static_filters(topics: &TopicsConfig, push: &[String]) -> BTreeSet<String> {
     let wildcards: BTreeSet<String> = topics
@@ -387,40 +387,22 @@ impl std::future::Future for Timer {
 mod tests {
     use super::*;
 
-    fn push_filters(prefix: &str, legacy: &str) -> Vec<String> {
-        [prefix, legacy]
-            .iter()
-            .flat_map(|p| {
-                [
-                    format!("{p}/notification/+"),
-                    format!("{p}/tokens/+"),
-                    format!("{p}/history"),
-                ]
-            })
-            .collect()
+    fn push_filters(p: &str) -> Vec<String> {
+        vec![
+            format!("{p}/notification/+"),
+            format!("{p}/tokens/+"),
+            format!("{p}/history"),
+        ]
     }
 
     #[test]
     fn push_filters_under_a_wildcard_are_left_out() {
-        let filters = static_filters(
-            &TopicsConfig::default(),
-            &push_filters("oikos/push", "oikos-push"),
-        );
-        assert!(filters.contains("oikos/#"));
+        let filters = static_filters(&TopicsConfig::default(), &push_filters("nidoo/push"));
+        assert!(filters.contains("nidoo/#"));
         assert!(
-            !filters.iter().any(|f| f.starts_with("oikos/push/")),
+            !filters.iter().any(|f| f.starts_with("nidoo/push/")),
             "{filters:?}"
         );
-        for legacy in [
-            "oikos-push/notification/+",
-            "oikos-push/tokens/+",
-            "oikos-push/history",
-        ] {
-            assert!(
-                filters.contains(legacy),
-                "{legacy} missing from {filters:?}"
-            );
-        }
     }
 
     #[test]
@@ -429,12 +411,13 @@ mod tests {
             discovery_prefixes: vec!["homeassistant".into()],
             ..TopicsConfig::default()
         };
-        let filters = static_filters(&topics, &push_filters("oikos/push", "oikos-push"));
-        assert!(filters.contains("oikos/push/notification/+"), "{filters:?}");
-        assert!(filters.contains("oikos/push/tokens/+"));
-        assert!(filters.contains("oikos/push/history"));
-        // `oikos-push/...` is not under `oikos/#`: a prefix match stops at the separator.
-        assert!(filters.contains("oikos-push/history"));
+        let filters = static_filters(&topics, &push_filters("nidoo/push"));
+        assert!(filters.contains("nidoo/push/notification/+"), "{filters:?}");
+        assert!(filters.contains("nidoo/push/tokens/+"));
+        assert!(filters.contains("nidoo/push/history"));
+        // `nidoo-push/...` is not under `nidoo/#`: a prefix match stops at the separator.
+        let filters = static_filters(&topics, &push_filters("nidoo-push"));
+        assert!(filters.contains("nidoo-push/history"));
     }
 
     #[test]

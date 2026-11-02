@@ -42,34 +42,34 @@
 }
 
 :root {
-  --oikos-font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --oikos-font-display: 'Manrope', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --nidoo-font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --nidoo-font-display: 'Manrope', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   /* Ivoire (light): ivory surfaces, sage for selection, honey for lit things. */
-  --oikos-bg: #f3f0e8;
-  --oikos-ink: #1f2420;
-  --oikos-ink-soft: #5f665c;
-  --oikos-card: #fffdf8;
-  --oikos-card-border: #ebe6da;
-  --oikos-chip-border: #d9d0c2;
-  --oikos-raised: #f7f5ef;
-  --oikos-shadow: 0 2px 6px rgb(60 50 20 / 6%), 0 10px 28px rgb(60 50 20 / 8%);
-  --oikos-shot-shadow: 0 30px 80px -24px rgb(60 50 20 / 28%);
-  --oikos-sage: #4f6b4a;
-  --oikos-sage-ink: #2f4a2b;
-  --oikos-sage-soft: #e3eadf;
-  --oikos-amber: #c9973d;
-  --oikos-amber-text: #8f6613;
-  --oikos-amber-soft: #fbf0d4;
-  --oikos-mint: #4f6b4a;
-  --oikos-cyan: #38738f;
-  --oikos-violet: #6a5acd;
-  --oikos-rose: #ac512b;
-  --oikos-cta-bg: #232a26;
-  --oikos-cta-ink: #fffdf8;
-  --oikos-cta-glow: rgb(35 42 38 / 35%);
-  --oikos-code-bg: #fffdf8;
-  --oikos-radius: 24px;
+  --nidoo-bg: #f3f0e8;
+  --nidoo-ink: #1f2420;
+  --nidoo-ink-soft: #5f665c;
+  --nidoo-card: #fffdf8;
+  --nidoo-card-border: #ebe6da;
+  --nidoo-chip-border: #d9d0c2;
+  --nidoo-raised: #f7f5ef;
+  --nidoo-shadow: 0 2px 6px rgb(60 50 20 / 6%), 0 10px 28px rgb(60 50 20 / 8%);
+  --nidoo-shot-shadow: 0 30px 80px -24px rgb(60 50 20 / 28%);
+  --nidoo-sage: #4f6b4a;
+  --nidoo-sage-ink: #2f4a2b;
+  --nidoo-sage-soft: #e3eadf;
+  --nidoo-amber: #c9973d;
+  --nidoo-amber-text: #8f6613;
+  --nidoo-amber-soft: #fbf0d4;
+  --nidoo-mint: #4f6b4a;
+  --nidoo-cyan: #38738f;
+  --nidoo-violet: #6a5acd;
+  --nidoo-rose: #ac512b;
+  --nidoo-cta-bg: #232a26;
+  --nidoo-cta-ink: #fffdf8;
+  --nidoo-cta-glow: rgb(35 42 38 / 35%);
+  --nidoo-code-bg: #fffdf8;
+  --nidoo-radius: 24px;
 
   --ifm-color-primary: #4f6b4a;
   --ifm-color-primary-dark: #476043;
@@ -79,8 +79,8 @@
   --ifm-color-primary-lighter: #5b7b55;
   --ifm-color-primary-lightest: #678b60;
 
-  --ifm-font-family-base: var(--oikos-font-body);
-  --ifm-heading-font-family: var(--oikos-font-display);
+  --ifm-font-family-base: var(--nidoo-font-body);
+  --ifm-heading-font-family: var(--nidoo-font-display);
   --ifm-heading-font-weight: 700;
   --ifm-font-size-base: 100%;
   --ifm-line-height-base: 1.7;
@@ -92,58 +92,58 @@
   --ifm-alert-border-radius: 14px;
   --ifm-pre-line-height: 1.55;
 
-  --ifm-background-color: var(--oikos-bg);
-  --ifm-background-surface-color: var(--oikos-card);
-  --ifm-color-content: var(--oikos-ink);
-  --ifm-color-content-secondary: var(--oikos-ink-soft);
-  --ifm-heading-color: var(--oikos-ink);
-  --ifm-link-color: var(--oikos-sage);
-  --ifm-link-hover-color: var(--oikos-sage-ink);
+  --ifm-background-color: var(--nidoo-bg);
+  --ifm-background-surface-color: var(--nidoo-card);
+  --ifm-color-content: var(--nidoo-ink);
+  --ifm-color-content-secondary: var(--nidoo-ink-soft);
+  --ifm-heading-color: var(--nidoo-ink);
+  --ifm-link-color: var(--nidoo-sage);
+  --ifm-link-hover-color: var(--nidoo-sage-ink);
   --ifm-navbar-background-color: rgb(243 240 232 / 85%);
   --ifm-navbar-shadow: none;
-  --ifm-footer-background-color: var(--oikos-raised);
-  --ifm-footer-link-color: var(--oikos-ink-soft);
-  --ifm-footer-link-hover-color: var(--oikos-sage);
-  --ifm-footer-title-color: var(--oikos-ink);
-  --ifm-footer-color: var(--oikos-ink-soft);
-  --ifm-code-background: var(--oikos-raised);
-  --ifm-toc-border-color: var(--oikos-card-border);
-  --ifm-hr-border-color: var(--oikos-card-border);
-  --ifm-table-border-color: var(--oikos-card-border);
-  --ifm-table-stripe-background: var(--oikos-raised);
-  --ifm-menu-color: var(--oikos-ink-soft);
-  --ifm-menu-color-active: var(--oikos-sage-ink);
-  --ifm-menu-color-background-active: var(--oikos-sage-soft);
+  --ifm-footer-background-color: var(--nidoo-raised);
+  --ifm-footer-link-color: var(--nidoo-ink-soft);
+  --ifm-footer-link-hover-color: var(--nidoo-sage);
+  --ifm-footer-title-color: var(--nidoo-ink);
+  --ifm-footer-color: var(--nidoo-ink-soft);
+  --ifm-code-background: var(--nidoo-raised);
+  --ifm-toc-border-color: var(--nidoo-card-border);
+  --ifm-hr-border-color: var(--nidoo-card-border);
+  --ifm-table-border-color: var(--nidoo-card-border);
+  --ifm-table-stripe-background: var(--nidoo-raised);
+  --ifm-menu-color: var(--nidoo-ink-soft);
+  --ifm-menu-color-active: var(--nidoo-sage-ink);
+  --ifm-menu-color-background-active: var(--nidoo-sage-soft);
   --ifm-menu-color-background-hover: rgb(60 50 20 / 5%);
-  --docusaurus-highlighted-code-line-bg: var(--oikos-sage-soft);
+  --docusaurus-highlighted-code-line-bg: var(--nidoo-sage-soft);
 }
 
 /* Night Glass (dark). */
 [data-theme='dark'] {
-  --oikos-bg: #0b1020;
-  --oikos-ink: #e8ecff;
-  --oikos-ink-soft: #a9b2d6;
-  --oikos-card: rgb(255 255 255 / 6%);
-  --oikos-card-border: rgb(255 255 255 / 9%);
-  --oikos-chip-border: rgb(255 255 255 / 14%);
-  --oikos-raised: rgb(255 255 255 / 4%);
-  --oikos-shadow: 0 8px 24px rgb(0 0 0 / 35%);
-  --oikos-shot-shadow: 0 30px 80px -20px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 196 87 / 6%);
-  --oikos-sage: #6ff0bf;
-  --oikos-sage-ink: #6ff0bf;
-  --oikos-sage-soft: rgb(111 240 191 / 10%);
-  --oikos-amber: #ffc457;
-  --oikos-amber-text: #ffc457;
-  --oikos-amber-soft: rgb(255 196 87 / 22%);
-  --oikos-mint: #6ff0bf;
-  --oikos-cyan: #58e1ff;
-  --oikos-violet: #8f7bff;
-  --oikos-rose: #ff7a9a;
-  --oikos-cta-bg: #ffc457;
-  --oikos-cta-ink: #1a1206;
-  --oikos-cta-glow: rgb(255 196 87 / 55%);
-  --oikos-code-bg: #0e1530;
-  --oikos-radius: 20px;
+  --nidoo-bg: #0b1020;
+  --nidoo-ink: #e8ecff;
+  --nidoo-ink-soft: #a9b2d6;
+  --nidoo-card: rgb(255 255 255 / 6%);
+  --nidoo-card-border: rgb(255 255 255 / 9%);
+  --nidoo-chip-border: rgb(255 255 255 / 14%);
+  --nidoo-raised: rgb(255 255 255 / 4%);
+  --nidoo-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  --nidoo-shot-shadow: 0 30px 80px -20px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 196 87 / 6%);
+  --nidoo-sage: #6ff0bf;
+  --nidoo-sage-ink: #6ff0bf;
+  --nidoo-sage-soft: rgb(111 240 191 / 10%);
+  --nidoo-amber: #ffc457;
+  --nidoo-amber-text: #ffc457;
+  --nidoo-amber-soft: rgb(255 196 87 / 22%);
+  --nidoo-mint: #6ff0bf;
+  --nidoo-cyan: #58e1ff;
+  --nidoo-violet: #8f7bff;
+  --nidoo-rose: #ff7a9a;
+  --nidoo-cta-bg: #ffc457;
+  --nidoo-cta-ink: #1a1206;
+  --nidoo-cta-glow: rgb(255 196 87 / 55%);
+  --nidoo-code-bg: #0e1530;
+  --nidoo-radius: 20px;
 
   --ifm-color-primary: #ffc457;
   --ifm-color-primary-dark: #ffbb35;
@@ -164,9 +164,9 @@
   --ifm-footer-title-color: #fff4dc;
   --ifm-footer-color: #a9b2d6;
   --ifm-code-background: rgb(255 196 87 / 12%);
-  --ifm-table-border-color: var(--oikos-chip-border);
+  --ifm-table-border-color: var(--nidoo-chip-border);
   --ifm-table-stripe-background: rgb(255 255 255 / 3%);
-  --ifm-menu-color: var(--oikos-ink-soft);
+  --ifm-menu-color: var(--nidoo-ink-soft);
   --ifm-menu-color-active: #ffc457;
   --ifm-menu-color-background-active: rgb(255 196 87 / 12%);
   --ifm-menu-color-background-hover: rgb(255 255 255 / 5%);
@@ -178,7 +178,7 @@ html {
 }
 
 body {
-  background-color: var(--oikos-bg);
+  background-color: var(--nidoo-bg);
 }
 
 [data-theme='dark'] body {
@@ -190,10 +190,10 @@ body {
 /* --- Navbar ------------------------------------------------------------- */
 .navbar {
   backdrop-filter: saturate(140%) blur(12px);
-  border-bottom: 1px solid var(--oikos-card-border);
+  border-bottom: 1px solid var(--nidoo-card-border);
 }
 .navbar__title {
-  font-family: var(--oikos-font-display);
+  font-family: var(--nidoo-font-display);
   font-weight: 700;
   font-size: 1.2rem;
   letter-spacing: -0.02em;
@@ -228,7 +228,7 @@ body {
   text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
 }
 .markdown code {
-  border: 1px solid var(--oikos-card-border);
+  border: 1px solid var(--nidoo-card-border);
 }
 .markdown pre code,
 .markdown a code {
@@ -237,10 +237,10 @@ body {
 
 /* Code blocks */
 div[class*='codeBlockContainer'] {
-  --prism-background-color: var(--oikos-code-bg);
-  background: var(--oikos-code-bg);
+  --prism-background-color: var(--nidoo-code-bg);
+  background: var(--nidoo-code-bg);
   border-radius: 14px;
-  border: 1px solid var(--oikos-card-border);
+  border: 1px solid var(--nidoo-card-border);
   box-shadow: none;
 }
 pre {
@@ -284,7 +284,7 @@ pre {
 
 /* Admonitions */
 .alert {
-  border: 1px solid var(--oikos-card-border);
+  border: 1px solid var(--nidoo-card-border);
   border-left-width: 4px;
   box-shadow: none;
 }
@@ -297,15 +297,15 @@ pre {
   font-weight: 600;
 }
 .theme-doc-sidebar-container {
-  border-right: 1px solid var(--oikos-card-border) !important;
+  border-right: 1px solid var(--nidoo-card-border) !important;
 }
 .table-of-contents__link--active {
   font-weight: 600;
 }
 article .card,
 .generatedIndexPage_vN6x .card {
-  border: 1px solid var(--oikos-card-border);
-  background: var(--oikos-card);
+  border: 1px solid var(--nidoo-card-border);
+  background: var(--nidoo-card);
   box-shadow: none;
   border-radius: 16px;
   transition: transform 200ms cubic-bezier(0.2, 0, 0, 1), border-color 200ms;
@@ -317,8 +317,8 @@ article .card:hover {
 }
 .pagination-nav__link {
   border-radius: 16px;
-  border: 1px solid var(--oikos-card-border);
-  background: var(--oikos-card);
+  border: 1px solid var(--nidoo-card-border);
+  background: var(--nidoo-card);
 }
 .pagination-nav__link:hover {
   border-color: var(--ifm-color-primary);
@@ -326,7 +326,7 @@ article .card:hover {
 
 /* Footer */
 .footer {
-  border-top: 1px solid var(--oikos-card-border);
+  border-top: 1px solid var(--nidoo-card-border);
 }
 .footer__copyright {
   font-size: 0.85rem;
@@ -344,8 +344,8 @@ article .card:hover {
 /* Code block surface follows the theme tokens. */
 .theme-code-block,
 .theme-code-block pre {
-  --prism-background-color: var(--oikos-code-bg);
-  background-color: var(--oikos-code-bg) !important;
+  --prism-background-color: var(--nidoo-code-bg);
+  background-color: var(--nidoo-code-bg) !important;
 }
 
 /* Screenshots come in pairs, as on GitHub: the Night Glass shot is tagged

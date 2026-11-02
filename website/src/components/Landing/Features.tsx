@@ -29,7 +29,7 @@ const FEATURES: Feature[] = [
     title: 'Dashboards',
     text: 'A House overview synthesized from your rooms, plus your own dashboards built from widgets: lights, covers, climate, cameras, charts.',
     to: '/docs/users/web-ui#dashboards',
-    color: 'var(--oikos-amber)',
+    color: 'var(--nidoo-amber)',
     icon: (
       <svg {...sv}>
         <rect x="3" y="3" width="8" height="8" rx="2" />
@@ -43,7 +43,7 @@ const FEATURES: Feature[] = [
     title: 'Flows',
     text: 'Automations as small graphs: triggers, checks, waits and actions. Edit them on a canvas and replay what a run did.',
     to: '/docs/users/flows',
-    color: 'var(--oikos-violet)',
+    color: 'var(--nidoo-violet)',
     icon: (
       <svg {...sv}>
         <circle cx="5" cy="6" r="2.2" />
@@ -57,7 +57,7 @@ const FEATURES: Feature[] = [
     title: 'Energy',
     text: 'The live power flow of the house: solar, grid, battery and consumers, with the kWh of each paired counter.',
     to: '/docs/users/web-ui#energy',
-    color: 'var(--oikos-mint)',
+    color: 'var(--nidoo-mint)',
     icon: (
       <svg {...sv}>
         <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
@@ -68,7 +68,7 @@ const FEATURES: Feature[] = [
     title: 'Climate',
     text: 'Heating and cooling by zone. The engine learns each room from history and proposes changes you approve or reject.',
     to: '/docs/users/climate',
-    color: 'var(--oikos-cyan)',
+    color: 'var(--nidoo-cyan)',
     beta: true,
     icon: (
       <svg {...sv}>
@@ -81,7 +81,7 @@ const FEATURES: Feature[] = [
     title: 'Phone alerts and cameras',
     text: 'Push notifications to the Android app through Firebase, with Frigate camera events and their snapshots in the Alerts tab.',
     to: '/docs/users/push-notifications',
-    color: 'var(--oikos-rose)',
+    color: 'var(--nidoo-rose)',
     icon: (
       <svg {...sv}>
         <path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7z" />
@@ -93,7 +93,7 @@ const FEATURES: Feature[] = [
     title: 'Talk to your house',
     text: 'The hub is an MCP server. Ask an assistant to inspect devices, build flows or change settings in plain words.',
     to: '/docs/users/assistants-mcp',
-    color: 'var(--oikos-amber)',
+    color: 'var(--nidoo-amber)',
     icon: (
       <svg {...sv}>
         <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />

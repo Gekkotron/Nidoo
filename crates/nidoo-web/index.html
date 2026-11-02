@@ -9,7 +9,7 @@
 // wrong theme before wasm boots. Blocked storage still follows the system; nothing ever throws.
 (function () {
   var t = null;
-  try { t = localStorage.getItem("oikos.theme"); } catch (e) {}
+  try { t = localStorage.getItem("nidoo.theme"); } catch (e) {}
   var light = t === "ivoire" || t === "warm";
   if (t !== "night" && !light) {
     try { light = matchMedia("(prefers-color-scheme: light)").matches; } catch (e) {}

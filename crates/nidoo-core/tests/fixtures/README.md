@@ -11,7 +11,7 @@ MQTT_HOST=<broker> MQTT_USER=<user> MQTT_PASS=<pass> bash tools/record-fixtures.
 Layout:
 
 - `bridge_info.json`, `bridge_devices.json`, `bridge_state.json`: `zigbee2mqtt/bridge/{info,devices,state}` (info is scrubbed).
-- `discovery/<component>__<node>__<object_id>.json`: `homeassistant/<...>/config`, topic minus prefix and `/config`, `/` replaced by `__`. Tests rebuild the topic under any prefix (e.g. `oikos`).
+- `discovery/<component>__<node>__<object_id>.json`: `homeassistant/<...>/config`, topic minus prefix and `/config`, `/` replaced by `__`. Tests rebuild the topic under any prefix (e.g. `nidoo`).
 - `states/<friendly_name with __>.json`: `zigbee2mqtt/<friendly_name>` device states.
-- `ui/<unique_id>.json`, `ui/_areas.json`: `oikos/ui/...` overrides.
+- `ui/<unique_id>.json`, `ui/_areas.json`: `nidoo/ui/...` overrides.
 - `topics.txt`: every recorded topic as `<retain> <topic>`.

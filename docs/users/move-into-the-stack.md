@@ -30,7 +30,7 @@ The hub keeps its flows, alarm and climate settings as retained messages on the 
 
 ```bash
 # The database, in a restorable archive
-docker exec <old-timescaledb> pg_dump -U oikos -Fc oikos > oikos-db.dump
+docker exec <old-timescaledb> pg_dump -U <db-user> -Fc <db-name> > db.dump
 
 # The broker's config and data
 tar czf mosquitto-backup.tgz <config-folder> <data-folder>
@@ -66,7 +66,6 @@ services:
 
 Notes:
 
-- An override written before the rename names the containers `oikos-mosquitto` and `oikos-timescaledb`. That still works: the names it sets win, and `tools/update.sh` leaves those containers alone.
 - Leave out `command` when the database port is 5432.
 - If the database lives in a named volume, mount it as `<name>:/var/lib/postgresql/data` and declare it at the bottom of the file with `volumes: {<name>: {external: true}}`.
 - You do not set any password. An initialised data folder keeps its users, and the stack only applies the generated password when it creates a database from scratch.

@@ -6,20 +6,20 @@ description: Connect an AI assistant to the hub over MCP and ask it, in plain wo
 
 The hub runs an MCP server, so an AI assistant can inspect and change the house instead of a rules editor. The server is served at `http://<host>:8081/mcp` (streamable HTTP), on the same port as the REST API. Like that API, it is LAN-trusted with no auth in v1; see [Security](security.md).
 
-The assistant gets the house's tools and one resource, `oikos://snapshot`, which is the whole house as one JSON document. The full tool list is in [MCP tools](../reference/mcp-tools.md).
+The assistant gets the house's tools and one resource, `nidoo://snapshot`, which is the whole house as one JSON document. The full tool list is in [MCP tools](../reference/mcp-tools.md).
 
 ## Connect a client
 
 Claude Code:
 
 ```sh
-claude mcp add --transport http oikos http://<host>:8081/mcp
+claude mcp add --transport http nidoo http://<host>:8081/mcp
 ```
 
 Codex CLI, in `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.oikos]
+[mcp_servers.nidoo]
 url = "http://<host>:8081/mcp"
 ```
 
@@ -28,7 +28,7 @@ Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio`, a proxy that
 ```json
 {
   "mcpServers": {
-    "oikos": {"command": "<path>/nidoo", "args": ["mcp-stdio", "--server", "http://<host>:8081"]}
+    "nidoo": {"command": "<path>/nidoo", "args": ["mcp-stdio", "--server", "http://<host>:8081"]}
   }
 }
 ```

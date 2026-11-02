@@ -1342,7 +1342,7 @@ mod tests {
     fn view(enabled: bool, state: &str) -> AlarmView {
         AlarmView {
             enabled,
-            entity_id: "oikos_alarm_house".into(),
+            entity_id: "nidoo_alarm_house".into(),
             state: state.into(),
             mode: None,
             source: None,

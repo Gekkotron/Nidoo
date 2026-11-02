@@ -46,7 +46,7 @@ The refreshes are spread over daylight:
 
 Sunrise and sunset come from your home location, the same place your flows use for sun triggers. Without a location the hub uses Paris.
 
-Each refresh keeps the periods of the day that have already passed, so "forecast today" stays the energy of the whole day, not just what is left. The latest forecast and the call count are kept as a retained document on the broker (`oikos/solar/cache`). A restart reads it back, so restarting the hub does not spend calls.
+Each refresh keeps the periods of the day that have already passed, so "forecast today" stays the energy of the whole day, not just what is left. The latest forecast and the call count are kept as a retained document on the broker (`nidoo/solar/cache`). A restart reads it back, so restarting the hub does not spend calls.
 
 If Solcast refuses the key (401 or 403), the hub logs one error and stops calling until it restarts. Save a working key in Settings; saving restarts the hub.
 

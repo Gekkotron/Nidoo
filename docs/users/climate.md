@@ -10,7 +10,7 @@ The climate engine is still being tested. Its rules, settings and decisions may 
 
 With climate on, the hub heats and cools by zone. The engine is off by default. Turn it on with the **Climate** card in the Services step of the setup wizard (**Settings → Run setup again** reopens it; nothing is wiped), where it is marked Beta. It is the card's **Enabled** switch. Everything else is edited on the Climate screen, over REST and over MCP.
 
-The one low-level field, the topic `prefix` (`oikos/climate` by default), has no screen: change it with `PUT /api/v1/settings/climate` or the `set_settings` MCP tool, which restarts the hub (see the [Settings reference](../reference/configuration.md#climate)).
+The one low-level field, the topic `prefix` (`nidoo/climate` by default), has no screen: change it with `PUT /api/v1/settings/climate` or the `set_settings` MCP tool, which restarts the hub (see the [Settings reference](../reference/configuration.md#climate)).
 
 Settings are retained documents under that prefix. While climate is off the REST routes answer `503` and the MCP tools answer `climate disabled`.
 

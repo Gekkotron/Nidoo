@@ -9,7 +9,7 @@ crates/nidoo-web/dist/
 docs/
 tools/
 firepit-log.txt
-oikos.toml
+nidoo.toml
 secrets/
 .env
 *.log

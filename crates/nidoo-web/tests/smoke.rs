@@ -9,7 +9,7 @@ fn app_renders() {
     let window = web_sys::window().unwrap();
     // The shell follows the browser language unless one is saved; pin English for the labels below.
     if let Ok(Some(storage)) = window.local_storage() {
-        storage.set_item("oikos.lang", "en").unwrap();
+        storage.set_item("nidoo.lang", "en").unwrap();
     }
     let document = window.document().unwrap();
     let host = document.create_element("div").unwrap();

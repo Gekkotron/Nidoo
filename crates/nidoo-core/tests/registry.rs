@@ -14,18 +14,18 @@ const AT: u64 = 1_700_000_000;
 
 const ALARM_SWITCH: &str = "0xbc33acfffe36db49_switch_alarm_zigbee2mqtt";
 const STAIR_LIGHT: &str = "0x847127fffe24e322_switch_zigbee2mqtt";
-const STAIR_LIGHT_TOPIC: &str = "oikos/switch/0x847127fffe24e322/switch/config";
+const STAIR_LIGHT_TOPIC: &str = "nidoo/switch/0x847127fffe24e322/switch/config";
 const THERMOMETER_TOPIC: &str = "zigbee2mqtt/rooms/bedroom2/thermometer";
 const SHUTTER_COVER: &str = "0x847127fffe08106c_cover_zigbee2mqtt";
 const SHUTTER_MOVING: &str = "0x847127fffe08106c_moving_zigbee2mqtt";
 const LINKQUALITY: &str = "0x5c0272fffea35cfb_linkquality_zigbee2mqtt";
 const HOUSE_ALARM: &str = "jeedom_house_alarm";
-const HOUSE_ALARM_TOPIC: &str = "oikos/alarm_control_panel/jeedom/house_alarm/config";
+const HOUSE_ALARM_TOPIC: &str = "nidoo/alarm_control_panel/jeedom/house_alarm/config";
 
 fn config() -> RegistryConfig {
     RegistryConfig {
-        discovery_prefixes: common::strings(&["oikos"]),
-        ui_prefix: "oikos/ui".to_owned(),
+        discovery_prefixes: common::strings(&["nidoo"]),
+        ui_prefix: "nidoo/ui".to_owned(),
         z2m_base: "zigbee2mqtt".to_owned(),
         reserved: common::strings(&["ui", "automation"]),
     }
@@ -64,11 +64,11 @@ fn load_house() -> Registry {
         feed(&mut registry, topic, common::fixture(file).into_bytes());
     }
     for (stem, payload) in files("discovery") {
-        let topic = format!("oikos/{}/config", stem.replace("__", "/"));
+        let topic = format!("nidoo/{}/config", stem.replace("__", "/"));
         feed(&mut registry, &topic, payload);
     }
     for (stem, payload) in files("ui") {
-        feed(&mut registry, &format!("oikos/ui/{stem}"), payload);
+        feed(&mut registry, &format!("nidoo/ui/{stem}"), payload);
     }
     for (stem, payload) in files("states") {
         let topic = format!("zigbee2mqtt/{}", stem.replace("__", "/"));
@@ -290,7 +290,7 @@ fn equal_value_report_is_reported_not_changed() {
         "device": {"identifiers": ["zigbee2mqtt_0xtest"], "name": "test"}
     });
     registry.apply(Inbound::Discovery(
-        discovery_topic("oikos/switch/test/config"),
+        discovery_topic("nidoo/switch/test/config"),
         config.to_string().into_bytes(),
     ));
     let state = |payload: &str, at: u64| Inbound::State {
@@ -372,34 +372,34 @@ fn folding_moving_into_cover() {
 
 #[test]
 fn groups_never_fold_into_each_other() {
-    // Every group is on the hub's one `oikos_group` device: with a single light group, a number
+    // Every group is on the hub's one `nidoo_group` device: with a single light group, a number
     // group must stay a card of its own.
     let mut registry = Registry::new(config());
     let group = |id: &str| {
         json!({
             "name": id,
             "unique_id": format!("group_{id}"),
-            "device": { "identifiers": ["oikos_group"], "name": "Groups" },
-            "command_topic": format!("oikos/group/{id}/set"),
+            "device": { "identifiers": ["nidoo_group"], "name": "Groups" },
+            "command_topic": format!("nidoo/group/{id}/set"),
         })
     };
     let mut light = group("light_living");
     light["schema"] = json!("json");
-    light["state_topic"] = json!("oikos/group/light_living/state");
+    light["state_topic"] = json!("nidoo/group/light_living/state");
     feed(
         &mut registry,
-        "oikos/light/oikos_group/light_living/config",
+        "nidoo/light/nidoo_group/light_living/config",
         light.to_string().into_bytes(),
     );
     feed(
         &mut registry,
-        "oikos/number/oikos_group/water_heater_power/config",
+        "nidoo/number/nidoo_group/water_heater_power/config",
         group("water_heater_power").to_string().into_bytes(),
     );
     let number = registry
         .entity("group_water_heater_power")
         .expect("number group");
-    assert_eq!(number.device_id.as_deref(), Some("oikos_group"));
+    assert_eq!(number.device_id.as_deref(), Some("nidoo_group"));
     assert_eq!(number.part_of, None);
 }
 
@@ -418,7 +418,7 @@ fn garbage_never_panics() {
     let ignored_before = registry.ignored().len();
 
     let changes = registry.apply(Inbound::Discovery(
-        discovery_topic("oikos/sensor/garbage/x/config"),
+        discovery_topic("nidoo/sensor/garbage/x/config"),
         vec![0xff, 0xfe, b'{'],
     ));
     assert!(changes.contains(&Change::IgnoredChanged), "{changes:?}");
@@ -427,7 +427,7 @@ fn garbage_never_panics() {
         registry
             .ignored()
             .iter()
-            .any(|i| i.topic == "oikos/sensor/garbage/x/config")
+            .any(|i| i.topic == "nidoo/sensor/garbage/x/config")
     );
 
     let _ = registry.apply(override_payload(STAIR_LIGHT, "{"));
@@ -447,8 +447,8 @@ fn garbage_never_panics() {
     });
     let _ = registry.apply(Inbound::Irrelevant);
     let _ = registry.route("", Vec::new(), AT);
-    let _ = registry.route("oikos/ui/", Vec::new(), AT);
-    let _ = registry.route("oikos//config", vec![0], AT);
+    let _ = registry.route("nidoo/ui/", Vec::new(), AT);
+    let _ = registry.route("nidoo//config", vec![0], AT);
 
     let after: Vec<String> = registry.entities().map(|e| e.unique_id.clone()).collect();
     assert_eq!(before, after);
@@ -572,7 +572,7 @@ fn override_before_discovery_applies_when_the_entity_appears() {
         "device": {"identifiers": ["zigbee2mqtt_0xtest"], "name": "test"}
     });
     let changes = registry.apply(Inbound::Discovery(
-        discovery_topic("oikos/switch/test/config"),
+        discovery_topic("nidoo/switch/test/config"),
         config.to_string().into_bytes(),
     ));
     assert_eq!(
@@ -611,7 +611,7 @@ fn override_before_discovery_applies_when_the_entity_appears() {
 #[test]
 fn device_based_discovery_expands_and_removes() {
     let mut registry = Registry::new(config());
-    let topic = discovery_topic("oikos/device/0xdev/config");
+    let topic = discovery_topic("nidoo/device/0xdev/config");
     let config = json!({
         "dev": {"ids": ["zigbee2mqtt_0xdev"], "name": "rooms/office/strip"},
         "o": {"name": "test"},
@@ -637,7 +637,7 @@ fn device_based_discovery_expands_and_removes() {
     assert_eq!(light.area, "office");
     assert_eq!(
         light.discovery_topic,
-        "oikos/light/0xdev/light/config".to_owned()
+        "nidoo/light/0xdev/light/config".to_owned()
     );
     assert_eq!(
         registry
@@ -688,7 +688,7 @@ fn template_failure_marks_unknown_and_recovers() {
         "value_template": "{{ value_json.x | no_such_filter }}"
     });
     registry.apply(Inbound::Discovery(
-        discovery_topic("oikos/sensor/broken/config"),
+        discovery_topic("nidoo/sensor/broken/config"),
         broken.to_string().into_bytes(),
     ));
     let changes = registry.apply(Inbound::State {
@@ -712,7 +712,7 @@ fn template_failure_marks_unknown_and_recovers() {
         "value_template": "{{ value_json.x }}"
     });
     registry.apply(Inbound::Discovery(
-        discovery_topic("oikos/sensor/broken/config"),
+        discovery_topic("nidoo/sensor/broken/config"),
         fixed.to_string().into_bytes(),
     ));
     let changes = registry.apply(Inbound::State {
@@ -732,10 +732,10 @@ fn template_failure_marks_unknown_and_recovers() {
 fn route_classifies_every_topic_kind() {
     let registry = load_house();
     let route = |topic: &str| registry.route(topic, b"x".to_vec(), AT);
-    assert!(matches!(route("oikos/ui/_areas"), Inbound::Areas(_)));
-    assert!(matches!(route("oikos/ui/_types"), Inbound::Ignored));
+    assert!(matches!(route("nidoo/ui/_areas"), Inbound::Areas(_)));
+    assert!(matches!(route("nidoo/ui/_types"), Inbound::Ignored));
     assert!(matches!(
-        route("oikos/ui/some_id"),
+        route("nidoo/ui/some_id"),
         Inbound::Override { unique_id, .. } if unique_id == "some_id"
     ));
     assert!(matches!(
@@ -747,14 +747,14 @@ fn route_classifies_every_topic_kind() {
         Inbound::Z2mBridgeInfo(_)
     ));
     assert!(matches!(
-        route("oikos/switch/x/config"),
+        route("nidoo/switch/x/config"),
         Inbound::Discovery(DiscoveryTopic { component, .. }, _) if component == "switch"
     ));
     assert!(matches!(
         route(THERMOMETER_TOPIC),
         Inbound::State { at, .. } if at == AT
     ));
-    assert!(matches!(route("oikos/automation/x"), Inbound::Irrelevant));
+    assert!(matches!(route("nidoo/automation/x"), Inbound::Irrelevant));
     assert!(matches!(
         route("zigbee2mqtt/nobody/here"),
         Inbound::Irrelevant
@@ -791,7 +791,7 @@ fn bridge_state_feeds_entity_availability() {
 const REMOTE: &str = "device_automation.0xd4fe12345";
 
 fn remote_topic(object: &str) -> String {
-    format!("oikos/device_automation/0xd4fe12345/{object}/config")
+    format!("nidoo/device_automation/0xd4fe12345/{object}/config")
 }
 
 fn remote_config(payload: &str) -> Vec<u8> {
@@ -1104,7 +1104,7 @@ fn switch_registry() -> Registry {
         "device": {"identifiers": ["zigbee2mqtt_0xtest"], "name": "test"}
     });
     registry.apply(Inbound::Discovery(
-        discovery_topic("oikos/switch/test/config"),
+        discovery_topic("nidoo/switch/test/config"),
         config.to_string().into_bytes(),
     ));
     registry

@@ -14,11 +14,11 @@ use nidoo_core::model::{Kind, StateValue};
 use serde_json::json;
 use tokio::sync::mpsc;
 
-const CONFIG_TOPIC: &str = "oikos/alarm_control_panel/alarm/house/config";
+const CONFIG_TOPIC: &str = "nidoo/alarm_control_panel/alarm/house/config";
 
 fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     let (tx, rx) = mpsc::channel(64);
     let hub = Hub::new(&cfg, tx);
     hub.set_connection(ConnectionStatus::Online);
@@ -45,7 +45,7 @@ fn contact(id: &str) -> serde_json::Value {
 
 fn feed(hub: &Hub, component: &str, id: &str, config: serde_json::Value) {
     hub.ingest(
-        &format!("oikos/{component}/{id}/{id}/config"),
+        &format!("nidoo/{component}/{id}/{id}/config"),
         config.to_string().as_bytes(),
     );
 }
@@ -122,15 +122,15 @@ async fn disabled_by_default_publishes_nothing() {
     );
     assert!(
         hub.extra_filters()
-            .contains(&"oikos/alarm/settings".to_owned())
+            .contains(&"nidoo/alarm/settings".to_owned())
     );
     assert!(
         hub.extra_filters()
-            .contains(&"oikos/alarm/state".to_owned())
+            .contains(&"nidoo/alarm/state".to_owned())
     );
     assert!(
         hub.extra_filters()
-            .contains(&"oikos/alarm/panel/set".to_owned())
+            .contains(&"nidoo/alarm/panel/set".to_owned())
     );
 }
 
@@ -154,25 +154,25 @@ async fn enable_publishes_entity() {
         json!(["arm_away", "arm_home", "arm_night"])
     );
     assert_eq!(doc["code_arm_required"], json!(false));
-    assert_eq!(doc["unique_id"], json!("oikos_alarm_house"));
+    assert_eq!(doc["unique_id"], json!("nidoo_alarm_house"));
     assert!(
         published
             .iter()
-            .any(|p| p.topic == "oikos/alarm/settings" && p.retain)
+            .any(|p| p.topic == "nidoo/alarm/settings" && p.retain)
     );
     // The runtime is persisted before the panel state is published (R6).
     let at = |topic: &str| published.iter().position(|p| p.topic == topic).unwrap();
-    assert!(at("oikos/alarm/state") < at("oikos/alarm/panel"));
+    assert!(at("nidoo/alarm/state") < at("nidoo/alarm/panel"));
     assert_eq!(
         published
             .iter()
-            .find(|p| p.topic == "oikos/alarm/panel")
+            .find(|p| p.topic == "nidoo/alarm/panel")
             .unwrap()
             .payload,
         "disarmed"
     );
 
-    let view = hub.entity_view("oikos_alarm_house").expect("panel entity");
+    let view = hub.entity_view("nidoo_alarm_house").expect("panel entity");
     assert_eq!(view.kind, Kind::AlarmPanel);
     assert_eq!(view.state.value, StateValue::Alarm("disarmed".to_owned()));
     assert!(hub.alarm_view().enabled);
@@ -191,7 +191,7 @@ async fn disable_removes_entity_keeps_settings() {
     let sensor = entity_id(&hub, "front_door");
     let mut settings = enabled_with(&sensor);
     hub.set_alarm_settings(settings.clone()).await.unwrap();
-    assert!(hub.entity_view("oikos_alarm_house").is_some());
+    assert!(hub.entity_view("nidoo_alarm_house").is_some());
     drain(&mut rx);
 
     settings.enabled = false;
@@ -199,7 +199,7 @@ async fn disable_removes_entity_keeps_settings() {
     let published = drain(&mut rx);
     let removal = published.iter().find(|p| p.topic == CONFIG_TOPIC).unwrap();
     assert!(removal.retain && removal.payload.is_empty());
-    assert!(hub.entity_view("oikos_alarm_house").is_none());
+    assert!(hub.entity_view("nidoo_alarm_house").is_none());
     assert_eq!(hub.alarm_settings().sensors.len(), 1);
     assert!(!hub.alarm_view().enabled);
 }
@@ -216,7 +216,7 @@ async fn enable_seeds_runtime_from_live_trackers() {
     hub.set_alarm_settings(settings).await.unwrap();
     let state = drain(&mut rx)
         .into_iter()
-        .find(|p| p.topic == "oikos/alarm/state")
+        .find(|p| p.topic == "nidoo/alarm/state")
         .unwrap();
     let doc: serde_json::Value = serde_json::from_str(&state.payload).unwrap();
     assert_eq!(doc["trackers"][&tracker], json!("home"));
@@ -277,10 +277,10 @@ async fn accepts_siren_switch_remote_and_tracker() {
 async fn invalid_retained_settings_keep_previous() {
     let (hub, _rx) = hub();
     let good = json!({"enabled": false, "siren_s": 30}).to_string();
-    hub.ingest_message("oikos/alarm/settings", good.as_bytes(), true);
+    hub.ingest_message("nidoo/alarm/settings", good.as_bytes(), true);
     assert_eq!(hub.alarm_settings().siren_s, 30);
     assert!(hub.alarm_view().settings_invalid.is_none());
-    hub.ingest_message("oikos/alarm/settings", br#"{"siren_s": 5}"#, true);
+    hub.ingest_message("nidoo/alarm/settings", br#"{"siren_s": 5}"#, true);
     assert!(hub.alarm_view().settings_invalid.is_some());
     assert_eq!(hub.alarm_settings().siren_s, 30);
 }
@@ -289,7 +289,7 @@ async fn invalid_retained_settings_keep_previous() {
 async fn view_warns_about_missing_entities() {
     let (hub, _rx) = hub();
     let doc = serde_json::to_string(&enabled_with("ghost_door")).unwrap();
-    hub.ingest_message("oikos/alarm/settings", doc.as_bytes(), true);
+    hub.ingest_message("nidoo/alarm/settings", doc.as_bytes(), true);
     let warnings = hub.alarm_view().warnings;
     assert!(
         warnings.iter().any(|w| w.contains("ghost_door")),
@@ -300,9 +300,9 @@ async fn view_warns_about_missing_entities() {
 #[tokio::test]
 async fn alarm_documents_are_not_devices() {
     let (hub, _rx) = hub();
-    let changes = hub.ingest_message("oikos/alarm/panel/set", b"ARM_AWAY", false);
+    let changes = hub.ingest_message("nidoo/alarm/panel/set", b"ARM_AWAY", false);
     assert!(changes.is_empty());
-    hub.ingest_message("oikos/alarm/state", b"not json", true);
+    hub.ingest_message("nidoo/alarm/state", b"not json", true);
     assert!(hub.snapshot().entities.is_empty());
 }
 
@@ -406,7 +406,7 @@ impl Rig {
 
     fn panel(&self) -> StateValue {
         self.hub
-            .entity_view("oikos_alarm_house")
+            .entity_view("nidoo_alarm_house")
             .unwrap()
             .state
             .value
@@ -414,7 +414,7 @@ impl Rig {
 
     async fn command(&mut self, cmd: nidoo_core::model::Command) -> nidoo_api::CommandResponse {
         let hub = Arc::clone(&self.hub);
-        let reply = hub.send_command("oikos_alarm_house", cmd).await.unwrap();
+        let reply = hub.send_command("nidoo_alarm_house", cmd).await.unwrap();
         self.pump().await;
         reply
     }
@@ -460,7 +460,7 @@ async fn commands_are_refused_while_disabled() {
     use nidoo_core::model::AlarmMode;
     let (hub, _rx) = hub();
     let reply = hub
-        .send_command("oikos_alarm_house", arm(AlarmMode::Away))
+        .send_command("nidoo_alarm_house", arm(AlarmMode::Away))
         .await
         .unwrap();
     assert!(!reply.accepted);
@@ -472,11 +472,11 @@ async fn raw_mqtt_command_arms() {
     let mut rig = Rig::new().await;
     // A retained command is a replay, never a press.
     rig.hub
-        .ingest_message("oikos/alarm/panel/set", b"ARM_NIGHT", true);
+        .ingest_message("nidoo/alarm/panel/set", b"ARM_NIGHT", true);
     rig.pump().await;
     assert_eq!(rig.state(), "disarmed");
     rig.hub
-        .ingest_message("oikos/alarm/panel/set", b"ARM_NIGHT", false);
+        .ingest_message("nidoo/alarm/panel/set", b"ARM_NIGHT", false);
     rig.pump().await;
     assert_eq!(rig.state(), "arming");
 }
@@ -517,7 +517,7 @@ async fn door_open_triggers_via_registry() {
     assert_eq!(rig.panel(), StateValue::Alarm("triggered".to_owned()));
     let attrs = rig
         .hub
-        .entity_view("oikos_alarm_house")
+        .entity_view("nidoo_alarm_house")
         .unwrap()
         .state
         .attributes;
@@ -531,7 +531,7 @@ async fn runtime_persisted_retained() {
     let mut rig = Rig::new().await;
     let hub = Arc::clone(&rig.hub);
     let reply = hub
-        .send_command("oikos_alarm_house", arm(AlarmMode::Away))
+        .send_command("nidoo_alarm_house", arm(AlarmMode::Away))
         .await
         .unwrap();
     assert!(reply.accepted);
@@ -539,7 +539,7 @@ async fn runtime_persisted_retained() {
     let last = seen
         .iter()
         .rev()
-        .find(|p| p.topic == "oikos/alarm/state")
+        .find(|p| p.topic == "nidoo/alarm/state")
         .expect("runtime published");
     assert!(last.retain);
     let rt: Runtime = serde_json::from_str(&last.payload).unwrap();
@@ -569,7 +569,7 @@ async fn boot_settle_backlog_is_not_replayed_against_the_seed() {
     let door = entity_id(&hub, "front_door");
     hub.ingest("fx/front_door", b"closed");
     hub.ingest_message(
-        "oikos/alarm/settings",
+        "nidoo/alarm/settings",
         serde_json::to_string(&enabled_with(&door))
             .unwrap()
             .as_bytes(),
@@ -582,7 +582,7 @@ async fn boot_settle_backlog_is_not_replayed_against_the_seed() {
         ..Runtime::default()
     };
     hub.ingest_message(
-        "oikos/alarm/state",
+        "nidoo/alarm/state",
         serde_json::to_string(&armed).unwrap().as_bytes(),
         true,
     );
@@ -618,7 +618,7 @@ async fn alarm_changed_during_an_outage_does_not_reseed() {
     settings.siren_s = 60;
     let doc = serde_json::to_string(&settings).unwrap();
     rig.hub
-        .ingest_message("oikos/alarm/settings", doc.as_bytes(), true);
+        .ingest_message("nidoo/alarm/settings", doc.as_bytes(), true);
     rig.pump().await;
     rig.hub.set_connection(ConnectionStatus::Online);
     rig.pump().await;
@@ -785,11 +785,11 @@ async fn push_disarm_reply_disarms() {
     let reply = json!({"id": id, "action": "disarm", "install_id": "x", "ts": 1}).to_string();
     // A retained reply is a replay, never a press.
     rig.hub
-        .ingest_message("oikos/push/responses", reply.as_bytes(), true);
+        .ingest_message("nidoo/push/responses", reply.as_bytes(), true);
     rig.pump().await;
     assert_eq!(rig.state(), "triggered");
     rig.hub
-        .ingest_message("oikos/push/responses", reply.as_bytes(), false);
+        .ingest_message("nidoo/push/responses", reply.as_bytes(), false);
     rig.pump().await;
     assert_eq!(rig.state(), "disarmed");
     assert_eq!(rig.sent(SIREN_SET), ["OFF"]);
@@ -807,7 +807,7 @@ async fn other_replies_are_ignored() {
         json!({"id": "frigate-1", "action": "disarm"}),
     ] {
         rig.hub
-            .ingest_message("oikos/push/responses", reply.to_string().as_bytes(), false);
+            .ingest_message("nidoo/push/responses", reply.to_string().as_bytes(), false);
     }
     rig.pump().await;
     assert_eq!(rig.state(), "triggered");
@@ -963,12 +963,12 @@ fn boot_hub(
     let mut settings = enabled_with(&entity_id(&hub, "front_door"));
     edit(&hub, &mut settings);
     hub.ingest_message(
-        "oikos/alarm/settings",
+        "nidoo/alarm/settings",
         serde_json::to_string(&settings).unwrap().as_bytes(),
         true,
     );
     hub.ingest_message(
-        "oikos/alarm/state",
+        "nidoo/alarm/state",
         serde_json::to_string(&runtime(&hub)).unwrap().as_bytes(),
         true,
     );
@@ -1060,7 +1060,7 @@ async fn disable_while_ringing_silences() {
 #[tokio::test(start_paused = true)]
 async fn climate_replies_still_routed() {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.climate.enabled = true;
     let (tx, mut rx) = mpsc::channel(64);
     let hub = Hub::new(&cfg, tx);
@@ -1076,7 +1076,7 @@ async fn climate_replies_still_routed() {
         br#"{"id":"alarm-1-0","action":"disarm"}"#.as_slice(),
     ] {
         assert!(
-            hub.ingest_message("oikos/push/responses", reply, false)
+            hub.ingest_message("nidoo/push/responses", reply, false)
                 .is_empty()
         );
     }
@@ -1128,7 +1128,7 @@ async fn unresponsive_siren_delays_neither_alert_nor_disarm() {
     let hub2 = Arc::clone(&rig.hub);
     let disarm = tokio::spawn(async move {
         hub2.send_command(
-            "oikos_alarm_house",
+            "nidoo_alarm_house",
             nidoo_core::model::Command::Disarm { code: None },
         )
         .await
@@ -1290,7 +1290,7 @@ async fn late_retained_runtime_is_not_overwritten() {
     let door = entity_id(&hub, "front_door");
     hub.ingest("fx/front_door", b"closed");
     hub.ingest_message(
-        "oikos/alarm/settings",
+        "nidoo/alarm/settings",
         serde_json::to_string(&enabled_with(&door))
             .unwrap()
             .as_bytes(),
@@ -1316,7 +1316,7 @@ async fn late_retained_runtime_is_not_overwritten() {
         ..Runtime::default()
     };
     rig.hub.ingest_message(
-        "oikos/alarm/state",
+        "nidoo/alarm/state",
         serde_json::to_string(&armed).unwrap().as_bytes(),
         true,
     );
@@ -1332,7 +1332,7 @@ async fn missing_runtime_is_taken_as_empty_after_the_wait() {
     house(&hub);
     let door = entity_id(&hub, "front_door");
     hub.ingest_message(
-        "oikos/alarm/settings",
+        "nidoo/alarm/settings",
         serde_json::to_string(&enabled_with(&door))
             .unwrap()
             .as_bytes(),
@@ -1350,7 +1350,7 @@ async fn missing_runtime_is_taken_as_empty_after_the_wait() {
     };
     rig.pump().await;
     rig.advance(6).await;
-    assert!(rig.sent("oikos/alarm/state").is_empty(), "still waiting");
+    assert!(rig.sent("nidoo/alarm/state").is_empty(), "still waiting");
     rig.advance(31).await;
     assert_eq!(rig.state(), "disarmed");
     assert!(
@@ -1495,7 +1495,7 @@ async fn commands_are_refused_until_the_engine_has_started() {
         .await
         .unwrap();
     let reply = hub
-        .send_command("oikos_alarm_house", arm(AlarmMode::Away))
+        .send_command("nidoo_alarm_house", arm(AlarmMode::Away))
         .await
         .unwrap();
     assert!(!reply.accepted);

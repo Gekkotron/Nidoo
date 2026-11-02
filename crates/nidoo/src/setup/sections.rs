@@ -71,7 +71,6 @@ impl fmt::Debug for SolcastSection {
 pub struct PushSection {
     pub service_account: Option<String>,
     pub prefix: String,
-    pub legacy_prefix: String,
     pub retry_interval: u64,
     pub max_retries: u32,
     pub history_size: usize,
@@ -84,7 +83,6 @@ impl Default for PushSection {
         Self {
             service_account: None,
             prefix: d.prefix,
-            legacy_prefix: d.legacy_prefix,
             retry_interval: d.retry_interval,
             max_retries: d.max_retries,
             history_size: d.history_size,
@@ -99,7 +97,6 @@ impl fmt::Debug for PushSection {
         f.debug_struct("PushSection")
             .field("service_account", &service_account)
             .field("prefix", &self.prefix)
-            .field("legacy_prefix", &self.legacy_prefix)
             .field("retry_interval", &self.retry_interval)
             .field("max_retries", &self.max_retries)
             .field("history_size", &self.history_size)
@@ -204,7 +201,6 @@ pub fn assemble(file: &HubFile, s: &Sections) -> Config {
         log: file.log.clone(),
         push: crate::config::PushConfig {
             prefix: s.push.prefix.clone(),
-            legacy_prefix: s.push.legacy_prefix.clone(),
             credentials: None,
             service_account: s.push.service_account.clone(),
             retry_interval: s.push.retry_interval,
@@ -292,7 +288,7 @@ mod tests {
 
     fn file() -> HubFile {
         HubFile {
-            database_url: Some("postgres://u:pw@db.example.com/oikos".into()),
+            database_url: Some("postgres://u:pw@db.example.com/nidoo".into()),
             ..HubFile::default()
         }
     }

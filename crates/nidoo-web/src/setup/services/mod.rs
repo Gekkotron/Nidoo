@@ -63,7 +63,7 @@ pub const SERVICE_IDS: [&str; 7] = [
 ];
 
 #[cfg(target_arch = "wasm32")]
-const SKIPPED_KEY: &str = "oikos.setup.skipped";
+const SKIPPED_KEY: &str = "nidoo.setup.skipped";
 
 /// The ids in a stored skipped list; anything unreadable reads as empty.
 fn parse_skipped(raw: Option<&str>) -> BTreeSet<String> {
@@ -618,10 +618,10 @@ mod tests {
     fn with_fields_keeps_the_other_keys() {
         assert_eq!(
             with_fields(
-                json!({"enabled": false, "prefix": "oikos/climate"}),
+                json!({"enabled": false, "prefix": "nidoo/climate"}),
                 &[("enabled", json!(true))]
             ),
-            json!({"enabled": true, "prefix": "oikos/climate"})
+            json!({"enabled": true, "prefix": "nidoo/climate"})
         );
     }
 

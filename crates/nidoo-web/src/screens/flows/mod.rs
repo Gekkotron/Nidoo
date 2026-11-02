@@ -22,7 +22,7 @@ use row::FlowRow;
 
 /// Storage key for the remembered view, grouping, sort, filters and folded sections.
 #[cfg(target_arch = "wasm32")]
-const STORAGE_KEY: &str = "oikos.flowList";
+const STORAGE_KEY: &str = "nidoo.flowList";
 
 /// `localStorage`, or `None` when it is missing, blocked or throws.
 #[cfg(target_arch = "wasm32")]

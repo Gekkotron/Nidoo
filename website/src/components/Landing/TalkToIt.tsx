@@ -28,12 +28,12 @@ export default function TalkToIt() {
             </div>
             <pre className={styles.termBody} aria-hidden="true">
               <span className={styles.prompt}>$ </span>
-              <span>claude mcp add --transport http oikos http://&lt;host&gt;:8081/mcp</span>
+              <span>claude mcp add --transport http nidoo http://&lt;host&gt;:8081/mcp</span>
               {'\n\n'}
               <span className={styles.you}>you  </span>
               <span>Turn the living room lights on at sunset, and off at midnight.</span>
               {'\n\n'}
-              <span className={styles.bot}>oikos</span>
+              <span className={styles.bot}>nidoo</span>
               <span> Done. Two flows created and enabled.</span>
             </pre>
           </div>

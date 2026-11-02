@@ -108,7 +108,7 @@ async fn app_at(enabled: bool, coordinates: Option<(f64, f64)>) -> App {
     let mut cfg = Config::default();
     cfg.weather.latitude = coordinates.map(|c| c.0);
     cfg.weather.longitude = coordinates.map(|c| c.1);
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.weather.enabled = enabled;
     cfg.weather.city = "Paris".to_owned();
     // Below the validated floor on purpose: the poller sleeps its one-second minimum.
@@ -181,7 +181,7 @@ async fn poller_publishes_offline_first_then_online_and_states() {
         let published = app.published.lock().unwrap();
         let availability: Vec<&str> = published
             .iter()
-            .filter(|(t, _)| t == "oikos/weather/availability")
+            .filter(|(t, _)| t == "nidoo/weather/availability")
             .map(|(_, p)| p.as_str())
             .collect();
         assert!(availability.len() >= 2, "{availability:?}");

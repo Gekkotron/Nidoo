@@ -15,7 +15,7 @@ use crate::i18n::security::alert_age;
 
 /// Storage key for the "last visit to the Alerts tab" marker.
 #[cfg(target_arch = "wasm32")]
-const SEEN_STORAGE_KEY: &str = "oikos.alerts.last_seen";
+const SEEN_STORAGE_KEY: &str = "nidoo.alerts.last_seen";
 
 /// `localStorage`, or `None` when it is missing, blocked or throws (private window, denied
 /// permission): the badge then stops persisting, but never panics.

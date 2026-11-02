@@ -8,21 +8,20 @@ fn defaults_match_spec() {
     Jail::expect_with(|_jail| {
         let cfg = Config::load(None)?;
         assert_eq!(cfg.mqtt.port, 1883);
-        assert_eq!(cfg.mqtt.client_id, "oikos-os");
+        assert_eq!(cfg.mqtt.client_id, "nidoo");
         assert!(!cfg.mqtt.send_ha_birth);
         assert_eq!(cfg.mqtt.ha_status_topic, "homeassistant/status");
-        assert_eq!(cfg.topics.discovery_prefixes, vec!["oikos".to_string()]);
-        assert_eq!(cfg.topics.ui_prefix, "oikos/ui");
+        assert_eq!(cfg.topics.discovery_prefixes, vec!["nidoo".to_string()]);
+        assert_eq!(cfg.topics.ui_prefix, "nidoo/ui");
         assert_eq!(cfg.topics.z2m_base, "zigbee2mqtt");
-        assert_eq!(cfg.topics.automation_prefix, "oikos/automation");
+        assert_eq!(cfg.topics.automation_prefix, "nidoo/automation");
         assert_eq!(cfg.automation.runs_kept, 20);
         assert_eq!(cfg.http.bind, "0.0.0.0:8081");
         assert_eq!(cfg.commands.confirm_timeout_ms, 5000);
         assert_eq!(cfg.commands.subscription_debounce_ms, 500);
         assert_eq!(cfg.log.level, "info");
         assert!(!cfg.log.json);
-        assert_eq!(cfg.push.prefix, "oikos/push");
-        assert_eq!(cfg.push.legacy_prefix, "oikos-push");
+        assert_eq!(cfg.push.prefix, "nidoo/push");
         assert_eq!(cfg.push.credentials, None);
         assert_eq!(cfg.frigate.url, None);
         assert_eq!(cfg.frigate.user, None);
@@ -37,7 +36,7 @@ fn defaults_match_spec() {
 fn frigate_live_parses() {
     Jail::expect_with(|jail| {
         jail.create_file(
-            "oikos.toml",
+            "nidoo.toml",
             "[frigate]\nurl = \"http://f:8971\"\nlive = true\n",
         )?;
         let cfg = Config::load(None)?;
@@ -49,11 +48,11 @@ fn frigate_live_parses() {
 #[test]
 fn env_overrides_file() {
     Jail::expect_with(|jail| {
-        jail.create_file("oikos.toml", "[mqtt]\nhost = \"a\"\nport = 1884\n")?;
+        jail.create_file("nidoo.toml", "[mqtt]\nhost = \"a\"\nport = 1884\n")?;
         let cfg = Config::load(None)?;
         assert_eq!(cfg.mqtt.host, "a");
         assert_eq!(cfg.mqtt.port, 1884);
-        jail.set_env("OIKOS_MQTT__HOST", "b");
+        jail.set_env("NIDOO_MQTT__HOST", "b");
         let cfg = Config::load(None)?;
         assert_eq!(cfg.mqtt.host, "b");
         assert_eq!(cfg.mqtt.port, 1884);
@@ -66,14 +65,14 @@ fn env_list_and_explicit_path() {
     Jail::expect_with(|jail| {
         jail.create_file("custom.toml", "[http]\nbind = \"127.0.0.1:9\"\n")?;
         jail.set_env(
-            "OIKOS_TOPICS__DISCOVERY_PREFIXES",
-            r#"["oikos","homeassistant"]"#,
+            "NIDOO_TOPICS__DISCOVERY_PREFIXES",
+            r#"["nidoo","homeassistant"]"#,
         );
         let cfg = Config::load(Some(std::path::Path::new("custom.toml")))?;
         assert_eq!(cfg.http.bind, "127.0.0.1:9");
         assert_eq!(
             cfg.topics.discovery_prefixes,
-            vec!["oikos".to_string(), "homeassistant".to_string()]
+            vec!["nidoo".to_string(), "homeassistant".to_string()]
         );
         Ok(())
     });
@@ -93,17 +92,17 @@ fn debug_redacts_password() {
 #[test]
 fn numeric_looking_env_strings_stay_strings() {
     Jail::expect_with(|jail| {
-        jail.set_env("OIKOS_MQTT__PASSWORD", "123456");
-        jail.set_env("OIKOS_MQTT__CLIENT_ID", "1");
-        jail.set_env("OIKOS_MQTT__USER", "007");
-        jail.set_env("OIKOS_MQTT__HOST", "192.168.1.20");
-        jail.set_env("OIKOS_MQTT__HA_STATUS_TOPIC", "42");
-        jail.set_env("OIKOS_TOPICS__UI_PREFIX", "7");
-        jail.set_env("OIKOS_TOPICS__Z2M_BASE", "0123");
-        jail.set_env("OIKOS_HTTP__BIND", "8080");
-        jail.set_env("OIKOS_LOG__LEVEL", "5");
-        jail.set_env("OIKOS_PUSH__PREFIX", "1");
-        jail.set_env("OIKOS_FRIGATE__PASSWORD", "0042");
+        jail.set_env("NIDOO_MQTT__PASSWORD", "123456");
+        jail.set_env("NIDOO_MQTT__CLIENT_ID", "1");
+        jail.set_env("NIDOO_MQTT__USER", "007");
+        jail.set_env("NIDOO_MQTT__HOST", "192.168.1.20");
+        jail.set_env("NIDOO_MQTT__HA_STATUS_TOPIC", "42");
+        jail.set_env("NIDOO_TOPICS__UI_PREFIX", "7");
+        jail.set_env("NIDOO_TOPICS__Z2M_BASE", "0123");
+        jail.set_env("NIDOO_HTTP__BIND", "8080");
+        jail.set_env("NIDOO_LOG__LEVEL", "5");
+        jail.set_env("NIDOO_PUSH__PREFIX", "1");
+        jail.set_env("NIDOO_FRIGATE__PASSWORD", "0042");
         let cfg = Config::load(None)?;
         assert_eq!(cfg.mqtt.ha_status_topic, "42");
         assert_eq!(cfg.topics.ui_prefix, "7");
@@ -123,25 +122,21 @@ fn numeric_looking_env_strings_stay_strings() {
 #[test]
 fn env_layer_excludes_string_keys() {
     Jail::expect_with(|jail| {
-        for prefix in ["OIKOS_", "NIDOO_"] {
-            for key in nidoo::config::STRING_ENV_KEYS {
-                jail.set_env(
-                    format!("{prefix}{}", key.replace('.', "__").to_uppercase()),
-                    "123",
-                );
-            }
-            jail.set_env(format!("{prefix}MQTT__PORT"), "1999");
+        for key in nidoo::config::STRING_ENV_KEYS {
+            jail.set_env(
+                format!("NIDOO_{}", key.replace('.', "__").to_uppercase()),
+                "123",
+            );
         }
-        for provider in [Config::legacy_env_provider(), Config::env_provider()] {
-            let env = figment::Figment::from(provider);
-            for key in nidoo::config::STRING_ENV_KEYS {
-                assert!(
-                    env.find_value(key).is_err(),
-                    "{key} leaked into the Env layer"
-                );
-            }
-            assert!(env.find_value("mqtt.port").is_ok());
+        jail.set_env("NIDOO_MQTT__PORT", "1999");
+        let env = figment::Figment::from(Config::env_provider());
+        for key in nidoo::config::STRING_ENV_KEYS {
+            assert!(
+                env.find_value(key).is_err(),
+                "{key} leaked into the Env layer"
+            );
         }
+        assert!(env.find_value("mqtt.port").is_ok());
         Ok(())
     });
 }
@@ -150,7 +145,7 @@ fn env_layer_excludes_string_keys() {
 fn debug_redacts_frigate_password() {
     Jail::expect_with(|jail| {
         jail.create_file(
-            "oikos.toml",
+            "nidoo.toml",
             "[frigate]\nurl = \"http://f:8971\"\nuser = \"u\"\npassword = \"hunter2\"\n",
         )?;
         let cfg = Config::load(None)?;
@@ -164,8 +159,8 @@ fn debug_redacts_frigate_password() {
 #[test]
 fn env_overrides_automation_keys() {
     Jail::expect_with(|jail| {
-        jail.set_env("OIKOS_TOPICS__AUTOMATION_PREFIX", "home/flows");
-        jail.set_env("OIKOS_AUTOMATION__RUNS_KEPT", "5");
+        jail.set_env("NIDOO_TOPICS__AUTOMATION_PREFIX", "home/flows");
+        jail.set_env("NIDOO_AUTOMATION__RUNS_KEPT", "5");
         let cfg = Config::load(None)?;
         assert_eq!(cfg.topics.automation_prefix, "home/flows");
         assert_eq!(cfg.automation.runs_kept, 5);
@@ -188,13 +183,13 @@ fn history_defaults_off() {
 fn history_url_from_env_stays_a_string() {
     Jail::expect_with(|jail| {
         jail.set_env(
-            "OIKOS_HISTORY__URL",
-            "postgres://oikos:s3cret@192.168.1.20:5432/oikos",
+            "NIDOO_HISTORY__URL",
+            "postgres://nidoo:s3cret@192.168.1.20:5432/nidoo",
         );
         let cfg = Config::load(None)?;
         assert_eq!(
             cfg.history.url,
-            "postgres://oikos:s3cret@192.168.1.20:5432/oikos"
+            "postgres://nidoo:s3cret@192.168.1.20:5432/nidoo"
         );
         assert!(cfg.history.enabled());
         Ok(())
@@ -205,8 +200,8 @@ fn history_url_from_env_stays_a_string() {
 fn history_debug_masks_password() {
     Jail::expect_with(|jail| {
         jail.create_file(
-            "oikos.toml",
-            "[history]\nurl = \"postgres://oikos:s3cret@192.168.1.20:5432/oikos\"\n",
+            "nidoo.toml",
+            "[history]\nurl = \"postgres://nidoo:s3cret@192.168.1.20:5432/nidoo\"\n",
         )?;
         let cfg = Config::load(None)?;
         let text = format!("{:?}", cfg.history);
@@ -220,12 +215,12 @@ fn history_debug_masks_password() {
 fn flows_timezone_is_read() {
     Jail::expect_with(|jail| {
         assert_eq!(Config::load(None)?.flows.timezone, None);
-        jail.create_file("oikos.toml", "[flows]\ntimezone = \"Europe/Paris\"\n")?;
+        jail.create_file("nidoo.toml", "[flows]\ntimezone = \"Europe/Paris\"\n")?;
         assert_eq!(
             Config::load(None)?.flows.timezone.as_deref(),
             Some("Europe/Paris")
         );
-        jail.set_env("OIKOS_FLOWS__TIMEZONE", "UTC");
+        jail.set_env("NIDOO_FLOWS__TIMEZONE", "UTC");
         assert_eq!(Config::load(None)?.flows.timezone.as_deref(), Some("UTC"));
         Ok(())
     });
@@ -235,8 +230,7 @@ fn flows_timezone_is_read() {
 fn push_defaults_are_new_topics() {
     Jail::expect_with(|_jail| {
         let push = Config::load(None)?.push;
-        assert_eq!(push.prefix, "oikos/push");
-        assert_eq!(push.legacy_prefix, "oikos-push");
+        assert_eq!(push.prefix, "nidoo/push");
         assert_eq!(push.credentials, None);
         assert_eq!(push.retry_interval, 60);
         assert_eq!(push.max_retries, 10);
@@ -250,19 +244,18 @@ fn push_defaults_are_new_topics() {
 fn push_keys_are_read() {
     Jail::expect_with(|jail| {
         jail.create_file(
-            "oikos.toml",
-            "[push]\nprefix = \"home/push\"\nlegacy_prefix = \"\"\n\
+            "nidoo.toml",
+            "[push]\nprefix = \"home/push\"\n\
              credentials = \"/srv/keys/fcm.json\"\nretry_interval = 30\n",
         )?;
         let push = Config::load(None)?.push;
         assert_eq!(push.prefix, "home/push");
-        assert_eq!(push.legacy_prefix, "");
         assert_eq!(
             push.credentials.as_deref(),
             Some(std::path::Path::new("/srv/keys/fcm.json"))
         );
         assert_eq!(push.retry_interval, 30);
-        jail.set_env("OIKOS_PUSH__CREDENTIALS", "/tmp/key.json");
+        jail.set_env("NIDOO_PUSH__CREDENTIALS", "/tmp/key.json");
         assert_eq!(
             Config::load(None)?.push.credentials.as_deref(),
             Some(std::path::Path::new("/tmp/key.json"))
@@ -309,14 +302,14 @@ fn explicit_push_credentials_win_over_the_secrets_folder() {
         jail.create_dir("secrets")?;
         jail.create_file("secrets/firebase.json", "{}")?;
         jail.create_file(
-            "oikos.toml",
+            "nidoo.toml",
             "[push]\ncredentials = \"/srv/keys/fcm.json\"\n",
         )?;
         assert_eq!(
             Config::load(None)?.push.credentials.as_deref(),
             Some(std::path::Path::new("/srv/keys/fcm.json"))
         );
-        jail.set_env("OIKOS_PUSH__CREDENTIALS", "/tmp/key.json");
+        jail.set_env("NIDOO_PUSH__CREDENTIALS", "/tmp/key.json");
         assert_eq!(
             Config::load(None)?.push.credentials.as_deref(),
             Some(std::path::Path::new("/tmp/key.json"))
@@ -328,31 +321,17 @@ fn explicit_push_credentials_win_over_the_secrets_folder() {
 #[test]
 fn old_push_keys_are_rejected() {
     Jail::expect_with(|jail| {
-        jail.create_file("oikos.toml", "[push]\nhistory_topic = \"x\"\n")?;
+        jail.create_file("nidoo.toml", "[push]\nhistory_topic = \"x\"\n")?;
         let err = Config::load(None).expect_err("history_topic is no longer a key");
         let text = err.to_string();
         assert!(text.contains("history_topic"), "{text}");
         assert!(
-            text.contains("legacy_prefix"),
+            text.contains("credentials"),
             "the error names the new keys: {text}"
         );
-        jail.create_file("oikos.toml", "[push]\nresponses_topic = \"x\"\n")?;
+        jail.create_file("nidoo.toml", "[push]\nresponses_topic = \"x\"\n")?;
         let err = Config::load(None).expect_err("responses_topic is no longer a key");
         assert!(err.to_string().contains("responses_topic"), "{err}");
-        Ok(())
-    });
-}
-
-#[test]
-fn legacy_config_still_loads() {
-    Jail::expect_with(|_jail| {
-        let path = std::path::Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/legacy-oikos.toml"
-        ));
-        let cfg = Config::load(Some(path))?;
-        assert_eq!(cfg.push.prefix, "oikos/push");
-        assert_eq!(cfg.push.credentials, None);
         Ok(())
     });
 }
@@ -371,10 +350,10 @@ fn frigate_bridge_defaults_and_string_env() {
         );
         assert!(f.bridge_settings().is_none());
 
-        jail.set_env("OIKOS_FRIGATE__SEVERITY", "123");
-        jail.set_env("OIKOS_FRIGATE__TOPIC_PREFIX", "007");
-        jail.set_env("OIKOS_FRIGATE__MEDIA_URL", "http://192.168.1.20:5000/");
-        jail.set_env("OIKOS_FRIGATE__BRIDGE", "true");
+        jail.set_env("NIDOO_FRIGATE__SEVERITY", "123");
+        jail.set_env("NIDOO_FRIGATE__TOPIC_PREFIX", "007");
+        jail.set_env("NIDOO_FRIGATE__MEDIA_URL", "http://192.168.1.20:5000/");
+        jail.set_env("NIDOO_FRIGATE__BRIDGE", "true");
         let cfg = Config::load(None)?;
         assert_eq!(cfg.frigate.severity, "123");
         assert_eq!(cfg.frigate.events_topic(), "007/events");
@@ -398,14 +377,14 @@ fn watchdog_defaults_and_validation() {
         assert_eq!(w.validate(), Ok(()));
 
         // A file source without a log file is a config error, but only once enabled.
-        jail.set_env("OIKOS_WATCHDOG__ACL__SOURCE", "file");
+        jail.set_env("NIDOO_WATCHDOG__ACL__SOURCE", "file");
         assert_eq!(Config::load(None)?.watchdog.validate(), Ok(()));
-        jail.set_env("OIKOS_WATCHDOG__ACL__ENABLED", "true");
+        jail.set_env("NIDOO_WATCHDOG__ACL__ENABLED", "true");
         let cfg = Config::load(None)?;
         assert_eq!(cfg.watchdog.acl.source, AclSource::File);
         assert!(cfg.watchdog.validate().is_err());
 
-        jail.set_env("OIKOS_WATCHDOG__ACL__LOG_FILE", "007");
+        jail.set_env("NIDOO_WATCHDOG__ACL__LOG_FILE", "007");
         let cfg = Config::load(None)?;
         assert_eq!(
             cfg.watchdog.acl.log_file.as_deref(),
@@ -413,8 +392,8 @@ fn watchdog_defaults_and_validation() {
         );
         assert_eq!(cfg.watchdog.validate(), Ok(()));
 
-        jail.set_env("OIKOS_WATCHDOG__GATEWAY__ENABLED", "true");
-        jail.set_env("OIKOS_WATCHDOG__GATEWAY__PREFIX", "/");
+        jail.set_env("NIDOO_WATCHDOG__GATEWAY__ENABLED", "true");
+        jail.set_env("NIDOO_WATCHDOG__GATEWAY__PREFIX", "/");
         assert!(Config::load(None)?.watchdog.validate().is_err());
         Ok(())
     });
@@ -423,7 +402,7 @@ fn watchdog_defaults_and_validation() {
 #[test]
 fn watchdog_rejects_an_unknown_source() {
     Jail::expect_with(|jail| {
-        jail.set_env("OIKOS_WATCHDOG__ACL__SOURCE", "stdin");
+        jail.set_env("NIDOO_WATCHDOG__ACL__SOURCE", "stdin");
         assert!(Config::load(None).is_err());
         Ok(())
     });
@@ -491,15 +470,15 @@ fn weather_refresh_has_a_ceiling() {
 fn weather_from_toml_and_env() {
     Jail::expect_with(|jail| {
         jail.create_file(
-            "oikos.toml",
+            "nidoo.toml",
             "[weather]\nenabled = true\ncity = \"Lyon\"\ncountry = \"FR\"\n",
         )?;
         let cfg = Config::load(None)?;
         assert!(cfg.weather.enabled);
         assert_eq!(cfg.weather.city, "Lyon");
         assert_eq!(cfg.weather.country.as_deref(), Some("FR"));
-        jail.set_env("OIKOS_WEATHER__CITY", "1234");
-        jail.set_env("OIKOS_WEATHER__COUNTRY", "42");
+        jail.set_env("NIDOO_WEATHER__CITY", "1234");
+        jail.set_env("NIDOO_WEATHER__COUNTRY", "42");
         let cfg = Config::load(None)?;
         assert_eq!(cfg.weather.city, "1234");
         assert_eq!(cfg.weather.country.as_deref(), Some("42"));
@@ -603,9 +582,8 @@ mod solcast {
     }
 }
 
-/// The image sets no env var of its own: a `NIDOO_*` default would beat a user's `OIKOS_*`
-/// override in `.env` (NIDOO wins), and an `OIKOS_*` one would log the deprecation warning on
-/// every start. The defaults (`0.0.0.0:8081`, `./data` under `WORKDIR /`) already fit the image.
+/// The image sets no env var of its own: a `NIDOO_*` default would beat a user's override in
+/// `.env`. The defaults (`0.0.0.0:8081`, `./data` under `WORKDIR /`) already fit the image.
 #[test]
 fn dockerfile_sets_no_env_that_shadows_a_user_override() {
     let dockerfile =
@@ -615,10 +593,7 @@ fn dockerfile_sets_no_env_that_shadows_a_user_override() {
         .expect("a runtime stage")
         .1;
     for line in runtime.lines().map(str::trim) {
-        assert!(
-            !(line.starts_with("ENV NIDOO_") || line.starts_with("ENV OIKOS_")),
-            "the image sets {line}"
-        );
+        assert!(!line.starts_with("ENV NIDOO_"), "the image sets {line}");
     }
     assert!(
         runtime.lines().any(|l| l.trim() == "WORKDIR /"),

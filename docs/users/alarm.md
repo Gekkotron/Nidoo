@@ -24,7 +24,7 @@ The page has an **Enable the alarm** switch and the sections **Sensors**, **Sire
 
 Turning it off stops everything at once: no entity is published, nothing is watched, and any ringing siren stops. The settings are kept, so turning it back on restores them. Turning it off while the alarm is armed or ringing also resolves the open alarm alerts.
 
-The panel itself is published to Home Assistant discovery as one `alarm_control_panel` entity, `oikos_alarm_house`, named **Alarm**. The web Security page shows it like any other panel.
+The panel itself is published to Home Assistant discovery as one `alarm_control_panel` entity, `nidoo_alarm_house`, named **Alarm**. The web Security page shows it like any other panel.
 
 ## Modes
 
@@ -161,4 +161,4 @@ If another controller, such as Jeedom, runs your alarm today, move over in this 
 2. Test it with the sirens disconnected or on a test siren: open each sensor, press each remote, check the pushes and the Disarm button, and check the arm chirp.
 3. Switch over: disarm the other controller's alarm and remove its alarm logic, its scenarios that ring the sirens, and its discovery topic. Its `alarm_control_panel` config is retained on the broker, so publish an empty retained message to that discovery `config` topic too. Otherwise the old panel stays on the Security page next to the native one.
 
-Then the Security page shows only `oikos_alarm_house`.
+Then the Security page shows only `nidoo_alarm_house`.

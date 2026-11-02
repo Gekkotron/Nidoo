@@ -1,4 +1,4 @@
-//! The MCP server: forty-five tools and the `oikos://snapshot` resource over the hub, served at
+//! The MCP server: forty-five tools and the `nidoo://snapshot` resource over the hub, served at
 //! `/mcp` over streamable HTTP with stateful sessions, and the stdio proxy in front of it.
 //!
 //! A failed tool call is answered in-band (`isError: true` with the reason as text) rather
@@ -32,7 +32,7 @@ use crate::hub::{Hub, HubError};
 pub use stdio_proxy::run_stdio_proxy;
 
 /// The resource carrying the whole house as one JSON document.
-pub const SNAPSHOT_URI: &str = "oikos://snapshot";
+pub const SNAPSHOT_URI: &str = "nidoo://snapshot";
 
 /// The MCP server over one hub; one instance serves one session.
 pub struct NidooMcp {
@@ -133,21 +133,21 @@ fn instructions() -> String {
          diagnostic, config, disabled-by-default and folded entities unless you pass \
          `include: \"all\"`; use `search` to find a device or an entity by name and `get_entity` \
          to see an entity's MQTT bindings (topics, templates) and its raw override. \
-         `set_override` writes the Android app's `oikos/ui/<id>` override (fields: {fields}; \
+         `set_override` writes the Android app's `nidoo/ui/<id>` override (fields: {fields}; \
          `null` clears a field) and `clear_override` removes it. `send_command` publishes to \
          the device and reports `accepted: true` once the next state echo confirms it, or \
          `accepted: false` with the reason; a generic entity (lock, fan, siren, scene, text and so on) \
          takes `{{\"type\":\"control\",\"control\":\"<name>\",\"value\":...}}` with a name from its \
          `capabilities.generic.controls`, and a control with no state to echo is accepted as soon \
-         as it is published. The `oikos://snapshot` resource is the whole house \
+         as it is published. The `nidoo://snapshot` resource is the whole house \
          as one JSON document. Automations are flows: `list_flows` and `get_flow` read them, \
          `set_flow` creates or replaces one (validated against the house, saved retained on \
-         `oikos/automation/<id>`, the prefix being configurable), `set_flow_enabled` \
+         `nidoo/automation/<id>`, the prefix being configurable), `set_flow_enabled` \
          switches it and `delete_flow` removes it; `run_flow` starts a manual run. A flow's optional `area` (an area id; a room name is resolved) is the room the UI lists it under; it does not change what the flow does. `set_virtual` and `delete_virtual` manage virtual \
          entities (a `switch`, `number`, `button` or `select` the hub owns, as `virtual_<id>`) for flows \
          to read and write. `list_groups`, `set_group` and `delete_group` manage flexible \
          groups (hub-published entities as `group_<id>` whose definition — kind, members, \
-         hideMembers — is retained at `oikos/group/<id>/definition`); the hub fans group \
+         hideMembers — is retained at `nidoo/group/<id>/definition`); the hub fans group \
          commands out to member entities and republishes the combined state as members \
          change. `list_network_watches`, `set_network_watch` and `delete_network_watch` manage \
          network watches: a device the hub pings, published as the connectivity sensor \
@@ -211,7 +211,7 @@ fn instructions() -> String {
          a hub restart. A typical alive check is `trigger.silent` then `limit` then `notify`. A `trigger.state` \
          with a `to` (and no `from`) also fires when the value was unknown, confirmed by an \
          earlier state message on its topic, and then becomes `to`; it never fires on the first value seen after boot. \
-         Set `[flows] latitude` and `[flows] longitude` in `oikos.toml`; the hub falls back to \
+         Set the house location in the settings; the hub falls back to \
          Paris otherwise and reports a warning on save. `get_history` returns one slice of an entity's history — a chart \
          series (`what: series` with `range`), kWh per day (`daily` with `days` and \
          `kind`), kWh since midnight (`today` with `kind`), or `last_change` — when \
@@ -227,7 +227,7 @@ fn instructions() -> String {
          change, at most `manual_hold_max_min`. Eco: `set_climate_settings` holds `eco` (`heat`, \
          `cool`, `actions` such as `{{\"fan_mode\":\"low\"}}`), never above a zone's schedule; \
          `set_climate_eco` puts one zone in eco until a Unix time and `clear_climate_eco` ends it; \
-         the hub's alarm (`oikos_alarm_house`, listed in `presence` or not) or an alarm panel in \
+         the hub's alarm (`nidoo_alarm_house`, listed in `presence` or not) or an alarm panel in \
          `presence` that is armed away means nobody home, whatever a tracker says and with no \
          `away_grace`, so every zone is in eco. `get_weather` returns the outdoor weather when \
          `[weather] enabled`. `get_solar` returns the Solcast solar forecast (today, tomorrow, the \
@@ -238,7 +238,7 @@ fn instructions() -> String {
     above 26 when unset), `energy_view` (`classic`, `flux` or `orbite`, the web Energy page's live \
     diagram). The native alarm is optional (`enabled` in its settings): \
     `alarm_status` reads the settings and the panel state, `set_alarm_settings` replaces the \
-    whole document (read it first). Arm and disarm with `send_command` on `oikos_alarm_house`, \
+    whole document (read it first). Arm and disarm with `send_command` on `nidoo_alarm_house`, \
     `{{\"type\":\"arm\",\"mode\":\"away\"}}` or `{{\"type\":\"disarm\"}}`; there are no codes.",
         fields = UiOverride::FIELDS.join(", ")
     )
@@ -355,7 +355,7 @@ mod tests {
         for needle in [
             "set_flow",
             "restart",
-            "oikos/automation",
+            "nidoo/automation",
             "run_flow",
             "`math`",
             "value_from",

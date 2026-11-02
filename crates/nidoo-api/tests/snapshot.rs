@@ -45,8 +45,8 @@ fn feed(registry: &mut Registry, topic: &str, payload: Vec<u8>) {
 
 fn load_house() -> Registry {
     let mut registry = Registry::new(RegistryConfig {
-        discovery_prefixes: strings(&["oikos"]),
-        ui_prefix: "oikos/ui".to_owned(),
+        discovery_prefixes: strings(&["nidoo"]),
+        ui_prefix: "nidoo/ui".to_owned(),
         z2m_base: "zigbee2mqtt".to_owned(),
         reserved: strings(&["ui", "automation"]),
     });
@@ -61,12 +61,12 @@ fn load_house() -> Registry {
     for (stem, payload) in files("discovery") {
         feed(
             &mut registry,
-            &format!("oikos/{}/config", stem.replace("__", "/")),
+            &format!("nidoo/{}/config", stem.replace("__", "/")),
             payload,
         );
     }
     for (stem, payload) in files("ui") {
-        feed(&mut registry, &format!("oikos/ui/{stem}"), payload);
+        feed(&mut registry, &format!("nidoo/ui/{stem}"), payload);
     }
     for (stem, payload) in files("states") {
         feed(
@@ -175,7 +175,7 @@ fn secret_text_is_masked_in_the_snapshot() {
     let mut registry = load_house();
     feed(
         &mut registry,
-        "oikos/text/u1/main/config",
+        "nidoo/text/u1/main/config",
         br#"{"name":"Code","unique_id":"u1","mode":"password","state_topic":"t/s","command_topic":"t/set"}"#
             .to_vec(),
     );
@@ -215,7 +215,7 @@ fn bedroom2_update(
         .to_owned();
     feed(
         registry,
-        "oikos/update/fw1/update/config",
+        "nidoo/update/fw1/update/config",
         config.to_string().into_bytes(),
     );
     let payload = format!(
@@ -250,7 +250,7 @@ fn area_primary_count_skips_non_card_generic_placements() {
     let before = snapshot(&registry, ConnectionStatus::Online, AT);
     feed(
         &mut registry,
-        "oikos/event/ev1/press/config",
+        "nidoo/event/ev1/press/config",
         br#"{"name":"Press","unique_id":"ev1","state_topic":"t/ev","event_types":["press"]}"#
             .to_vec(),
     );

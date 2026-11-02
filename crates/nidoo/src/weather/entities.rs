@@ -38,7 +38,7 @@ pub const KEYS: [&str; 26] = [
     "tomorrow_uv_index_max",
 ];
 
-const DEVICE_ID: &str = "oikos_weather";
+const DEVICE_ID: &str = "nidoo_weather";
 
 /// Unit, device class and whether it is a "now" measurement, per key.
 fn describe(key: &str) -> (Option<&'static str>, Option<&'static str>, bool) {
@@ -247,30 +247,30 @@ mod tests {
 
     #[test]
     fn there_are_twenty_six_configs_with_own_device() {
-        let all = configs("oikos");
+        let all = configs("nidoo");
         assert_eq!(all.len(), 26);
         for ((_, config), key) in all.iter().zip(KEYS) {
-            assert_eq!(config["device"]["identifiers"], json!(["oikos_weather"]));
+            assert_eq!(config["device"]["identifiers"], json!(["nidoo_weather"]));
             assert_eq!(config["unique_id"], json!(format!("weather_{key}")));
             assert_eq!(
                 config["availability_topic"],
-                json!("oikos/weather/availability")
+                json!("nidoo/weather/availability")
             );
-            assert_eq!(config["state_topic"], json!(format!("oikos/weather/{key}")));
+            assert_eq!(config["state_topic"], json!(format!("nidoo/weather/{key}")));
         }
     }
 
     #[test]
     fn config_topics_use_the_component() {
         assert_eq!(
-            config_topic("oikos", "daylight"),
-            "oikos/binary_sensor/weather/daylight/config"
+            config_topic("nidoo", "daylight"),
+            "nidoo/binary_sensor/weather/daylight/config"
         );
         assert_eq!(
-            config_topic("oikos", "temperature"),
-            "oikos/sensor/weather/temperature/config"
+            config_topic("nidoo", "temperature"),
+            "nidoo/sensor/weather/temperature/config"
         );
-        let all = configs("oikos");
+        let all = configs("nidoo");
         let daylight = &all[4].1;
         assert_eq!(daylight["payload_on"], json!("ON"));
         assert_eq!(daylight["payload_off"], json!("OFF"));
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn condition_is_an_enum_sensor() {
-        let all = configs("oikos");
+        let all = configs("nidoo");
         let condition = &all[3].1;
         assert_eq!(condition["device_class"], json!("enum"));
         let options: Vec<&str> = WeatherCondition::ALL.iter().map(|c| c.as_str()).collect();
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn tomorrow_condition_is_an_enum_sensor() {
-        let all = configs("oikos");
+        let all = configs("nidoo");
         let index = KEYS
             .iter()
             .position(|k| *k == "tomorrow_condition")
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn own_config_is_recognised() {
-        let own = configs("oikos")[0].1.to_string();
+        let own = configs("nidoo")[0].1.to_string();
         assert!(is_own_config(own.as_bytes()));
         assert!(!is_own_config(br#"{"device":{"identifiers":["0x1234"]}}"#));
         assert!(!is_own_config(b"garbage"));

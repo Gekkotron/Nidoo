@@ -8,7 +8,6 @@ fn init(dir: &std::path::Path) -> assert_cmd::assert::Assert {
         .arg("--data")
         .arg(dir)
         .arg("init-bundled")
-        .env_remove("OIKOS_DATA_DIR")
         .assert()
 }
 

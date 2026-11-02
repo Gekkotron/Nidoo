@@ -23,7 +23,7 @@ fn fixture(name: &str) -> Vec<u8> {
 
 fn hub(enabled: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.climate.enabled = enabled;
     let (tx, rx) = mpsc::channel(64);
     let hub = Hub::new(&cfg, tx);
@@ -34,7 +34,7 @@ fn hub(enabled: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
 /// The recorded Daikin `n` (0..=3), placed in `area` by override; returns its entity id.
 async fn feed_daikin(hub: &Hub, n: u8, area: &str) -> String {
     let name = format!("climate__daikin_192_168_1_15{n}__climate.json");
-    let topic = format!("oikos/climate/daikin_192_168_1_15{n}/climate/config");
+    let topic = format!("nidoo/climate/daikin_192_168_1_15{n}/climate/config");
     hub.ingest(&topic, &fixture(&name));
     place(hub, &format!("daikin_192_168_1_15{n}"), area).await
 }
@@ -81,7 +81,7 @@ async fn disabled_has_no_filters_and_refuses() {
     ));
     // A climate-looking topic is just an unknown topic while the engine is off.
     assert!(
-        hub.ingest_message("oikos/climate/house", b"{}", true)
+        hub.ingest_message("nidoo/climate/house", b"{}", true)
             .is_empty()
     );
     assert!(drain(&mut rx).is_empty());
@@ -93,8 +93,8 @@ async fn enabled_subscribes_house_and_zones_only() {
     let (hub, _rx) = hub(true);
     let f = hub.extra_filters();
     assert!(
-        f.contains(&"oikos/climate/house".to_owned())
-            && f.contains(&"oikos/climate/zone/+/+".to_owned())
+        f.contains(&"nidoo/climate/house".to_owned())
+            && f.contains(&"nidoo/climate/zone/+/+".to_owned())
     );
     assert!(!f.iter().any(|t| t.ends_with('#')));
 }
@@ -103,7 +103,7 @@ async fn enabled_subscribes_house_and_zones_only() {
 async fn zone_settings_doc_is_not_a_device() {
     let (hub, _rx) = hub(true);
     let changes = hub.ingest_message(
-        "oikos/climate/zone/living/settings",
+        "nidoo/climate/zone/living/settings",
         br#"{"state":"active"}"#,
         true,
     );
@@ -123,7 +123,7 @@ async fn climate_group_discovery_still_reaches_registry() {
     let text = String::from_utf8(fixture("climate__daikin_192_168_1_150__climate.json"))
         .unwrap()
         .replace("daikin_192_168_1_150", "group_g1");
-    hub.ingest_message("oikos/climate/group/g1/config", text.as_bytes(), true);
+    hub.ingest_message("nidoo/climate/group/g1/config", text.as_bytes(), true);
     assert!(
         hub.snapshot()
             .entities
@@ -138,7 +138,7 @@ async fn store_keeps_invalid_with_reason() {
     let (hub, _rx) = hub(true);
     let mut events = hub.subscribe();
     hub.ingest_message(
-        "oikos/climate/zone/attic/settings",
+        "nidoo/climate/zone/attic/settings",
         br#"{"state":"active"}"#,
         true,
     );
@@ -147,7 +147,7 @@ async fn store_keeps_invalid_with_reason() {
         WsEvent::ClimateChanged { zone: Some(z) } if z == "attic"
     ));
     hub.ingest_message(
-        "oikos/climate/zone/attic/settings",
+        "nidoo/climate/zone/attic/settings",
         br#"{"state":"bogus"}"#,
         true,
     );
@@ -156,7 +156,7 @@ async fn store_keeps_invalid_with_reason() {
     assert_eq!(zone.settings.state, ZoneState::Active);
     assert!(zone.settings_invalid.is_some());
 
-    hub.ingest_message("oikos/climate/house", br#"{"frost":40.0}"#, true);
+    hub.ingest_message("nidoo/climate/house", br#"{"frost":40.0}"#, true);
     let view = hub.climate_view().unwrap();
     assert!(view.house_invalid.is_some());
 }
@@ -169,7 +169,7 @@ async fn view_lists_area_zones_and_skips_groups() {
     let text = String::from_utf8(fixture("climate__daikin_192_168_1_152__climate.json"))
         .unwrap()
         .replace("daikin_192_168_1_152", "group_g1");
-    hub.ingest("oikos/climate/group/g1/config", text.as_bytes());
+    hub.ingest("nidoo/climate/group/g1/config", text.as_bytes());
     place(&hub, "group_g1", "living").await;
 
     let view = hub.climate_view().unwrap();
@@ -188,7 +188,7 @@ async fn view_lists_area_zones_and_skips_groups() {
         ..active()
     };
     hub.ingest_message(
-        "oikos/climate/zone/living/settings",
+        "nidoo/climate/zone/living/settings",
         serde_json::to_string(&settings).unwrap().as_bytes(),
         true,
     );
@@ -200,7 +200,7 @@ async fn view_lists_area_zones_and_skips_groups() {
 async fn zone_without_area_is_listed_orphan() {
     let (hub, _rx) = hub(true);
     hub.ingest_message(
-        "oikos/climate/zone/attic/settings",
+        "nidoo/climate/zone/attic/settings",
         br#"{"state":"active"}"#,
         true,
     );
@@ -219,7 +219,7 @@ async fn set_zone_publishes_retained_and_applies() {
     hub.set_climate_zone("living", active()).unwrap();
     let published = drain(&mut rx);
     assert_eq!(published.len(), 1);
-    assert_eq!(published[0].topic, "oikos/climate/zone/living/settings");
+    assert_eq!(published[0].topic, "nidoo/climate/zone/living/settings");
     assert!(published[0].retain);
     let view = hub.climate_view().unwrap();
     assert_eq!(view.zones[0].settings.state, ZoneState::Active);
@@ -238,7 +238,7 @@ async fn set_house_publishes_retained_and_applies() {
     };
     hub.set_climate_house(house).unwrap();
     let published = drain(&mut rx);
-    assert_eq!(published[0].topic, "oikos/climate/house");
+    assert_eq!(published[0].topic, "nidoo/climate/house");
     assert!(published[0].retain);
     assert_eq!(hub.climate_view().unwrap().house.heat_below, 17.0);
     let bad = nidoo_climate::doc::HouseSettings {
@@ -441,7 +441,7 @@ mod engine {
         /// What a Daikin does with a command: applies it and reports its state.
         fn on_publish(&mut self, hub: &Hub, p: &Publish) {
             // The broker hands the push history back to the hub.
-            if p.topic == "oikos/push/history" {
+            if p.topic == "nidoo/push/history" {
                 hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
                 return;
             }
@@ -483,7 +483,7 @@ mod engine {
     impl Rig {
         async fn new(tz: Option<&str>) -> Rig {
             let mut cfg = Config::default();
-            cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+            cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
             cfg.climate.enabled = true;
             cfg.flows.timezone = tz.map(str::to_owned);
             let (tx, rx) = mpsc::channel(64);
@@ -570,7 +570,7 @@ mod engine {
 
     fn decisions_published(out: &[Publish]) -> usize {
         out.iter()
-            .filter(|p| p.topic == "oikos/climate/zone/living/decision")
+            .filter(|p| p.topic == "nidoo/climate/zone/living/decision")
             .count()
     }
 
@@ -807,7 +807,7 @@ mod engine {
         rig.sim.set(&rig.hub, 0, "heat", 22.0, 20.0);
         let settings = heat_rules(20.0);
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/settings",
+            "nidoo/climate/zone/living/settings",
             serde_json::to_string(&settings).unwrap().as_bytes(),
             true,
         );
@@ -837,7 +837,7 @@ mod engine {
             )]),
         };
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/decision",
+            "nidoo/climate/zone/living/decision",
             serde_json::to_string(&decision).unwrap().as_bytes(),
             true,
         );
@@ -891,7 +891,7 @@ mod engine {
                 entities,
             };
             rig.hub.ingest_message(
-                &format!("oikos/climate/zone/{zone}/decision"),
+                &format!("nidoo/climate/zone/{zone}/decision"),
                 serde_json::to_string(&decision).unwrap().as_bytes(),
                 true,
             );
@@ -1022,7 +1022,7 @@ mod engine {
         let mut rig = Rig::new(None).await;
         rig.sim.set(&rig.hub, 0, "heat", 22.0, 20.0);
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/settings",
+            "nidoo/climate/zone/living/settings",
             serde_json::to_string(&heat_rules(20.0)).unwrap().as_bytes(),
             true,
         );
@@ -1051,7 +1051,7 @@ mod engine {
             )]),
         };
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/decision",
+            "nidoo/climate/zone/living/decision",
             serde_json::to_string(&decision).unwrap().as_bytes(),
             true,
         );
@@ -1068,7 +1068,7 @@ mod engine {
         rig.pass(0).await;
         // The device leaves the house (the ledger forgets it) and comes back.
         rig.hub
-            .ingest("oikos/climate/daikin_192_168_1_150/climate/config", b"");
+            .ingest("nidoo/climate/daikin_192_168_1_150/climate/config", b"");
         rig.pass(61).await;
         feed_daikin(&rig.hub, 0, "living").await;
         rig.sim.set(&rig.hub, 0, "heat", 17.0, 20.0);
@@ -1233,7 +1233,7 @@ mod engine {
     fn last_history(out: &[Publish]) -> Option<String> {
         out.iter()
             .rev()
-            .find(|p| p.topic == "oikos/push/history")
+            .find(|p| p.topic == "nidoo/push/history")
             .map(|p| p.payload.clone())
     }
 
@@ -1254,7 +1254,7 @@ mod engine {
         // The hub restarts and finds the alert in the retained history.
         let mut rig = Rig::new(None).await;
         rig.hub
-            .ingest_message("oikos/push/history", history.as_bytes(), true);
+            .ingest_message("nidoo/push/history", history.as_bytes(), true);
         load_push(&rig.hub).await;
         rig.hub.set_climate_house(house).unwrap();
         drain(&mut rig.rx);
@@ -1416,7 +1416,7 @@ mod engine {
 
         // The held device disappears from the house; the other keeps following the rules.
         rig.hub
-            .ingest("oikos/climate/daikin_192_168_1_150/climate/config", b"");
+            .ingest("nidoo/climate/daikin_192_168_1_150/climate/config", b"");
         assert!(rig.hub.snapshot().entities.iter().all(|e| e.id != rig.id));
         rig.sim.report(&rig.hub, 1);
         rig.settings(heat_rules(18.0));
@@ -1475,7 +1475,7 @@ mod engine {
     async fn away_after_grace() {
         let mut rig = Rig::new(None).await;
         rig.hub.ingest(
-            "oikos/switch/presence/home/config",
+            "nidoo/switch/presence/home/config",
             br#"{"name":"Home","unique_id":"presence_home","state_topic":"t/home","command_topic":"t/home/set"}"#,
         );
         let switch = rig
@@ -1536,7 +1536,7 @@ mod engine {
         assert_eq!(rig.zone().eco, None, "expired_room_eco_is_deleted");
         assert!(
             out.iter()
-                .any(|p| p.topic == "oikos/climate/zone/living/eco"
+                .any(|p| p.topic == "nidoo/climate/zone/living/eco"
                     && p.payload.is_empty()
                     && p.retain),
             "{out:?}"
@@ -1587,7 +1587,7 @@ mod engine {
     /// A test alarm panel in the house presence list; returns its state topic.
     fn alarm_presence(rig: &Rig) -> &'static str {
         rig.hub.ingest(
-            "oikos/alarm_control_panel/test/panel/config",
+            "nidoo/alarm_control_panel/test/panel/config",
             br#"{"name":"Panel","unique_id":"panel_test","state_topic":"t/panel","command_topic":"t/panel/set"}"#,
         );
         let panel = rig
@@ -1661,15 +1661,15 @@ mod engine {
     /// The hub's own alarm panel as the registry sees it; returns its state topic.
     fn native_alarm(rig: &Rig) -> &'static str {
         rig.hub.ingest(
-            "oikos/alarm_control_panel/alarm/house/config",
-            br#"{"name":"Alarm","unique_id":"oikos_alarm_house","state_topic":"t/alarm","command_topic":"t/alarm/set"}"#,
+            "nidoo/alarm_control_panel/alarm/house/config",
+            br#"{"name":"Alarm","unique_id":"nidoo_alarm_house","state_topic":"t/alarm","command_topic":"t/alarm/set"}"#,
         );
         assert!(
             rig.hub
                 .snapshot()
                 .entities
                 .iter()
-                .any(|e| e.id == "oikos_alarm_house"),
+                .any(|e| e.id == "nidoo_alarm_house"),
             "native alarm panel"
         );
         "t/alarm"
@@ -1678,7 +1678,7 @@ mod engine {
     /// A presence switch in the house presence list; returns its state topic.
     fn switch_presence(rig: &Rig) -> &'static str {
         rig.hub.ingest(
-            "oikos/switch/presence/home/config",
+            "nidoo/switch/presence/home/config",
             br#"{"name":"Home","unique_id":"presence_home","state_topic":"t/home","command_topic":"t/home/set"}"#,
         );
         let switch = rig
@@ -1902,19 +1902,19 @@ mod engine {
         again.sim.set(&again.hub, 0, "heat", 16.0, 20.0);
         let retained = [
             (
-                "oikos/climate/house",
+                "nidoo/climate/house",
                 serde_json::to_vec(&view.house).unwrap(),
             ),
             (
-                "oikos/climate/zone/living/settings",
+                "nidoo/climate/zone/living/settings",
                 serde_json::to_vec(&zone.settings).unwrap(),
             ),
             (
-                "oikos/climate/zone/living/decision",
+                "nidoo/climate/zone/living/decision",
                 serde_json::to_vec(&zone.decision.unwrap()).unwrap(),
             ),
             (
-                "oikos/climate/zone/living/eco",
+                "nidoo/climate/zone/living/eco",
                 serde_json::to_vec(&zone.eco.unwrap()).unwrap(),
             ),
         ];
@@ -2074,7 +2074,7 @@ mod engine {
             fingerprint: "fp".to_owned(),
         };
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/proposal",
+            "nidoo/climate/zone/living/proposal",
             serde_json::to_string(&proposal).unwrap().as_bytes(),
             true,
         );
@@ -2130,7 +2130,7 @@ mod engine {
             entities: BTreeMap::new(),
         };
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/decision",
+            "nidoo/climate/zone/living/decision",
             serde_json::to_string(&decision).unwrap().as_bytes(),
             true,
         );
@@ -2151,7 +2151,7 @@ mod engine {
     ) -> String {
         let (ieee, object) = fixture_name.split_once("__").unwrap();
         hub.ingest(
-            &format!("oikos/sensor/{ieee}/{object}/config"),
+            &format!("nidoo/sensor/{ieee}/{object}/config"),
             &fixture(&format!("sensor__{fixture_name}.json")),
         );
         let id = place(hub, &format!("{ieee}_{object}"), area).await;
@@ -2227,7 +2227,7 @@ mod engine {
     /// The recorded occupancy sensor, placed in `area` and reporting `on`; returns its id.
     async fn feed_occupancy(hub: &Hub, area: &str, on: bool) -> String {
         hub.ingest(
-            "oikos/binary_sensor/0x00158d00044c4d4c/occupancy/config",
+            "nidoo/binary_sensor/0x00158d00044c4d4c/occupancy/config",
             &fixture("binary_sensor__0x00158d00044c4d4c__occupancy.json"),
         );
         let id = place(hub, "0x00158d00044c4d4c_occupancy", area).await;
@@ -2493,7 +2493,7 @@ mod engine {
             )]),
         };
         rig.hub.ingest_message(
-            "oikos/climate/zone/living/decision",
+            "nidoo/climate/zone/living/decision",
             serde_json::to_string(&decision).unwrap().as_bytes(),
             true,
         );
@@ -2534,7 +2534,7 @@ mod approval {
 
     use super::*;
 
-    const RESPONSES: &str = "oikos/push/responses";
+    const RESPONSES: &str = "nidoo/push/responses";
 
     fn rules(base: f64) -> Rules {
         Rules {
@@ -2585,7 +2585,7 @@ mod approval {
 
     fn seed(hub: &Hub, proposal: &Proposal) {
         hub.ingest_message(
-            "oikos/climate/zone/living/proposal",
+            "nidoo/climate/zone/living/proposal",
             serde_json::to_string(proposal).unwrap().as_bytes(),
             true,
         );
@@ -2668,18 +2668,18 @@ mod approval {
 
         let cleared = published
             .iter()
-            .find(|p| p.topic == "oikos/climate/zone/living/proposal")
+            .find(|p| p.topic == "nidoo/climate/zone/living/proposal")
             .expect("proposal topic published");
         assert!(cleared.retain && cleared.payload.is_empty());
         assert!(
             published
                 .iter()
-                .any(|p| p.topic == "oikos/climate/zone/living/settings" && p.retain)
+                .any(|p| p.topic == "nidoo/climate/zone/living/settings" && p.retain)
         );
         // The alert is cancelled in the push history, whether or not this run raised it.
         let history = published
             .iter()
-            .rfind(|p| p.topic == "oikos/push/history")
+            .rfind(|p| p.topic == "nidoo/push/history")
             .expect("the push history was published");
         let entries: serde_json::Value = serde_json::from_str(&history.payload).unwrap();
         assert!(
@@ -2791,7 +2791,7 @@ mod approval {
         assert!(
             published
                 .iter()
-                .any(|p| p.topic == "oikos/climate/zone/living/proposal" && p.payload.is_empty())
+                .any(|p| p.topic == "nidoo/climate/zone/living/proposal" && p.payload.is_empty())
         );
     }
 
@@ -2920,7 +2920,7 @@ mod approval {
         assert!(
             published
                 .iter()
-                .all(|p| p.topic == "oikos/climate/zone/living/override" && p.retain)
+                .all(|p| p.topic == "nidoo/climate/zone/living/override" && p.retain)
         );
 
         for bad in [ov(None, now), ov(Some("climate.elsewhere"), now + 600)] {

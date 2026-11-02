@@ -330,11 +330,11 @@ pub const LIGHT_SCHEME_QUERY: &str = "(prefers-color-scheme: light)";
 pub const REDUCED_MOTION_QUERY: &str = "(prefers-reduced-motion: reduce)";
 
 /// The MCP set-up commands, the same in both languages; `{origin}` is the hub's address.
-pub const CLAUDE_CODE_SNIPPET: &str = "claude mcp add --transport http oikos {origin}/mcp";
-pub const CODEX_SNIPPET: &str = "[mcp_servers.oikos]\nurl = \"{origin}/mcp\"";
+pub const CLAUDE_CODE_SNIPPET: &str = "claude mcp add --transport http nidoo {origin}/mcp";
+pub const CODEX_SNIPPET: &str = "[mcp_servers.nidoo]\nurl = \"{origin}/mcp\"";
 /// Keys in the order of docs/users/assistants-mcp.md (`command` before `args`); `{origin}` is the
 /// address as a JSON string.
-pub const CLAUDE_DESKTOP_SNIPPET: &str = "{\n  \"mcpServers\": {\n    \"oikos\": {\n      \"command\": \"<path>/nidoo\",\n      \"args\": [\"mcp-stdio\", \"--server\", {origin}]\n    }\n  }\n}";
+pub const CLAUDE_DESKTOP_SNIPPET: &str = "{\n  \"mcpServers\": {\n    \"nidoo\": {\n      \"command\": \"<path>/nidoo\",\n      \"args\": [\"mcp-stdio\", \"--server\", {origin}]\n    }\n  }\n}";
 
 #[cfg(test)]
 mod tests {

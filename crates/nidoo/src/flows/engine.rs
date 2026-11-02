@@ -1840,7 +1840,7 @@ mod tests {
         let mut engine = engine_at(78.22, 15.65, "Europe/Oslo");
         for enabled in [true, false, true] {
             engine.hub.ingest(
-                "oikos/automation/polar",
+                "nidoo/automation/polar",
                 sun_flow("polar", enabled).as_bytes(),
             );
             engine.reload();
@@ -1853,12 +1853,12 @@ mod tests {
         let mut engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine
             .hub
-            .ingest("oikos/automation/day", sun_flow("day", true).as_bytes());
+            .ingest("nidoo/automation/day", sun_flow("day", true).as_bytes());
         engine.reload();
         assert_eq!(engine.sun_timers.keys().collect::<Vec<_>>(), ["day/sun"]);
         engine
             .hub
-            .ingest("oikos/automation/day", sun_flow("day", false).as_bytes());
+            .ingest("nidoo/automation/day", sun_flow("day", false).as_bytes());
         engine.reload();
         assert!(engine.sun_timers.is_empty());
     }
@@ -1880,7 +1880,7 @@ mod tests {
         let read = Arc::clone(&clock);
         engine.now = Arc::new(move || *read.lock().unwrap());
         engine.hub.ingest(
-            "oikos/sensor/meter/tariff/config",
+            "nidoo/sensor/meter/tariff/config",
             br#"{"unique_id":"tariff","state_topic":"test/tariff","availability_topic":"test/tariff/avail"}"#,
         );
         engine.hub.set_connection(ConnectionStatus::Online);
@@ -1895,7 +1895,7 @@ mod tests {
             "edges": []
         });
         engine.hub.ingest(
-            &format!("oikos/automation/{id}"),
+            &format!("nidoo/automation/{id}"),
             flow.to_string().as_bytes(),
         );
     }
@@ -2154,7 +2154,7 @@ mod tests {
     async fn if_average_counts_every_reading_including_the_newest() {
         let mut engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine.hub.ingest(
-            "oikos/sensor/room/temperature/config",
+            "nidoo/sensor/room/temperature/config",
             br#"{"unique_id":"room_temperature","state_topic":"test/room","value_template":"{{ value_json.temperature }}","unit_of_measurement":"\u00b0C"}"#,
         );
         let entity = engine.hub.snapshot().entities[0].id.clone();
@@ -2168,7 +2168,7 @@ mod tests {
         });
         engine
             .hub
-            .ingest("oikos/automation/avg", flow.to_string().as_bytes());
+            .ingest("nidoo/automation/avg", flow.to_string().as_bytes());
         engine.reload();
         // A repeated reading counts again, and the newest one counts.
         for t in [20, 20, 17] {
@@ -2213,7 +2213,7 @@ mod tests {
         });
         engine
             .hub
-            .ingest("oikos/automation/swavg", flow.to_string().as_bytes());
+            .ingest("nidoo/automation/swavg", flow.to_string().as_bytes());
         engine.reload();
         // Only a switch registers the entity: its readings must be buffered.
         for t in [20, 20, 17] {
@@ -2272,7 +2272,7 @@ mod tests {
     /// Reports a numeric sensor and returns its entity id.
     fn add_sensor(engine: &Engine, value: Option<f64>) -> String {
         engine.hub.ingest(
-            "oikos/sensor/room/temperature/config",
+            "nidoo/sensor/room/temperature/config",
             br#"{"unique_id":"room_temperature","state_topic":"test/room","value_template":"{{ value_json.temperature }}","unit_of_measurement":"\u00b0C"}"#,
         );
         if let Some(value) = value {
@@ -2390,7 +2390,7 @@ mod tests {
         });
         engine
             .hub
-            .ingest("oikos/automation/sw", flow.to_string().as_bytes());
+            .ingest("nidoo/automation/sw", flow.to_string().as_bytes());
         engine.reload();
         let flow = engine.flows[0].clone();
         let run = engine.hub.begin_run("sw", None).unwrap();
@@ -2462,7 +2462,7 @@ mod tests {
         });
         engine
             .hub
-            .ingest("oikos/automation/pv", flow.to_string().as_bytes());
+            .ingest("nidoo/automation/pv", flow.to_string().as_bytes());
         engine.reload();
         let flow = engine.flows[0].clone();
         let run = engine.hub.begin_run("pv", None).unwrap();
@@ -2496,7 +2496,7 @@ mod tests {
         });
         engine
             .hub
-            .ingest("oikos/automation/pf", flow.to_string().as_bytes());
+            .ingest("nidoo/automation/pf", flow.to_string().as_bytes());
         engine.reload();
         let flow = engine.flows[0].clone();
         let run = engine.hub.begin_run("pf", None).unwrap();
@@ -2520,7 +2520,7 @@ mod tests {
     fn vacuum_engine() -> (Engine, String) {
         let engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine.hub.ingest(
-            "oikos/vacuum/robo/config",
+            "nidoo/vacuum/robo/config",
             br#"{"unique_id":"robo","state_topic":"test/robo","fan_speed_list":["Silent","Turbo"]}"#,
         );
         engine.hub.set_connection(ConnectionStatus::Online);
@@ -2547,7 +2547,7 @@ mod tests {
             "edges": []
         });
         engine.hub.ingest(
-            &format!("oikos/automation/{id}"),
+            &format!("nidoo/automation/{id}"),
             flow.to_string().as_bytes(),
         );
     }
@@ -2678,7 +2678,7 @@ mod tests {
     async fn if_average_reads_a_recorded_field() {
         let mut engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine.hub.ingest(
-            "oikos/climate/clim/config",
+            "nidoo/climate/clim/config",
             br#"{"unique_id":"clim","mode_state_topic":"test/clim","mode_state_template":"{{ value_json.mode }}","current_temperature_topic":"test/clim","current_temperature_template":"{{ value_json.current }}","modes":["off","heat"]}"#,
         );
         let entity = engine.hub.snapshot().entities[0].id.clone();
@@ -2693,7 +2693,7 @@ mod tests {
         });
         engine
             .hub
-            .ingest("oikos/automation/avg", flow.to_string().as_bytes());
+            .ingest("nidoo/automation/avg", flow.to_string().as_bytes());
         engine.reload();
         for t in [20, 20, 17] {
             engine.hub.ingest(
@@ -2721,7 +2721,7 @@ mod tests {
     async fn generic_headline_trigger_fires() {
         let mut engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine.hub.ingest(
-            "oikos/lock/front/config",
+            "nidoo/lock/front/config",
             br#"{"unique_id":"front","state_topic":"test/front"}"#,
         );
         engine.hub.set_connection(ConnectionStatus::Online);
@@ -2752,7 +2752,7 @@ mod tests {
     fn alarm_engine() -> (Engine, String) {
         let engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine.hub.ingest(
-            "oikos/binary_sensor/det/alarm/config",
+            "nidoo/binary_sensor/det/alarm/config",
             br#"{"unique_id":"alarm","state_topic":"test/det","value_template":"{{ value_json.alarm }}","payload_on":"yes","payload_off":"no"}"#,
         );
         engine.hub.set_connection(ConnectionStatus::Online);
@@ -2812,7 +2812,7 @@ mod tests {
     fn smoke_engine() -> (Engine, String) {
         let engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         engine.hub.ingest(
-            "oikos/binary_sensor/det/smoke/config",
+            "nidoo/binary_sensor/det/smoke/config",
             br#"{"unique_id":"smoke","state_topic":"test/det","value_template":"{{ value_json[\"smoke\"] }}","payload_on":true,"payload_off":false}"#,
         );
         engine.hub.set_connection(ConnectionStatus::Online);
@@ -3006,7 +3006,7 @@ mod tests {
             "edges": [{ "from": "t", "to": "d" }]
         });
         engine.hub.ingest(
-            &format!("oikos/automation/{id}"),
+            &format!("nidoo/automation/{id}"),
             flow.to_string().as_bytes(),
         );
     }
@@ -3109,13 +3109,13 @@ mod tests {
         flow.enabled = false;
         engine
             .hub
-            .ingest("oikos/automation/s", flow.encode().as_bytes());
+            .ingest("nidoo/automation/s", flow.encode().as_bytes());
         engine.reload();
         at(&clock, 300);
         flow.enabled = true;
         engine
             .hub
-            .ingest("oikos/automation/s", flow.encode().as_bytes());
+            .ingest("nidoo/automation/s", flow.encode().as_bytes());
         engine.reload();
         at(&clock, 300 + 49);
         engine.tick_silents();
@@ -3256,7 +3256,7 @@ mod tests {
             "edges": [{ "from": "m", "to": "l" }, { "from": "l", "to": "d" }]
         });
         engine.hub.ingest(
-            &format!("oikos/automation/{id}"),
+            &format!("nidoo/automation/{id}"),
             flow.to_string().as_bytes(),
         );
     }

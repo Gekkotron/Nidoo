@@ -68,17 +68,17 @@ mod tests {
 
     #[test]
     fn topics_layout() {
-        let p = "oikos/alarm/";
-        assert_eq!(settings_topic(p), "oikos/alarm/settings");
-        assert_eq!(runtime_topic(p), "oikos/alarm/state");
-        assert_eq!(panel_state_topic(p), "oikos/alarm/panel");
-        assert_eq!(panel_command_topic(p), "oikos/alarm/panel/set");
-        assert_eq!(panel_attributes_topic(p), "oikos/alarm/panel/attributes");
+        let p = "nidoo/alarm/";
+        assert_eq!(settings_topic(p), "nidoo/alarm/settings");
+        assert_eq!(runtime_topic(p), "nidoo/alarm/state");
+        assert_eq!(panel_state_topic(p), "nidoo/alarm/panel");
+        assert_eq!(panel_command_topic(p), "nidoo/alarm/panel/set");
+        assert_eq!(panel_attributes_topic(p), "nidoo/alarm/panel/attributes");
         let [s, r, c] = filters(p);
         assert_eq!(parse(p, &s), Some(AlarmTopic::Settings));
         assert_eq!(parse(p, &r), Some(AlarmTopic::Runtime));
         assert_eq!(parse(p, &c), Some(AlarmTopic::PanelCommand));
-        assert_eq!(parse(p, "oikos/alarm/panel"), None);
-        assert_eq!(parse(p, "oikos/alarm/panel/attributes"), None);
+        assert_eq!(parse(p, "nidoo/alarm/panel"), None);
+        assert_eq!(parse(p, "nidoo/alarm/panel/attributes"), None);
     }
 }
