@@ -19,6 +19,10 @@ use rewrite::{Action, Retained};
 /// The names the switch-over moves from and to.
 const FROM: &str = "oikos";
 const TO: &str = "nidoo";
+
+/// The subcommand name: `nidoo migrate-oikos`. It lives here because only this module may name
+/// the old brand.
+pub const COMMAND: &str = "migrate-oikos";
 /// How long the "is the hub still running" probe waits.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 

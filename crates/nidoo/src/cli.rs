@@ -31,9 +31,9 @@ enum RawCommand {
     },
     /// Create the bundled broker and database credentials, then exit.
     InitBundled,
-    /// One-off: move the `nidoo` retained messages, database rows, database and role to
+    /// One-off: move the old-name retained messages, database rows, database and role to
     /// `nidoo`. Without a flag it is a dry run that writes nothing.
-    #[command(name = "migrate-nidoo")]
+    #[command(name = crate::migrate::COMMAND)]
     Migrate {
         /// Do the switch-over (the hub must be stopped; needs `--backup`).
         #[arg(long, conflicts_with_all = ["verify", "restore"], requires = "backup")]
@@ -226,7 +226,7 @@ mod tests {
     fn migrate_defaults_to_dry_run() {
         figment::Jail::expect_with(|_| {
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "migrate-nidoo"]).unwrap(),
+                Cli::try_parse_from(["nidoo", crate::migrate::COMMAND]).unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::DryRun,
@@ -237,7 +237,8 @@ mod tests {
                 }
             );
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "--data", "d", "migrate-nidoo", "--verify"]).unwrap(),
+                Cli::try_parse_from(["nidoo", "--data", "d", crate::migrate::COMMAND, "--verify"])
+                    .unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::Verify,
@@ -254,10 +255,16 @@ mod tests {
     #[test]
     fn migrate_apply_requires_backup() {
         figment::Jail::expect_with(|_| {
-            assert!(Cli::try_parse_from(["nidoo", "migrate-nidoo", "--apply"]).is_err());
+            assert!(Cli::try_parse_from(["nidoo", crate::migrate::COMMAND, "--apply"]).is_err());
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--apply", "--backup", "b.jsonl"])
-                    .unwrap(),
+                Cli::try_parse_from([
+                    "nidoo",
+                    crate::migrate::COMMAND,
+                    "--apply",
+                    "--backup",
+                    "b.jsonl"
+                ])
+                .unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::Apply,
@@ -270,7 +277,7 @@ mod tests {
             assert!(
                 Cli::try_parse_from([
                     "nidoo",
-                    "migrate-nidoo",
+                    crate::migrate::COMMAND,
                     "--apply",
                     "--verify",
                     "--backup",
@@ -286,8 +293,14 @@ mod tests {
     fn migrate_backup_conflicts_with_verify() {
         figment::Jail::expect_with(|_| {
             assert!(
-                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--verify", "--backup", "b"])
-                    .is_err()
+                Cli::try_parse_from([
+                    "nidoo",
+                    crate::migrate::COMMAND,
+                    "--verify",
+                    "--backup",
+                    "b"
+                ])
+                .is_err()
             );
             Ok(())
         });
@@ -297,7 +310,8 @@ mod tests {
     fn migrate_restore_takes_file() {
         figment::Jail::expect_with(|_| {
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--restore", "b.jsonl"]).unwrap(),
+                Cli::try_parse_from(["nidoo", crate::migrate::COMMAND, "--restore", "b.jsonl"])
+                    .unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::DryRun,
@@ -308,8 +322,14 @@ mod tests {
                 }
             );
             assert!(
-                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--restore", "b", "--apply"])
-                    .is_err()
+                Cli::try_parse_from([
+                    "nidoo",
+                    crate::migrate::COMMAND,
+                    "--restore",
+                    "b",
+                    "--apply"
+                ])
+                .is_err()
             );
             Ok(())
         });
