@@ -14,7 +14,7 @@ use nidoo_api::{
 };
 
 use crate::api;
-use crate::components::sparkline::SparklePair;
+use crate::components::sparkline::SparklinePair;
 use crate::components::system_chart::SystemChart;
 use crate::i18n::format::{date_time, decimal, decimal_grouped, local_date_time};
 use crate::i18n::history::range_chip;
@@ -115,10 +115,10 @@ fn Tile(
         {trend
             .map(|(server, hub)| match hub {
                 Some(hub) => {
-                    view! { <SparklePair server=server.to_owned() hub=hub.to_owned() /> }
+                    view! { <SparklinePair server=server.to_owned() hub=hub.to_owned() /> }
                         .into_any()
                 }
-                None => view! { <SparklePair server=server.to_owned() /> }.into_any(),
+                None => view! { <SparklinePair server=server.to_owned() /> }.into_any(),
             })}
     };
     match href {
@@ -322,6 +322,17 @@ impl Show {
         }
     }
 
+    /// The unit of the chart's values.
+    fn unit(self, lang: Lang) -> Option<&'static str> {
+        match self {
+            Self::Cpu => Some("%"),
+            Self::Ram => Some(system_text(lang, SystemText::UnitMb)),
+            Self::Disk => Some(system_text(lang, SystemText::UnitGb)),
+            Self::Temperature => Some("°C"),
+            Self::Restarts => None,
+        }
+    }
+
     /// The server's and the hub's entities, and the words that name them in the key.
     fn lines(self) -> Option<(&'static str, Option<&'static str>, SystemText, SystemText)> {
         use SystemText::*;
@@ -441,7 +452,12 @@ fn Detail(show: Show, data: RwSignal<Option<SystemView>>) -> impl IntoView {
                 "←"
                 <span>{move || t(SystemText::Back)}</span>
             </A>
-            <h2 class="system__heading">{move || t(show.title())}</h2>
+            <h2 class="system__heading">
+                {move || match show.unit(lang()) {
+                    Some(unit) => format!("{} ({unit})", t(show.title())),
+                    None => t(show.title()).to_owned(),
+                }}
+            </h2>
             {body}
         </div>
     }

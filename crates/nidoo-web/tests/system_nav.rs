@@ -68,7 +68,7 @@ async fn back_from_chart_returns_to_tiles() {
         .unwrap()
         .history()
         .unwrap()
-        .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/settings/system"))
+        .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/settings"))
         .unwrap();
     let house = House::new();
     let _app = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
@@ -78,17 +78,37 @@ async fn back_from_chart_returns_to_tiles() {
         nidoo_web::nav::install_nav();
         view! {
             <Router>
+                <nidoo_web::nav::TrackBackStack />
+                <nidoo_web::nav::BackLink />
                 <Routes fallback=|| "fallback">
+                    <Route
+                        path=path!("/settings")
+                        view=|| {
+                            view! {
+                                <leptos_router::components::A href="/settings/system">
+                                    "System"
+                                </leptos_router::components::A>
+                            }
+                        }
+                    />
                     <Route path=path!("/settings/system") view=SystemSettingsPage />
                 </Routes>
             </Router>
         }
     });
 
+    wait_for(&host, "a[href=\"/settings/system\"]", 1).await;
+    all(&host, "a[href=\"/settings/system\"]")[0].click();
     wait_for(&host, "a[href=\"/settings/system?show=cpu\"]", 1).await;
     all(&host, "a[href=\"/settings/system?show=cpu\"]")[0].click();
     wait_for(&host, ".system__back", 1).await;
     assert!(all(&host, ".system__tiles").is_empty());
+    // The header's Back goes to the tiles too, not past them.
+    let header_back = all(&host, ".sheet__back").remove(0);
+    assert_eq!(
+        header_back.get_attribute("href").as_deref(),
+        Some("/settings/system")
+    );
 
     all(&host, ".system__back")[0].click();
     wait_for(&host, ".system__tiles", 1).await;

@@ -81,7 +81,9 @@ pub fn cached_day_series(id: &str) -> Option<Series> {
     CACHE.with(|c| c.borrow().peek(id, unix_now()))
 }
 
-/// Forgets every cached series, so the next ask goes to the hub (tests start each page clean).
+/// Forgets every cached series, so the next ask goes to the hub. Test-only: the wasm tests start
+/// each page with an empty cache.
+#[doc(hidden)]
 pub fn forget_day_series() {
     CACHE.with(|c| *c.borrow_mut() = CacheState::default());
 }

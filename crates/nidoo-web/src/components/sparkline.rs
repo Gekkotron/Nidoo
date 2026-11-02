@@ -135,7 +135,7 @@ pub fn Sparkline(entity_id: String) -> impl IntoView {
 /// (classes `spark__server` and `spark__hub`). Nothing shows while the hub has no history for
 /// `server`; a missing hub series just leaves its line out.
 #[component]
-pub fn SparklePair(server: String, #[prop(optional)] hub: Option<String>) -> impl IntoView {
+pub fn SparklinePair(server: String, #[prop(optional)] hub: Option<String>) -> impl IntoView {
     type Points = Option<Vec<(i64, f64)>>;
     let known_server = cached_day_series(&server);
     let known_hub = match &hub {

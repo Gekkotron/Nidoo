@@ -9572,8 +9572,12 @@ dialog.popup::backdrop {
 }
 
 /* The tiles' two-line trend: the server's line, the hub's beside it. */
-.spark .spark__hub {
+.spark .spark__server {
   stroke: var(--accent-mint);
+}
+
+.spark .spark__hub {
+  stroke: var(--ring-cool);
 }
 
 .system__detail {

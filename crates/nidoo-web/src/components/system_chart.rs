@@ -177,6 +177,7 @@ pub fn SystemChart(
                         let g = geometry(lang, &s, h.as_deref(), now - r.span_secs(), now);
                         let xticks = tick_labels(lang, r, now);
                         let has_hub = g.hub.is_some();
+                        let has_server = !s.is_empty();
                         view! {
                             <div class="history-chart__inset">
                                 <div class="history-chart__plot">
@@ -201,11 +202,16 @@ pub fn SystemChart(
                                                 }
                                             })
                                             .collect::<Vec<_>>()}
-                                        <path
-                                            d=g.server
-                                            class="history-chart__line system-chart__server"
-                                            fill="none"
-                                        />
+                                        {has_server
+                                            .then(|| {
+                                                view! {
+                                                    <path
+                                                        d=g.server
+                                                        class="history-chart__line system-chart__server"
+                                                        fill="none"
+                                                    />
+                                                }
+                                            })}
                                         {g
                                             .hub
                                             .map(|d| {
@@ -244,13 +250,18 @@ pub fn SystemChart(
                             <div class="history-chart__legend">
                                 <span>{range_name(lang, r)}</span>
                                 <span class="history-chart__key">
-                                    <span class="history-chart__key-item">
-                                        <i
-                                            class="history-chart__key-line system-chart__key--server"
-                                            aria-hidden="true"
-                                        ></i>
-                                        {move || server_label.get()}
-                                    </span>
+                                    {has_server
+                                        .then(|| {
+                                            view! {
+                                                <span class="history-chart__key-item">
+                                                    <i
+                                                        class="history-chart__key-line system-chart__key--server"
+                                                        aria-hidden="true"
+                                                    ></i>
+                                                    {move || server_label.get()}
+                                                </span>
+                                            }
+                                        })}
                                     {has_hub
                                         .then(|| {
                                             view! {
