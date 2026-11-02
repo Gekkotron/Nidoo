@@ -22,6 +22,18 @@ The themes are **Night Glass** (dark), **Ivoire** (a light, warm ivory with sage
 
 On a phone or a narrow window (below 900 px) the sidebar becomes a drawer. The ☰ button at the left of the header opens it over the page; tapping the dimmed page, pressing Escape, choosing an entry or widening the window closes it.
 
+## Search
+
+The magnifying glass in the top bar opens the Search page (`/search`) from any page. On a computer, the `/` key does the same unless the focus is in a text field.
+
+Type a few words: a device name, a room, or a kind of device such as "lamp" or "lampe". French and English both work, and accents and capitals don't matter. Every word must match.
+
+Results are the same live cards a dashboard shows, grouped by room. A light can be switched and a shutter moved in place; a tap opens the full controls. Matching rooms appear as tiles after the devices, and a tile opens the room. An empty field shows your Favorites.
+
+At most 60 cards are drawn; past that a line reads "type more to narrow it down". Back from a card returns to the same results. Esc clears the field, and a second Esc leaves the page.
+
+Search covers devices only. Flows, moods and settings are not searched.
+
 ## Home header
 
 The house overview (**House**, first under Overview) opens with a header above its cards: the date, a greeting, one sentence about the house, a detail line, a row of chips and, when weather is on, a weather card (with a [solar card](#solar-card) beside it when the solar forecast is on). The overview always has it; your own dashboards show it only when their **Show header** switch is on. With live view on in **Settings → Cameras** a **Cameras** section follows the moods: every Frigate camera, one live 16:9 tile each, side by side on a computer and stacked on a phone; it is hidden while `live` is off. The overview ends with a **Recent alerts** list and a **See all** button.
