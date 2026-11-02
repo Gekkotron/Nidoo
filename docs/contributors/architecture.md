@@ -18,8 +18,9 @@ Nidoo is one Cargo workspace (`crates/*`) with one binary, `nidoo`. The hub keep
 | [`nidoo-frigate`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-frigate) | The Frigate event bridge: a pure translator from `<frigate>/events` messages to v1 push alerts, with per-event and per-camera memory. |
 | [`nidoo-watchdog`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-watchdog) | The gateway-health and broker-ACL watchdogs as pure translators to `system` push alerts, plus a Mosquitto log tailer. |
 | [`nidoo-climate`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-climate) | The climate engine's documents, decision tree, schedule learning and topics. Pure data and logic, no I/O; the hub and the web UI share it. |
+| [`nidoo-assist`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo-assist) | The assistant: turns a short French sentence and a snapshot of the house into a plan (actions, an answer, a question back, or "not understood") with the safety checks for heating setpoints. Pure data and logic, no I/O; the hub executes the plans and the web UI shares the wire types. |
 
-`nidoo-core` depends on no other crate. `nidoo-api`, `nidoo-push` and `nidoo-climate` depend on it; `nidoo-frigate` and `nidoo-watchdog` depend on no workspace crate. `nidoo` (native) depends on all of them, and `nidoo-web` (wasm) on `nidoo-core`, `nidoo-api` and `nidoo-climate`.
+`nidoo-core` depends on no other crate. `nidoo-api`, `nidoo-push` and `nidoo-climate` depend on it; `nidoo-frigate` and `nidoo-watchdog` depend on no workspace crate. `nidoo-assist` depends on `nidoo-core`, `nidoo-api` and `nidoo-climate`. `nidoo` (native) depends on all of them, and `nidoo-web` (wasm) on `nidoo-core`, `nidoo-api`, `nidoo-climate` and `nidoo-assist`.
 
 ## Data flow
 

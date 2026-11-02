@@ -2225,6 +2225,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nidoo-assist"
+version = "0.1.0"
+dependencies = [
+ "nidoo-api",
+ "nidoo-climate",
+ "nidoo-core",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nidoo-climate"
 version = "0.1.0"
 dependencies = [
