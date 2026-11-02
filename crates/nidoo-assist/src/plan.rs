@@ -106,9 +106,9 @@ impl Plan {
         }
     }
 
-    fn with_trace(mut self, trace: Trace) -> Self {
+    fn with_trace(mut self: Box<Self>, trace: Trace) -> Self {
         *self.trace_mut() = trace;
-        self
+        *self
     }
 
     pub fn trace_mut(&mut self) -> &mut Trace {
@@ -315,21 +315,21 @@ fn pick_room(
     candidates: &[String],
     none: String,
     house: &House,
-) -> Result<(String, String), Plan> {
+) -> Result<(String, String), Box<Plan>> {
     if let Some(area) = &req.area {
         return Ok((area.clone(), "choix".into()));
     }
     match resolve_room(house, room) {
         RoomMatch::One(area) => Ok((area, format!("mots : {}", room.join(", ")))),
-        RoomMatch::Many(areas) => Err(ask_room(req, &areas, house, Trace::default())),
-        RoomMatch::Unknown => Err(answer(
+        RoomMatch::Many(areas) => Err(Box::new(ask_room(req, &areas, house, Trace::default()))),
+        RoomMatch::Unknown => Err(Box::new(answer(
             format!("Je ne connais pas de pièce « {} ».", room.join(" ")),
             Trace::default(),
-        )),
+        ))),
         RoomMatch::NoRoomSaid => match candidates {
-            [] => Err(answer(none, Trace::default())),
+            [] => Err(Box::new(answer(none, Trace::default()))),
             [one] => Ok((one.clone(), "seule pièce possible".into())),
-            _ => Err(ask_room(req, candidates, house, Trace::default())),
+            _ => Err(Box::new(ask_room(req, candidates, house, Trace::default()))),
         },
     }
 }
