@@ -375,9 +375,10 @@ impl Hub {
         round
     }
 
-    /// Once per local day, starts deleting the system history and restart log past the 90
-    /// days, detached so the tick never waits on it. The day is marked before the attempt: a
-    /// failure is logged once and waits for the next local day. `None` when nothing started.
+    /// Once per local day, starts deleting the system history, the restart log and the
+    /// assistant's turns past the 90 days, detached so the tick never waits on it. The day is
+    /// marked before the attempt: a failure is logged once and waits for the next local day.
+    /// `None` when nothing started.
     fn start_purge(&self, now: u64, today: NaiveDate) -> Option<JoinHandle<()>> {
         let db = self.history().and_then(|h| h.db().ok())?.clone();
         if !self.system_state().purge_due(today) {
@@ -392,6 +393,16 @@ impl Hub {
                 }
                 Err(_) => {
                     tracing::warn!("purging the old system history timed out; next try tomorrow")
+                }
+            }
+            // The assistant's turns are kept as long.
+            match timeout(PURGE_TIMEOUT, db.purge_assist(cutoff)).await {
+                Ok(Ok(removed)) => tracing::debug!(removed, "purged the old assistant turns"),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "could not purge the old assistant turns; next try tomorrow");
+                }
+                Err(_) => {
+                    tracing::warn!("purging the old assistant turns timed out; next try tomorrow")
                 }
             }
         }))

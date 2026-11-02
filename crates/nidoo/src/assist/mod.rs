@@ -2,6 +2,7 @@
 //! own paths (`send_command` for lights, `set_climate_override` for setpoints), with one
 //! pending question per client and a log of the turns.
 
+mod db;
 mod hub;
 pub(crate) mod log;
 

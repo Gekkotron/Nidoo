@@ -475,3 +475,16 @@ async fn range_from_home_settings() {
         Err(HubError::Rejected(_))
     ));
 }
+
+#[tokio::test]
+async fn without_db_history_is_memory_only() {
+    let (hub, _rx) = house().await;
+    let first = say(&hub, "fais-moi un café").await;
+    for _ in 0..100 {
+        say(&hub, "il fait combien dehors ?").await;
+    }
+    let turns = hub.assist_turns(200).await;
+    assert!(!turns.kept);
+    assert_eq!(turns.turns.len(), 100);
+    assert!(turns.turns.iter().all(|t| t.id != first.id));
+}

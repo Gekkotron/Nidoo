@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures_util::future::join_all;
 use nidoo_api::{already_there, area_views, entity_views};
@@ -15,10 +15,14 @@ use nidoo_assist::view::{
 use nidoo_assist::{HeatRange, House, Pending, PendingAnswer, answer_text, plan, plan_request};
 use nidoo_climate::doc::{Override, OverrideOrigin, Setpoint};
 use nidoo_core::model::{Availability, Command};
+use tokio::time::timeout;
 
 use super::log::TurnLog;
 use crate::clock;
 use crate::hub::{Hub, HubError};
+
+/// How long a database read or write of the turn log may take.
+const DB_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a question waits for its answer, in seconds.
 pub const PENDING_TTL_S: u64 = 60;
@@ -235,6 +239,7 @@ impl Hub {
         let mut turn = turn;
         turn.trace.elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         self.assist.turns().push(turn.clone());
+        self.log_turn(&turn).await;
         Ok(turn)
     }
 
@@ -389,17 +394,50 @@ impl Hub {
         .await
     }
 
-    /// Up to `limit` recent turns, newest first.
+    /// The history database, when one is configured.
+    fn assist_db(&self) -> Option<crate::history::db::Db> {
+        self.history().and_then(|h| h.db().ok()).cloned()
+    }
+
+    /// Writes the turn to the database when there is one; a failure is logged, never
+    /// returned: the memory log already has the turn.
+    async fn log_turn(&self, turn: &AssistTurn) {
+        let Some(db) = self.assist_db() else { return };
+        match timeout(DB_TIMEOUT, db.insert_assist_turn(turn)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => tracing::warn!(%error, "could not log the assistant turn"),
+            Err(_) => tracing::warn!("logging the assistant turn timed out"),
+        }
+    }
+
+    /// Up to `limit` recent turns, newest first: from the database when it answers
+    /// (`kept`), else from the memory log.
     pub async fn assist_turns(&self, limit: usize) -> AssistTurns {
+        if let Some(db) = self.assist_db() {
+            let wanted = i64::try_from(limit).unwrap_or(i64::MAX);
+            match timeout(DB_TIMEOUT, db.assist_turns(wanted)).await {
+                Ok(Ok(turns)) => return AssistTurns { turns, kept: true },
+                Ok(Err(error)) => tracing::warn!(%error, "could not read the assistant turns"),
+                Err(_) => tracing::warn!("reading the assistant turns timed out"),
+            }
+        }
         AssistTurns {
             turns: self.assist.turns().newest(limit),
             kept: false,
         }
     }
 
-    /// Flags a turn as wrongly understood.
+    /// Flags a turn as wrongly understood, in memory and in the database.
     pub async fn assist_mark_wrong(&self, id: &str) -> Result<(), HubError> {
-        if self.assist.turns().mark_wrong(id) {
+        let mut found = self.assist.turns().mark_wrong(id);
+        if let Some(db) = self.assist_db() {
+            match timeout(DB_TIMEOUT, db.mark_assist_wrong(id)).await {
+                Ok(Ok(marked)) => found |= marked,
+                Ok(Err(error)) => tracing::warn!(%error, "could not mark the assistant turn"),
+                Err(_) => tracing::warn!("marking the assistant turn timed out"),
+            }
+        }
+        if found {
             Ok(())
         } else {
             Err(HubError::UnknownTurn(id.to_owned()))
