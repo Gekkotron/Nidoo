@@ -3,6 +3,7 @@
 pub mod heartbeat;
 pub mod restarts;
 pub mod sample;
+pub mod services;
 
 use std::sync::atomic::Ordering;
 
@@ -33,6 +34,31 @@ impl CommandsToday {
 }
 
 impl Hub {
+    /// Retained messages on the broker, `None` until the broker has reported a count.
+    pub fn retained_count(&self) -> Option<u64> {
+        *self
+            .system_retained
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Capture the broker's retained-message count; an unparsable payload is ignored.
+    pub(crate) fn ingest_system_retained(&self, topic: &str, payload: &[u8]) -> bool {
+        if topic != services::RETAINED_TOPIC {
+            return false;
+        }
+        if let Some(count) = std::str::from_utf8(payload)
+            .ok()
+            .and_then(|text| text.trim().parse::<u64>().ok())
+        {
+            *self
+                .system_retained
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(count);
+        }
+        true
+    }
+
     /// Device commands published since boot.
     pub fn commands_sent(&self) -> u64 {
         self.commands_sent.load(Ordering::Relaxed)
