@@ -243,15 +243,31 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
 }
 
 /// Renames the `oikos_` entity ids of the (quoted) table `t`; returns the rows renamed.
+///
+/// One UPDATE per id, each with an exact `entity_id = '<literal>'`: on a compressed hypertable
+/// segmented by `entity_id`, TimescaleDB narrows the batches it decompresses only with such a
+/// comparison. A `LIKE` filter decompresses every batch of every chunk (17 GB on the live
+/// house). The ids come from a `SELECT DISTINCT`, which reads the segmentby column without
+/// decompressing. The literal is inlined (not bound) so the planner sees a constant.
 async fn rename_rows(conn: &mut PgConnection, t: &str) -> sqlx::Result<u64> {
-    let update = format!(
-        "UPDATE {t} SET entity_id = 'nidoo_' || substr(entity_id, 7) \
-         WHERE entity_id LIKE 'oikos\\_%'"
-    );
-    Ok(sqlx::query(&update)
-        .execute(&mut *conn)
-        .await?
-        .rows_affected())
+    let ids: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT DISTINCT entity_id FROM {t} WHERE entity_id LIKE 'oikos\\_%'"
+    ))
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut total = 0;
+    for id in ids {
+        let update = format!(
+            "UPDATE {t} SET entity_id = {} WHERE entity_id = {}",
+            quote_literal(&format!("nidoo_{}", &id[6..])),
+            quote_literal(&id)
+        );
+        total += sqlx::query(&update)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+    }
+    Ok(total)
 }
 
 /// Rewrites every `settings` value that mentions `oikos` (any casing) with
