@@ -7,15 +7,17 @@ use nidoo_api::search::fold;
 pub enum Word {
     /// Lowercase, accents folded to ASCII. Also `?`, `%` and `°`, which carry meaning.
     Text(String),
-    /// From digits (`19`, `19,5`, `+1`, `-0,5`) or French number words (`dix-neuf`).
+    /// From digits (`19`, `19,5`) or French number words (`dix-neuf`).
     Number(f64),
+    /// Digits written with a sign (`+1`, `-0,5`): a change, not a value.
+    Signed(f64),
 }
 
 impl Word {
     pub fn text(&self) -> Option<&str> {
         match self {
             Word::Text(t) => Some(t),
-            Word::Number(_) => None,
+            Word::Number(_) | Word::Signed(_) => None,
         }
     }
 
@@ -62,7 +64,11 @@ fn tokens(folded: &str) -> Vec<Word> {
                 }
             }
             if let Ok(n) = text.parse::<f64>() {
-                out.push(Word::Number(n));
+                out.push(if signed {
+                    Word::Signed(n)
+                } else {
+                    Word::Number(n)
+                });
             }
         } else if c.is_alphabetic() {
             let mut text = String::new();
@@ -172,8 +178,9 @@ mod tests {
 
     #[test]
     fn reads_signed_numbers() {
-        assert_eq!(words("+1"), vec![Word::Number(1.0)]);
-        assert_eq!(words("-0,5"), vec![Word::Number(-0.5)]);
+        assert_eq!(words("+1"), vec![Word::Signed(1.0)]);
+        assert_eq!(words("-0,5"), vec![Word::Signed(-0.5)]);
+        assert_eq!(words("a 19"), vec![t("a"), Word::Number(19.0)]);
     }
 
     #[test]

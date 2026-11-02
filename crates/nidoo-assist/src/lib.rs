@@ -2,4 +2,6 @@
 //!
 //! Pure data: no I/O, builds for wasm32.
 
+pub mod intent;
+pub mod lexicon;
 pub mod text;
