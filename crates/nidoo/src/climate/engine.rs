@@ -986,23 +986,12 @@ impl Hub {
     /// change, at most `manual_hold_max`, and acknowledges the state in the ledger so the
     /// events that follow are not hand changes again.
     fn record_hand_change(&self, zone: &str, id: &str, target: Option<f64>, mode: &str, now: u64) {
-        let settings = self.zone_settings(zone);
         let hint = match mode {
             "heat" => Some(Mode::Heat),
             "cool" => Some(Mode::Cool),
             _ => None,
         };
-        // "Until the next scheduled change" is the zone's schedule for the season's mode, not
-        // whatever mode the device was put in.
-        let rules = self
-            .season_mode_now(now)
-            .and_then(|m| settings.rules.get(m));
-        let tz = self.zone();
-        let until = hold_until(
-            now,
-            secs_until_next_change(tz, rules, local_time(tz, now), now),
-            settings.manual_hold_max_min,
-        );
+        let until = self.hand_hold_until(zone, now);
         let setpoint = if mode == "off" {
             Some(Setpoint::Off)
         } else {
@@ -1028,6 +1017,23 @@ impl Hub {
             now,
         );
         tracing::info!(zone, entity = id, until, "hand change held");
+    }
+
+    /// How long a hand change on `zone` is held: until the zone's next scheduled change, at most
+    /// `manual_hold_max_min` from `now`. The assistant's setpoints get the same hold.
+    pub(crate) fn hand_hold_until(&self, zone: &str, now: u64) -> u64 {
+        let settings = self.zone_settings(zone);
+        // "Until the next scheduled change" is the zone's schedule for the season's mode, not
+        // whatever mode the device was put in.
+        let rules = self
+            .season_mode_now(now)
+            .and_then(|m| settings.rules.get(m));
+        let tz = self.zone();
+        hold_until(
+            now,
+            secs_until_next_change(tz, rules, local_time(tz, now), now),
+            settings.manual_hold_max_min,
+        )
     }
 
     /// The mode the house's season runs in now.
@@ -1472,5 +1478,65 @@ mod tests {
         let rows = decision_rows(&decision, 0);
         assert_eq!(rows[0].setpoint, Some(18.5));
         assert_eq!(rows[0].adjust, None);
+    }
+
+    #[tokio::test]
+    async fn hand_hold_until_matches_hand_change() {
+        use nidoo_climate::doc::{Block, Day, HhMm, ModeRules, Rules, Season};
+        let mut cfg = crate::config::Config::default();
+        cfg.climate.enabled = true;
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        let hub = Hub::new(&cfg, tx);
+        let tz = hub.zone();
+        // A Monday, 10:00 house time.
+        let now = tz
+            .with_ymd_and_hms(2026, 11, 2, 10, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp() as u64;
+        let all_days = vec![
+            Day::Mon,
+            Day::Tue,
+            Day::Wed,
+            Day::Thu,
+            Day::Fri,
+            Day::Sat,
+            Day::Sun,
+        ];
+        let schedule = |from: u16, to: u16| Rules {
+            heat: Some(ModeRules {
+                base: Setpoint::Temp(17.0),
+                blocks: vec![Block {
+                    days: all_days.clone(),
+                    from: HhMm(from),
+                    to: HhMm(to),
+                    setpoint: Setpoint::Temp(20.0),
+                    evidence: None,
+                }],
+            }),
+            cool: None,
+        };
+        {
+            let mut store = hub.climate_store();
+            store.house.season = Season::Heat;
+            let living = store.zones.entry("living".to_owned()).or_default();
+            living.settings.manual_hold_max_min = 240;
+            // The next change is at 11:30, in 90 minutes.
+            living.settings.rules = schedule(11 * 60 + 30, 12 * 60);
+        }
+        assert_eq!(hub.hand_hold_until("living", now), now + 90 * 60);
+        hub.record_hand_change("living", "climate.a", Some(21.0), "heat", now);
+        let held = hub.climate_store().zones["living"].overrides.clone();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].until, hub.hand_hold_until("living", now));
+
+        // The next change in 6 h: held for manual_hold_max_min.
+        hub.climate_store()
+            .zones
+            .get_mut("living")
+            .unwrap()
+            .settings
+            .rules = schedule(16 * 60, 17 * 60);
+        assert_eq!(hub.hand_hold_until("living", now), now + 240 * 60);
     }
 }
