@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::migrate::{MigrateArgs, Mode};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -31,42 +30,14 @@ enum RawCommand {
     },
     /// Create the bundled broker and database credentials, then exit.
     InitBundled,
-    /// One-off: move the old-name retained messages, database rows, database and role to
-    /// `nidoo`. Without a flag it is a dry run that writes nothing.
-    #[command(name = crate::migrate::COMMAND)]
-    Migrate {
-        /// Do the switch-over (the hub must be stopped; needs `--backup`).
-        #[arg(long, conflicts_with_all = ["verify", "restore"], requires = "backup")]
-        apply: bool,
-        /// Report anything still carrying the old name; exits non-zero when something does.
-        #[arg(long, conflicts_with = "restore")]
-        verify: bool,
-        /// Write the retained messages to this file first.
-        #[arg(long, value_name = "FILE", conflicts_with_all = ["restore", "verify"])]
-        backup: Option<PathBuf>,
-        /// Republish a backup file's old- and new-name topics (retained), then exit.
-        #[arg(long, value_name = "FILE")]
-        restore: Option<PathBuf>,
-    },
 }
 
 /// Resolved command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cli {
-    Run {
-        data_dir: PathBuf,
-    },
-    McpStdio {
-        server: String,
-        data_dir: PathBuf,
-    },
-    InitBundled {
-        data_dir: PathBuf,
-    },
-    Migrate {
-        args: MigrateArgs,
-        data_dir: PathBuf,
-    },
+    Run { data_dir: PathBuf },
+    McpStdio { server: String, data_dir: PathBuf },
+    InitBundled { data_dir: PathBuf },
 }
 
 impl Cli {
@@ -94,25 +65,6 @@ impl Cli {
                 data_dir: raw.data_dir,
             },
             Some(RawCommand::InitBundled) => Cli::InitBundled {
-                data_dir: raw.data_dir,
-            },
-            Some(RawCommand::Migrate {
-                apply,
-                verify,
-                backup,
-                restore,
-            }) => Cli::Migrate {
-                args: MigrateArgs {
-                    mode: if apply {
-                        Mode::Apply
-                    } else if verify {
-                        Mode::Verify
-                    } else {
-                        Mode::DryRun
-                    },
-                    backup,
-                    restore,
-                },
                 data_dir: raw.data_dir,
             },
         }
@@ -217,119 +169,6 @@ mod tests {
                 Cli::InitBundled {
                     data_dir: "/data".into(),
                 }
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn migrate_defaults_to_dry_run() {
-        figment::Jail::expect_with(|_| {
-            assert_eq!(
-                Cli::try_parse_from(["nidoo", crate::migrate::COMMAND]).unwrap(),
-                Cli::Migrate {
-                    args: MigrateArgs {
-                        mode: Mode::DryRun,
-                        backup: None,
-                        restore: None,
-                    },
-                    data_dir: "./data".into(),
-                }
-            );
-            assert_eq!(
-                Cli::try_parse_from(["nidoo", "--data", "d", crate::migrate::COMMAND, "--verify"])
-                    .unwrap(),
-                Cli::Migrate {
-                    args: MigrateArgs {
-                        mode: Mode::Verify,
-                        backup: None,
-                        restore: None,
-                    },
-                    data_dir: "d".into(),
-                }
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn migrate_apply_requires_backup() {
-        figment::Jail::expect_with(|_| {
-            assert!(Cli::try_parse_from(["nidoo", crate::migrate::COMMAND, "--apply"]).is_err());
-            assert_eq!(
-                Cli::try_parse_from([
-                    "nidoo",
-                    crate::migrate::COMMAND,
-                    "--apply",
-                    "--backup",
-                    "b.jsonl"
-                ])
-                .unwrap(),
-                Cli::Migrate {
-                    args: MigrateArgs {
-                        mode: Mode::Apply,
-                        backup: Some("b.jsonl".into()),
-                        restore: None,
-                    },
-                    data_dir: "./data".into(),
-                }
-            );
-            assert!(
-                Cli::try_parse_from([
-                    "nidoo",
-                    crate::migrate::COMMAND,
-                    "--apply",
-                    "--verify",
-                    "--backup",
-                    "b"
-                ])
-                .is_err()
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn migrate_backup_conflicts_with_verify() {
-        figment::Jail::expect_with(|_| {
-            assert!(
-                Cli::try_parse_from([
-                    "nidoo",
-                    crate::migrate::COMMAND,
-                    "--verify",
-                    "--backup",
-                    "b"
-                ])
-                .is_err()
-            );
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn migrate_restore_takes_file() {
-        figment::Jail::expect_with(|_| {
-            assert_eq!(
-                Cli::try_parse_from(["nidoo", crate::migrate::COMMAND, "--restore", "b.jsonl"])
-                    .unwrap(),
-                Cli::Migrate {
-                    args: MigrateArgs {
-                        mode: Mode::DryRun,
-                        backup: None,
-                        restore: Some("b.jsonl".into()),
-                    },
-                    data_dir: "./data".into(),
-                }
-            );
-            assert!(
-                Cli::try_parse_from([
-                    "nidoo",
-                    crate::migrate::COMMAND,
-                    "--restore",
-                    "b",
-                    "--apply"
-                ])
-                .is_err()
             );
             Ok(())
         });

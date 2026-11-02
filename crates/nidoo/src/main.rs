@@ -179,11 +179,6 @@ async fn main() -> anyhow::Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Cli::Migrate { args, data_dir } => {
-            logging::init(&LogConfig::default());
-            nidoo::migrate::run(args, &data_dir).await?;
-            Ok(ExitCode::SUCCESS)
-        }
         Cli::McpStdio { server, data_dir } => {
             let (log, load_err) = match HubFile::load(&data_dir) {
                 Ok(file) => match file.unwrap_or_default().with_bootstrap_env() {
