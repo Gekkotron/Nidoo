@@ -13,6 +13,62 @@ use super::rewrite::{Change, rename_json};
 /// The temporary superuser that renames the database and role from outside.
 const TMP_ROLE: &str = "nidoo_migrate_tmp";
 
+/// How many times the background workers are asked to start, a second apart, while the
+/// launcher has no free worker slot.
+const START_ATTEMPTS: u32 = 10;
+
+/// What became of TimescaleDB's background workers (the scheduler that runs the compression
+/// and retention jobs) on the renamed database. `ALTER DATABASE ... RENAME` stops them, and
+/// TimescaleDB only warns that they must be restarted by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Workers {
+    /// Running again.
+    Started,
+    /// The database has no TimescaleDB, so it has no workers.
+    NotInstalled,
+    /// Still stopped; the reason says why.
+    NotStarted(String),
+}
+
+/// Asks the launcher to start the scheduler of the database `conn` is on. Needs a superuser
+/// session. Never fails: the outcome is reported instead, after the rename it cannot undo.
+async fn start_workers(conn: &mut PgConnection) -> Workers {
+    // TimescaleDB 2.12 moved the function from `_timescaledb_internal` to
+    // `_timescaledb_functions`; ask the catalog rather than guess.
+    let schema: Option<String> = match sqlx::query_scalar(
+        "SELECT n.nspname::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+         WHERE p.proname = 'start_background_workers' \
+           AND n.nspname IN ('_timescaledb_functions', '_timescaledb_internal') \
+         ORDER BY n.nspname = '_timescaledb_functions' DESC LIMIT 1",
+    )
+    .fetch_optional(&mut *conn)
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => return Workers::NotStarted(format!("{e}")),
+    };
+    let Some(schema) = schema else {
+        return Workers::NotInstalled;
+    };
+    let sql = format!("SELECT {}.start_background_workers()", quote_ident(&schema));
+    for attempt in 1..=START_ATTEMPTS {
+        match sqlx::query_scalar::<_, bool>(&sql)
+            .fetch_one(&mut *conn)
+            .await
+        {
+            Ok(true) => return Workers::Started,
+            Ok(false) if attempt < START_ATTEMPTS => {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Ok(false) => break,
+            Err(e) => return Workers::NotStarted(format!("{e}")),
+        }
+    }
+    Workers::NotStarted(format!(
+        "the launcher had no free background worker slot after {START_ATTEMPTS} tries"
+    ))
+}
+
 /// `"name"` with embedded quotes doubled, safe to splice into SQL.
 fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
@@ -268,7 +324,10 @@ async fn drop_tmp_role(conn: &mut PgConnection) -> Result<()> {
 /// database `from`), so the same password is kept for `to`. Safe to run again: only "`from`
 /// gone, `to` present" counts as already switched over. If both exist, nothing is renamed and
 /// it fails. The temporary superuser is dropped on every path.
-pub async fn rename_db_and_role(admin_url: &str, from: &str, to: &str) -> Result<()> {
+///
+/// Then, on every path, TimescaleDB's background workers are started again on `to` (the
+/// rename stopped them) and the outcome is returned.
+pub async fn rename_db_and_role(admin_url: &str, from: &str, to: &str) -> Result<Workers> {
     let url = Url::parse(admin_url).context("database url")?;
     let password = percent_decode_str(url.password().unwrap_or(""))
         .decode_utf8()
@@ -307,7 +366,18 @@ pub async fn rename_db_and_role(admin_url: &str, from: &str, to: &str) -> Result
                 };
             drop_tmp_role(&mut conn).await?;
             conn.close().await?;
-            return Ok(());
+            // A run stopped between the rename and the restart left them stopped. This needs
+            // `to` to be a superuser; the outcome says so when it is not.
+            let workers =
+                match PgConnection::connect_with(&options(admin_url, to, &password, to)?).await {
+                    Ok(mut conn) => {
+                        let w = start_workers(&mut conn).await;
+                        let _ = conn.close().await;
+                        w
+                    }
+                    Err(e) => Workers::NotStarted(format!("connecting as {to} to {to}: {e}")),
+                };
+            return Ok(workers);
         }
     }
 
@@ -315,30 +385,41 @@ pub async fn rename_db_and_role(admin_url: &str, from: &str, to: &str) -> Result
     let result = switch(admin_url, from, to, &password, &tmp_password).await;
     let dropped = drop_tmp_role_after(admin_url, from, to, &password).await;
     match (result, dropped) {
-        (Ok(()), Ok(())) => Ok(()),
+        (Ok(w), Ok(())) => Ok(w),
         (Err(e), Ok(())) => Err(e),
-        (Ok(()), Err(d)) => Err(d),
+        (Ok(_), Err(d)) => Err(d),
         (Err(e), Err(d)) => {
             Err(e.context(format!("and the temporary role was left behind: {d:#}")))
         }
     }
 }
 
-/// Renames as the temporary role, then checks the new role logs in with the old password.
+/// Renames as the temporary role, then checks the new role logs in with the old password, then
+/// starts the background workers on the renamed database, still as the temporary superuser.
 async fn switch(
     admin_url: &str,
     from: &str,
     to: &str,
     password: &str,
     tmp_password: &str,
-) -> Result<()> {
+) -> Result<Workers> {
     let mut tmp =
         PgConnection::connect_with(&options(admin_url, TMP_ROLE, tmp_password, "postgres")?)
             .await
             .context("connecting as the temporary role")?;
     let result = rename_as_tmp(&mut tmp, admin_url, from, to, password).await;
     let _ = tmp.close().await;
-    result
+    result?;
+    Ok(
+        match PgConnection::connect_with(&options(admin_url, TMP_ROLE, tmp_password, to)?).await {
+            Ok(mut conn) => {
+                let w = start_workers(&mut conn).await;
+                let _ = conn.close().await;
+                w
+            }
+            Err(e) => Workers::NotStarted(format!("connecting to {to} as {TMP_ROLE}: {e}")),
+        },
+    )
 }
 
 async fn database_exists(conn: &mut PgConnection, name: &str) -> sqlx::Result<bool> {
@@ -426,7 +507,7 @@ async fn drop_tmp_role_after(admin_url: &str, from: &str, to: &str, password: &s
 }
 
 /// Everything that still says `oikos` in any casing: database names, role names, entity ids
-/// and settings values.
+/// and settings values. A settings row is named by its key only: its value may hold a secret.
 pub async fn verify_db(pool: &PgPool) -> sqlx::Result<Vec<String>> {
     let mut left = Vec::new();
     for (what, sql) in [
@@ -440,7 +521,7 @@ pub async fn verify_db(pool: &PgPool) -> sqlx::Result<Vec<String>> {
         ),
         (
             "settings",
-            "SELECT key || ' = ' || value::text FROM settings WHERE value::text ILIKE '%oikos%'",
+            "SELECT key FROM settings WHERE value::text ILIKE '%oikos%' ORDER BY key",
         ),
     ] {
         for r in sqlx::query_scalar::<_, String>(sql).fetch_all(pool).await? {

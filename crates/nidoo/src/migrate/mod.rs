@@ -12,9 +12,12 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use sqlx::PgPool;
 
+use crate::config::mask_url_password;
 use crate::setup::HubFile;
+use crate::setup::fs::write_private_atomic;
+use crate::setup::store::CACHE_FILE;
 use broker::{BrokerOpts, DEFAULT_QUIET};
-use rewrite::{Action, Retained};
+use rewrite::{Action, Change, Retained, shown};
 
 /// The names the switch-over moves from and to.
 const FROM: &str = "oikos";
@@ -70,16 +73,122 @@ fn refuse_if_hub_running(bind: &str) -> Result<()> {
     Ok(())
 }
 
-/// True when an environment override gives the hub another database URL than `hub.json` and
-/// that URL still names the old user or database: rewriting `hub.json` alone cannot move it.
-fn env_pins_old_url(raw: &str, effective: &str) -> bool {
-    if raw == effective {
-        return false;
+/// Stands in for `hub.json`'s database URL to tell whether the environment replaces it.
+const URL_PROBE: &str = "postgresql://probe@probe.invalid/probe";
+
+/// True when an environment variable (`NIDOO_HISTORY__URL`) sets the hub's database URL. The
+/// command renames the database and then rewrites `hub.json`, so such an override would keep
+/// pointing the hub (and the command itself) at another URL than the one it switched over.
+#[allow(clippy::result_large_err)] // figment::Error, as `with_bootstrap_env` returns it
+fn env_sets_database_url(raw: &HubFile) -> Result<bool, figment::Error> {
+    let mut probe = raw.clone();
+    probe.database_url = Some(URL_PROBE.to_string());
+    Ok(probe.with_bootstrap_env()?.database_url.as_deref() != Some(URL_PROBE))
+}
+
+/// The old default `mqtt.client_id`, saved into `hub.json` by the old setup.
+const OLD_CLIENT_ID: &str = "oikos-os";
+
+/// `hub.json` with the old names renamed, and the changes. Every value goes through
+/// [`rewrite::rename_json`] except the broker's address and login, which this switch-over does
+/// not move, and the database URL, whose user and database name are swapped field by field
+/// (its password and host are kept; the change shows it with the password masked). The old
+/// default client id becomes the new default.
+fn rename_hub_file(file: &HubFile) -> Result<(HubFile, Vec<Change>)> {
+    const KEPT: [&str; 4] = [
+        "/database_url",
+        "/mqtt/host",
+        "/mqtt/user",
+        "/mqtt/password",
+    ];
+    let mut v = serde_json::to_value(file).context("hub.json")?;
+    let kept: Vec<(&str, serde_json::Value)> = KEPT
+        .iter()
+        .filter_map(|p| v.pointer_mut(p).map(|slot| (*p, slot.take())))
+        .collect();
+    let (mut v, mut changes) = rewrite::rename_json(v);
+    for (p, value) in kept {
+        if let Some(slot) = v.pointer_mut(p) {
+            *slot = value;
+        }
     }
-    let Ok(url) = url::Url::parse(effective) else {
-        return false;
+    let mut new: HubFile = serde_json::from_value(v).context("renamed hub.json")?;
+    if let (Some(old), Some(mqtt)) = (&file.mqtt, &mut new.mqtt)
+        && old.client_id == OLD_CLIENT_ID
+    {
+        mqtt.client_id = crate::config::MqttConfig::default().client_id;
+        if let Some(c) = changes.iter_mut().find(|c| c.path == "/mqtt/client_id") {
+            c.new = mqtt.client_id.clone();
+        }
+    }
+    if let Some(old) = &file.database_url {
+        let renamed = db::renamed_url(old, FROM, TO);
+        if renamed != *old {
+            changes.push(Change {
+                path: "/database_url".into(),
+                old: mask_url_password(old),
+                new: mask_url_password(&renamed),
+            });
+            new.database_url = Some(renamed);
+        }
+    }
+    Ok((new, changes))
+}
+
+fn cache_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(CACHE_FILE)
+}
+
+/// `settings-cache.json` (the settings copy the hub boots from when the database is slow)
+/// with the old names renamed, and the changes; `None` when there is no cache.
+fn rename_cache(data_dir: &Path) -> Result<Option<(serde_json::Value, Vec<Change>)>> {
+    let path = cache_path(data_dir);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    url.username() == FROM || url.path().trim_start_matches('/') == FROM
+    let v: serde_json::Value = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "{} is not valid JSON; move it away (the hub writes it again from the database)",
+            path.display()
+        )
+    })?;
+    Ok(Some(rewrite::rename_json(v)))
+}
+
+/// Rewrites `settings-cache.json` when it names the old prefixes (mode 0600, atomic); returns
+/// how many values changed. A cache with nothing to rename keeps its bytes.
+fn rewrite_cache(data_dir: &Path) -> Result<usize> {
+    let Some((v, changes)) = rename_cache(data_dir)? else {
+        return Ok(0);
+    };
+    if !changes.is_empty() {
+        let json = serde_json::to_vec_pretty(&v).context("settings cache")?;
+        write_private_atomic(&cache_path(data_dir), &json)
+            .with_context(|| format!("writing {}", cache_path(data_dir).display()))?;
+    }
+    Ok(changes.len())
+}
+
+/// A leftover line when `settings-cache.json` still says `oikos` in any casing. Names the file
+/// only, never its content (it holds secrets).
+fn verify_cache(data_dir: &Path) -> Result<Vec<String>> {
+    let path = cache_path(data_dir);
+    match std::fs::read(&path) {
+        Ok(b) if b.to_ascii_lowercase().windows(5).any(|w| w == b"oikos") => {
+            Ok(vec![format!("{CACHE_FILE}: still names oikos")])
+        }
+        Ok(_) => Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn print_changes(changes: &[Change]) {
+    for c in changes {
+        println!("        {}", rewrite::change_line(c));
+    }
 }
 
 /// Claims the backup path; refuses an existing file so the first backup is never replaced.
@@ -127,12 +236,16 @@ pub async fn run(args: MigrateArgs, data_dir: &Path) -> Result<()> {
     if let Some(path) = &args.restore {
         let msgs = broker::read_backup(path)?;
         let n = broker::restore(&opts, &msgs).await?;
-        println!("restored {n} retained messages from {}", path.display());
+        println!(
+            "restored {n} of the {} retained messages in {} (the old and new names' topics only)",
+            msgs.len(),
+            path.display()
+        );
         return Ok(());
     }
 
     match args.mode {
-        Mode::Verify => verify(&opts, &url).await,
+        Mode::Verify => verify(&opts, &url, data_dir).await,
         Mode::DryRun | Mode::Apply => {
             let apply = args.mode == Mode::Apply;
             if apply && args.backup.is_none() {
@@ -140,19 +253,21 @@ pub async fn run(args: MigrateArgs, data_dir: &Path) -> Result<()> {
             }
             // Even a dry run runs the real UPDATEs (rolled back), which contend with a live hub.
             refuse_if_hub_running(&file.http.bind)?;
-            if apply
-                && let Some(raw_url) = &raw.database_url
-                && env_pins_old_url(raw_url, &url)
-            {
+            if env_sets_database_url(&raw)? {
                 bail!(
-                    "an environment override (NIDOO_HISTORY__URL or similar) points the hub at \
-                     the old database; edit .env to the new name first, hub.json alone cannot move it"
+                    "an environment variable (NIDOO_HISTORY__URL, in .env or the compose file) sets \
+                     the hub's database URL; remove it from the environment for this run, so the \
+                     command acts on the database_url in hub.json, then put it back afterwards \
+                     with the new user and database name ({TO})"
                 );
             }
+            // Before any write, broker included: a wrong URL fails here, with nothing changed.
+            let pool = pool(&url).await?;
             if let Some(path) = &args.backup {
                 claim_backup(path)?;
             }
             let msgs = broker::read_retained(&opts, DEFAULT_QUIET).await?;
+            broker::require_retained(&msgs)?;
             if let Some(path) = &args.backup {
                 broker::write_backup(path, &msgs)?;
                 println!(
@@ -166,6 +281,7 @@ pub async fn run(args: MigrateArgs, data_dir: &Path) -> Result<()> {
                 apply_all(
                     &opts,
                     &actions,
+                    pool,
                     &url,
                     &raw,
                     data_dir,
@@ -173,48 +289,65 @@ pub async fn run(args: MigrateArgs, data_dir: &Path) -> Result<()> {
                 )
                 .await
             } else {
-                dry_run(&msgs, &actions, &url).await
+                dry_run(&msgs, &actions, &pool, &raw, data_dir).await
             }
         }
     }
 }
 
-async fn dry_run(msgs: &[Retained], actions: &[Action], url: &str) -> Result<()> {
+async fn dry_run(
+    msgs: &[Retained],
+    actions: &[Action],
+    pool: &PgPool,
+    file: &HubFile,
+    data_dir: &Path,
+) -> Result<()> {
     println!("== broker ({} retained messages read)", msgs.len());
     for a in actions {
         match a {
             Action::Move { from, to, changes } => {
+                let overwrites = if rewrite::overwrites_existing(msgs, from, to) {
+                    " (overwrites existing)"
+                } else {
+                    ""
+                };
                 if *from != to.topic {
-                    println!("move  {from} -> {}", to.topic);
+                    println!("move  {from} -> {}{overwrites}", to.topic);
                 } else {
                     println!("keep  {from} (payload rewritten)");
                 }
-                for c in changes {
-                    println!("        {}: {:?} -> {:?}", c.path, c.old, c.new);
-                }
+                print_changes(changes);
                 // A text payload records no `Change`: show both sides instead.
                 if changes.is_empty() {
                     let old = msgs.iter().find(|m| m.topic == *from);
                     println!(
                         "        was: {}",
-                        old.map(|m| text(&m.payload)).unwrap_or_default()
+                        shown(&old.map(|m| text(&m.payload)).unwrap_or_default())
                     );
-                    println!("        now: {}", text(&to.payload));
+                    println!("        now: {}", shown(&text(&to.payload)));
                 }
             }
             Action::Drop { topic, reason } => println!("drop  {topic} ({reason})"),
             Action::Refuse { topic, reason } => println!("REFUSE {topic}: {reason}"),
         }
     }
-    let pool = pool(url).await?;
     println!("== database");
-    for (table, rows) in db::rename_entity_ids(&pool, true).await? {
+    for (table, rows) in db::rename_entity_ids(pool, true).await? {
         println!("{table}: {rows} rows");
     }
-    for (key, changes) in db::rename_settings(&pool, true).await? {
+    for (key, changes) in db::rename_settings(pool, true).await? {
         println!("settings {key}");
-        for c in changes {
-            println!("        {}: {:?} -> {:?}", c.path, c.old, c.new);
+        print_changes(&changes);
+    }
+    println!("== files");
+    let (_, changes) = rename_hub_file(file)?;
+    println!("hub.json: {} values", changes.len());
+    print_changes(&changes);
+    match rename_cache(data_dir)? {
+        None => println!("{CACHE_FILE}: none"),
+        Some((_, changes)) => {
+            println!("{CACHE_FILE}: {} values", changes.len());
+            print_changes(&changes);
         }
     }
     let refused = actions
@@ -231,12 +364,14 @@ async fn dry_run(msgs: &[Retained], actions: &[Action], url: &str) -> Result<()>
 async fn apply_all(
     opts: &BrokerOpts,
     actions: &[Action],
+    pool: PgPool,
     url: &str,
     file: &HubFile,
     data_dir: &Path,
     backup: Option<&Path>,
 ) -> Result<()> {
     let mut done: Vec<&str> = Vec::new();
+    let new_url = db::renamed_url(url, FROM, TO);
     let result = async {
         let report = broker::apply(opts, actions, DEFAULT_QUIET).await?;
         println!(
@@ -244,7 +379,6 @@ async fn apply_all(
             report.published, report.cleared
         );
         done.push("broker");
-        let pool = pool(url).await?;
         for (table, rows) in db::rename_entity_ids(&pool, false).await? {
             println!("{table}: {rows} rows");
         }
@@ -253,19 +387,32 @@ async fn apply_all(
         println!("settings: {} keys rewritten", settings.len());
         done.push("settings");
         pool.close().await;
-        db::rename_db_and_role(url, FROM, TO).await?;
+        let n = rewrite_cache(data_dir)?;
+        println!("{CACHE_FILE}: {n} values rewritten");
+        done.push(CACHE_FILE);
+        let workers = db::rename_db_and_role(url, FROM, TO).await?;
         println!("database and role renamed to {TO}");
         done.push("database and role");
-        let mut new_file = file.clone();
-        new_file.database_url = Some(db::renamed_url(
-            file.database_url.as_deref().unwrap_or(url),
-            FROM,
-            TO,
-        ));
+        match &workers {
+            db::Workers::Started => println!("timescaledb background workers started on {TO}"),
+            db::Workers::NotInstalled => println!("no timescaledb in {TO}: no workers to start"),
+            db::Workers::NotStarted(why) => {
+                eprintln!("timescaledb background workers NOT started on {TO}: {why}")
+            }
+        }
+        let (new_file, changes) = rename_hub_file(file)?;
         new_file.save(data_dir)?;
-        println!("hub.json database_url updated");
+        println!("hub.json: {} values rewritten", changes.len());
+        print_changes(&changes);
         done.push("hub.json");
-        Ok::<(), anyhow::Error>(())
+        if let db::Workers::NotStarted(why) = workers {
+            bail!(
+                "the compression and retention jobs are stopped on {TO} ({why}); restart the \
+                 database server, or run this command again"
+            );
+        }
+        // The spec's last step of --apply: the same check as --verify.
+        verify(opts, &new_url, data_dir).await
     }
     .await;
     if let Err(e) = result {
@@ -279,14 +426,14 @@ async fn apply_all(
         );
         if let Some(b) = backup {
             eprintln!(
-                "the retained messages are backed up in {0}; to put them back: nidoo migrate-oikos --restore {0}",
+                "the retained messages are backed up in {0}; to put them back: nidoo {COMMAND} --restore {0}",
                 b.display()
             );
         }
-        if done.contains(&"database and role") {
+        if done.contains(&"database and role") && !done.contains(&"hub.json") {
             eprintln!(
-                "the database is already renamed: set hub.json database_url to {}",
-                db::renamed_url(url, FROM, TO)
+                "the database is already renamed: set hub.json database_url to {} (same password)",
+                mask_url_password(&new_url)
             );
         }
         return Err(e);
@@ -294,12 +441,15 @@ async fn apply_all(
     Ok(())
 }
 
-async fn verify(opts: &BrokerOpts, url: &str) -> Result<()> {
+async fn verify(opts: &BrokerOpts, url: &str, data_dir: &Path) -> Result<()> {
     let msgs = broker::read_retained(opts, DEFAULT_QUIET).await?;
+    broker::require_retained(&msgs)?;
     let mut lines = broker::verify_retained(&msgs);
     // After the switch-over `hub.json` points at the renamed database already.
     let pool = pool(url).await?;
     lines.extend(db::verify_db(&pool).await?);
+    pool.close().await;
+    lines.extend(verify_cache(data_dir)?);
     for l in &lines {
         println!("{l}");
     }
@@ -325,11 +475,109 @@ mod tests {
     }
 
     #[test]
-    fn env_url_pinning_the_old_name_is_detected() {
-        let raw = "postgresql://oikos:p@h/oikos";
-        assert!(!env_pins_old_url(raw, raw));
-        assert!(env_pins_old_url(raw, "postgresql://oikos:p@other/oikos"));
-        assert!(!env_pins_old_url(raw, "postgresql://nidoo:p@h/nidoo"));
+    #[allow(clippy::result_large_err)] // figment::Jail closures return figment::Error
+    fn env_database_url_is_detected_with_or_without_hub_json_url() {
+        figment::Jail::expect_with(|jail| {
+            let with_url = HubFile {
+                database_url: Some("postgresql://oikos:p@h/oikos".into()),
+                ..HubFile::default()
+            };
+            assert!(!env_sets_database_url(&with_url)?);
+            assert!(!env_sets_database_url(&HubFile::default())?);
+            // Whatever the env URL names, old or new: the command would act on another URL.
+            for env in [
+                "postgresql://oikos:p@h/oikos",
+                "postgresql://nidoo:p@h/nidoo",
+            ] {
+                jail.set_env("NIDOO_HISTORY__URL", env);
+                assert!(env_sets_database_url(&with_url)?, "{env}");
+                assert!(env_sets_database_url(&HubFile::default())?, "{env}");
+            }
+            Ok(())
+        });
+    }
+
+    fn hub_file() -> HubFile {
+        HubFile {
+            mqtt: Some(crate::config::MqttConfig {
+                host: "oikos-mosquitto".into(),
+                user: Some("oikos".into()),
+                password: Some("oikos-pw".into()),
+                client_id: OLD_CLIENT_ID.into(),
+                ..Default::default()
+            }),
+            database_url: Some("postgresql://oikos:oikos-pw@oikos-db:5432/oikos".into()),
+            log: crate::config::LogConfig {
+                level: "info,oikos=debug".into(),
+                ..Default::default()
+            },
+            ..HubFile::default()
+        }
+    }
+
+    #[test]
+    fn hub_json_follows_the_mapping_but_keeps_logins_and_addresses() {
+        let (new, changes) = rename_hub_file(&hub_file()).unwrap();
+        let mqtt = new.mqtt.as_ref().unwrap();
+        assert_eq!(mqtt.client_id, "nidoo");
+        assert_eq!(mqtt.host, "oikos-mosquitto");
+        assert_eq!(mqtt.user.as_deref(), Some("oikos"));
+        assert_eq!(mqtt.password.as_deref(), Some("oikos-pw"));
+        assert_eq!(new.log.level, "info,nidoo=debug");
+        // User and database renamed; password and host kept.
+        assert_eq!(
+            new.database_url.as_deref(),
+            Some("postgresql://nidoo:oikos-pw@oikos-db:5432/nidoo")
+        );
+        let mut paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["/database_url", "/log/level", "/mqtt/client_id"]);
+        let url = changes.iter().find(|c| c.path == "/database_url").unwrap();
+        assert!(!url.old.contains("oikos-pw") && !url.new.contains("oikos-pw"));
+        let id = changes
+            .iter()
+            .find(|c| c.path == "/mqtt/client_id")
+            .unwrap();
+        assert_eq!((id.old.as_str(), id.new.as_str()), ("oikos-os", "nidoo"));
+        // A second pass has nothing left.
+        assert!(rename_hub_file(&new).unwrap().1.is_empty());
+    }
+
+    #[test]
+    fn settings_cache_is_rewritten_and_verified() {
+        let dir = tempfile::tempdir().unwrap();
+        // No cache: nothing to do, nothing to flag.
+        assert!(rename_cache(dir.path()).unwrap().is_none());
+        assert_eq!(rewrite_cache(dir.path()).unwrap(), 0);
+        assert!(verify_cache(dir.path()).unwrap().is_empty());
+
+        let cache = serde_json::json!({
+            "advanced": {"topics": {"ui_prefix": "oikos/ui"}},
+            "push": {"prefix": "oikos/push", "service_account": "-----BEGIN PRIVATE KEY-----oikos"}
+        });
+        let path = dir.path().join(CACHE_FILE);
+        std::fs::write(&path, serde_json::to_vec(&cache).unwrap()).unwrap();
+        assert_eq!(
+            verify_cache(dir.path()).unwrap(),
+            [format!("{CACHE_FILE}: still names oikos")]
+        );
+        let (_, changes) = rename_cache(dir.path()).unwrap().unwrap();
+        assert_eq!(changes.len(), 3);
+        assert_eq!(rewrite_cache(dir.path()).unwrap(), 3);
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(v["advanced"]["topics"]["ui_prefix"], "nidoo/ui");
+        assert_eq!(v["push"]["prefix"], "nidoo/push");
+        assert!(verify_cache(dir.path()).unwrap().is_empty());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // Nothing left to rename: the bytes are kept.
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(rewrite_cache(dir.path()).unwrap(), 0);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[test]

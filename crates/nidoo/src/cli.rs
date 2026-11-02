@@ -44,7 +44,7 @@ enum RawCommand {
         /// Write the retained messages to this file first.
         #[arg(long, value_name = "FILE", conflicts_with_all = ["restore", "verify"])]
         backup: Option<PathBuf>,
-        /// Republish the retained messages of a backup file, then exit.
+        /// Republish a backup file's old- and new-name topics (retained), then exit.
         #[arg(long, value_name = "FILE")]
         restore: Option<PathBuf>,
     },

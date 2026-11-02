@@ -4,7 +4,9 @@
 mod common;
 
 use common::db::fresh_db;
-use nidoo::migrate::db::{rename_db_and_role, rename_entity_ids, rename_settings};
+use nidoo::migrate::db::{
+    Workers, rename_db_and_role, rename_entity_ids, rename_settings, verify_db,
+};
 use sqlx::{Connection, PgConnection, PgPool};
 
 /// `rename_db_and_role` creates and drops one fixed-name temp role, so two of these tests in
@@ -345,7 +347,7 @@ async fn renames_database_and_role() {
 
 async fn throwaway(t: &common::db::TestDb, tag: &str) -> (url::Url, String, String) {
     let mut base = url::Url::parse(&std::env::var("TEST_DATABASE_URL").unwrap()).unwrap();
-    let suffix = format!("{tag}{}", t.name.trim_start_matches("oikos_test_"));
+    let suffix = format!("{tag}{}", t.name.trim_start_matches("nidoo_test_"));
     let from = format!("oikos_t{suffix}");
     let to = format!("nidoo_t{suffix}");
     sqlx::query(&format!(
@@ -411,5 +413,91 @@ async fn refuses_an_existing_target() {
     let role = format!("SELECT count(*) FROM pg_roles WHERE rolname = '{from}'");
     assert_eq!(count(&t.admin, &role).await, 1);
     cleanup(&t.admin, &[&from, &to]).await;
+    t.drop_db().await;
+}
+
+/// Polls until `sql` (a count) is at least 1, for up to 30 s.
+async fn eventually(pool: &PgPool, sql: &str) -> bool {
+    for _ in 0..60 {
+        if count(pool, sql).await >= 1 {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    false
+}
+
+const SCHEDULER: &str = "TimescaleDB Background Worker Scheduler";
+
+#[tokio::test]
+async fn renamed_database_gets_its_scheduler_back() {
+    let _lock = ROLE_LOCK.lock().await;
+    let Some(t) = fresh_db().await else { return };
+    let (base, from, to) = throwaway(&t, "w").await;
+    // Like the house: TimescaleDB installed and its scheduler attached when the rename runs.
+    let mut conn = PgConnection::connect(base.as_str()).await.unwrap();
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS timescaledb")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let started: bool =
+        sqlx::query_scalar("SELECT _timescaledb_functions.start_background_workers()")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert!(started, "no scheduler on {from} before the rename");
+    conn.close().await.unwrap();
+    let on = |db: &str| {
+        format!(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = '{db}' \
+             AND application_name = '{SCHEDULER}'"
+        )
+    };
+    assert!(
+        eventually(&t.admin, &on(&from)).await,
+        "scheduler never attached to {from}"
+    );
+
+    // The rename stops it (TimescaleDB only warns); the command starts it again.
+    let workers = rename_db_and_role(base.as_str(), &from, &to).await.unwrap();
+    assert_eq!(workers, Workers::Started);
+    assert!(
+        eventually(&t.admin, &on(&to)).await,
+        "no scheduler on {to} after the rename"
+    );
+    // The rerun path ("already switched") asks again and is still fine.
+    let workers = rename_db_and_role(base.as_str(), &from, &to).await.unwrap();
+    assert_eq!(workers, Workers::Started);
+    assert_eq!(count(&t.admin, NO_TMP).await, 0);
+
+    for db in [&to, &from] {
+        let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)"))
+            .execute(&t.admin)
+            .await;
+    }
+    cleanup(&t.admin, &[&from, &to]).await;
+    t.drop_db().await;
+}
+
+#[tokio::test]
+async fn verify_names_a_settings_row_by_its_key_only() {
+    let Some(t) = fresh_db().await else { return };
+    let pool = t.db.pool();
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES \
+         ('push', '{\"service_account\":\"-----BEGIN PRIVATE KEY-----MIIE oikos-1\"}')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    // Other tests' throwaway databases and roles may show up too; only the settings lines
+    // matter here.
+    let lines: Vec<String> = verify_db(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|l| l.starts_with("settings"))
+        .collect();
+    assert_eq!(lines, ["settings: push"]);
     t.drop_db().await;
 }

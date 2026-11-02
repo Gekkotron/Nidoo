@@ -127,6 +127,41 @@ fn topic_selected(topic: &str) -> bool {
         || topic.split('/').any(|s| s.starts_with("oikos_"))
 }
 
+/// The backup entries `--restore` republishes: the old names' topics (the `oikos/` and
+/// `oikos-push/` prefixes, `oikos_` segments) and the new `nidoo/` prefix. Everything else on
+/// the broker (Zigbee2MQTT, cameras, discovery the hub does not own) is left alone, so a
+/// rollback never replays it to live subscribers.
+pub fn restorable(topic: &str) -> bool {
+    topic_selected(topic) || topic.starts_with("nidoo/")
+}
+
+/// Longer values than this are never printed: a service-account key is one long string.
+pub const SHOWN_MAX: usize = 200;
+
+/// `s` quoted for printing, or `<redacted, N bytes>` when it may be a secret: it holds a
+/// private key, or it is longer than [`SHOWN_MAX`] bytes.
+pub fn shown(s: &str) -> String {
+    if s.contains("PRIVATE KEY") || s.len() > SHOWN_MAX {
+        format!("<redacted, {} bytes>", s.len())
+    } else {
+        format!("{s:?}")
+    }
+}
+
+/// One change as the dry run prints it, redacted by [`shown`].
+pub fn change_line(c: &Change) -> String {
+    format!("{}: {} -> {}", c.path, shown(&c.old), shown(&c.new))
+}
+
+/// True when the move's target topic already holds other bytes than the ones it would get:
+/// the move overwrites a newer copy (the new hub ran before the switch-over).
+pub fn overwrites_existing(msgs: &[Retained], from: &str, to: &Retained) -> bool {
+    from != to.topic
+        && msgs
+            .iter()
+            .any(|m| m.topic == to.topic && m.payload != to.payload)
+}
+
 /// Decides what to do with each retained message that mentions `oikos`.
 pub fn plan(retained: &[Retained]) -> Vec<Action> {
     let mut actions = Vec::new();
@@ -318,6 +353,76 @@ mod tests {
         assert_eq!(to.topic, "nidoo/x");
         assert_eq!(to.payload, vec![0xff, 0x00]);
         assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn secrets_are_redacted_but_the_path_is_kept() {
+        let key = "{\"project_id\":\"oikos-1\",\"private_key\":\"-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n\"}";
+        let c = Change {
+            path: "/service_account".into(),
+            old: key.into(),
+            new: rename_text(key),
+        };
+        let line = change_line(&c);
+        assert_eq!(
+            line,
+            format!(
+                "/service_account: <redacted, {0} bytes> -> <redacted, {0} bytes>",
+                key.len()
+            )
+        );
+        assert!(!line.contains("MIIE"));
+        // A long value without a key marker is redacted too; a short one is shown.
+        let long = "x".repeat(SHOWN_MAX + 1);
+        assert_eq!(shown(&long), format!("<redacted, {} bytes>", SHOWN_MAX + 1));
+        assert_eq!(
+            shown(&"x".repeat(SHOWN_MAX)),
+            format!("{:?}", "x".repeat(SHOWN_MAX))
+        );
+        assert_eq!(
+            change_line(&Change {
+                path: "/p".into(),
+                old: "oikos/ui".into(),
+                new: "nidoo/ui".into(),
+            }),
+            r#"/p: "oikos/ui" -> "nidoo/ui""#
+        );
+    }
+
+    #[test]
+    fn overwrite_of_a_different_target_is_flagged() {
+        let to = msg("nidoo/ui/a", br#"{"name":"x"}"#);
+        let same = [msg("nidoo/ui/a", br#"{"name":"x"}"#)];
+        let other = [msg("nidoo/ui/a", br#"{"name":"newer"}"#)];
+        assert!(!overwrites_existing(&[], "oikos/ui/a", &to));
+        assert!(!overwrites_existing(&same, "oikos/ui/a", &to));
+        assert!(overwrites_existing(&other, "oikos/ui/a", &to));
+        // An in-place rewrite replaces its own topic by design.
+        let in_place = msg("oikos/ui/a", b"new");
+        assert!(!overwrites_existing(
+            &[msg("oikos/ui/a", b"old")],
+            "oikos/ui/a",
+            &in_place
+        ));
+    }
+
+    #[test]
+    fn restore_keeps_to_the_old_and_new_names() {
+        for t in [
+            "oikos/ui/a",
+            "oikos-push/history",
+            "homeassistant/device_tracker/oikos_phone/config",
+            "nidoo/ui/a",
+        ] {
+            assert!(restorable(t), "{t}");
+        }
+        for t in [
+            "zigbee2mqtt/lamp",
+            "frigate/events",
+            "homeassistant/light/x/config",
+        ] {
+            assert!(!restorable(t), "{t}");
+        }
     }
 
     #[test]

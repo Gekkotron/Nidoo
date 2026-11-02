@@ -7,11 +7,13 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Outgoing, Packet, QoS};
+use rumqttc::{
+    AsyncClient, Event, EventLoop, MqttOptions, Outgoing, Packet, QoS, SubAck, SubscribeReasonCode,
+};
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
-use super::rewrite::{Action, Retained};
+use super::rewrite::{Action, Retained, restorable};
 
 /// How long the broker must stay silent (no new retained message) before a read is complete.
 pub const DEFAULT_QUIET: Duration = Duration::from_secs(3);
@@ -74,6 +76,33 @@ fn qos_to(q: QoS) -> u8 {
     }
 }
 
+/// Fails when the broker refused the `#` subscription: an empty read would look like a broker
+/// with nothing to move.
+fn check_suback(ack: &SubAck) -> Result<()> {
+    if ack.return_codes.is_empty()
+        || ack
+            .return_codes
+            .iter()
+            .any(|c| matches!(c, SubscribeReasonCode::Failure))
+    {
+        bail!("the broker refused the subscription to # (check the ACL of the hub's broker login)");
+    }
+    Ok(())
+}
+
+/// Fails on an empty read: a house broker always holds retained messages (Zigbee2MQTT's bridge
+/// topics at least), so none means the login may not read them (ACL) or this is the wrong
+/// broker, and every check after it would pass for the wrong reason.
+pub fn require_retained(msgs: &[Retained]) -> Result<()> {
+    if msgs.is_empty() {
+        bail!(
+            "the broker returned no retained message at all: the hub's broker login may not be \
+             allowed to read them (ACL), or hub.json points at the wrong broker"
+        );
+    }
+    Ok(())
+}
+
 /// Subscribes to `#` and collects the retained messages, until none new arrived for `quiet`.
 pub async fn read_retained(o: &BrokerOpts, quiet: Duration) -> Result<Vec<Retained>> {
     let (client, mut eventloop) = connect(o);
@@ -92,7 +121,10 @@ pub async fn read_retained(o: &BrokerOpts, quiet: Duration) -> Result<Vec<Retain
             None => eventloop.poll().await,
         };
         match event.context("reading retained messages from the broker")? {
-            Event::Incoming(Packet::SubAck(_)) => deadline = Some(Instant::now() + quiet),
+            Event::Incoming(Packet::SubAck(ack)) => {
+                check_suback(&ack)?;
+                deadline = Some(Instant::now() + quiet);
+            }
             Event::Incoming(Packet::Publish(p)) if p.retain && !p.payload.is_empty() => {
                 found.insert(
                     p.topic.clone(),
@@ -184,14 +216,20 @@ pub fn read_backup(path: &Path) -> std::io::Result<Vec<Retained>> {
     Ok(msgs)
 }
 
-/// Republishes each message retained; returns how many.
+/// The backup entries `--restore` republishes: only the old and new names' topics.
+pub fn restore_selection(msgs: &[Retained]) -> Vec<&Retained> {
+    msgs.iter().filter(|m| restorable(&m.topic)).collect()
+}
+
+/// Republishes, retained, the backup entries [`restore_selection`] keeps; returns how many.
 pub async fn restore(o: &BrokerOpts, msgs: &[Retained]) -> Result<usize> {
-    let items = msgs
-        .iter()
+    let items: Vec<_> = restore_selection(msgs)
+        .into_iter()
         .map(|m| (m.topic.clone(), m.payload.clone(), m.qos))
         .collect();
+    let n = items.len();
     publish_all(o, items).await?;
-    Ok(msgs.len())
+    Ok(n)
 }
 
 /// Publishes the new messages, checks them, clears the old ones, checks again.
@@ -349,6 +387,41 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn refused_subscription_fails() {
+        assert!(
+            check_suback(&SubAck::new(
+                1,
+                vec![SubscribeReasonCode::Success(QoS::AtLeastOnce)]
+            ))
+            .is_ok()
+        );
+        assert!(check_suback(&SubAck::new(1, vec![SubscribeReasonCode::Failure])).is_err());
+        assert!(check_suback(&SubAck::new(1, vec![])).is_err());
+    }
+
+    #[test]
+    fn empty_read_is_refused() {
+        let err = require_retained(&[]).unwrap_err().to_string();
+        assert!(err.contains("ACL"), "{err}");
+        assert!(require_retained(&[msg("zigbee2mqtt/bridge/state", b"online")]).is_ok());
+    }
+
+    #[test]
+    fn restore_selects_only_old_and_new_names() {
+        let backup = [
+            msg("oikos/ui/a", b"1"),
+            msg("zigbee2mqtt/lamp", b"2"),
+            msg("nidoo/ui/b", b"3"),
+            msg("frigate/available", b"online"),
+        ];
+        let topics: Vec<&str> = restore_selection(&backup)
+            .iter()
+            .map(|m| m.topic.as_str())
+            .collect();
+        assert_eq!(topics, ["oikos/ui/a", "nidoo/ui/b"]);
     }
 
     #[test]
