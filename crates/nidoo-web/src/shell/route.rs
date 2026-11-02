@@ -95,6 +95,7 @@ pub fn section_for(path: &str, back: &[String]) -> Section {
         ["climate", ..] => Section::Climate,
         ["weather", ..] | ["solar", ..] => Section::Overview,
         ["alerts", ..] => Section::Alerts,
+        ["search", ..] => Section::Overview,
         ["settings", ..] | ["devices", ..] => Section::Settings,
         ["entity", ..] | ["history", ..] => back
             .iter()
@@ -163,6 +164,7 @@ pub fn crumbs(path: &str, lang: Lang, name_of: impl Fn(Lookup) -> Option<String>
         ["climate", ..] => push(t(Key::Climate), String::new()),
         ["weather", ..] => push(t(Key::Weather), String::new()),
         ["solar", ..] => push(t(Key::Solar), String::new()),
+        ["search"] => push(t(Key::Search), String::new()),
         ["alerts"] => push(t(Key::Alerts), String::new()),
         ["alerts", id, ..] => {
             push(t(Key::Alerts), "/alerts".into());
@@ -298,6 +300,19 @@ mod tests {
             labels(&crumbs("/ambiances/zz", Lang::En, names)),
             ["My home", "My moods", "zz"]
         );
+    }
+
+    #[test]
+    fn search_route_crumb_and_section() {
+        assert_eq!(
+            labels(&crumbs("/search", Lang::En, names)),
+            ["My home", "Search"]
+        );
+        assert_eq!(
+            labels(&crumbs("/search?q=lamp", Lang::Fr, names)),
+            ["Ma maison", "Recherche"]
+        );
+        assert_eq!(section_for("/search", &[]), Section::Overview);
     }
 
     #[test]

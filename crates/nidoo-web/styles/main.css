@@ -9643,3 +9643,96 @@ dialog.popup::backdrop {
 .system__restart-stop {
   text-align: right;
 }
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.search__input::-webkit-search-cancel-button,
+.search__input::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.search__clear {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.search__clear:hover,
+.search__clear:focus-visible {
+  opacity: 1;
+  background: var(--chip-border);
+}
+
+.search__clear svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.search__line {
+  margin: 0;
+  font: var(--type-label);
+  opacity: 0.7;
+}
+
+.search__line--cap {
+  opacity: 1;
+}
+
+.search__heading {
+  margin: 0 0 8px;
+  font: var(--type-label);
+  opacity: 0.7;
+}
+
+.search__tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.search__room {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--touch-min);
+  padding: 0 16px;
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius-nav);
+  background: var(--card-bg);
+  color: inherit;
+  font: var(--type-body);
+  text-decoration: none;
+  transition:
+    border-color var(--motion-short) var(--ease),
+    background var(--motion-short) var(--ease);
+}
+
+.search__room:hover,
+.search__room:focus-visible {
+  border-color: color-mix(in srgb, var(--accent-mint) 50%, var(--chip-border));
+  background: color-mix(in srgb, var(--accent-mint) 6%, var(--card-bg));
+}
+
+.search__room-count {
+  font: var(--type-label);
+  opacity: 0.6;
+}
