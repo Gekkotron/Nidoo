@@ -56,7 +56,7 @@ pub(crate) fn assert_table<K: Copy + PartialEq + std::fmt::Debug>(
 
 /// Storage key for the persisted choice.
 #[cfg(target_arch = "wasm32")]
-const STORAGE_KEY: &str = "oikos.lang";
+const STORAGE_KEY: &str = "nidoo.lang";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {

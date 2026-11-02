@@ -20,12 +20,12 @@ wasm_bindgen_test_configure!(run_in_browser);
 mod fetch_stub;
 use fetch_stub::FetchStub;
 
-const SKIPPED_KEY: &str = "oikos.setup.skipped";
+const SKIPPED_KEY: &str = "nidoo.setup.skipped";
 
 const STATUS: &str = r#"{"mode":"running","step":"done","finished":false,"bundled":false,
 "location":{"city":"Bordeaux","country":"FR","latitude":44.84,"longitude":-0.58,"timezone":"Europe/Paris"},
 "mqtt":{"host":"192.0.2.10","port":1883,"user":null,"password":{"set":false},"client_id":null,"z2m_base":null},
-"database":{"host":"192.0.2.11","port":5432,"database":"oikos","user":"oikos","password":{"set":false}},
+"database":{"host":"192.0.2.11","port":5432,"database":"nidoo","user":"nidoo","password":{"set":false}},
 "restarting":false}"#;
 
 fn mount_done() -> web_sys::Element {
@@ -155,7 +155,7 @@ fn stub_services(stub: &FetchStub) {
     );
     let alarm = AlarmView {
         enabled: false,
-        entity_id: "alarm_control_panel.oikos_alarm_house".into(),
+        entity_id: "alarm_control_panel.nidoo_alarm_house".into(),
         state: "disarmed".into(),
         mode: None,
         source: None,
@@ -205,7 +205,7 @@ async fn summary_shows_skipped_services() {
     );
     assert!(text("location").contains("Bordeaux, FR"));
     assert!(text("mqtt").contains("192.0.2.10:1883"));
-    assert!(text("database").contains("192.0.2.11:5432 / oikos"));
+    assert!(text("database").contains("192.0.2.11:5432 / nidoo"));
 }
 
 #[wasm_bindgen_test]

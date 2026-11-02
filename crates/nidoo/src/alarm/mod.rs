@@ -14,7 +14,7 @@ use nidoo_alarm::doc::AlarmSettings;
 use nidoo_alarm::machine::Runtime;
 
 /// The id of the alarm panel entity (its discovery `unique_id`).
-pub const ALARM_ENTITY_ID: &str = "oikos_alarm_house";
+pub const ALARM_ENTITY_ID: &str = "nidoo_alarm_house";
 
 /// What the hub keeps for the alarm. It exists whether or not the alarm is switched on: the
 /// engine idles while the settings say disabled.

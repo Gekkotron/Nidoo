@@ -138,7 +138,7 @@ struct App {
 fn key_file() -> std::path::PathBuf {
     static N: AtomicUsize = AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
-        "oikos-solar-poller-{}-{}.key",
+        "nidoo-solar-poller-{}-{}.key",
         std::process::id(),
         N.fetch_add(1, Ordering::SeqCst)
     ));
@@ -156,7 +156,7 @@ async fn app(enabled: bool, sites: &[&str], limit: u32) -> App {
 /// Like [`app`], but the broker has not acknowledged the subscription yet.
 async fn app_unsubscribed(enabled: bool, sites: &[&str], limit: u32) -> App {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.flows.timezone = Some("Europe/Paris".into());
     cfg.solcast.enabled = enabled;
     cfg.solcast.sites = sites.iter().map(|s| (*s).to_owned()).collect();
@@ -218,7 +218,7 @@ fn feed_cache(
     ledger: &nidoo_solcast::Ledger,
 ) {
     let payload = json!({ "forecast": forecast, "ledger": ledger }).to_string();
-    hub.ingest_message("oikos/solar/cache", payload.as_bytes(), true);
+    hub.ingest_message("nidoo/solar/cache", payload.as_bytes(), true);
 }
 
 #[tokio::test]
@@ -247,7 +247,7 @@ async fn first_start_fetches_once_per_site_and_serves_view() {
             .lock()
             .unwrap()
             .iter()
-            .any(|(t, p)| t == "oikos/solar/availability" && p == "online")
+            .any(|(t, p)| t == "nidoo/solar/availability" && p == "online")
     );
     task.abort();
 }
@@ -328,7 +328,7 @@ async fn restart_reads_cache_and_makes_no_call() {
         assert!(
             published
                 .iter()
-                .any(|(t, p)| t == "oikos/solar/availability" && p == "online")
+                .any(|(t, p)| t == "nidoo/solar/availability" && p == "online")
         );
     }
     task.abort();

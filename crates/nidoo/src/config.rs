@@ -48,7 +48,7 @@ impl Default for MqttConfig {
             port: 1883,
             user: None,
             password: None,
-            client_id: "oikos-os".into(),
+            client_id: "nidoo".into(),
             send_ha_birth: false,
             ha_status_topic: "homeassistant/status".into(),
         }
@@ -83,10 +83,10 @@ pub struct TopicsConfig {
 impl Default for TopicsConfig {
     fn default() -> Self {
         Self {
-            discovery_prefixes: vec!["oikos".into()],
-            ui_prefix: "oikos/ui".into(),
+            discovery_prefixes: vec!["nidoo".into()],
+            ui_prefix: "nidoo/ui".into(),
             z2m_base: "zigbee2mqtt".into(),
-            automation_prefix: "oikos/automation".into(),
+            automation_prefix: "nidoo/automation".into(),
         }
     }
 }
@@ -139,8 +139,7 @@ impl Default for LogConfig {
 
 /// Push notifications, owned by the hub: producers publish on `<prefix>/notification/<source>`,
 /// the app registers on `<prefix>/tokens/<installId>` and replies on `<prefix>/responses`, the
-/// hub keeps the retained `<prefix>/history`. The legacy OikosPush topics under
-/// `legacy_prefix` are read too (empty disables them). Without `credentials` (a Firebase
+/// hub keeps the retained `<prefix>/history`. Without `credentials` (a Firebase
 /// service-account key file) the hub keeps the history and sends nothing.
 ///
 /// Unknown keys are refused, so a config still setting the old `history_topic` /
@@ -149,7 +148,6 @@ impl Default for LogConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct PushConfig {
     pub prefix: String,
-    pub legacy_prefix: String,
     /// Path of the service-account JSON key; only the path is ever logged. When unset, `load`
     /// uses [`PUSH_KEY_FILE`] next to the config file if it exists.
     pub credentials: Option<PathBuf>,
@@ -168,8 +166,7 @@ pub struct PushConfig {
 impl Default for PushConfig {
     fn default() -> Self {
         Self {
-            prefix: "oikos/push".into(),
-            legacy_prefix: "oikos-push".into(),
+            prefix: "nidoo/push".into(),
             credentials: None,
             service_account: None,
             retry_interval: 60,
@@ -185,7 +182,6 @@ impl fmt::Debug for PushConfig {
         let service_account = self.service_account.as_ref().map(|_| "***");
         f.debug_struct("PushConfig")
             .field("prefix", &self.prefix)
-            .field("legacy_prefix", &self.legacy_prefix)
             .field("credentials", &self.credentials)
             .field("service_account", &service_account)
             .field("retry_interval", &self.retry_interval)
@@ -201,7 +197,6 @@ impl PushConfig {
     pub fn settings(&self) -> nidoo_push::PushSettings {
         nidoo_push::PushSettings {
             prefix: self.prefix.clone(),
-            legacy_prefix: self.legacy_prefix.clone(),
             retry_interval: self.retry_interval,
             max_retries: self.max_retries,
             history_size: self.history_size,
@@ -681,7 +676,7 @@ impl Default for ClimateConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            prefix: "oikos/climate".to_owned(),
+            prefix: "nidoo/climate".to_owned(),
         }
     }
 }
@@ -715,7 +710,7 @@ pub struct AlarmConfig {
 impl Default for AlarmConfig {
     fn default() -> Self {
         Self {
-            prefix: "oikos/alarm".to_owned(),
+            prefix: "nidoo/alarm".to_owned(),
         }
     }
 }
@@ -800,7 +795,6 @@ pub const STRING_ENV_KEYS: &[&str] = &[
     "http.bind",
     "log.level",
     "push.prefix",
-    "push.legacy_prefix",
     "push.credentials",
     "flows.timezone",
     "frigate.url",
@@ -943,7 +937,7 @@ mod climate_config_tests {
     fn climate_off_by_default() {
         let cfg = Config::default();
         assert!(!cfg.climate.enabled);
-        assert_eq!(cfg.climate.prefix, "oikos/climate");
+        assert_eq!(cfg.climate.prefix, "nidoo/climate");
     }
 
     #[test]
@@ -953,7 +947,7 @@ mod climate_config_tests {
             .extract()
             .unwrap();
         assert!(cfg.climate.enabled);
-        assert_eq!(cfg.climate.prefix, "oikos/climate");
+        assert_eq!(cfg.climate.prefix, "nidoo/climate");
     }
 
     #[test]
@@ -969,7 +963,7 @@ mod climate_config_tests {
 
     #[test]
     fn climate_prefix_rejects_slashes_only_and_wildcards() {
-        for bad in ["", "/", " // ", "oikos/+/climate", "oikos/#", "a+b"] {
+        for bad in ["", "/", " // ", "nidoo/+/climate", "nidoo/#", "a+b"] {
             let cfg = ClimateConfig {
                 enabled: true,
                 prefix: bad.to_owned(),
@@ -979,7 +973,7 @@ mod climate_config_tests {
                 "{bad:?} accepted"
             );
         }
-        for good in ["oikos/climate", "climate/", "home"] {
+        for good in ["nidoo/climate", "climate/", "home"] {
             let cfg = ClimateConfig {
                 enabled: true,
                 prefix: good.to_owned(),
@@ -996,7 +990,7 @@ mod alarm_config_tests {
     #[test]
     fn alarm_prefix_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.alarm.prefix, "oikos/alarm");
+        assert_eq!(cfg.alarm.prefix, "nidoo/alarm");
         assert_eq!(cfg.alarm.validate(), Ok(()));
     }
 
@@ -1011,7 +1005,7 @@ mod alarm_config_tests {
 
     #[test]
     fn alarm_prefix_rejects_slashes_only_and_wildcards() {
-        for bad in ["", "/", " // ", "oikos/+/alarm", "oikos/#", "a+b"] {
+        for bad in ["", "/", " // ", "nidoo/+/alarm", "nidoo/#", "a+b"] {
             let cfg = AlarmConfig {
                 prefix: bad.to_owned(),
             };
@@ -1020,7 +1014,7 @@ mod alarm_config_tests {
                 "{bad:?} accepted"
             );
         }
-        for good in ["oikos/alarm", "alarm/", "home"] {
+        for good in ["nidoo/alarm", "alarm/", "home"] {
             let cfg = AlarmConfig {
                 prefix: good.to_owned(),
             };
@@ -1071,7 +1065,7 @@ mod env_prefix_tests {
     use super::*;
 
     #[test]
-    fn oikos_env_still_read() {
+    fn nidoo_env_still_read() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("OIKOS_MQTT__PORT", "1884");
             assert_eq!(Config::load(None)?.mqtt.port, 1884);
@@ -1080,7 +1074,7 @@ mod env_prefix_tests {
     }
 
     #[test]
-    fn nidoo_env_wins_over_oikos() {
+    fn nidoo_env_wins_over_nidoo() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("OIKOS_MQTT__HOST", "a");
             jail.set_env("NIDOO_MQTT__HOST", "b");
@@ -1108,7 +1102,7 @@ mod env_prefix_tests {
     fn hub_json_bootstrap_reads_both_prefixes() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("OIKOS_MQTT__HOST", "192.0.2.5");
-            jail.set_env("OIKOS_HISTORY__URL", "postgres://u:p@192.0.2.6/oikos");
+            jail.set_env("OIKOS_HISTORY__URL", "postgres://u:p@192.0.2.6/nidoo");
             let file = crate::setup::HubFile::default().with_bootstrap_env()?;
             assert_eq!(
                 file.mqtt.as_ref().map(|m| m.host.as_str()),
@@ -1122,7 +1116,7 @@ mod env_prefix_tests {
             assert_eq!(mqtt.password.as_deref(), Some("0042"));
             assert_eq!(
                 file.database_url.as_deref(),
-                Some("postgres://u:p@192.0.2.6/oikos")
+                Some("postgres://u:p@192.0.2.6/nidoo")
             );
             Ok(())
         });

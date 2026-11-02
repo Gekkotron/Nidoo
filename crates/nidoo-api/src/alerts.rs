@@ -1,4 +1,4 @@
-//! Push alerts: the entries of OikosPush's retained history topic, as the web shows them.
+//! Push alerts: the entries of the retained push history topic, as the web shows them.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

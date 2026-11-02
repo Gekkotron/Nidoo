@@ -337,7 +337,7 @@ mod tests {
         p
     }
 
-    const DOWN: &str = "postgres://u:p@127.0.0.1:1/oikos";
+    const DOWN: &str = "postgres://u:p@127.0.0.1:1/nidoo";
 
     fn toml_with_history(url: &str) -> String {
         format!(

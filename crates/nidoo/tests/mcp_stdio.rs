@@ -19,9 +19,9 @@ use tokio::sync::mpsc;
 
 /// A recorded ZBMINI switch: the `rooms/stair/light` device, with its diagnostic sensor.
 const SWITCH_FIXTURE: &str = "discovery/switch__0x847127fffe24e322__switch.json";
-const SWITCH_TOPIC: &str = "oikos/switch/0x847127fffe24e322/switch/config";
+const SWITCH_TOPIC: &str = "nidoo/switch/0x847127fffe24e322/switch/config";
 const LINKQUALITY_FIXTURE: &str = "discovery/sensor__0x847127fffe24e322__linkquality.json";
-const LINKQUALITY_TOPIC: &str = "oikos/sensor/0x847127fffe24e322/linkquality/config";
+const LINKQUALITY_TOPIC: &str = "nidoo/sensor/0x847127fffe24e322/linkquality/config";
 
 const EXPECTED_TOOLS: &[&str] = &[
     "bridge_info",
@@ -92,7 +92,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn config() -> Config {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg
 }
 
@@ -184,11 +184,11 @@ async fn stdio_proxy_forwards_list_tools() {
 
     let resources = client.list_all_resources().await.expect("list resources");
     assert!(
-        resources.iter().any(|r| r.uri == "oikos://snapshot"),
+        resources.iter().any(|r| r.uri == "nidoo://snapshot"),
         "{resources:?}"
     );
     let read = client
-        .read_resource(ReadResourceRequestParams::new("oikos://snapshot"))
+        .read_resource(ReadResourceRequestParams::new("nidoo://snapshot"))
         .await
         .expect("read resource");
     let text = match read.contents.first().expect("one content") {
@@ -200,7 +200,7 @@ async fn stdio_proxy_forwards_list_tools() {
 
     // An upstream error crosses the proxy as an error, not as a fabricated answer.
     let missing = client
-        .read_resource(ReadResourceRequestParams::new("oikos://nope"))
+        .read_resource(ReadResourceRequestParams::new("nidoo://nope"))
         .await;
     assert!(missing.is_err(), "unknown resource must be an error");
 

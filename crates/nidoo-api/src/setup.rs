@@ -224,7 +224,6 @@ pub struct PushView {
     pub service_account: SecretView,
     pub project_id: Option<String>,
     pub prefix: String,
-    pub legacy_prefix: String,
     pub retry_interval: u64,
     pub max_retries: u32,
     pub history_size: usize,
@@ -239,8 +238,6 @@ pub struct PushInput {
     pub service_account: Secret,
     #[serde(default)]
     pub prefix: Option<String>,
-    #[serde(default)]
-    pub legacy_prefix: Option<String>,
     #[serde(default)]
     pub retry_interval: Option<u64>,
     #[serde(default)]

@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 
 fn hub_with(enabled: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.weather.enabled = enabled;
     cfg.weather.city = "Paris".to_owned();
     let (tx, rx) = mpsc::channel(256);
@@ -104,7 +104,7 @@ fn publish_configs_then_apply_publishes_states_and_online() {
     let out = drain(&mut rx);
     assert_eq!(out.len(), 27);
     assert!(out.iter().all(|p| p.retain));
-    let availability = topic(&out, "oikos/weather/availability");
+    let availability = topic(&out, "nidoo/weather/availability");
     assert_eq!(availability.len(), 1);
     assert_eq!(availability[0].payload, "offline");
     assert_eq!(
@@ -115,7 +115,7 @@ fn publish_configs_then_apply_publishes_states_and_online() {
     hub.apply_weather(sample_view());
     let out = drain(&mut rx);
     assert_eq!(
-        topic(&out, "oikos/weather/availability")[0].payload,
+        topic(&out, "nidoo/weather/availability")[0].payload,
         "online"
     );
     assert_eq!(out.len(), 27);
@@ -148,7 +148,7 @@ fn apply_weather_publishes_only_changes() {
     hub.apply_weather(changed);
     let out = drain(&mut rx);
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].topic, "oikos/weather/temperature");
+    assert_eq!(out[0].topic, "nidoo/weather/temperature");
     assert_eq!(out[0].payload, "14");
 
     let mut changes = 0;
@@ -192,22 +192,22 @@ fn set_weather_offline_is_once_per_transition() {
 #[test]
 fn disabled_weather_clears_only_its_own_configs() {
     let (hub, mut rx) = hub_with(false);
-    let own = entities::configs("oikos")[0].1.to_string();
+    let own = entities::configs("nidoo")[0].1.to_string();
     hub.ingest_message(
-        "oikos/sensor/weather/temperature/config",
+        "nidoo/sensor/weather/temperature/config",
         own.as_bytes(),
         true,
     );
     let out = drain(&mut rx);
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].topic, "oikos/sensor/weather/temperature/config");
+    assert_eq!(out[0].topic, "nidoo/sensor/weather/temperature/config");
     assert!(out[0].payload.is_empty() && out[0].retain);
     assert!(hub.entity_view("weather_temperature").is_none());
 
-    hub.ingest_message("oikos/weather/temperature", b"13.4", true);
+    hub.ingest_message("nidoo/weather/temperature", b"13.4", true);
     let out = drain(&mut rx);
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].topic, "oikos/weather/temperature");
+    assert_eq!(out[0].topic, "nidoo/weather/temperature");
     assert!(out[0].payload.is_empty() && out[0].retain);
 
     let foreign = serde_json::json!({
@@ -217,7 +217,7 @@ fn disabled_weather_clears_only_its_own_configs() {
         "device": { "identifiers": ["0xabc"] },
     })
     .to_string();
-    hub.ingest_message("oikos/sensor/weather/foo/config", foreign.as_bytes(), true);
+    hub.ingest_message("nidoo/sensor/weather/foo/config", foreign.as_bytes(), true);
     assert!(drain(&mut rx).is_empty());
     assert!(hub.entity_view("foo").is_some());
 }
@@ -225,8 +225,8 @@ fn disabled_weather_clears_only_its_own_configs() {
 #[test]
 fn weather_state_topic_is_not_discovery() {
     let (hub, _rx) = hub();
-    hub.ingest_message("oikos/weather/temperature", b"13.4", true);
-    hub.ingest_message("oikos/weather/availability", b"online", true);
+    hub.ingest_message("nidoo/weather/temperature", b"13.4", true);
+    hub.ingest_message("nidoo/weather/availability", b"online", true);
     assert!(hub.ignored().is_empty());
 }
 
@@ -237,10 +237,10 @@ fn weather_value_that_disappears_is_cleared() {
     for publish in drain(&mut rx) {
         hub.ingest_message(&publish.topic, publish.payload.as_bytes(), true);
     }
-    for (topic, config) in entities::configs("oikos") {
+    for (topic, config) in entities::configs("nidoo") {
         hub.ingest_message(&topic, config.to_string().as_bytes(), true);
     }
-    hub.ingest_message("oikos/weather/uv_index", b"1", true);
+    hub.ingest_message("nidoo/weather/uv_index", b"1", true);
     assert_eq!(
         hub.entity_view("weather_uv_index")
             .expect("entity")
@@ -254,7 +254,7 @@ fn weather_value_that_disappears_is_cleared() {
     hub.apply_weather(gone.clone());
     let out = drain(&mut rx);
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].topic, "oikos/weather/uv_index");
+    assert_eq!(out[0].topic, "nidoo/weather/uv_index");
     assert_eq!(out[0].payload, "None");
     assert_eq!(
         hub.entity_view("weather_uv_index")
@@ -280,7 +280,7 @@ fn publish_configs_makes_states_republish() {
     let out = drain(&mut rx);
     assert_eq!(
         out.iter()
-            .filter(|p| p.topic != "oikos/weather/availability")
+            .filter(|p| p.topic != "nidoo/weather/availability")
             .count(),
         26
     );
@@ -295,7 +295,7 @@ fn restart_publishes_unknown_for_values_a_previous_run_left_retained() {
     view.current.uv_index = None;
     hub.apply_weather(view);
     let out = drain(&mut rx);
-    let uv = topic(&out, "oikos/weather/uv_index");
+    let uv = topic(&out, "nidoo/weather/uv_index");
     assert_eq!(uv.len(), 1);
     assert_eq!(uv[0].payload, "None");
     assert!(uv[0].retain);
@@ -309,7 +309,7 @@ fn config_count(out: &[Publish]) -> usize {
 
 fn state_count(out: &[Publish]) -> usize {
     out.iter()
-        .filter(|p| !p.topic.ends_with("/config") && p.topic != "oikos/weather/availability")
+        .filter(|p| !p.topic.ends_with("/config") && p.topic != "nidoo/weather/availability")
         .count()
 }
 
@@ -343,7 +343,7 @@ fn removed_entity_makes_the_next_apply_republish_the_configs() {
     drain(&mut rx);
     assert!(hub.entity_view("weather_temperature").is_some());
 
-    hub.ingest_message("oikos/sensor/weather/temperature/config", b"", true);
+    hub.ingest_message("nidoo/sensor/weather/temperature/config", b"", true);
     assert!(hub.entity_view("weather_temperature").is_none());
     // No reaction to the empty retained message itself.
     assert!(drain(&mut rx).is_empty());

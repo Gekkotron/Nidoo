@@ -1,4 +1,4 @@
-//! `AreasDocument` round-trips the app's retained `oikos/ui/_areas` JSON.
+//! `AreasDocument` round-trips the app's retained `nidoo/ui/_areas` JSON.
 
 mod common;
 

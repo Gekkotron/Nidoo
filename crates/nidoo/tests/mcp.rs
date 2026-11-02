@@ -23,10 +23,10 @@ type Client = RunningService<RoleClient, ()>;
 /// A recorded ZBMINI switch: the `rooms/stair/light` device, with its diagnostic sensor.
 const SWITCH_FIXTURE: &str = "discovery/switch__0x847127fffe24e322__switch.json";
 const SWITCH_ID: &str = "0x847127fffe24e322_switch_zigbee2mqtt";
-const SWITCH_TOPIC: &str = "oikos/switch/0x847127fffe24e322/switch/config";
+const SWITCH_TOPIC: &str = "nidoo/switch/0x847127fffe24e322/switch/config";
 const LINKQUALITY_FIXTURE: &str = "discovery/sensor__0x847127fffe24e322__linkquality.json";
 const LINKQUALITY_ID: &str = "0x847127fffe24e322_linkquality_zigbee2mqtt";
-const LINKQUALITY_TOPIC: &str = "oikos/sensor/0x847127fffe24e322/linkquality/config";
+const LINKQUALITY_TOPIC: &str = "nidoo/sensor/0x847127fffe24e322/linkquality/config";
 
 const EXPECTED_TOOLS: &[&str] = &[
     "bridge_info",
@@ -84,10 +84,10 @@ const EXPECTED_TOOLS: &[&str] = &[
 ];
 
 const LED_ID: &str = "0x60a423fffe94d1c6_light_zigbee2mqtt";
-const LED_TOPIC: &str = "oikos/light/0x60a423fffe94d1c6/light/config";
+const LED_TOPIC: &str = "nidoo/light/0x60a423fffe94d1c6/light/config";
 const LED_FIXTURE: &str = "discovery/light__0x60a423fffe94d1c6__light.json";
 const MOTION_ID: &str = "0x00158d008b5a2d65_occupancy_zigbee2mqtt";
-const MOTION_TOPIC: &str = "oikos/binary_sensor/0x00158d008b5a2d65/occupancy/config";
+const MOTION_TOPIC: &str = "nidoo/binary_sensor/0x00158d008b5a2d65/occupancy/config";
 const MOTION_FIXTURE: &str = "discovery/binary_sensor__0x00158d008b5a2d65__occupancy.json";
 
 fn fixtures() -> PathBuf {
@@ -104,7 +104,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn config() -> Config {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg
 }
 
@@ -233,7 +233,7 @@ async fn lists_the_expected_tools() {
     assert!(instructions.contains("list_alerts"), "{instructions}");
     assert!(instructions.contains("`notify`"), "{instructions}");
     assert!(instructions.contains("climate_status"), "{instructions}");
-    assert!(instructions.contains("oikos_alarm_house"), "{instructions}");
+    assert!(instructions.contains("nidoo_alarm_house"), "{instructions}");
 
     let tools = client.list_all_tools().await.expect("list tools");
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -358,7 +358,7 @@ async fn set_override_round_trip_through_tool() {
     assert_eq!(view["id"], SWITCH_ID);
     assert_eq!(view["kind"], "light");
     let published = server.publisher.try_recv().expect("the override publish");
-    assert_eq!(published.topic, format!("oikos/ui/{SWITCH_ID}"));
+    assert_eq!(published.topic, format!("nidoo/ui/{SWITCH_ID}"));
     assert!(published.retain);
 
     let detail = json_of(
@@ -473,12 +473,12 @@ async fn snapshot_resource_reads() {
     let resources = client.list_all_resources().await.expect("list resources");
     let snapshot = resources
         .iter()
-        .find(|resource| resource.uri == "oikos://snapshot")
+        .find(|resource| resource.uri == "nidoo://snapshot")
         .expect("the snapshot resource");
     assert_eq!(snapshot.mime_type.as_deref(), Some("application/json"));
 
     let read = client
-        .read_resource(ReadResourceRequestParams::new("oikos://snapshot"))
+        .read_resource(ReadResourceRequestParams::new("nidoo://snapshot"))
         .await
         .expect("read resource");
     let (uri, mime_type, text) = match read.contents.first().expect("one content") {
@@ -490,14 +490,14 @@ async fn snapshot_resource_reads() {
         } => (uri.clone(), mime_type.clone(), text.clone()),
         other => panic!("expected text contents, got {other:?}"),
     };
-    assert_eq!(uri, "oikos://snapshot");
+    assert_eq!(uri, "nidoo://snapshot");
     assert_eq!(mime_type.as_deref(), Some("application/json"));
     let snapshot: Value = serde_json::from_str(&text).expect("json snapshot");
     assert_eq!(snapshot["connection"]["type"], "connecting");
     assert_eq!(snapshot["entities"].as_array().map(Vec::len), Some(2));
 
     let missing = client
-        .read_resource(ReadResourceRequestParams::new("oikos://nope"))
+        .read_resource(ReadResourceRequestParams::new("nidoo://nope"))
         .await;
     assert!(missing.is_err(), "unknown resource must be an error");
 
@@ -567,7 +567,7 @@ async fn send_command_search_areas_and_the_small_tools() {
         .expect("the declared area");
     assert_eq!(stair["name"], "Stair");
     let published = server.publisher.try_recv().expect("the areas publish");
-    assert_eq!(published.topic, "oikos/ui/_areas");
+    assert_eq!(published.topic, "nidoo/ui/_areas");
     let listed = json_of("list_areas", &call(&client, "list_areas", json!({})).await);
     assert_eq!(listed, areas);
 
@@ -958,7 +958,7 @@ async fn delete_flow() {
     );
     assert_eq!(deleted, json!({ "id": "living" }));
     let published = server.publisher.try_recv().expect("retained clear");
-    assert_eq!(published.topic, "oikos/automation/living");
+    assert_eq!(published.topic, "nidoo/automation/living");
     assert!(published.payload.is_empty() && published.retain);
     let list = json_of("list_flows", &call(&client, "list_flows", json!({})).await);
     assert_eq!(list["flows"].as_array().map(Vec::len), Some(0));
@@ -974,7 +974,7 @@ async fn mcp_set_areas_keeps_group_fields() {
     let mut server = Server::start().await;
     server.online();
     server.hub.ingest(
-        "oikos/ui/_areas",
+        "nidoo/ui/_areas",
         br#"{"areas":[{"id":"dehors","name":"Dehors","icon":"tree","groupNames":{"cover":"Volets"},"groupFavorites":["cover"],"newKey":true},{"id":"gone","name":"Gone"}]}"#,
     );
     let client = server.client().await;
@@ -1002,7 +1002,7 @@ async fn mcp_list_then_set_areas_round_trips() {
     let mut server = Server::start().await;
     server.online();
     server.hub.ingest(
-        "oikos/ui/_areas",
+        "nidoo/ui/_areas",
         br#"{"areas":[{"id":"dehors","name":"Dehors","icon":"tree","groupNames":{"cover":"Volets"},"groupFavorites":["cover"],"newKey":true}]}"#,
     );
     let client = server.client().await;
@@ -1075,7 +1075,7 @@ async fn mcp_set_virtual_lists_the_entity() {
     assert_eq!(deleted, json!({ "id": "force_heating" }));
     assert_eq!(
         server.publisher.try_recv().expect("config clear").topic,
-        "oikos/switch/virtual/force_heating/config"
+        "nidoo/switch/virtual/force_heating/config"
     );
     let again = call(&client, "delete_virtual", json!({ "id": "force_heating" })).await;
     assert_eq!(again.is_error, Some(true));
@@ -1285,7 +1285,7 @@ async fn get_grid_day_is_listed_read_only() {
     client.cancel().await.expect("close");
 }
 
-const HISTORY_TOPIC: &str = "oikos/push/history";
+const HISTORY_TOPIC: &str = "nidoo/push/history";
 
 fn history_entry(id: &str, channel: &str, sent_at: u64) -> String {
     format!(
@@ -1432,7 +1432,7 @@ async fn climate_status_enabled_returns_zones() {
     let server = Server::start_with(cfg).await;
     server.online();
     server.hub.ingest(
-        "oikos/climate/daikin_192_168_1_150/climate/config",
+        "nidoo/climate/daikin_192_168_1_150/climate/config",
         &fixture("discovery/climate__daikin_192_168_1_150__climate.json"),
     );
     let id = server
@@ -1568,7 +1568,7 @@ async fn alarm_tools_read_and_replace_settings() {
     let status = call(&client, "alarm_status", json!({})).await;
     let view = json_of("alarm_status", &status);
     assert_eq!(view["enabled"], false);
-    assert_eq!(view["entity_id"], "oikos_alarm_house");
+    assert_eq!(view["entity_id"], "nidoo_alarm_house");
 
     let bad = call(
         &client,
@@ -1590,7 +1590,7 @@ fn settings_ctx(mode: nidoo::setup::Mode) -> Arc<nidoo::setup::SetupCtx> {
     sections.frigate.user = Some("u".into());
     sections.frigate.password = Some(FRIGATE_PASS.into());
     Arc::new(SetupCtx::new(
-        std::env::temp_dir().join(format!("oikos-mcp-settings-{}", std::process::id())),
+        std::env::temp_dir().join(format!("nidoo-mcp-settings-{}", std::process::id())),
         mode,
         HubFile::default(),
         Some(nidoo::history::db::Db::connect_lazy("postgres://u:p@127.0.0.1:1/x").unwrap()),

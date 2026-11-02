@@ -515,8 +515,8 @@ mod tests {
         let input = DatabaseInput {
             host: "localhost".into(),
             port: 5432,
-            database: "oikos".into(),
-            user: "oikos".into(),
+            database: "nidoo".into(),
+            user: "nidoo".into(),
             password: Secret::Keep,
         };
         let url = build_database_url(None, Some("p%41ss"), &input).unwrap();

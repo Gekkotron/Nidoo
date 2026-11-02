@@ -16,13 +16,13 @@ fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| (*s).to_owned()).collect()
 }
 
-/// Rebuilds the discovery topic a fixture was recorded from, under the `oikos` prefix.
+/// Rebuilds the discovery topic a fixture was recorded from, under the `nidoo` prefix.
 fn fixture_topic(file_stem: &str) -> String {
-    format!("oikos/{}/config", file_stem.replace("__", "/"))
+    format!("nidoo/{}/config", file_stem.replace("__", "/"))
 }
 
 fn discovery_topic(topic: &str) -> DiscoveryTopic {
-    match classify(topic, &strings(&["oikos"]), &strings(&["ui", "automation"])) {
+    match classify(topic, &strings(&["nidoo"]), &strings(&["ui", "automation"])) {
         TopicClass::Discovery(t) => t,
         other => panic!("{topic} is not a discovery topic: {other:?}"),
     }
@@ -41,9 +41,9 @@ fn parse_fixture(file_stem: &str) -> Entity {
 
 #[test]
 fn network_subtree_is_reserved() {
-    let prefixes = strings(&["oikos"]);
+    let prefixes = strings(&["nidoo"]);
     let reserved = RegistryConfig::default_reserved();
-    for topic in ["oikos/network/nas", "oikos/network/nas/avail"] {
+    for topic in ["nidoo/network/nas", "nidoo/network/nas/avail"] {
         assert_eq!(
             classify(topic, &prefixes, &reserved),
             TopicClass::Reserved("network".into())
@@ -51,7 +51,7 @@ fn network_subtree_is_reserved() {
     }
     assert!(matches!(
         classify(
-            "oikos/binary_sensor/network/nas/config",
+            "nidoo/binary_sensor/network/nas/config",
             &prefixes,
             &reserved
         ),
@@ -61,29 +61,29 @@ fn network_subtree_is_reserved() {
 
 #[test]
 fn classifies_topics() {
-    let prefixes = strings(&["oikos"]);
+    let prefixes = strings(&["nidoo"]);
     let reserved = strings(&["ui", "automation"]);
     assert_eq!(
-        classify("oikos/light/x/y/config", &prefixes, &reserved),
+        classify("nidoo/light/x/y/config", &prefixes, &reserved),
         TopicClass::Discovery(DiscoveryTopic {
-            prefix: "oikos".into(),
+            prefix: "nidoo".into(),
             component: "light".into(),
             node_id: Some("x".into()),
             object_id: "y".into(),
         })
     );
     assert_eq!(
-        classify("oikos/ui/0xabc", &prefixes, &reserved),
+        classify("nidoo/ui/0xabc", &prefixes, &reserved),
         TopicClass::Reserved("ui".into())
     );
     assert_eq!(
-        classify("oikos/ui/_areas", &prefixes, &reserved),
+        classify("nidoo/ui/_areas", &prefixes, &reserved),
         TopicClass::Reserved("ui".into())
     );
     assert_eq!(
         classify(
             "homeassistant/sensor/x/config",
-            &strings(&["oikos", "homeassistant"]),
+            &strings(&["nidoo", "homeassistant"]),
             &reserved
         ),
         TopicClass::Discovery(DiscoveryTopic {
@@ -94,7 +94,7 @@ fn classifies_topics() {
         })
     );
     assert_eq!(
-        classify("oikos/light/x/y/state", &prefixes, &reserved),
+        classify("nidoo/light/x/y/state", &prefixes, &reserved),
         TopicClass::Other
     );
     assert_eq!(
@@ -310,30 +310,30 @@ fn diagnostic_and_disabled_are_kept_and_flagged() {
 
 #[test]
 fn empty_payload_is_removed_and_ignored_component_is_ignored() {
-    let light = discovery_topic("oikos/light/0x1/light/config");
+    let light = discovery_topic("nidoo/light/0x1/light/config");
     assert!(matches!(
-        parse(&light, b"", "oikos/light/0x1/light/config"),
+        parse(&light, b"", "nidoo/light/0x1/light/config"),
         Ok(Parsed::Removed)
     ));
 
-    let device = discovery_topic("oikos/device/0x1/config");
-    match parse(&device, br#"{"cmps":{}}"#, "oikos/device/0x1/config") {
+    let device = discovery_topic("nidoo/device/0x1/config");
+    match parse(&device, br#"{"cmps":{}}"#, "nidoo/device/0x1/config") {
         Ok(Parsed::Ignored { reason }) => {
             assert_eq!(reason, "device-based discovery: expanded by caller");
         }
         other => panic!("expected Ignored, got {other:?}"),
     }
 
-    assert!(parse(&light, b"{not json", "oikos/light/0x1/light/config").is_err());
-    assert!(parse(&light, b"[1,2]", "oikos/light/0x1/light/config").is_err());
-    assert!(parse(&light, b"\xff\xfe", "oikos/light/0x1/light/config").is_err());
+    assert!(parse(&light, b"{not json", "nidoo/light/0x1/light/config").is_err());
+    assert!(parse(&light, b"[1,2]", "nidoo/light/0x1/light/config").is_err());
+    assert!(parse(&light, b"\xff\xfe", "nidoo/light/0x1/light/config").is_err());
 
-    let sensor = discovery_topic("oikos/sensor/0x1/temp/config");
+    let sensor = discovery_topic("nidoo/sensor/0x1/temp/config");
     assert!(
         parse(
             &sensor,
             br#"{"name":"Temperature"}"#,
-            "oikos/sensor/0x1/temp/config"
+            "nidoo/sensor/0x1/temp/config"
         )
         .is_err(),
         "a sensor without state_topic is invalid"
@@ -341,7 +341,7 @@ fn empty_payload_is_removed_and_ignored_component_is_ignored() {
 
     // No unique_id: falls back to <component>.<node_id>.<object_id>.
     let payload = br#"{"state_topic":"z/t","command_topic":"z/t/set"}"#;
-    match parse(&light, payload, "oikos/light/0x1/light/config") {
+    match parse(&light, payload, "nidoo/light/0x1/light/config") {
         Ok(Parsed::Entity(entity)) => {
             assert_eq!(entity.unique_id, "light.0x1.light");
             assert_eq!(entity.name, "light");
@@ -353,7 +353,7 @@ fn empty_payload_is_removed_and_ignored_component_is_ignored() {
 
 #[test]
 fn device_based_discovery_expands_cmps() {
-    let topic = discovery_topic("oikos/device/plug_1/config");
+    let topic = discovery_topic("nidoo/device/plug_1/config");
     let payload = br#"{
         "~": "z/plug_1",
         "dev": {"ids": ["plug_1"], "name": "rooms/office/plug"},
@@ -393,7 +393,7 @@ fn device_based_discovery_expands_cmps() {
 
     // The expanded configs parse as ordinary entities.
     let bytes = serde_json::to_vec(power).expect("serialises");
-    match parse(power_topic, &bytes, "oikos/device/plug_1/config") {
+    match parse(power_topic, &bytes, "nidoo/device/plug_1/config") {
         Ok(Parsed::Entity(entity)) => {
             assert_eq!(entity.unique_id, "plug_1_power");
             assert_eq!(entity.kind, Kind::Sensor);
@@ -501,7 +501,7 @@ const GENERIC_FIXTURES: &[(&str, &str)] = &[
     ("lawn_mower", "lawn_mower__homeassistant__garden"),
     ("text", "text__0x00124b001c2fa59c__action"),
     ("scene", "scene__homeassistant__movie_night"),
-    ("device_tracker", "device_tracker__oikos_phone"),
+    ("device_tracker", "device_tracker__nidoo_phone"),
     ("camera", "camera__homeassistant__front_door"),
     ("image", "image__homeassistant__weather_map"),
     ("event", "event__0x00158d0005e6f708__action"),
@@ -533,7 +533,7 @@ fn existing_kinds_carry_their_component() {
 }
 
 fn generic_entity(component: &str, config: Value) -> Entity {
-    let topic_str = format!("oikos/{component}/test/config");
+    let topic_str = format!("nidoo/{component}/test/config");
     let topic = discovery_topic(&topic_str);
     match parse(&topic, config.to_string().as_bytes(), &topic_str) {
         Ok(Parsed::Entity(entity)) => *entity,
@@ -573,7 +573,7 @@ fn lock_without_payload_open_has_no_open_control() {
 
 #[test]
 fn lock_without_state_topic_is_rejected() {
-    let topic_str = "oikos/lock/test/config";
+    let topic_str = "nidoo/lock/test/config";
     let topic = discovery_topic(topic_str);
     let result = parse(&topic, br#"{"command_topic": "l/set"}"#, topic_str);
     assert_eq!(

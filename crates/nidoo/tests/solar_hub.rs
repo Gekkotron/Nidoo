@@ -15,7 +15,7 @@ const SITE: &str = "site-secret";
 
 fn hub_with(enabled: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.flows.timezone = Some("Europe/Paris".into());
     cfg.solcast.enabled = enabled;
     cfg.solcast.sites = vec![SITE.to_owned()];
@@ -62,25 +62,25 @@ async fn apply_publishes_configs_states_availability_and_cache() {
         entities::KEYS.len()
     );
     assert_eq!(
-        last(&first, "oikos/solar/availability").unwrap().payload,
+        last(&first, "nidoo/solar/availability").unwrap().payload,
         "offline"
     );
 
     hub.apply_solar_forecast(common::solar::forecast_today());
     let out = drain(&mut rx);
     assert_eq!(
-        last(&out, "oikos/solar/availability").unwrap().payload,
+        last(&out, "nidoo/solar/availability").unwrap().payload,
         "online"
     );
-    let today = last(&out, "oikos/solar/forecast_today").unwrap();
+    let today = last(&out, "nidoo/solar/forecast_today").unwrap();
     assert!(today.retain);
     assert!(today.payload.parse::<f64>().unwrap() > 0.0);
     // The fixture covers today only: tomorrow's values go out as unknown, never frozen.
     assert_eq!(
-        last(&out, "oikos/solar/forecast_tomorrow").unwrap().payload,
+        last(&out, "nidoo/solar/forecast_tomorrow").unwrap().payload,
         "None"
     );
-    let cache = last(&out, "oikos/solar/cache").unwrap();
+    let cache = last(&out, "nidoo/solar/cache").unwrap();
     assert!(cache.retain);
     assert!(cache.payload.contains("forecast"));
     assert!(hub.solar_has_forecast());
@@ -115,14 +115,14 @@ async fn cache_restores_forecast_and_ledger_once() {
     source.publish_solar_configs();
     source.record_solar_attempt();
     source.apply_solar_forecast(common::solar::forecast_today());
-    let cache = last(&drain(&mut rx), "oikos/solar/cache")
+    let cache = last(&drain(&mut rx), "nidoo/solar/cache")
         .unwrap()
         .payload
         .clone();
 
     let (hub, _rx) = hub_with(true);
     assert!(!hub.solar_has_forecast());
-    hub.ingest_message("oikos/solar/cache", cache.as_bytes(), true);
+    hub.ingest_message("nidoo/solar/cache", cache.as_bytes(), true);
     assert!(hub.solar_has_forecast());
     assert_eq!(hub.solar_ledger(), source.solar_ledger());
     assert_eq!(hub.solar_ledger().calls, 1);
@@ -133,21 +133,21 @@ async fn cache_restores_forecast_and_ledger_once() {
     other.record_solar_attempt();
     other.record_solar_attempt();
     other.apply_solar_forecast(common::solar::forecast_today());
-    let second = last(&drain(&mut other_rx), "oikos/solar/cache")
+    let second = last(&drain(&mut other_rx), "nidoo/solar/cache")
         .unwrap()
         .payload
         .clone();
-    hub.ingest_message("oikos/solar/cache", second.as_bytes(), true);
+    hub.ingest_message("nidoo/solar/cache", second.as_bytes(), true);
     assert_eq!(hub.solar_ledger().calls, 2);
 
     // Malformed is swallowed.
     let (fresh, _rx) = hub_with(true);
-    fresh.ingest_message("oikos/solar/cache", b"{nope", true);
+    fresh.ingest_message("nidoo/solar/cache", b"{nope", true);
     assert!(!fresh.solar_has_forecast());
 }
 
 fn cache_payload(rx: &mut mpsc::Receiver<Publish>) -> String {
-    last(&drain(rx), "oikos/solar/cache")
+    last(&drain(rx), "nidoo/solar/cache")
         .unwrap()
         .payload
         .clone()
@@ -165,7 +165,7 @@ async fn forecast_cache_never_lowers_calls_recorded_this_run() {
     hub.record_solar_attempt();
     hub.record_solar_attempt();
     hub.record_solar_attempt();
-    hub.ingest_message("oikos/solar/cache", cache.as_bytes(), true);
+    hub.ingest_message("nidoo/solar/cache", cache.as_bytes(), true);
     assert_eq!(hub.solar_ledger().calls, 3);
     assert!(hub.solar_has_forecast());
 }
@@ -180,7 +180,7 @@ async fn ledger_only_cache_is_restored_into_a_fresh_hub() {
     assert!(!cache.contains("\"forecast\":{"));
 
     let (hub, _rx) = hub_with(true);
-    hub.ingest_message("oikos/solar/cache", cache.as_bytes(), true);
+    hub.ingest_message("nidoo/solar/cache", cache.as_bytes(), true);
     assert_eq!(hub.solar_ledger(), source.solar_ledger());
     assert_eq!(hub.solar_ledger().calls, 2);
     assert!(!hub.solar_has_forecast());
@@ -196,7 +196,7 @@ async fn ledger_only_cache_with_fewer_calls_does_not_lower_calls() {
     let (hub, _rx) = hub_with(true);
     hub.record_solar_attempt();
     hub.record_solar_attempt();
-    hub.ingest_message("oikos/solar/cache", cache.as_bytes(), true);
+    hub.ingest_message("nidoo/solar/cache", cache.as_bytes(), true);
     assert_eq!(hub.solar_ledger().calls, 2);
 }
 
@@ -210,7 +210,7 @@ async fn cache_never_contains_key_or_site_ids() {
     hub.apply_solar_forecast(common::solar::forecast_today());
     hub.refresh_solar_states();
     let out = drain(&mut rx);
-    assert!(out.iter().any(|p| p.topic == "oikos/solar/cache"));
+    assert!(out.iter().any(|p| p.topic == "nidoo/solar/cache"));
     for publish in &out {
         assert!(!publish.payload.contains(SITE), "{}", publish.topic);
         assert!(!publish.payload.contains("s3cr3t"), "{}", publish.topic);
@@ -223,16 +223,16 @@ async fn cache_never_contains_key_or_site_ids() {
 async fn disabled_hub_clears_retained_solar_topics() {
     let (hub, mut rx) = hub_with(false);
     for topic in [
-        "oikos/solar/forecast_today",
-        "oikos/solar/availability",
-        "oikos/solar/cache",
+        "nidoo/solar/forecast_today",
+        "nidoo/solar/availability",
+        "nidoo/solar/cache",
     ] {
         hub.ingest_message(topic, b"x", true);
     }
-    let config = entities::configs("oikos").remove(0);
+    let config = entities::configs("nidoo").remove(0);
     hub.ingest_message(&config.0, config.1.to_string().as_bytes(), true);
     // Another device's retained config is left alone.
-    hub.ingest_message("oikos/sensor/other/x/config", b"{}", true);
+    hub.ingest_message("nidoo/sensor/other/x/config", b"{}", true);
     let out = drain(&mut rx);
     assert_eq!(out.len(), 4);
     assert!(out.iter().all(|p| p.payload.is_empty() && p.retain));
@@ -261,7 +261,7 @@ async fn expired_forecast_goes_offline_on_refresh() {
     hub.apply_solar_forecast(common::solar::forecast_today());
     hub.refresh_solar_states();
     assert_eq!(
-        last(&drain(&mut rx), "oikos/solar/availability")
+        last(&drain(&mut rx), "nidoo/solar/availability")
             .unwrap()
             .payload,
         "online"
@@ -274,7 +274,7 @@ async fn expired_forecast_goes_offline_on_refresh() {
     drain(&mut old_rx);
     old.refresh_solar_states();
     assert_eq!(
-        last(&drain(&mut old_rx), "oikos/solar/availability")
+        last(&drain(&mut old_rx), "nidoo/solar/availability")
             .unwrap()
             .payload,
         "offline"

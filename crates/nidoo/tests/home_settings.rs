@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-const HOME_TOPIC: &str = "oikos/ui/_home";
-const TEMPERATURE_TOPIC: &str = "oikos/sensor/0x00124b0008fd6568/temperature_1/config";
+const HOME_TOPIC: &str = "nidoo/ui/_home";
+const TEMPERATURE_TOPIC: &str = "nidoo/sensor/0x00124b0008fd6568/temperature_1/config";
 const TEMPERATURE_FIXTURE: &str = "discovery/sensor__0x00124b0008fd6568__temperature_1.json";
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -30,7 +30,7 @@ fn fixture(name: &str) -> Vec<u8> {
 
 fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     let (tx, rx) = mpsc::channel(64);
     let hub = Hub::new(&cfg, tx);
     hub.set_connection(ConnectionStatus::Online);

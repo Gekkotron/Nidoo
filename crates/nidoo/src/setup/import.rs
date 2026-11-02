@@ -152,7 +152,6 @@ pub fn import_toml(path: &Path) -> anyhow::Result<(HubFile, Sections)> {
         push: PushSection {
             service_account,
             prefix: cfg.push.prefix.clone(),
-            legacy_prefix: cfg.push.legacy_prefix.clone(),
             retry_interval: cfg.push.retry_interval,
             max_retries: cfg.push.max_retries,
             history_size: cfg.push.history_size,
@@ -213,7 +212,7 @@ mod tests {
 [mqtt]
 host = "192.0.2.1"
 [history]
-url = "postgres://u:pw@db.example.com/oikos"
+url = "postgres://u:pw@db.example.com/nidoo"
 [flows]
 latitude = 45.76
 longitude = 4.84
@@ -232,7 +231,7 @@ country = "FR"
         assert_eq!(file.mqtt.as_ref().unwrap().host, "192.0.2.1");
         assert_eq!(
             file.database_url.as_deref(),
-            Some("postgres://u:pw@db.example.com/oikos")
+            Some("postgres://u:pw@db.example.com/nidoo")
         );
         let loc = file.location.unwrap();
         assert_eq!(
@@ -485,7 +484,7 @@ client_id = "cid"
 send_ha_birth = false
 ha_status_topic = "ha/status"
 [topics]
-discovery_prefixes = ["oikos", "homeassistant"]
+discovery_prefixes = ["nidoo", "homeassistant"]
 ui_prefix = "x/ui"
 z2m_base = "z2m"
 automation_prefix = "x/auto"
@@ -512,7 +511,7 @@ enabled = true
 [alarm]
 prefix = "x/alarm"
 [history]
-url = "postgres://u:pw@db.example.com/oikos"
+url = "postgres://u:pw@db.example.com/nidoo"
 buffer_rows = 42
 [flows]
 timezone = "Europe/Paris"
@@ -545,7 +544,6 @@ topic_prefix = "fr"
 live = true
 [push]
 prefix = "p/push"
-legacy_prefix = "p-legacy"
 retry_interval = 11
 max_retries = 3
 history_size = 50

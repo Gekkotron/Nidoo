@@ -375,7 +375,7 @@ mod tests {
 
     fn echo(hub: &Hub, rx: &mut mpsc::Receiver<Publish>) {
         while let Ok(p) = rx.try_recv() {
-            if p.topic == "oikos/push/history" {
+            if p.topic == hub.push().history_topic() {
                 hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
             }
         }
@@ -466,7 +466,7 @@ mod tests {
         let (history, _in) = crate::history::History::detached(8, chrono_tz::UTC);
         hub.set_history(history);
         hub.ingest_message(
-            "oikos/climate/zone/attic/settings",
+            "nidoo/climate/zone/attic/settings",
             serde_json::to_string(&ZoneSettings {
                 state: nidoo_climate::doc::ZoneState::Active,
                 ..ZoneSettings::default()
@@ -491,7 +491,7 @@ mod tests {
         }
         // A pending proposal wins over whatever the last run said.
         hub.ingest_message(
-            "oikos/climate/zone/attic/proposal",
+            "nidoo/climate/zone/attic/proposal",
             serde_json::to_string(&proposal("p-1", ProposalKind::Initial, &[]))
                 .unwrap()
                 .as_bytes(),
@@ -507,7 +507,7 @@ mod tests {
         let (history, _in) = crate::history::History::detached(8, chrono_tz::UTC);
         hub.set_history(history);
         hub.ingest_message(
-            "oikos/climate/zone/attic/settings",
+            "nidoo/climate/zone/attic/settings",
             settings_doc(ZoneState::Active).as_bytes(),
             true,
         );
@@ -519,7 +519,7 @@ mod tests {
             })
             .unwrap()
         };
-        let topic = "oikos/climate/zone/attic/eco";
+        let topic = "nidoo/climate/zone/attic/eco";
         hub.ingest_message(topic, eco(now + 3_600).as_bytes(), true);
         let learn = |hub: &Hub| hub.climate_view().unwrap().zones[0].learn.clone();
         assert_eq!(learn(&hub), LearnStatus::Eco);
@@ -537,6 +537,28 @@ mod tests {
         assert_ne!(
             learning::learn_zone(&hub, "attic", now).await,
             LearnStatus::Eco
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn proposal_reply_follows_push_prefix() {
+        let mut cfg = Config::default();
+        cfg.climate.enabled = true;
+        cfg.push.prefix = "custom/push".to_owned();
+        let (tx, mut rx) = mpsc::channel(64);
+        let hub = Hub::new(&cfg, tx);
+        settle(&hub).await;
+        publish(
+            &hub,
+            "living",
+            proposal("p-1", ProposalKind::Initial, &["Base: 17.0 °C"]),
+            1_000_000,
+        );
+        echo(&hub, &mut rx);
+        assert_eq!(
+            alerts_of(&hub).len(),
+            1,
+            "the history on custom/push came back"
         );
     }
 
@@ -563,7 +585,7 @@ mod tests {
             "title": "Climate: new rules for living", "body": "", "actions": [],
             "silent": false, "source": "climate", "sent_at": sent_at,
         }]);
-        hub.ingest_message("oikos/push/history", history.to_string().as_bytes(), true);
+        hub.ingest_message("nidoo/push/history", history.to_string().as_bytes(), true);
     }
 
     /// A pending proposal, as the broker delivers it after a restart.
@@ -571,7 +593,7 @@ mod tests {
         let mut old = proposal(id, ProposalKind::Initial, &[]);
         old.created = created;
         hub.ingest_message(
-            "oikos/climate/zone/living/proposal",
+            "nidoo/climate/zone/living/proposal",
             serde_json::to_string(&old).unwrap().as_bytes(),
             true,
         );
@@ -694,7 +716,7 @@ mod tests {
     async fn a_zone_leaving_off_is_learned_at_once() {
         use nidoo_climate::doc::ZoneState;
         let (hub, _rx) = hub();
-        let topic = "oikos/climate/zone/attic/settings";
+        let topic = "nidoo/climate/zone/attic/settings";
         hub.ingest_message(topic, settings_doc(ZoneState::Off).as_bytes(), true);
         hub.climate_runtime()
             .learn_status

@@ -42,7 +42,7 @@ pub async fn fresh_db() -> Option<TestDb> {
         }
     };
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let name = format!("oikos_test_{}_{}", std::process::id(), n);
+    let name = format!("nidoo_test_{}_{}", std::process::id(), n);
     let admin = PgPoolOptions::new()
         .max_connections(1)
         .connect(&base_url)

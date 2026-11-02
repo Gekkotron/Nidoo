@@ -24,7 +24,7 @@ pub const KEYS: [&str; 10] = [
     "forecast_peak_time_today",
 ];
 
-const DEVICE_ID: &str = "oikos_solar";
+const DEVICE_ID: &str = "nidoo_solar";
 
 /// Name and unit per key (the peak time has no unit).
 fn describe(key: &str) -> (&'static str, Option<&'static str>) {
@@ -168,14 +168,14 @@ mod tests {
 
     #[test]
     fn configs_have_no_energy_or_power_class() {
-        let all = configs("oikos");
+        let all = configs("nidoo");
         assert_eq!(all.len(), 10);
         for (_, config) in &all {
             assert_ne!(config["device_class"], json!("energy"));
             assert_ne!(config["device_class"], json!("power"));
             assert_ne!(config["state_class"], json!("total_increasing"));
             assert_eq!(config["icon"], json!("mdi:solar-power"));
-            assert_eq!(config["device"]["identifiers"], json!(["oikos_solar"]));
+            assert_eq!(config["device"]["identifiers"], json!(["nidoo_solar"]));
             assert_eq!(config["device"]["name"], json!("Solar forecast"));
         }
         let by_key = |k: &str| &all[KEYS.iter().position(|x| *x == k).unwrap()].1;
@@ -201,18 +201,18 @@ mod tests {
 
     #[test]
     fn configs_topics_and_ids() {
-        let all = configs("oikos");
-        assert_eq!(all[0].0, "oikos/sensor/solar/forecast_today/config");
+        let all = configs("nidoo");
+        assert_eq!(all[0].0, "nidoo/sensor/solar/forecast_today/config");
         assert_eq!(all[0].1["unique_id"], json!("solar_forecast_today"));
-        assert_eq!(all[0].1["state_topic"], json!("oikos/solar/forecast_today"));
+        assert_eq!(all[0].1["state_topic"], json!("nidoo/solar/forecast_today"));
         assert_eq!(
             all[0].1["availability_topic"],
-            json!("oikos/solar/availability")
+            json!("nidoo/solar/availability")
         );
-        assert_eq!(cache_topic("oikos"), "oikos/solar/cache");
+        assert_eq!(cache_topic("nidoo"), "nidoo/solar/cache");
         assert_eq!(
-            state_topic("oikos", "forecast_power_now"),
-            "oikos/solar/forecast_power_now"
+            state_topic("nidoo", "forecast_power_now"),
+            "nidoo/solar/forecast_power_now"
         );
     }
 
@@ -263,10 +263,10 @@ mod tests {
 
     #[test]
     fn own_config_recognised() {
-        let own = configs("oikos")[0].1.to_string();
+        let own = configs("nidoo")[0].1.to_string();
         assert!(is_own_config(own.as_bytes()));
         assert!(!is_own_config(
-            br#"{"device":{"identifiers":["oikos_weather"]}}"#
+            br#"{"device":{"identifiers":["nidoo_weather"]}}"#
         ));
         assert!(!is_own_config(b"garbage"));
     }

@@ -1,4 +1,4 @@
-//! In-memory retry queue, ported from OikosPush's `NotificationQueue` with an injected clock
+//! In-memory retry queue with an injected clock
 //! (`now` is epoch seconds). The queue never sends: `take_due` hands items out, the caller
 //! puts failures back with `put_back`, and a success is simply not put back.
 

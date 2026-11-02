@@ -9,7 +9,7 @@ use crate::format::{entity_title, is_on, room_name};
 use crate::i18n::Lang;
 
 /// The device the hub publishes its weather entities under.
-const WEATHER_DEVICE: &str = "oikos_weather";
+const WEATHER_DEVICE: &str = "nidoo_weather";
 
 /// An open door or window.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,7 +293,7 @@ mod tests {
         let mut offline = temp("off", 30.0, "salon");
         offline.state.availability = Availability::Offline;
         let mut weather = temp("w", 9.0, "salon");
-        weather.device_id = Some("oikos_weather".into());
+        weather.device_id = Some("nidoo_weather".into());
         let h = house(vec![
             temp("a", 18.0, "salon"),
             temp("b", 20.0, "chambre"),

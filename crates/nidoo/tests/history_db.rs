@@ -1,7 +1,7 @@
 //! Database-backed tests for the history layer.
 //!
 //! These tests need a reachable TimescaleDB. Set
-//! `TEST_DATABASE_URL=postgres://oikos:change-me@localhost:5432/oikos` to run them against
+//! `TEST_DATABASE_URL=postgres://nidoo:change-me@localhost:5432/nidoo` to run them against
 //! the compose file in `deploy/timescaledb/`. Without the variable each test prints
 //! `skipping: TEST_DATABASE_URL unset` and returns, so the suite stays green on machines
 //! without a database.
@@ -732,7 +732,7 @@ mod learning {
         tokio::task::JoinHandle<()>,
     ) {
         let mut cfg = Config::default();
-        cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+        cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
         cfg.climate.enabled = true;
         cfg.flows.timezone = Some("UTC".to_owned());
         let (tx, rx) = mpsc::channel(256);
@@ -745,7 +745,7 @@ mod learning {
         )
         .expect("fixture");
         hub.ingest(
-            "oikos/climate/daikin_192_168_1_150/climate/config",
+            "nidoo/climate/daikin_192_168_1_150/climate/config",
             &fixture,
         );
         let id = hub

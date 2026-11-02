@@ -43,7 +43,7 @@ pub fn load(dir: &Path) -> Option<Bundled> {
 /// The broker configuration shipped to the bundled Mosquitto; written once, then the user's.
 const MOSQUITTO_CONF: &str = include_str!("../../assets/mosquitto.conf");
 /// Fixed user and database names of the bundled stack.
-const BUNDLED_NAME: &str = "oikos";
+const BUNDLED_NAME: &str = "nidoo";
 /// Mosquitto's PBKDF2 iteration count for `$7$` hashes.
 const PBKDF2_ROUNDS: u32 = 101;
 const SECRET_LEN: usize = 24;
@@ -155,8 +155,8 @@ mod tests {
             .try_into()
             .unwrap();
         assert_eq!(
-            mosquitto_password_line("oikos", "correct horse", &salt),
-            "oikos:$7$101$8ByG83gjOOd8TqHW$pYBnuy3hWyF7SI1EMLZE3/NTahEnAorkGhzthwFEyTulx8mn9VkqQdIM/2/6a0mrHH7T5QDY+SgGWTmJr899ZA=="
+            mosquitto_password_line("nidoo", "correct horse", &salt),
+            "nidoo:$7$101$8ByG83gjOOd8TqHW$pYBnuy3hWyF7SI1EMLZE3/NTahEnAorkGhzthwFEyTulx8mn9VkqQdIM/2/6a0mrHH7T5QDY+SgGWTmJr899ZA=="
         );
     }
 
@@ -174,20 +174,20 @@ mod tests {
         let dir = tmp.path();
         assert_eq!(init_bundled(dir, None).unwrap(), InitOutcome::Created);
         let b = load(dir).unwrap();
-        assert_eq!(b.mqtt_user, "oikos");
-        assert_eq!(b.db_user, "oikos");
-        assert_eq!(b.db_name, "oikos");
+        assert_eq!(b.mqtt_user, "nidoo");
+        assert_eq!(b.db_user, "nidoo");
+        assert_eq!(b.db_name, "nidoo");
         assert_eq!(read(dir, "bundled/db-password"), b.db_password);
         let passwd = read(dir, "mosquitto/config/passwd");
         let line = passwd.trim_end();
-        assert!(line.starts_with("oikos:$7$101$"));
+        assert!(line.starts_with("nidoo:$7$101$"));
         let salt: [u8; 12] = STANDARD
             .decode(line.split('$').nth(3).unwrap())
             .unwrap()
             .try_into()
             .unwrap();
         assert_eq!(
-            mosquitto_password_line("oikos", &b.mqtt_password, &salt),
+            mosquitto_password_line("nidoo", &b.mqtt_password, &salt),
             line
         );
         assert!(read(dir, "mosquitto/config/mosquitto.conf").contains("allow_anonymous false"));
@@ -289,7 +289,7 @@ mod tests {
             .try_into()
             .unwrap();
         assert_eq!(
-            mosquitto_password_line("oikos", &b.mqtt_password, &salt),
+            mosquitto_password_line("nidoo", &b.mqtt_password, &salt),
             passwd.trim_end()
         );
     }

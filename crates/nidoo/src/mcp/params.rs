@@ -178,7 +178,7 @@ pub struct GetFlowParams {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SetFlowParams {
     /// The whole flow; it replaces any flow with the same `id` (retained on
-    /// `oikos/automation/<id>`) and is checked before it is saved, so a refusal names what to
+    /// `nidoo/automation/<id>`) and is checked before it is saved, so a refusal names what to
     /// fix. Fields: `id` (1 to 64 characters of `a-z`, `0-9`, `_` and `-`), `name` (free text),
     /// `description` (optional), `enabled` (default `true`; a disabled flow is kept but never
     /// runs), `mode`, `nodes` and `edges`.

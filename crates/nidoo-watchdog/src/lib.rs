@@ -1,5 +1,4 @@
-//! Gateway health and broker ACL watchdogs: pure translators ported from OikosPush's
-//! `gateway_health_watchdog.py` and `broker_acl_watchdog.py`.
+//! Gateway health and broker ACL watchdogs: pure translators.
 //!
 //! Each watchdog takes the clock as an argument and returns the v1 push alert as JSON; the
 //! caller hands it to the push service (`source` `system`). [`tail`] feeds the ACL watchdog

@@ -1297,7 +1297,7 @@ mod tests {
     #[tokio::test]
     async fn settings_change_resets_correction() {
         let mut cfg = crate::config::Config::default();
-        cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+        cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
         cfg.climate.enabled = true;
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let hub = Hub::new(&cfg, tx);
@@ -1306,7 +1306,7 @@ mod tests {
             "../nidoo-core/tests/fixtures/discovery/climate__daikin_192_168_1_150__climate.json",
         );
         hub.ingest(
-            "oikos/climate/daikin_192_168_1_150/climate/config",
+            "nidoo/climate/daikin_192_168_1_150/climate/config",
             &std::fs::read(fixture).unwrap(),
         );
         let id = hub.snapshot().entities[0].id.clone();
@@ -1340,7 +1340,7 @@ mod tests {
     #[tokio::test]
     async fn presence_settings_change_resets_state() {
         let mut cfg = crate::config::Config::default();
-        cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+        cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
         cfg.climate.enabled = true;
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let hub = Hub::new(&cfg, tx);
@@ -1349,7 +1349,7 @@ mod tests {
             "../nidoo-core/tests/fixtures/discovery/climate__daikin_192_168_1_150__climate.json",
         );
         hub.ingest(
-            "oikos/climate/daikin_192_168_1_150/climate/config",
+            "nidoo/climate/daikin_192_168_1_150/climate/config",
             &std::fs::read(fixture).unwrap(),
         );
         let id = hub.snapshot().entities[0].id.clone();

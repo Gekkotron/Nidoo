@@ -24,11 +24,11 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// A recorded ZBMINI switch: the `rooms/stair/light` device.
 const SWITCH_FIXTURE: &str = "discovery/switch__0x847127fffe24e322__switch.json";
 const SWITCH_ID: &str = "0x847127fffe24e322_switch_zigbee2mqtt";
-const SWITCH_TOPIC: &str = "oikos/switch/0x847127fffe24e322/switch/config";
+const SWITCH_TOPIC: &str = "nidoo/switch/0x847127fffe24e322/switch/config";
 /// The same device's link-quality sensor: it reads the same state topic as the switch.
 const LINKQUALITY_FIXTURE: &str = "discovery/sensor__0x847127fffe24e322__linkquality.json";
 const LINKQUALITY_ID: &str = "0x847127fffe24e322_linkquality_zigbee2mqtt";
-const LINKQUALITY_TOPIC: &str = "oikos/sensor/0x847127fffe24e322/linkquality/config";
+const LINKQUALITY_TOPIC: &str = "nidoo/sensor/0x847127fffe24e322/linkquality/config";
 
 fn fixtures() -> PathBuf {
     PathBuf::from(concat!(
@@ -44,7 +44,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn config() -> Config {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg
 }
 
@@ -58,10 +58,10 @@ fn switch_state_topic() -> String {
 }
 
 /// The LED and the motion sensor the reference flow talks to.
-const LED_TOPIC: &str = "oikos/light/0x60a423fffe94d1c6/light/config";
+const LED_TOPIC: &str = "nidoo/light/0x60a423fffe94d1c6/light/config";
 const LED_FIXTURE: &str = "discovery/light__0x60a423fffe94d1c6__light.json";
 const LED_ID: &str = "0x60a423fffe94d1c6_light_zigbee2mqtt";
-const MOTION_TOPIC: &str = "oikos/binary_sensor/0x00158d008b5a2d65/occupancy/config";
+const MOTION_TOPIC: &str = "nidoo/binary_sensor/0x00158d008b5a2d65/occupancy/config";
 const MOTION_FIXTURE: &str = "discovery/binary_sensor__0x00158d008b5a2d65__occupancy.json";
 const MOTION_ID: &str = "0x00158d008b5a2d65_occupancy_zigbee2mqtt";
 
@@ -283,7 +283,7 @@ async fn patch_override_then_snapshot_reflects_it() {
     assert_eq!(view["kind"], "light");
     assert_eq!(view["ui"]["favorite"], true);
     let published = server.publisher.try_recv().expect("the override publish");
-    assert_eq!(published.topic, format!("oikos/ui/{SWITCH_ID}"));
+    assert_eq!(published.topic, format!("nidoo/ui/{SWITCH_ID}"));
     assert!(published.retain);
 
     let snapshot: Value = server
@@ -406,7 +406,7 @@ async fn put_areas_and_list_ignored() {
     assert_eq!(stair["name"], "Stair");
     assert_eq!(stair["order"], 2);
     let published = server.publisher.try_recv().expect("the areas publish");
-    assert_eq!(published.topic, "oikos/ui/_areas");
+    assert_eq!(published.topic, "nidoo/ui/_areas");
     assert!(published.retain);
 
     let ignored = server.get("/api/v1/ignored").await;
@@ -420,7 +420,7 @@ async fn patch_area_renames_and_keeps_the_app_fields() {
     let mut server = Server::start().await;
     server.online();
     server.hub.ingest(
-        "oikos/ui/_areas",
+        "nidoo/ui/_areas",
         br#"{"areas":[{"id":"dehors","name":"Dehors","order":7,"groupNames":{"cover":"Volets"}}]}"#,
     );
 
@@ -441,7 +441,7 @@ async fn patch_area_renames_and_keeps_the_app_fields() {
         .expect("the renamed area");
     assert_eq!(dehors["name"], "Outdoor");
     let published = server.publisher.try_recv().expect("the areas publish");
-    assert_eq!(published.topic, "oikos/ui/_areas");
+    assert_eq!(published.topic, "nidoo/ui/_areas");
     assert_eq!(
         published.payload,
         r#"{"areas":[{"id":"dehors","name":"Outdoor","order":7,"groupNames":{"cover":"Volets"}}]}"#
@@ -490,7 +490,7 @@ async fn rename_keeps_group_fields() {
     let mut server = Server::start().await;
     server.online();
     server.hub.ingest(
-        "oikos/ui/_areas",
+        "nidoo/ui/_areas",
         br#"{"areas":[{"id":"dehors","name":"Dehors","groupNames":{"cover":"Volets"}}]}"#,
     );
 
@@ -611,7 +611,7 @@ async fn cors_is_open_to_any_origin() {
 
 // ----- push alerts -----
 
-const HISTORY_TOPIC: &str = "oikos/push/history";
+const HISTORY_TOPIC: &str = "nidoo/push/history";
 const ALERT_ENTRY: &str = r#"{"v":1,"id":"frigate-front-1696","channel":"camera","severity":"warning","title":"Front Door","body":"Person in Porch","actions":[{"id":"disarm","label":"Disarm"}],"silent":false,"sent_at":1760880000,"source":"frigate"}"#;
 
 fn history_payload() -> Vec<u8> {
@@ -684,7 +684,7 @@ async fn alert_action_publishes_and_404s() {
         .expect("POST");
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     let published = server.publisher.recv().await.expect("a publish");
-    assert_eq!(published.topic, "oikos/push/responses");
+    assert_eq!(published.topic, "nidoo/push/responses");
 
     let response = server
         .client
@@ -1767,8 +1767,8 @@ async fn http_put_virtual_round_trips() {
     assert_eq!(
         topics,
         [
-            "oikos/switch/virtual/force_heating/config",
-            "oikos/virtual/force_heating"
+            "nidoo/switch/virtual/force_heating/config",
+            "nidoo/virtual/force_heating"
         ]
     );
     let again = server.client.delete(&url).send().await.expect("DELETE");
@@ -1824,7 +1824,7 @@ async fn main_control_patch_rejects_unknown_control() {
     let mut server = Server::start().await;
     server.online();
     server.hub.ingest(
-        "oikos/lock/0x00158d0001a2b3c4/lock/config",
+        "nidoo/lock/0x00158d0001a2b3c4/lock/config",
         &fixture("discovery/lock__0x00158d0001a2b3c4__lock.json"),
     );
     let lock_id = "0x00158d0001a2b3c4_lock_zigbee2mqtt";
@@ -1860,7 +1860,7 @@ async fn main_control_patch_rejects_unknown_control() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-const CAMERA_TOPIC: &str = "oikos/camera/porch/config";
+const CAMERA_TOPIC: &str = "nidoo/camera/porch/config";
 const CAMERA_ID: &str = "porch_camera";
 
 fn camera_config() -> Vec<u8> {
@@ -2083,7 +2083,7 @@ async fn apply_returns_report_json() {
     assert_eq!(report["actions"][0]["outcome"], "skipped");
 }
 
-const DAIKIN_TOPIC: &str = "oikos/climate/daikin_192_168_1_150/climate/config";
+const DAIKIN_TOPIC: &str = "nidoo/climate/daikin_192_168_1_150/climate/config";
 const DAIKIN_FIXTURE: &str = "discovery/climate__daikin_192_168_1_150__climate.json";
 
 /// A server with `[climate] enabled`, the broker link up and one Daikin placed in `living`.
@@ -2323,7 +2323,7 @@ async fn get_alarm_returns_view() {
     assert_eq!(res.status(), StatusCode::OK);
     let body: Value = res.json().await.expect("json");
     assert_eq!(body["enabled"], false);
-    assert_eq!(body["entity_id"], "oikos_alarm_house");
+    assert_eq!(body["entity_id"], "nidoo_alarm_house");
 }
 
 #[tokio::test]

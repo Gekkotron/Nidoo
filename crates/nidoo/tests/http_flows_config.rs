@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-const MOTION_TOPIC: &str = "oikos/binary_sensor/0x00158d008b5a2d65/occupancy/config";
+const MOTION_TOPIC: &str = "nidoo/binary_sensor/0x00158d008b5a2d65/occupancy/config";
 const MOTION_FIXTURE: &str = "discovery/binary_sensor__0x00158d008b5a2d65__occupancy.json";
 const MOTION_ID: &str = "0x00158d008b5a2d65_occupancy_zigbee2mqtt";
 
@@ -35,7 +35,7 @@ fn fixture(name: &str) -> Vec<u8> {
 async fn test_app(point: Option<(f64, f64)>) -> App {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg.flows.latitude = point.map(|p| p.0);
     cfg.flows.longitude = point.map(|p| p.1);
     let (tx, mut publisher) = mpsc::channel(64);

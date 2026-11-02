@@ -136,7 +136,7 @@ impl NidooMcp {
         })
     }
 
-    /// Replaces the declared rooms (retained on `oikos/ui/_areas`) and returns the resulting
+    /// Replaces the declared rooms (retained on `nidoo/ui/_areas`) and returns the resulting
     /// list. A room kept by id keeps the `icon`, group names, group favourites and other
     /// fields you leave out.
     #[tool(name = "set_areas", annotations(idempotent_hint = true))]
@@ -262,7 +262,7 @@ impl NidooMcp {
         }))
     }
 
-    /// Changes fields of the entity's override (the Android app's `oikos/ui/<id>` document,
+    /// Changes fields of the entity's override (the Android app's `nidoo/ui/<id>` document,
     /// retained) and returns the entity as it now appears. Unknown fields and invalid values
     /// are refused and nothing is written.
     #[tool(name = "set_override", annotations(idempotent_hint = true))]
@@ -361,7 +361,7 @@ impl NidooMcp {
 
     /// Creates or replaces a group: one entity the hub owns, as `group_<id>`, that fans commands
     /// out to its members and presents their combined state. Its definition is retained on
-    /// `oikos/group/<id>/definition`; a member of another kind than the group's is flagged.
+    /// `nidoo/group/<id>/definition`; a member of another kind than the group's is flagged.
     #[tool(name = "set_group", annotations(idempotent_hint = true))]
     async fn set_group(
         &self,
@@ -392,7 +392,7 @@ impl NidooMcp {
 
     /// Creates or replaces a network watch: a device pinged by the hub, presented as the
     /// `binary_sensor` `network_<id>` (connected after one reply, disconnected after three missed
-    /// pings). Its definition is retained on `oikos/network/<id>/definition`.
+    /// pings). Its definition is retained on `nidoo/network/<id>/definition`.
     #[tool(name = "set_network_watch", annotations(idempotent_hint = true))]
     async fn set_network_watch(
         &self,

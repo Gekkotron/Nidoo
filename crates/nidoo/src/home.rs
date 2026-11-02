@@ -256,20 +256,20 @@ mod tests {
 
     fn registry() -> Registry {
         let mut reg = Registry::new(RegistryConfig {
-            discovery_prefixes: vec!["oikos".to_owned()],
+            discovery_prefixes: vec!["nidoo".to_owned()],
             ..RegistryConfig::default()
         });
         for (topic, file) in [
             (
-                "oikos/sensor/0x00124b0008fd6568/temperature_1/config",
+                "nidoo/sensor/0x00124b0008fd6568/temperature_1/config",
                 "sensor__0x00124b0008fd6568__temperature_1.json",
             ),
             (
-                "oikos/sensor/0x00124b0008fd6568/humidity_1/config",
+                "nidoo/sensor/0x00124b0008fd6568/humidity_1/config",
                 "sensor__0x00124b0008fd6568__humidity_1.json",
             ),
             (
-                "oikos/select/0x000d6ffffe9d44e4/indicator_mode/config",
+                "nidoo/select/0x000d6ffffe9d44e4/indicator_mode/config",
                 "select__0x000d6ffffe9d44e4__indicator_mode.json",
             ),
         ] {
@@ -503,6 +503,6 @@ mod tests {
 
     #[test]
     fn topic_sits_beside_areas() {
-        assert_eq!(topic("oikos/ui"), "oikos/ui/_home");
+        assert_eq!(topic("nidoo/ui"), "nidoo/ui/_home");
     }
 }

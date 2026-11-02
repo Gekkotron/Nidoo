@@ -140,7 +140,7 @@ fn push_transport(cfg: &crate::config::PushConfig) -> Option<Arc<dyn FcmTranspor
 }
 
 /// The `install_id` the web sends in a reply; the app sends its own install id.
-const WEB_INSTALL_ID: &str = "oikos-web";
+const WEB_INSTALL_ID: &str = "nidoo-web";
 
 /// The reply the app's `ReplyWorker` publishes, field order included.
 #[derive(serde::Serialize)]
@@ -371,7 +371,7 @@ impl Hub {
                 .discovery_prefixes
                 .first()
                 .cloned()
-                .unwrap_or_else(|| "oikos".to_owned()),
+                .unwrap_or_else(|| "nidoo".to_owned()),
             push,
             alerts: Mutex::new(alerts),
             frigate: cfg.frigate.bridge_settings().map(|settings| {

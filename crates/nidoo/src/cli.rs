@@ -37,9 +37,9 @@ enum RawCommand {
     },
     /// Create the bundled broker and database credentials, then exit.
     InitBundled,
-    /// One-off: move the `oikos` retained messages, database rows, database and role to
+    /// One-off: move the `nidoo` retained messages, database rows, database and role to
     /// `nidoo`. Without a flag it is a dry run that writes nothing.
-    #[command(name = "migrate-oikos")]
+    #[command(name = "migrate-nidoo")]
     Migrate {
         /// Do the switch-over (the hub must be stopped; needs `--backup`).
         #[arg(long, conflicts_with_all = ["verify", "restore"], requires = "backup")]
@@ -184,8 +184,8 @@ mod tests {
     fn data_flag_and_env() {
         figment::Jail::expect_with(|jail| {
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "--data", "/srv/oikos"]).unwrap(),
-                run(None, "/srv/oikos")
+                Cli::try_parse_from(["nidoo", "--data", "/srv/nidoo"]).unwrap(),
+                run(None, "/srv/nidoo")
             );
             assert_eq!(
                 Cli::try_parse_from(["nidoo", "run", "--data", "d"]).unwrap(),
@@ -203,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn data_dir_falls_back_to_oikos_env() {
+    fn data_dir_falls_back_to_nidoo_env() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("OIKOS_DATA_DIR", "/data");
             assert_eq!(Cli::try_parse_from(["nidoo"]).unwrap(), run(None, "/data"));
@@ -285,7 +285,7 @@ mod tests {
     fn migrate_defaults_to_dry_run() {
         figment::Jail::expect_with(|_| {
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "migrate-oikos"]).unwrap(),
+                Cli::try_parse_from(["nidoo", "migrate-nidoo"]).unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::DryRun,
@@ -296,7 +296,7 @@ mod tests {
                 }
             );
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "--data", "d", "migrate-oikos", "--verify"]).unwrap(),
+                Cli::try_parse_from(["nidoo", "--data", "d", "migrate-nidoo", "--verify"]).unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::Verify,
@@ -313,9 +313,9 @@ mod tests {
     #[test]
     fn migrate_apply_requires_backup() {
         figment::Jail::expect_with(|_| {
-            assert!(Cli::try_parse_from(["nidoo", "migrate-oikos", "--apply"]).is_err());
+            assert!(Cli::try_parse_from(["nidoo", "migrate-nidoo", "--apply"]).is_err());
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "migrate-oikos", "--apply", "--backup", "b.jsonl"])
+                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--apply", "--backup", "b.jsonl"])
                     .unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
@@ -329,7 +329,7 @@ mod tests {
             assert!(
                 Cli::try_parse_from([
                     "nidoo",
-                    "migrate-oikos",
+                    "migrate-nidoo",
                     "--apply",
                     "--verify",
                     "--backup",
@@ -345,7 +345,7 @@ mod tests {
     fn migrate_backup_conflicts_with_verify() {
         figment::Jail::expect_with(|_| {
             assert!(
-                Cli::try_parse_from(["nidoo", "migrate-oikos", "--verify", "--backup", "b"])
+                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--verify", "--backup", "b"])
                     .is_err()
             );
             Ok(())
@@ -356,7 +356,7 @@ mod tests {
     fn migrate_restore_takes_file() {
         figment::Jail::expect_with(|_| {
             assert_eq!(
-                Cli::try_parse_from(["nidoo", "migrate-oikos", "--restore", "b.jsonl"]).unwrap(),
+                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--restore", "b.jsonl"]).unwrap(),
                 Cli::Migrate {
                     args: MigrateArgs {
                         mode: Mode::DryRun,
@@ -367,7 +367,7 @@ mod tests {
                 }
             );
             assert!(
-                Cli::try_parse_from(["nidoo", "migrate-oikos", "--restore", "b", "--apply"])
+                Cli::try_parse_from(["nidoo", "migrate-nidoo", "--restore", "b", "--apply"])
                     .is_err()
             );
             Ok(())

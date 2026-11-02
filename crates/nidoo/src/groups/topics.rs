@@ -117,27 +117,27 @@ mod tests {
     #[test]
     fn config_topic_follows_the_component() {
         assert_eq!(
-            config_topic("oikos", Kind::Climate, "water_tank"),
-            "oikos/climate/group/water_tank/config"
+            config_topic("nidoo", Kind::Climate, "water_tank"),
+            "nidoo/climate/group/water_tank/config"
         );
     }
 
     #[test]
     fn state_topic_is_distinct_from_config_and_definition() {
-        assert_eq!(state_topic("oikos", "lights"), "oikos/group/lights");
+        assert_eq!(state_topic("nidoo", "lights"), "nidoo/group/lights");
         assert_ne!(
-            state_topic("oikos", "lights"),
-            config_topic("oikos", Kind::Light, "lights")
+            state_topic("nidoo", "lights"),
+            config_topic("nidoo", Kind::Light, "lights")
         );
         assert_eq!(
-            definition_topic("oikos", "lights"),
-            "oikos/group/lights/definition"
+            definition_topic("nidoo", "lights"),
+            "nidoo/group/lights/definition"
         );
         assert_eq!(
-            availability_topic("oikos", "lights"),
-            "oikos/group/lights/avail"
+            availability_topic("nidoo", "lights"),
+            "nidoo/group/lights/avail"
         );
-        assert_eq!(migration_marker_topic("oikos"), "oikos/group/_migrated");
+        assert_eq!(migration_marker_topic("nidoo"), "nidoo/group/_migrated");
         assert_eq!(unique_id("lights"), "group_lights");
     }
 
@@ -145,18 +145,18 @@ mod tests {
     fn is_config_topic_matches_every_in_scope_kind() {
         for kind in KINDS {
             assert!(is_config_topic(
-                "oikos",
+                "nidoo",
                 "g",
-                &config_topic("oikos", kind, "g")
+                &config_topic("nidoo", kind, "g")
             ));
         }
         assert!(!is_config_topic(
-            "oikos",
+            "nidoo",
             "g",
-            "oikos/switch/virtual/g/config"
+            "nidoo/switch/virtual/g/config"
         ));
-        assert!(!is_config_topic("oikos", "g", "oikos/ui/group_g"));
-        assert!(!is_config_topic("oikos", "g", "oikos/light/group/h/config"));
+        assert!(!is_config_topic("nidoo", "g", "nidoo/ui/group_g"));
+        assert!(!is_config_topic("nidoo", "g", "nidoo/light/group/h/config"));
     }
 
     #[test]

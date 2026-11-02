@@ -18,7 +18,7 @@ wasm_bindgen_test_configure!(run_in_browser);
 mod fetch_stub;
 use fetch_stub::FetchStub;
 
-const SKIPPED_KEY: &str = "oikos.setup.skipped";
+const SKIPPED_KEY: &str = "nidoo.setup.skipped";
 
 struct Mounted {
     host: web_sys::Element,
@@ -116,7 +116,7 @@ async fn alarm_switch_needs_no_restart() {
     let stub = FetchStub::install();
     let view = AlarmView {
         enabled: false,
-        entity_id: "alarm_control_panel.oikos_alarm_house".into(),
+        entity_id: "alarm_control_panel.nidoo_alarm_house".into(),
         state: "disarmed".into(),
         mode: None,
         source: None,

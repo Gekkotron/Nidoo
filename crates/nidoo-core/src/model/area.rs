@@ -1,4 +1,4 @@
-//! Areas (rooms) retained on `oikos/ui/_areas`, as the app's `Area` and `AreasDocument`.
+//! Areas (rooms) retained on `nidoo/ui/_areas`, as the app's `Area` and `AreasDocument`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,7 +32,7 @@ pub struct Area {
     pub extra: BTreeMap<String, Value>,
 }
 
-/// Retained payload of `oikos/ui/_areas`.
+/// Retained payload of `nidoo/ui/_areas`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(default)]

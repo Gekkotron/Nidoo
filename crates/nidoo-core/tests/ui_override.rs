@@ -1,4 +1,4 @@
-//! `UiOverride` round-trips the app's retained `oikos/ui/<unique_id>` JSON.
+//! `UiOverride` round-trips the app's retained `nidoo/ui/<unique_id>` JSON.
 
 mod common;
 

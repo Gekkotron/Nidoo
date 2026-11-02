@@ -6,7 +6,7 @@
 //!   sensor folds into the cover of its device when both read the same `state_topic` and the
 //!   sensor's `value_template` reads exactly one JSON field that the cover's template also reads.
 //!   A binary sensor with `device_class: moving` on a device with exactly one cover folds too.
-//! - Hub groups never fold: they all share the hub's one `oikos_group` device, so a single light
+//! - Hub groups never fold: they all share the hub's one `nidoo_group` device, so a single light
 //!   group would otherwise swallow every number or select group.
 //!
 //! Recomputed from scratch after every change, so the result is the same whatever order the
@@ -20,7 +20,7 @@ use serde_json::Value;
 use crate::model::{Entity, Kind};
 
 /// The device every hub group is published on (`groups/discovery.rs` in nidoo).
-const GROUPS_DEVICE: &str = "oikos_group";
+const GROUPS_DEVICE: &str = "nidoo_group";
 
 /// `unique_id → owner unique_id` for every folded entity.
 pub(super) fn compute(entities: &BTreeMap<String, Entity>) -> BTreeMap<String, String> {

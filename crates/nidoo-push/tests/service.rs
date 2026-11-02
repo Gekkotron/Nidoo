@@ -1,5 +1,4 @@
-//! `PushService` behaviour, ported from OikosPush `tests/test_service.py` (minus the
-//! MQTT-handler and persistence cases) plus the hub-specific first-sync rules.
+//! `PushService` behaviour, including the hub-specific first-sync rules.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -16,8 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 const NOW: u64 = 1_700_000_000;
-const P: &str = "oikos/push";
-const L: &str = "oikos-push";
+const P: &str = "nidoo/push";
 
 thread_local! {
     static START: Cell<Option<Instant>> = const { Cell::new(None) };
@@ -122,7 +120,6 @@ struct Harness {
 fn settings() -> PushSettings {
     PushSettings {
         prefix: P.into(),
-        legacy_prefix: L.into(),
         retry_interval: 60,
         max_retries: 10,
         history_size: 100,
@@ -252,55 +249,7 @@ async fn first_boot_never_publishes_an_empty_history() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn legacy_history_seeds_once_when_new_is_empty() {
-    let mut h = harness();
-    let legacy = json!([{"v": 1, "id": "leg", "title": "L", "sent_at": NOW}]);
-    h.svc.on_connected();
-    h.svc
-        .on_message(&format!("{L}/history"), legacy.to_string().as_bytes(), true);
-    h.svc.on_subscribed();
-    advance(2.0).await;
-    let pubs = h.history_publishes();
-    assert_eq!(pubs.len(), 1);
-    let published: Value = serde_json::from_str(&pubs[0].payload).unwrap();
-    assert_eq!(published, legacy);
-
-    // Second connection: the broker replays both retained lists; the legacy one has moved on.
-    h.svc.on_connected();
-    let ours = h.history_publishes();
-    assert_eq!(ours.len(), 1, "a reconnect republishes the list");
-    let other = json!([{"v": 1, "id": "leg2", "title": "L2", "sent_at": NOW}]);
-    h.svc
-        .on_message(&format!("{L}/history"), other.to_string().as_bytes(), true);
-    h.svc
-        .on_message(&format!("{P}/history"), ours[0].payload.as_bytes(), true);
-    h.svc.on_subscribed();
-    advance(2.0).await;
-    assert!(h.history_publishes().is_empty());
-    h.svc
-        .submit("t", &json!({"v": 1, "id": "x", "title": "X"}))
-        .unwrap();
-    assert_eq!(ids(&h.history_publishes()[0]), ["x", "leg"]);
-}
-
-#[tokio::test(start_paused = true)]
-async fn retained_empty_array_blocks_legacy_seed() {
-    let mut h = harness();
-    h.svc.on_connected();
-    h.svc.on_message(&format!("{P}/history"), b"[]", true);
-    let legacy = json!([{"v": 1, "id": "leg", "title": "L", "sent_at": NOW}]).to_string();
-    h.svc
-        .on_message(&format!("{L}/history"), legacy.as_bytes(), true);
-    h.svc.on_subscribed();
-    advance(2.0).await;
-    let pubs = h.history_publishes();
-    assert_eq!(pubs.len(), 1);
-    assert_eq!(pubs[0].payload, "[]");
-}
-
-#[tokio::test(start_paused = true)]
-async fn missing_cleared_or_non_array_history_still_seeds() {
-    let legacy = json!([{"v": 1, "id": "leg", "title": "L", "sent_at": NOW}]);
+async fn missing_cleared_or_non_array_history_starts_empty() {
     for new in [
         None,
         Some(&b""[..]),
@@ -312,13 +261,11 @@ async fn missing_cleared_or_non_array_history_still_seeds() {
         if let Some(raw) = new {
             h.svc.on_message(&format!("{P}/history"), raw, true);
         }
-        h.svc
-            .on_message(&format!("{L}/history"), legacy.to_string().as_bytes(), true);
         h.svc.on_subscribed();
         advance(2.0).await;
         let pubs = h.history_publishes();
         assert_eq!(pubs.len(), 1, "{new:?}");
-        assert_eq!(ids(&pubs[0]), ["leg"], "{new:?}");
+        assert_eq!(pubs[0].payload, "[]", "{new:?}");
     }
 }
 
@@ -363,24 +310,6 @@ async fn stale_settle_timer_is_ignored() {
     h.svc.on_subscribed();
     advance(2.0).await;
     assert_eq!(h.svc.status().state, PushState::Ready);
-}
-
-#[tokio::test(start_paused = true)]
-async fn same_token_on_legacy_and_new_topic_is_sent_once_and_cleared_on_both() {
-    let mut h = harness().ready().await;
-    h.register(&tok("a"), "t1");
-    h.register(&format!("{L}/tokens/a"), "t1");
-    assert_eq!(h.svc.status().installs, 2);
-    h.fcm.script("t1", vec![Outcome::Invalid]);
-    h.svc
-        .submit("t", &json!({"v": 1, "id": "a", "title": "A"}))
-        .unwrap();
-    flush().await;
-    assert_eq!(h.fcm.tokens(), ["t1"]);
-    let pubs = h.drain();
-    assert_eq!(clears(&pubs), [format!("{L}/tokens/a"), tok("a")]);
-    assert_eq!(h.svc.status().installs, 0);
-    assert_eq!(h.svc.status().queued, 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -466,56 +395,34 @@ async fn submit_rejects_invalid_payload() {
 // ---------- topics ----------
 
 #[tokio::test(start_paused = true)]
-async fn filters_list_new_and_legacy_topics() {
+async fn filters_list_the_push_topics() {
     let h = harness();
     assert_eq!(
         h.svc.filters(),
         [
-            "oikos/push/notification/+",
-            "oikos/push/tokens/+",
-            "oikos/push/history",
-            "oikos-push/notification/+",
-            "oikos-push/tokens/+",
-            "oikos-push/history",
+            "nidoo/push/notification/+",
+            "nidoo/push/tokens/+",
+            "nidoo/push/history",
         ]
     );
-    assert_eq!(h.svc.history_topic(), "oikos/push/history");
-    assert_eq!(h.svc.responses_topic(), "oikos/push/responses");
+    assert_eq!(h.svc.history_topic(), "nidoo/push/history");
+    assert_eq!(h.svc.responses_topic(), "nidoo/push/responses");
     for t in [
-        "oikos/push/notification/x",
-        "oikos/push/tokens/a",
-        "oikos/push/history",
-        "oikos-push/notification/x",
-        "oikos-push/tokens/a",
-        "oikos-push/history",
+        "nidoo/push/notification/x",
+        "nidoo/push/tokens/a",
+        "nidoo/push/history",
     ] {
         assert!(h.svc.wants(t), "{t}");
     }
     for t in [
-        "oikos/push/responses",
-        "oikos-push/responses",
-        "oikos/push/heartbeat",
-        "oikos/push/other/x",
+        "nidoo/push/responses",
+        "nidoo/push/heartbeat",
+        "nidoo/push/other/x",
         "elsewhere/notification/x",
-        "oikos/light/x/config",
+        "nidoo/light/x/config",
     ] {
         assert!(!h.svc.wants(t), "{t}");
     }
-}
-
-#[tokio::test(start_paused = true)]
-async fn empty_legacy_prefix_disables_legacy_topics() {
-    let h = harness_with(
-        PushSettings {
-            legacy_prefix: String::new(),
-            ..settings()
-        },
-        true,
-    );
-    assert_eq!(h.svc.filters().len(), 3);
-    assert!(!h.svc.wants("oikos-push/notification/x"));
-    assert!(!h.svc.wants("/notification/x"));
-    assert!(!h.svc.wants("/history"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -537,21 +444,6 @@ async fn custom_prefix_drives_every_topic() {
     );
     assert_eq!(h.svc.history_topic(), "home/push/history");
     assert_eq!(h.svc.responses_topic(), "home/push/responses");
-}
-
-#[tokio::test(start_paused = true)]
-async fn legacy_notification_topic_is_handled_like_the_new_one() {
-    let h = harness().ready().await;
-    h.register(&format!("{L}/tokens/a"), "tokA");
-    h.svc.on_message(
-        &format!("{L}/notification/jeedom"),
-        v1(json!({})).to_string().as_bytes(),
-        false,
-    );
-    flush().await;
-    let calls = h.fcm.calls();
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].data["source"], "jeedom");
 }
 
 #[tokio::test(start_paused = true)]

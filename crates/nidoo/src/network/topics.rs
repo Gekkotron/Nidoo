@@ -88,17 +88,17 @@ mod tests {
     #[test]
     fn topics_live_under_the_network_subtree() {
         assert_eq!(
-            definition_topic("oikos", "nas"),
-            "oikos/network/nas/definition"
+            definition_topic("nidoo", "nas"),
+            "nidoo/network/nas/definition"
         );
         assert_eq!(
-            config_topic("oikos", "nas"),
-            "oikos/binary_sensor/network/nas/config"
+            config_topic("nidoo", "nas"),
+            "nidoo/binary_sensor/network/nas/config"
         );
-        assert_eq!(state_topic("oikos", "nas"), "oikos/network/nas");
+        assert_eq!(state_topic("nidoo", "nas"), "nidoo/network/nas");
         assert_eq!(
-            availability_topic("oikos", "nas"),
-            "oikos/network/nas/avail"
+            availability_topic("nidoo", "nas"),
+            "nidoo/network/nas/avail"
         );
     }
 

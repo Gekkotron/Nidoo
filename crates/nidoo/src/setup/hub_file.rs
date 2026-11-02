@@ -236,7 +236,7 @@ mod tests {
             jail.set_env("OIKOS_MQTT__HOST", "192.0.2.5");
             jail.set_env("OIKOS_MQTT__PASSWORD", "123456");
             jail.set_env("OIKOS_MQTT__PORT", "1884");
-            jail.set_env("OIKOS_HISTORY__URL", "postgres://u:p@192.0.2.6/oikos");
+            jail.set_env("OIKOS_HISTORY__URL", "postgres://u:p@192.0.2.6/nidoo");
             jail.set_env("OIKOS_WEATHER__ENABLED", "true");
             let f = HubFile::default().with_bootstrap_env().unwrap();
             let mqtt = f.mqtt.unwrap();
@@ -245,7 +245,7 @@ mod tests {
             assert_eq!(mqtt.password.as_deref(), Some("123456"));
             assert_eq!(
                 f.database_url.as_deref(),
-                Some("postgres://u:p@192.0.2.6/oikos")
+                Some("postgres://u:p@192.0.2.6/nidoo")
             );
             Ok(())
         });

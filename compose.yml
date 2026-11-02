@@ -54,8 +54,8 @@ services:
       init:
         condition: service_completed_successfully
     environment:
-      POSTGRES_USER: oikos
-      POSTGRES_DB: oikos
+      POSTGRES_USER: nidoo
+      POSTGRES_DB: nidoo
     # The password file only exists when init created the bundled
     # credentials. Without it (a hub that already has its own database) the
     # image's entrypoint never sees POSTGRES_PASSWORD_FILE, which it would

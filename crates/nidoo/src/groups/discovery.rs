@@ -243,7 +243,7 @@ pub fn build_config(prefix: &str, id: &str, spec: &GroupSpec, members: &[EntityV
             ("unique_id", json!(unique_id(id))),
             (
                 "device",
-                json!({ "identifiers": ["oikos_group"], "name": "Groups" }),
+                json!({ "identifiers": ["nidoo_group"], "name": "Groups" }),
             ),
             ("availability_topic", json!(availability_topic(prefix, id))),
             ("payload_available", json!("online")),
@@ -332,28 +332,28 @@ mod tests {
 
     #[test]
     fn common_keys() {
-        let config = build_config("oikos", "lights", &spec(Kind::Switch), &[]);
+        let config = build_config("nidoo", "lights", &spec(Kind::Switch), &[]);
         assert_eq!(config["name"], "Living");
         assert_eq!(config["unique_id"], "group_lights");
         assert_eq!(
             config["device"],
-            json!({ "identifiers": ["oikos_group"], "name": "Groups" })
+            json!({ "identifiers": ["nidoo_group"], "name": "Groups" })
         );
-        assert_eq!(config["availability_topic"], "oikos/group/lights/avail");
+        assert_eq!(config["availability_topic"], "nidoo/group/lights/avail");
         assert_eq!(config["payload_available"], "online");
         assert_eq!(config["retain"], true);
-        assert_eq!(config["command_topic"], "oikos/group/lights");
-        assert_eq!(config["state_topic"], "oikos/group/lights");
+        assert_eq!(config["command_topic"], "nidoo/group/lights");
+        assert_eq!(config["state_topic"], "nidoo/group/lights");
     }
 
     #[test]
     fn light_brightness_needs_every_member() {
         let both = [light(true, false), light(true, false)];
-        let config = build_config("oikos", "g", &spec(Kind::Light), &both);
+        let config = build_config("nidoo", "g", &spec(Kind::Light), &both);
         assert_eq!(config["brightness"], true);
         assert_eq!(config["brightness_scale"], 255);
         let mixed = [light(true, false), light(false, false)];
-        let config = build_config("oikos", "g", &spec(Kind::Light), &mixed);
+        let config = build_config("nidoo", "g", &spec(Kind::Light), &mixed);
         assert!(config.get("brightness").is_none());
         assert!(config.get("brightness_command_topic").is_none());
     }
@@ -361,11 +361,11 @@ mod tests {
     #[test]
     fn light_colour_needs_every_member() {
         let one = [light(true, true), light(true, false)];
-        let config = build_config("oikos", "g", &spec(Kind::Light), &one);
+        let config = build_config("nidoo", "g", &spec(Kind::Light), &one);
         assert!(config.get("hs_command_topic").is_none());
         let all = [light(true, true), light(true, true)];
-        let config = build_config("oikos", "g", &spec(Kind::Light), &all);
-        assert_eq!(config["hs_state_topic"], "oikos/group/g");
+        let config = build_config("nidoo", "g", &spec(Kind::Light), &all);
+        assert_eq!(config["hs_state_topic"], "nidoo/group/g");
     }
 
     #[test]
@@ -380,9 +380,9 @@ mod tests {
                 },
             )
         };
-        let config = build_config("oikos", "g", &spec(Kind::Cover), &[with(true), with(true)]);
-        assert_eq!(config["position_topic"], "oikos/group/g");
-        let config = build_config("oikos", "g", &spec(Kind::Cover), &[with(true), with(false)]);
+        let config = build_config("nidoo", "g", &spec(Kind::Cover), &[with(true), with(true)]);
+        assert_eq!(config["position_topic"], "nidoo/group/g");
+        let config = build_config("nidoo", "g", &spec(Kind::Cover), &[with(true), with(false)]);
         assert!(config.get("position_topic").is_none());
     }
 
@@ -405,7 +405,7 @@ mod tests {
             climate(5.0, 30.0, 0.5, &["off", "heat", "auto"]),
             climate(7.0, 28.0, 1.0, &["off", "heat"]),
         ];
-        let config = build_config("oikos", "g", &spec(Kind::Climate), &members);
+        let config = build_config("nidoo", "g", &spec(Kind::Climate), &members);
         assert_eq!(config["min_temp"], 7.0);
         assert_eq!(config["max_temp"], 28.0);
         assert_eq!(config["temp_step"], 1.0);
@@ -414,11 +414,11 @@ mod tests {
 
     #[test]
     fn button_has_no_state_and_no_retain() {
-        let config = build_config("oikos", "g", &spec(Kind::Button), &[]);
+        let config = build_config("nidoo", "g", &spec(Kind::Button), &[]);
         assert_eq!(config["payload_press"], r#"{"type":"press"}"#);
         assert!(config.get("state_topic").is_none());
         assert!(config.get("retain").is_none());
-        assert_eq!(config["availability_topic"], "oikos/group/g/avail");
+        assert_eq!(config["availability_topic"], "nidoo/group/g/avail");
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
             )
         };
         let config = build_config(
-            "oikos",
+            "nidoo",
             "g",
             &spec(Kind::Select),
             &[select(&["a", "b", "c"]), select(&["c", "a"])],
@@ -452,7 +452,7 @@ mod tests {
             )
         };
         let config = build_config(
-            "oikos",
+            "nidoo",
             "g",
             &spec(Kind::Vacuum),
             &[
@@ -484,7 +484,7 @@ mod tests {
             view
         };
         let config = build_config(
-            "oikos",
+            "nidoo",
             "g",
             &spec(Kind::Number),
             &[number(0.0, 100.0, 1.0, "%"), number(10.0, 90.0, 5.0, "%")],
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(config["step"], 5.0);
         assert_eq!(config["unit_of_measurement"], "%");
         let config = build_config(
-            "oikos",
+            "nidoo",
             "g",
             &spec(Kind::Number),
             &[number(0.0, 100.0, 1.0, "%"), number(0.0, 100.0, 1.0, "W")],

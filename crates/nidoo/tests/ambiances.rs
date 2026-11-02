@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 const SWITCH_FIXTURE: &str = "discovery/switch__0x847127fffe24e322__switch.json";
 const SWITCH_ID: &str = "0x847127fffe24e322_switch_zigbee2mqtt";
-const SWITCH_TOPIC: &str = "oikos/switch/0x847127fffe24e322/switch/config";
+const SWITCH_TOPIC: &str = "nidoo/switch/0x847127fffe24e322/switch/config";
 
 fn fixture(name: &str) -> Vec<u8> {
     let dir = PathBuf::from(concat!(
@@ -29,7 +29,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn config() -> Config {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
-    cfg.topics.discovery_prefixes = vec!["oikos".to_owned()];
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     cfg
 }
 
@@ -75,14 +75,14 @@ const VALID: &str = r#"{"id":"a","name":"A","actions":[]}"#;
 #[tokio::test]
 async fn retained_payload_is_listed_and_empty_payload_deletes() {
     let (hub, _rx) = hub();
-    hub.ingest("oikos/ui/ambiances/a", VALID.as_bytes());
+    hub.ingest("nidoo/ui/ambiances/a", VALID.as_bytes());
     let list = hub.ambiances();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, "a");
     assert!(list[0].ambiance.is_some() && list[0].invalid.is_none());
     assert!(hub.ambiance("a").is_some());
 
-    hub.ingest("oikos/ui/ambiances/a", b"");
+    hub.ingest("nidoo/ui/ambiances/a", b"");
     assert!(hub.ambiances().is_empty());
     assert!(hub.ambiance("a").is_none());
 }
@@ -90,7 +90,7 @@ async fn retained_payload_is_listed_and_empty_payload_deletes() {
 #[tokio::test]
 async fn invalid_payload_is_kept_with_reason() {
     let (hub, _rx) = hub();
-    hub.ingest("oikos/ui/ambiances/a", br#"{"id":"a","name":""}"#);
+    hub.ingest("nidoo/ui/ambiances/a", br#"{"id":"a","name":""}"#);
     let list = hub.ambiances();
     assert_eq!(list.len(), 1);
     assert!(list[0].invalid.is_some(), "{list:?}");
@@ -101,7 +101,7 @@ async fn invalid_payload_is_kept_with_reason() {
 async fn topic_id_mismatch_is_invalid() {
     let (hub, _rx) = hub();
     hub.ingest(
-        "oikos/ui/ambiances/a",
+        "nidoo/ui/ambiances/a",
         br#"{"id":"b","name":"B","actions":[]}"#,
     );
     let list = hub.ambiances();
@@ -119,7 +119,7 @@ async fn set_ambiance_publishes_retained_and_lists_it() {
         .expect("set_ambiance");
     assert_eq!(view.id, "a");
     let published = rx.try_recv().expect("a publish");
-    assert_eq!(published.topic, "oikos/ui/ambiances/a");
+    assert_eq!(published.topic, "nidoo/ui/ambiances/a");
     assert!(published.retain);
     assert_eq!(hub.ambiances().len(), 1);
 }
@@ -215,7 +215,7 @@ async fn delete_publishes_an_empty_retained_payload() {
     rx.try_recv().expect("set publish");
     hub.delete_ambiance("a").await.expect("delete");
     let published = rx.try_recv().expect("delete publish");
-    assert_eq!(published.topic, "oikos/ui/ambiances/a");
+    assert_eq!(published.topic, "nidoo/ui/ambiances/a");
     assert!(published.retain && published.payload.is_empty());
     assert!(hub.ambiances().is_empty());
 }
@@ -224,7 +224,7 @@ async fn delete_publishes_an_empty_retained_payload() {
 async fn ingest_broadcasts_ambiances_changed() {
     let (hub, _rx) = hub();
     let mut events = hub.subscribe();
-    hub.ingest("oikos/ui/ambiances/a", VALID.as_bytes());
+    hub.ingest("nidoo/ui/ambiances/a", VALID.as_bytes());
     let event = tokio::time::timeout(Duration::from_secs(1), events.recv())
         .await
         .expect("an event within 1 s")
@@ -237,19 +237,19 @@ async fn ingest_broadcasts_ambiances_changed() {
         other => panic!("{other:?}"),
     }
     // An identical echo changes nothing, so nothing is broadcast.
-    hub.ingest("oikos/ui/ambiances/a", VALID.as_bytes());
+    hub.ingest("nidoo/ui/ambiances/a", VALID.as_bytes());
     assert!(events.try_recv().is_err());
 }
 
 // Applying an ambiance.
 
 const LED_FIXTURE: &str = "discovery/light__0x60a423fffe94d1c6__light.json";
-const LED_TOPIC: &str = "oikos/light/0x60a423fffe94d1c6/light/config";
+const LED_TOPIC: &str = "nidoo/light/0x60a423fffe94d1c6/light/config";
 const LED_ID: &str = "0x60a423fffe94d1c6_light_zigbee2mqtt";
 const LED_STATE_TOPIC: &str = "zigbee2mqtt/rooms/living/led_ceiling";
 const LED_COMMAND_TOPIC: &str = "zigbee2mqtt/rooms/living/led_ceiling/set";
 const TV_FIXTURE: &str = "discovery/light__0x9035eafffec07012__light.json";
-const TV_TOPIC: &str = "oikos/light/0x9035eafffec07012/light/config";
+const TV_TOPIC: &str = "nidoo/light/0x9035eafffec07012/light/config";
 const TV_ID: &str = "0x9035eafffec07012_light_zigbee2mqtt";
 const TV_STATE_TOPIC: &str = "zigbee2mqtt/rooms/living/led_tv";
 
@@ -313,7 +313,7 @@ fn published(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
 /// Stores the ambiance as a retained payload, skipping the writer's checks.
 fn save(hub: &Hub, a: &Ambiance) {
     let payload = serde_json::to_vec(a).expect("serialize");
-    hub.ingest(&format!("oikos/ui/ambiances/{}", a.id), &payload);
+    hub.ingest(&format!("nidoo/ui/ambiances/{}", a.id), &payload);
 }
 
 fn lights(to: Target) -> AmbianceAction {
@@ -447,7 +447,7 @@ async fn vanished_entity_is_skipped_not_fatal() {
 async fn flow_enable_action_enables_flow() {
     let (hub, rx) = led_hub(50, true);
     hub.ingest(
-        "oikos/binary_sensor/0x00158d008b5a2d65/occupancy/config",
+        "nidoo/binary_sensor/0x00158d008b5a2d65/occupancy/config",
         &fixture("discovery/binary_sensor__0x00158d008b5a2d65__occupancy.json"),
     );
     let _log = echo(rx, Arc::clone(&hub), false);
@@ -461,7 +461,7 @@ async fn flow_enable_action_enables_flow() {
         ],
         "edges": [{ "from": "motion", "to": "on" }]
     });
-    hub.ingest("oikos/automation/living", flow.to_string().as_bytes());
+    hub.ingest("nidoo/automation/living", flow.to_string().as_bytes());
     assert!(!hub.flow("living").expect("flow").definition.enabled);
     let action = AmbianceAction::Flow(FlowAction {
         flow: "living".to_owned(),
@@ -569,7 +569,7 @@ async fn apply_unknown_or_invalid_ambiance_is_refused() {
         hub.apply_ambiance("ghost").await,
         Err(HubError::UnknownAmbiance("ghost".to_owned()))
     );
-    hub.ingest("oikos/ui/ambiances/bad", br#"{"id":"bad","name":""}"#);
+    hub.ingest("nidoo/ui/ambiances/bad", br#"{"id":"bad","name":""}"#);
     assert!(matches!(
         hub.apply_ambiance("bad").await,
         Err(HubError::Rejected(_))
@@ -681,18 +681,18 @@ async fn climate_every_zone_reaches_only_active_zones() {
 async fn bridge_switch_and_z2m_group_are_not_category_members() {
     let (hub, rx) = hub_with_timeout(50);
     hub.ingest(
-        "oikos/switch/1221051039810110150109113116116_0x00124b0022983b3e/permit_join/config",
+        "nidoo/switch/1221051039810110150109113116116_0x00124b0022983b3e/permit_join/config",
         &fixture(
             "discovery/switch__1221051039810110150109113116116_0x00124b0022983b3e__permit_join.json",
         ),
     );
     hub.ingest(
-        "oikos/light/1221051039810110150109113116116_1/light/config",
+        "nidoo/light/1221051039810110150109113116116_1/light/config",
         &fixture("discovery/light__1221051039810110150109113116116_1__light.json"),
     );
     // Typed as a plug, so only the bridge rule keeps it out.
     hub.ingest(
-        "oikos/ui/bridge_0x00124b0022983b3e_permit_join_zigbee2mqtt",
+        "nidoo/ui/bridge_0x00124b0022983b3e_permit_join_zigbee2mqtt",
         br#"{"showAs":"plug"}"#,
     );
     let log = echo(rx, Arc::clone(&hub), false);
@@ -830,7 +830,7 @@ async fn a_large_category_does_not_overflow_the_publish_queue() {
         config["state_topic"] = format!("test/bulk{n}").into();
         config["command_topic"] = format!("test/bulk{n}/set").into();
         hub.ingest(
-            &format!("oikos/light/bulk{n}/light/config"),
+            &format!("nidoo/light/bulk{n}/light/config"),
             config.to_string().as_bytes(),
         );
         hub.ingest(&format!("test/bulk{n}"), br#"{"state":"ON"}"#);
@@ -858,7 +858,7 @@ async fn a_large_category_does_not_overflow_the_publish_queue() {
 async fn set_ambiance_refuses_an_alarm_code() {
     let (hub, _rx) = hub();
     hub.ingest(
-        "oikos/alarm_control_panel/jeedom/house_alarm/config",
+        "nidoo/alarm_control_panel/jeedom/house_alarm/config",
         &fixture("discovery/alarm_control_panel__jeedom__house_alarm.json"),
     );
     let arm = device(

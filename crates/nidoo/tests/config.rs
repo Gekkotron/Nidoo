@@ -8,21 +8,20 @@ fn defaults_match_spec() {
     Jail::expect_with(|_jail| {
         let cfg = Config::load(None)?;
         assert_eq!(cfg.mqtt.port, 1883);
-        assert_eq!(cfg.mqtt.client_id, "oikos-os");
+        assert_eq!(cfg.mqtt.client_id, "nidoo");
         assert!(!cfg.mqtt.send_ha_birth);
         assert_eq!(cfg.mqtt.ha_status_topic, "homeassistant/status");
-        assert_eq!(cfg.topics.discovery_prefixes, vec!["oikos".to_string()]);
-        assert_eq!(cfg.topics.ui_prefix, "oikos/ui");
+        assert_eq!(cfg.topics.discovery_prefixes, vec!["nidoo".to_string()]);
+        assert_eq!(cfg.topics.ui_prefix, "nidoo/ui");
         assert_eq!(cfg.topics.z2m_base, "zigbee2mqtt");
-        assert_eq!(cfg.topics.automation_prefix, "oikos/automation");
+        assert_eq!(cfg.topics.automation_prefix, "nidoo/automation");
         assert_eq!(cfg.automation.runs_kept, 20);
         assert_eq!(cfg.http.bind, "0.0.0.0:8081");
         assert_eq!(cfg.commands.confirm_timeout_ms, 5000);
         assert_eq!(cfg.commands.subscription_debounce_ms, 500);
         assert_eq!(cfg.log.level, "info");
         assert!(!cfg.log.json);
-        assert_eq!(cfg.push.prefix, "oikos/push");
-        assert_eq!(cfg.push.legacy_prefix, "oikos-push");
+        assert_eq!(cfg.push.prefix, "nidoo/push");
         assert_eq!(cfg.push.credentials, None);
         assert_eq!(cfg.frigate.url, None);
         assert_eq!(cfg.frigate.user, None);
@@ -67,13 +66,13 @@ fn env_list_and_explicit_path() {
         jail.create_file("custom.toml", "[http]\nbind = \"127.0.0.1:9\"\n")?;
         jail.set_env(
             "OIKOS_TOPICS__DISCOVERY_PREFIXES",
-            r#"["oikos","homeassistant"]"#,
+            r#"["nidoo","homeassistant"]"#,
         );
         let cfg = Config::load(Some(std::path::Path::new("custom.toml")))?;
         assert_eq!(cfg.http.bind, "127.0.0.1:9");
         assert_eq!(
             cfg.topics.discovery_prefixes,
-            vec!["oikos".to_string(), "homeassistant".to_string()]
+            vec!["nidoo".to_string(), "homeassistant".to_string()]
         );
         Ok(())
     });
@@ -189,12 +188,12 @@ fn history_url_from_env_stays_a_string() {
     Jail::expect_with(|jail| {
         jail.set_env(
             "OIKOS_HISTORY__URL",
-            "postgres://oikos:s3cret@192.168.1.20:5432/oikos",
+            "postgres://nidoo:s3cret@192.168.1.20:5432/nidoo",
         );
         let cfg = Config::load(None)?;
         assert_eq!(
             cfg.history.url,
-            "postgres://oikos:s3cret@192.168.1.20:5432/oikos"
+            "postgres://nidoo:s3cret@192.168.1.20:5432/nidoo"
         );
         assert!(cfg.history.enabled());
         Ok(())
@@ -206,7 +205,7 @@ fn history_debug_masks_password() {
     Jail::expect_with(|jail| {
         jail.create_file(
             "oikos.toml",
-            "[history]\nurl = \"postgres://oikos:s3cret@192.168.1.20:5432/oikos\"\n",
+            "[history]\nurl = \"postgres://nidoo:s3cret@192.168.1.20:5432/nidoo\"\n",
         )?;
         let cfg = Config::load(None)?;
         let text = format!("{:?}", cfg.history);
@@ -235,8 +234,7 @@ fn flows_timezone_is_read() {
 fn push_defaults_are_new_topics() {
     Jail::expect_with(|_jail| {
         let push = Config::load(None)?.push;
-        assert_eq!(push.prefix, "oikos/push");
-        assert_eq!(push.legacy_prefix, "oikos-push");
+        assert_eq!(push.prefix, "nidoo/push");
         assert_eq!(push.credentials, None);
         assert_eq!(push.retry_interval, 60);
         assert_eq!(push.max_retries, 10);
@@ -251,12 +249,11 @@ fn push_keys_are_read() {
     Jail::expect_with(|jail| {
         jail.create_file(
             "oikos.toml",
-            "[push]\nprefix = \"home/push\"\nlegacy_prefix = \"\"\n\
+            "[push]\nprefix = \"home/push\"\n\
              credentials = \"/srv/keys/fcm.json\"\nretry_interval = 30\n",
         )?;
         let push = Config::load(None)?.push;
         assert_eq!(push.prefix, "home/push");
-        assert_eq!(push.legacy_prefix, "");
         assert_eq!(
             push.credentials.as_deref(),
             Some(std::path::Path::new("/srv/keys/fcm.json"))
@@ -333,7 +330,7 @@ fn old_push_keys_are_rejected() {
         let text = err.to_string();
         assert!(text.contains("history_topic"), "{text}");
         assert!(
-            text.contains("legacy_prefix"),
+            text.contains("credentials"),
             "the error names the new keys: {text}"
         );
         jail.create_file("oikos.toml", "[push]\nresponses_topic = \"x\"\n")?;
@@ -351,7 +348,7 @@ fn legacy_config_still_loads() {
             "/tests/fixtures/legacy-oikos.toml"
         ));
         let cfg = Config::load(Some(path))?;
-        assert_eq!(cfg.push.prefix, "oikos/push");
+        assert_eq!(cfg.push.prefix, "nidoo/push");
         assert_eq!(cfg.push.credentials, None);
         Ok(())
     });

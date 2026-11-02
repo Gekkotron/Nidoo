@@ -71,7 +71,7 @@ pub fn is_config_topic(prefix: &str, id: &str, topic: &str) -> bool {
 }
 
 fn device() -> Value {
-    json!({ "identifiers": ["oikos_virtual"], "name": "Virtual" })
+    json!({ "identifiers": ["nidoo_virtual"], "name": "Virtual" })
 }
 
 /// The number's bounds with their defaults.
@@ -258,8 +258,8 @@ mod tests {
 
     #[test]
     fn switch_config_echoes_on_its_own_topic() {
-        let config = switch_config("oikos", "force_heating", &spec(VirtualKind::Switch));
-        assert_eq!(config["command_topic"], "oikos/virtual/force_heating");
+        let config = switch_config("nidoo", "force_heating", &spec(VirtualKind::Switch));
+        assert_eq!(config["command_topic"], "nidoo/virtual/force_heating");
         assert_eq!(config["state_topic"], config["command_topic"]);
         assert_eq!(config["retain"], true);
         assert_eq!(config["unique_id"], "virtual_force_heating");
@@ -268,13 +268,13 @@ mod tests {
         assert_eq!(config["name"], "Force heating");
         assert_eq!(
             config["device"],
-            json!({ "identifiers": ["oikos_virtual"], "name": "Virtual" })
+            json!({ "identifiers": ["nidoo_virtual"], "name": "Virtual" })
         );
     }
 
     #[test]
     fn number_config_has_defaults_and_unit() {
-        let config = number_config("oikos", "t", &spec(VirtualKind::Number));
+        let config = number_config("nidoo", "t", &spec(VirtualKind::Number));
         assert_eq!(config["min"], 0.0);
         assert_eq!(config["max"], 100.0);
         assert_eq!(config["step"], 1.0);
@@ -286,7 +286,7 @@ mod tests {
         custom.max = Some(25.0);
         custom.step = Some(0.5);
         custom.unit = Some("°C".to_owned());
-        let config = number_config("oikos", "t", &custom);
+        let config = number_config("nidoo", "t", &custom);
         assert_eq!(config["min"], 5.0);
         assert_eq!(config["max"], 25.0);
         assert_eq!(config["step"], 0.5);
@@ -295,8 +295,8 @@ mod tests {
 
     #[test]
     fn button_config_has_a_command_topic_only() {
-        let config = button_config("oikos", "boost", &spec(VirtualKind::Button));
-        assert_eq!(config["command_topic"], "oikos/virtual/boost");
+        let config = button_config("nidoo", "boost", &spec(VirtualKind::Button));
+        assert_eq!(config["command_topic"], "nidoo/virtual/boost");
         assert_eq!(config["payload_press"], "PRESS");
         assert!(config.get("state_topic").is_none());
         assert!(config.get("retain").is_none());
@@ -305,18 +305,18 @@ mod tests {
     #[test]
     fn topics_follow_the_component() {
         assert_eq!(
-            config_topic("oikos", VirtualKind::Number, "t"),
-            "oikos/number/virtual/t/config"
+            config_topic("nidoo", VirtualKind::Number, "t"),
+            "nidoo/number/virtual/t/config"
         );
         assert!(is_config_topic(
-            "oikos",
+            "nidoo",
             "t",
-            "oikos/button/virtual/t/config"
+            "nidoo/button/virtual/t/config"
         ));
         assert!(!is_config_topic(
-            "oikos",
+            "nidoo",
             "t",
-            "oikos/button/other/t/config"
+            "nidoo/button/other/t/config"
         ));
     }
 
@@ -324,19 +324,19 @@ mod tests {
     fn select_config_lists_options_and_echoes() {
         let mut s = spec(VirtualKind::Select);
         s.options = Some(vec!["home".into(), "away".into(), "night".into()]);
-        let c = select_config("oikos", "house_mode", &s);
-        assert_eq!(c["command_topic"], "oikos/virtual/house_mode");
+        let c = select_config("nidoo", "house_mode", &s);
+        assert_eq!(c["command_topic"], "nidoo/virtual/house_mode");
         assert_eq!(c["state_topic"], c["command_topic"]);
         assert_eq!(c["options"], json!(["home", "away", "night"]));
         assert_eq!(c["retain"], true);
         assert_eq!(
-            config_topic("oikos", VirtualKind::Select, "house_mode"),
-            "oikos/select/virtual/house_mode/config"
+            config_topic("nidoo", VirtualKind::Select, "house_mode"),
+            "nidoo/select/virtual/house_mode/config"
         );
         assert!(is_config_topic(
-            "oikos",
+            "nidoo",
             "house_mode",
-            "oikos/select/virtual/house_mode/config"
+            "nidoo/select/virtual/house_mode/config"
         ));
     }
 

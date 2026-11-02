@@ -24,7 +24,7 @@ pub fn strings(items: &[&str]) -> Vec<String> {
 }
 
 pub fn discovery_topic(topic: &str) -> DiscoveryTopic {
-    match classify(topic, &strings(&["oikos"]), &strings(&["ui", "automation"])) {
+    match classify(topic, &strings(&["nidoo"]), &strings(&["ui", "automation"])) {
         TopicClass::Discovery(t) => t,
         other => panic!("{topic} is not a discovery topic: {other:?}"),
     }
@@ -40,7 +40,7 @@ pub fn entity_from_payload(topic_str: &str, payload: &str) -> Entity {
 
 /// Parses one recorded discovery fixture (file name without `.json`) into an entity.
 pub fn parse_fixture(file_stem: &str) -> Entity {
-    let topic_str = format!("oikos/{}/config", file_stem.replace("__", "/"));
+    let topic_str = format!("nidoo/{}/config", file_stem.replace("__", "/"));
     let payload = fixture(&format!("discovery/{file_stem}.json"));
     entity_from_payload(&topic_str, &payload)
 }
@@ -48,7 +48,7 @@ pub fn parse_fixture(file_stem: &str) -> Entity {
 /// Builds an entity from a hand-written config for `component`.
 pub fn entity(component: &str, config: Value) -> Entity {
     entity_from_payload(
-        &format!("oikos/{component}/test/config"),
+        &format!("nidoo/{component}/test/config"),
         &config.to_string(),
     )
 }
@@ -64,7 +64,7 @@ pub fn all_entities() -> Vec<Entity> {
             .and_then(|s| s.to_str())
             .expect("fixture stem")
             .to_owned();
-        let topic_str = format!("oikos/{}/config", stem.replace("__", "/"));
+        let topic_str = format!("nidoo/{}/config", stem.replace("__", "/"));
         let topic = discovery_topic(&topic_str);
         let payload = std::fs::read(&path).expect("fixture");
         if let Ok(Parsed::Entity(entity)) = parse(&topic, &payload, &topic_str) {

@@ -796,14 +796,14 @@ mod tests {
         let s = claude_code_snippet(ORIGIN);
         assert_eq!(
             s,
-            "claude mcp add --transport http oikos http://192.168.1.10:8081/mcp"
+            "claude mcp add --transport http nidoo http://192.168.1.10:8081/mcp"
         );
     }
 
     #[test]
     fn codex_snippet_has_endpoint() {
         let s = codex_snippet(ORIGIN);
-        assert!(s.starts_with("[mcp_servers.oikos]\n"));
+        assert!(s.starts_with("[mcp_servers.nidoo]\n"));
         assert!(s.contains("url = \"http://192.168.1.10:8081/mcp\""));
     }
 
@@ -812,8 +812,8 @@ mod tests {
         let s = claude_desktop_snippet(ORIGIN);
         assert!(s.lines().count() > 1);
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["mcpServers"]["oikos"]["args"][2], ORIGIN);
-        assert_eq!(v["mcpServers"]["oikos"]["command"], "<path>/nidoo");
+        assert_eq!(v["mcpServers"]["nidoo"]["args"][2], ORIGIN);
+        assert_eq!(v["mcpServers"]["nidoo"]["command"], "<path>/nidoo");
     }
 
     #[test]

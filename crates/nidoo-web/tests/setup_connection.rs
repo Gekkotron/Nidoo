@@ -20,7 +20,7 @@ const OK: &str = r#"{"ok":true,"message":"Connected","detail":null}"#;
 const DB_OK: &str =
     r#"{"ok":true,"message":"Connected","detail":{"history_since":"2026-01-15T08:00:00+00:00"}}"#;
 const STATUS: &str = r#"{"mode":"setup","step":"database","finished":false,"bundled":false,"location":null,"mqtt":null,"database":null,"restarting":false}"#;
-const BUNDLED: &str = r#"{"mode":"setup","step":"mqtt","finished":false,"bundled":true,"location":null,"mqtt":{"host":"localhost","port":1883,"user":"oikos","password":{"set":true},"client_id":null,"z2m_base":null},"database":null,"restarting":false}"#;
+const BUNDLED: &str = r#"{"mode":"setup","step":"mqtt","finished":false,"bundled":true,"location":null,"mqtt":{"host":"localhost","port":1883,"user":"nidoo","password":{"set":true},"client_id":null,"z2m_base":null},"database":null,"restarting":false}"#;
 
 struct Mounted {
     host: web_sys::Element,
@@ -164,7 +164,7 @@ async fn bundled_credentials_prefill_and_keep_the_password() {
     stub.reply("POST", "/api/v1/setup/test/mqtt", 200, OK);
     let m = mount(false, Some(BUNDLED), Applying::new(reload_to));
     tick().await;
-    assert_eq!(input(&m.host, "#mqtt-user").value(), "oikos");
+    assert_eq!(input(&m.host, "#mqtt-user").value(), "nidoo");
     let pw = input(&m.host, "#mqtt-password");
     assert_eq!(pw.type_(), "password");
     assert_eq!(pw.placeholder(), "Saved, enter a new one to replace it");
@@ -232,7 +232,7 @@ async fn saving_the_database_in_setup_mode_starts_applying() {
     assert_eq!(puts, 1);
 }
 
-const SAVED_MQTT: &str = r#"{"mode":"setup","step":"database","finished":false,"bundled":false,"location":null,"mqtt":{"host":"192.0.2.10","port":1883,"user":"oikos","password":{"set":true},"client_id":null,"z2m_base":null},"database":null,"restarting":false}"#;
+const SAVED_MQTT: &str = r#"{"mode":"setup","step":"database","finished":false,"bundled":false,"location":null,"mqtt":{"host":"192.0.2.10","port":1883,"user":"nidoo","password":{"set":true},"client_id":null,"z2m_base":null},"database":null,"restarting":false}"#;
 
 #[wasm_bindgen_test]
 async fn back_after_a_saved_mqtt_step_shows_what_was_saved() {

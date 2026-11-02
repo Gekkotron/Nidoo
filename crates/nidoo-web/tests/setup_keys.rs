@@ -147,7 +147,7 @@ async fn push_upload_sends_the_file_text() {
         "GET",
         "/api/v1/settings/push",
         200,
-        r#"{"service_account":{"set":false},"project_id":null,"prefix":"oikos/push","legacy_prefix":"legacy","retry_interval":30,"max_retries":5,"history_size":100,"history_days":7}"#,
+        r#"{"service_account":{"set":false},"project_id":null,"prefix":"nidoo/push","retry_interval":30,"max_retries":5,"history_size":100,"history_days":7}"#,
     );
     stub.reply(
         "PUT",
@@ -179,7 +179,7 @@ async fn push_upload_sends_the_file_text() {
     settle().await;
     let body = put_body(&stub);
     assert_eq!(body["service_account"], text);
-    assert_eq!(body["prefix"], "oikos/push");
+    assert_eq!(body["prefix"], "nidoo/push");
     assert_eq!(body["history_days"], 7);
 }
 
@@ -274,7 +274,7 @@ async fn a_file_without_project_id_is_not_sent() {
         "GET",
         "/api/v1/settings/push",
         200,
-        r#"{"service_account":{"set":false},"project_id":null,"prefix":"oikos/push","legacy_prefix":"legacy","retry_interval":30,"max_retries":5,"history_size":100,"history_days":7}"#,
+        r#"{"service_account":{"set":false},"project_id":null,"prefix":"nidoo/push","retry_interval":30,"max_retries":5,"history_size":100,"history_days":7}"#,
     );
     let m = mount();
     settle().await;

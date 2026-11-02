@@ -4,18 +4,18 @@
 [mqtt]
 host = "192.168.1.20"
 port = 1883
-user = "oikos"
+user = "nidoo"
 password = "change-me"
-client_id = "oikos-os"
+client_id = "nidoo"
 send_ha_birth = false
 ha_status_topic = "homeassistant/status"
 
 [topics]
-discovery_prefixes = ["oikos"]
-ui_prefix = "oikos/ui"
+discovery_prefixes = ["nidoo"]
+ui_prefix = "nidoo/ui"
 z2m_base = "zigbee2mqtt"
 # Flow definitions are retained JSON documents at <automation_prefix>/<flow id>.
-automation_prefix = "oikos/automation"
+automation_prefix = "nidoo/automation"
 
 [http]
 bind = "0.0.0.0:8081"
@@ -41,10 +41,7 @@ json = false
 # <prefix>/notification/<source>, the app registers on <prefix>/tokens/<installId> and replies
 # on <prefix>/responses, the hub keeps the retained <prefix>/history the web UI shows under Alerts.
 [push]
-prefix = "oikos/push"
-# OikosPush's topics (<legacy>/notification/+, /tokens/+, /history), still read during the
-# switch-over. An empty string turns them off.
-legacy_prefix = "oikos-push"
+prefix = "nidoo/push"
 # The Firebase service-account key file. Left out, the hub uses secrets/firebase.json next to
 # this file when it exists (git-ignored). Without a key the hub keeps the history and sends
 # nothing; an unreadable file is the same, with a warning.
@@ -98,7 +95,7 @@ password = ""
 # pending states the writer keeps when the database is unreachable, before dropping the
 # oldest.
 [history]
-# url = "postgres://oikos:change-me@192.168.1.20:5432/oikos"
+# url = "postgres://nidoo:change-me@192.168.1.20:5432/nidoo"
 # buffer_rows = 100000
 
 # The climate engine (beta, still being tested): learns each room's heating/cooling rules from history (needs [history]),
@@ -106,12 +103,12 @@ password = ""
 # this switch is edited through MCP and the web Climate screen, as retained JSON under `prefix`.
 [climate]
 enabled = false
-# prefix = "oikos/climate"
+# prefix = "nidoo/climate"
 
 # The native alarm (optional, off by default). It is switched on in its settings document (web
 # Settings → Alarm, or MCP and HTTP), not here. `prefix` is the topic prefix of its retained documents.
 # [alarm]
-# prefix = "oikos/alarm"
+# prefix = "nidoo/alarm"
 
 # Rooftop solar forecast from Solcast. The API key is read from secrets/solcast.key next to
 # this config file; `api_key_file = "path"` overrides it (a relative path is resolved against

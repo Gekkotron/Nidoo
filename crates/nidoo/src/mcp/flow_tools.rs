@@ -38,7 +38,7 @@ impl NidooMcp {
 
     /// Creates or replaces an automation: a trigger on an entity's state, optional conditions
     /// and delays, and commands. It is validated against the house (entities must exist and
-    /// support the commands) and saved retained on `oikos/automation/<id>`; the reason of a
+    /// support the commands) and saved retained on `nidoo/automation/<id>`; the reason of a
     /// refusal is returned so you can fix the flow and retry.
     #[tool(name = "set_flow", annotations(idempotent_hint = true))]
     async fn set_flow(

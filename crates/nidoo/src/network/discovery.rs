@@ -23,7 +23,7 @@ pub fn build_config(prefix: &str, id: &str, spec: &NetworkWatchSpec, device_bloc
 
 /// The device block of a watch that is not attached to a device.
 pub fn standalone_device(id: &str, name: &str) -> Value {
-    json!({ "identifiers": [format!("oikos_network_{id}")], "name": name })
+    json!({ "identifiers": [format!("nidoo_network_{id}")], "name": name })
 }
 
 #[cfg(test)]
@@ -40,16 +40,16 @@ mod tests {
             area: None,
             device: None,
         };
-        let config = build_config("oikos", "nas", &spec, standalone_device("nas", "NAS"));
+        let config = build_config("nidoo", "nas", &spec, standalone_device("nas", "NAS"));
         assert_eq!(config["name"], "NAS");
         assert_eq!(config["unique_id"], "network_nas");
-        assert_eq!(config["state_topic"], "oikos/network/nas");
-        assert_eq!(config["availability_topic"], "oikos/network/nas/avail");
+        assert_eq!(config["state_topic"], "nidoo/network/nas");
+        assert_eq!(config["availability_topic"], "nidoo/network/nas/avail");
         assert_eq!(config["payload_on"], "ON");
         assert_eq!(config["payload_off"], "OFF");
         assert_eq!(config["payload_available"], "online");
         assert_eq!(config["payload_not_available"], "offline");
         assert_eq!(config["device_class"], "connectivity");
-        assert_eq!(config["device"]["identifiers"][0], "oikos_network_nas");
+        assert_eq!(config["device"]["identifiers"][0], "nidoo_network_nas");
     }
 }
