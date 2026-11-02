@@ -20,6 +20,10 @@ const LOCAL_THRESHOLD_SECS: u64 = 5 * 60;
 /// How often the hub's watch task checks for an outage that crossed the threshold.
 pub const WATCH_INTERVAL_SECS: u64 = 60;
 
+/// The longest failure reason an alert carries, in characters, before "…": the push
+/// validator drops a `loc` hint whose values exceed its own limit.
+const REASON_MAX_CHARS: usize = 160;
+
 /// How long an outage alert stays relevant, in seconds (a day, like the watchdog alerts).
 const TTL: u64 = 86_400;
 
@@ -45,14 +49,14 @@ impl Service {
         }
     }
 
-    /// The name the user knows the feature by.
+    /// The name the user knows the feature by, as a title starts with it.
     fn label(self) -> &'static str {
         match self {
             Service::Weather => "Weather",
             Service::Solar => "Solar forecast",
-            Service::Broker => "the MQTT broker",
+            Service::Broker => "MQTT broker",
             Service::Zigbee2mqtt => "Zigbee2MQTT",
-            Service::Database => "the database",
+            Service::Database => "Database",
         }
     }
 
@@ -105,9 +109,10 @@ impl Outage {
 
     /// A fetch failed at `now`. The first failure of a run starts the clock; a later one keeps
     /// that start and only updates the reason.
+    /// A reason longer than [`REASON_MAX_CHARS`] is cut there and ends with "…".
     pub fn failed(&mut self, now: u64, reason: &str) {
         self.failing_since.get_or_insert(now);
-        self.reason = reason.to_owned();
+        self.reason = shortened(reason);
     }
 
     /// A fetch succeeded at `now`: ends the outage, and returns the "reachable again" alert
@@ -138,7 +143,7 @@ impl Outage {
             "id": format!("service-{}-down-{since}", service.key()),
             "channel": "system",
             "severity": "warning",
-            "title": format!("{} unreachable", capitalized(service.label())),
+            "title": format!("{} unreachable", service.label()),
             "body": format!(
                 "No answer from {} for {minutes} min: {}",
                 service.provider(),
@@ -162,7 +167,7 @@ impl Outage {
             "id": format!("service-{}-back-{since}", service.key()),
             "channel": "system",
             "severity": "info",
-            "title": format!("{} reachable again", capitalized(service.label())),
+            "title": format!("{} reachable again", service.label()),
             "body": format!(
                 "{} answers again after {}",
                 capitalized(service.provider()),
@@ -184,6 +189,14 @@ fn capitalized(text: &str) -> String {
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     })
+}
+
+/// `reason` cut to [`REASON_MAX_CHARS`] characters plus "…" when longer.
+fn shortened(reason: &str) -> String {
+    match reason.char_indices().nth(REASON_MAX_CHARS) {
+        Some((end, _)) => format!("{}…", &reason[..end]),
+        None => reason.to_owned(),
+    }
 }
 
 /// `45 min`, `1 h 12 min`, `2 h`.
@@ -392,7 +405,48 @@ mod tests {
         let alert = o.tick(T0 + 5 * MIN).expect("down alert");
         assert_eq!(alert["loc"]["args"]["service"], "broker");
         assert_eq!(alert["loc"]["args"]["minutes"], "5");
-        assert_eq!(alert["title"], "The MQTT broker unreachable");
+        assert_eq!(alert["title"], "MQTT broker unreachable");
+        assert_eq!(
+            alert["body"],
+            "No answer from the MQTT broker for 5 min: connection refused"
+        );
+    }
+
+    #[test]
+    fn local_service_titles_read_without_an_article() {
+        let mut o = Outage::new(Service::Database, true);
+        o.failed(T0, "pool timed out");
+        let down = o.tick(T0 + 5 * MIN).expect("down alert");
+        assert_eq!(down["title"], "Database unreachable");
+        assert_eq!(
+            down["body"],
+            "No answer from the database for 5 min: pool timed out"
+        );
+        let back = o.succeeded(T0 + 12 * MIN).expect("back alert");
+        assert_eq!(back["title"], "Database reachable again");
+        assert_eq!(back["body"], "The database answers again after 12 min");
+
+        let mut o = Outage::new(Service::Zigbee2mqtt, true);
+        o.failed(T0, "the bridge is offline");
+        let down = o.tick(T0 + 5 * MIN).expect("down alert");
+        assert_eq!(down["title"], "Zigbee2MQTT unreachable");
+    }
+
+    #[test]
+    fn a_long_reason_is_shortened_and_keeps_the_loc() {
+        let mut o = Outage::new(Service::Database, true);
+        let reason = "é".repeat(300);
+        o.failed(T0, &reason);
+        let alert = o.tick(T0 + 5 * MIN).expect("down alert");
+        let normalized =
+            nidoo_push::normalize::normalize("system", &alert, T0).expect("a valid alert");
+        let loc = normalized.loc.expect("the loc hint was kept");
+        let shown = loc["args"]["reason"].as_str().expect("a reason");
+        assert_eq!(shown, format!("{}…", "é".repeat(REASON_MAX_CHARS)));
+        assert!(shown.chars().count() <= nidoo_push::normalize::LOC_MAX_VALUE);
+        // A reason that fits is kept whole.
+        let fits = "é".repeat(REASON_MAX_CHARS);
+        assert_eq!(shortened(&fits), fits);
     }
 
     #[test]
