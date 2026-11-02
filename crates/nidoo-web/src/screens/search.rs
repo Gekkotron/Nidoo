@@ -98,7 +98,7 @@ where
     }
 }
 
-/// What the words found: counts, room tiles and the cards by room.
+/// What the words found: counts, the cards by room, then the room tiles.
 #[component]
 fn SearchFound(results: Memo<Option<SearchResults>>, query: Memo<String>) -> impl IntoView {
     let lang = use_lang();
@@ -136,6 +136,14 @@ fn SearchFound(results: Memo<Option<SearchResults>>, query: Memo<String>) -> imp
                     {move || search_capped(lang(), shown(), total())}
                 </p>
             </Show>
+            <For
+                each=move || areas.get()
+                key=|a| a.clone()
+                children={
+                    let mark = mark.clone();
+                    move |area| view! { <SearchRoom area results mark=mark.clone() /> }
+                }
+            />
             <Show when=move || rooms.with(|r| !r.is_empty())>
                 <section class="search__rooms">
                     <h2 class="search__heading">{move || search_text(lang(), SearchText::Rooms)}</h2>
@@ -155,14 +163,6 @@ fn SearchFound(results: Memo<Option<SearchResults>>, query: Memo<String>) -> imp
                     </div>
                 </section>
             </Show>
-            <For
-                each=move || areas.get()
-                key=|a| a.clone()
-                children={
-                    let mark = mark.clone();
-                    move |area| view! { <SearchRoom area results mark=mark.clone() /> }
-                }
-            />
         </Show>
     }
 }
