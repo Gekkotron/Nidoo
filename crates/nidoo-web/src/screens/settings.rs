@@ -587,7 +587,7 @@ pub fn SettingsScreen() -> impl IntoView {
                 <div class="settings-hero__text">
                     <h1 class="settings__title">{move || text(lang(), Key::Settings)}</h1>
                     <p class="settings-hero__brand">
-                        <span class="settings-hero__wordmark">"nidoo."</span>
+                        <span class="settings-hero__wordmark">"Nidoo."</span>
                         <span class="settings-hero__version">{VERSION}</span>
                     </p>
                     <p class="settings-hero__meta">
