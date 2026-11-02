@@ -25,6 +25,7 @@ const LINKQUALITY_TOPIC: &str = "nidoo/sensor/0x847127fffe24e322/linkquality/con
 
 const EXPECTED_TOOLS: &[&str] = &[
     "bridge_info",
+    "system_status",
     "get_home_settings",
     "set_home_settings",
     "get_settings",

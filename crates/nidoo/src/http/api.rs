@@ -18,8 +18,8 @@ use nidoo_api::{
     CommandResponse, ConnectionStatus, Dashboard, DashboardReorder, DashboardView, EnergyKind,
     EntityView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec, GroupView,
     HistoryDaily, HistoryRange, HistorySeries, HistoryToday, HomeSettings, IgnoredView, LastChange,
-    NetworkWatchSpec, NetworkWatchView, OverridePatch, RunView, SchedulePreview, Snapshot,
-    VirtualSpec, WeatherView,
+    NetworkWatchSpec, NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview,
+    Snapshot, SystemView, VirtualSpec, WeatherView,
 };
 use nidoo_climate::doc::{HouseSettings, Rules, ZoneSettings};
 use nidoo_climate::view::{ClimateView, DecisionLog, LearnStatus, OverrideRequest, RoomEcoRequest};
@@ -72,6 +72,8 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
             "/network/{id}",
             put(put_network_watch).delete(delete_network_watch),
         )
+        .route("/system", get(system_view))
+        .route("/system/notify", put(put_system_notify))
         .route("/ambiances", get(list_ambiances))
         .route("/ambiances/{id}", put(put_ambiance).delete(delete_ambiance))
         .route("/ambiances/{id}/apply", post(apply_ambiance))
@@ -815,6 +817,22 @@ async fn delete_network_watch(
 ) -> Result<StatusCode, HttpError> {
     hub.delete_network_watch(&id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The system health view (`200`), read from memory.
+async fn system_view(State(hub): HubState) -> Json<SystemView> {
+    Json(hub.system_view())
+}
+
+/// Switches outage pushes (`200` with the saved value); `422` for a bad body, `503` while the
+/// database cannot save it.
+async fn put_system_notify(
+    State(hub): HubState,
+    body: Body<NotifyInput>,
+) -> Result<Json<NotifyInput>, HttpError> {
+    let Json(input) = body?;
+    let notify = hub.set_system_notify(input.notify).await?;
+    Ok(Json(NotifyInput { notify }))
 }
 
 /// The stored ambiances (`200`), the unreadable ones included with their reason.

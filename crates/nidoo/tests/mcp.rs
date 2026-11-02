@@ -30,6 +30,7 @@ const LINKQUALITY_TOPIC: &str = "nidoo/sensor/0x847127fffe24e322/linkquality/con
 
 const EXPECTED_TOOLS: &[&str] = &[
     "bridge_info",
+    "system_status",
     "get_home_settings",
     "set_home_settings",
     "get_settings",
@@ -656,6 +657,12 @@ async fn send_command_search_areas_and_the_small_tools() {
     );
     assert_eq!(bridge["connection"]["type"], "online");
     assert_eq!(bridge["bridge"]["state"], "online");
+
+    let system = json_of(
+        "system_status",
+        &call(&client, "system_status", json!({})).await,
+    );
+    assert!(system["services"].is_array());
 
     let ignored = json_of(
         "list_ignored",
