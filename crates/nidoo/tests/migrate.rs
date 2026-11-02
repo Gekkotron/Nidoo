@@ -11,6 +11,20 @@ async fn count(pool: &PgPool, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
+/// Compresses every chunk of the two history hypertables now. Rows older than the policy age
+/// are compressed by a background job at an arbitrary moment; doing it here keeps the tests
+/// deterministic.
+async fn compress_all(pool: &PgPool) {
+    for table in ["entity_state", "entity_availability"] {
+        sqlx::query(&format!(
+            "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('{table}') c"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn renames_entity_ids_in_every_table() {
     let Some(t) = fresh_db().await else { return };
@@ -57,10 +71,7 @@ async fn renames_rows_in_compressed_chunk() {
     .execute(pool)
     .await
     .unwrap();
-    sqlx::query("SELECT compress_chunk(c) FROM show_chunks('entity_state') c")
-        .execute(pool)
-        .await
-        .unwrap();
+    compress_all(pool).await;
     rename_entity_ids(pool, false).await.unwrap();
     let id: String = sqlx::query_scalar("SELECT entity_id FROM entity_state")
         .fetch_one(pool)
@@ -81,6 +92,7 @@ async fn entity_id_collision_keeps_new_row() {
     .execute(pool)
     .await
     .unwrap();
+    compress_all(pool).await;
     rename_entity_ids(pool, false).await.unwrap();
     let rows: Vec<(String, serde_json::Value)> =
         sqlx::query_as("SELECT entity_id, value FROM entity_state")
@@ -88,6 +100,28 @@ async fn entity_id_collision_keeps_new_row() {
             .await
             .unwrap();
     assert_eq!(rows, vec![("nidoo_x".to_string(), serde_json::json!(2))]);
+    t.drop_db().await;
+}
+
+#[tokio::test]
+async fn availability_collision_keeps_new_row_when_compressed() {
+    let Some(t) = fresh_db().await else { return };
+    let pool = t.db.pool();
+    sqlx::query(
+        "INSERT INTO entity_availability (time, entity_id, availability) VALUES \
+         ('2026-01-01T00:00:00Z', 'oikos_x', 'offline'), ('2026-01-01T00:00:00Z', 'nidoo_x', 'online')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    compress_all(pool).await;
+    rename_entity_ids(pool, false).await.unwrap();
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT entity_id, availability FROM entity_availability")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![("nidoo_x".to_string(), "online".to_string())]);
     t.drop_db().await;
 }
 
