@@ -44,6 +44,7 @@ pub mod rooms;
 pub mod sankey_layout;
 pub mod schedule;
 pub mod screens;
+pub mod search;
 pub mod security;
 pub mod settings_rules;
 pub mod setup;
