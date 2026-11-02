@@ -72,10 +72,11 @@ fn whole(lang: Lang, v: f64) -> String {
     decimal(lang, if r == 0.0 { 0.0 } else { r }, 0)
 }
 
-/// A byte count as "180 MB", or "3.2 GB" from one gigabyte up.
+/// A byte count as "180 MB", or "3.2 GB" from one gigabyte up, in decimal units (like the
+/// hub's sensors).
 fn size(lang: Lang, bytes: u64) -> String {
-    const GB: f64 = 1_073_741_824.0;
-    const MB: f64 = 1_048_576.0;
+    const GB: f64 = 1e9;
+    const MB: f64 = 1e6;
     let b = bytes as f64;
     if b >= GB {
         format!(
@@ -605,9 +606,12 @@ mod tests {
 
     #[test]
     fn sizes_switch_unit_at_one_gigabyte() {
-        assert_eq!(size(Lang::En, 180 * 1_048_576), "180 MB");
-        assert_eq!(size(Lang::En, 3_435_973_837), "3.2 GB");
-        assert_eq!(size(Lang::Fr, 3_435_973_837), "3,2 Go");
+        // Decimal units, as the hub's sensors publish them.
+        assert_eq!(size(Lang::En, 180_000_000), "180 MB");
+        assert_eq!(size(Lang::En, 999_000_000), "999 MB");
+        assert_eq!(size(Lang::En, 1_500_000_000), "1.5 GB");
+        assert_eq!(size(Lang::En, 3_200_000_000), "3.2 GB");
+        assert_eq!(size(Lang::Fr, 3_200_000_000), "3,2 Go");
     }
 
     #[test]
