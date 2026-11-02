@@ -128,7 +128,7 @@ fi
 # oikos (a bootstrap role cannot be renamed, and the command refuses when the
 # target names already exist, so the bundled nidoo cluster cannot play the
 # old install). Mosquitto keeps the nidoo login; only the topics are old.
-echo "== migrate-oikos"
+echo "== migrate-nidoo"
 seed=nidoo-oikos-seed
 seed_port=5434
 docker run -d --name "$seed" --network host \
@@ -178,11 +178,11 @@ done
 docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
   -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
 migrate() {
-  docker compose run --rm --no-deps -T hub --data /data migrate-oikos "$@"
+  docker compose run --rm --no-deps -T hub --data /data migrate-nidoo "$@"
 }
 # While the hub answers, the command refuses (dry run and apply), writing nothing.
 if migrate --backup /data/refused.jsonl --apply; then
-  echo "migrate-oikos --apply ran while the hub was up" >&2
+  echo "migrate-nidoo --apply ran while the hub was up" >&2
   exit 1
 fi
 if [ -e data/refused.jsonl ] || docker compose run --rm --no-deps -T --entrypoint test hub -e /data/refused.jsonl; then
