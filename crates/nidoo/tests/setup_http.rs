@@ -1390,3 +1390,20 @@ async fn a_restart_that_lands_while_a_put_waits_for_the_lock_wins() {
     assert_eq!(body, json!({"error": "restarting"}));
     assert!(!s.dir.path().join("settings-cache.json").exists());
 }
+
+#[tokio::test]
+async fn the_notify_unreachable_switches_show_in_the_views_and_default_off() {
+    let mut sections = Sections::default();
+    sections.weather.notify_unreachable = true;
+    sections.solcast.notify_unreachable = true;
+    let s = serve_settings(Mode::Run, located(), sections, None, None).await;
+    for key in ["weather", "solcast"] {
+        let view: Value = serde_json::from_str(&s.sget(&format!("/{key}")).await.1).unwrap();
+        assert_eq!(view["notify_unreachable"], true, "{key}");
+    }
+    let s = serve_settings(Mode::Run, located(), Sections::default(), None, None).await;
+    for key in ["weather", "solcast"] {
+        let view: Value = serde_json::from_str(&s.sget(&format!("/{key}")).await.1).unwrap();
+        assert_eq!(view["notify_unreachable"], false, "{key}");
+    }
+}

@@ -118,6 +118,7 @@ Command line:
 | --- | --- | --- |
 | `enabled` | `false` | Turn the weather on. Needs the home location. While `false`, `GET /api/v1/weather` answers 503 and `get_weather` answers `weather unavailable`. |
 | `refresh_minutes` | `15` | Minutes between two fetches, with about 10 % random jitter. Between 10 and 1440 when enabled. |
+| `notify_unreachable` | `false` | Send a push alert when Open-Meteo has been unreachable for 30 minutes, and one when it answers again. |
 
 The city, country and coordinates come from the home location. An enabled weather with a refresh below 10 or above 1440 is refused when you save, and so is enabling it with no home location.
 
@@ -131,6 +132,7 @@ The city, country and coordinates come from the home location. An enabled weathe
 | `sites` | `[]` | Rooftop resource ids from the Solcast Toolkit, one or more. Each id may hold only letters, digits, `-` and `_`. One request per site per refresh. |
 | `daily_limit` | `10` | This hub's share of the account's requests per UTC day (the form calls it Calls per day). The hobbyist limit is 10. Refreshes per day are `(daily_limit - 2) / number of sites`, at least 1; 2 calls are kept in reserve. Must be at least the number of sites. |
 | `api_key` | none | The Solcast API key (a secret). Required when enabled. |
+| `notify_unreachable` | `false` | Send a push alert when Solcast has been unreachable for 30 minutes, and one when it answers again. |
 
 When enabled, no site, an empty or invalid id, a `daily_limit` below the number of sites, or no key is refused when you save. The key is never written to a log line, an API response or MQTT.
 

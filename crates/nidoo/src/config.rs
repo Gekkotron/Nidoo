@@ -436,6 +436,8 @@ pub struct WeatherConfig {
     /// The house's coordinates when already known (from the setup); skips the geocoding.
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    /// Push an alert when Open-Meteo has been unreachable for 30 minutes.
+    pub notify_unreachable: bool,
 }
 
 impl Default for WeatherConfig {
@@ -447,6 +449,7 @@ impl Default for WeatherConfig {
             refresh_minutes: 15,
             latitude: None,
             longitude: None,
+            notify_unreachable: false,
         }
     }
 }
@@ -497,6 +500,8 @@ pub struct SolcastConfig {
     pub api_key_file: Option<PathBuf>,
     /// The API key itself (set from the browser); wins over `api_key_file`.
     pub api_key: Option<String>,
+    /// Push an alert when Solcast has been unreachable for 30 minutes.
+    pub notify_unreachable: bool,
 }
 
 impl fmt::Debug for SolcastConfig {
@@ -508,6 +513,7 @@ impl fmt::Debug for SolcastConfig {
             .field("daily_limit", &self.daily_limit)
             .field("api_key_file", &self.api_key_file)
             .field("api_key", &api_key)
+            .field("notify_unreachable", &self.notify_unreachable)
             .finish()
     }
 }
@@ -520,6 +526,7 @@ impl Default for SolcastConfig {
             daily_limit: 10,
             api_key_file: None,
             api_key: None,
+            notify_unreachable: false,
         }
     }
 }

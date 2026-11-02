@@ -150,6 +150,8 @@ pub struct SolcastView {
     pub sites: Vec<String>,
     pub daily_limit: u32,
     pub api_key: SecretView,
+    #[serde(default)]
+    pub notify_unreachable: bool,
 }
 
 /// The Solcast section in a `PUT` or a test. A `PUT` replaces the whole section: a left-out
@@ -164,6 +166,8 @@ pub struct SolcastInput {
     pub daily_limit: Option<u32>,
     #[serde(default)]
     pub api_key: Secret,
+    #[serde(default)]
+    pub notify_unreachable: bool,
 }
 
 /// The Frigate section as a read shows it.

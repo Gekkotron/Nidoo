@@ -37,6 +37,10 @@ Producers publish an alert (a v1 or legacy payload) on `nidoo/push/notification/
 
 After each (re)connect the hub waits for its subscription to be acknowledged, then 2 s more for the retained tokens, before it sends; alerts arriving meanwhile wait in the queue. The history is the retained `nidoo/push/history` itself: the hub adopts it at its first sync.
 
+## Service outage pushes
+
+Weather and the Solar forecast can each send a `system` alert when their outside service has been unreachable for 30 minutes ("Weather unreachable", `warning`), and one more when it answers again ("Weather reachable again", `info`). Each is a switch, off by default, in that service's settings. See [Weather](weather.md#tell-me-when-open-meteo-is-unreachable) and [Solar forecast](solar-forecast.md#tell-me-when-solcast-is-unreachable).
+
 ## Alarm pushes
 
 The native alarm sends on its own channel, `alarm`, from source `alarm`. A triggered alarm is a critical alert with a **Disarm** button: tapping it sends the reply on `nidoo/push/responses`, and the hub disarms the alarm. The hub listens on the reply topic at all times. Arming and disarming send an info push that names the mode and who did it, with any sensor left open at arm. See [Alarm](alarm.md#phone-push).
