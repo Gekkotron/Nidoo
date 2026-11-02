@@ -454,6 +454,30 @@ fn device_class_icon(device_class: &str) -> Option<&'static str> {
     })
 }
 
+// Settings list glyphs: one per sub-page that has no device glyph to borrow.
+pub const PIN: &str = svg!(
+    r#"<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>"#
+);
+pub const WIFI: &str = svg!(
+    r#"<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/>"#
+);
+/// Three linked nodes: a Zigbee mesh.
+pub const MESH: &str = svg!(
+    r#"<circle cx="5.5" cy="6" r="2.2"/><circle cx="18.5" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M7.7 6h8.6"/><path d="m6.6 8 4.3 8"/><path d="m17.4 8-4.3 8"/>"#
+);
+/// Messages both ways: the MQTT broker.
+pub const BROKER: &str = svg!(
+    r#"<path d="M4 8h14"/><path d="m14 4 4 4-4 4"/><path d="M20 16H6"/><path d="m10 12-4 4 4 4"/>"#
+);
+pub const DATABASE: &str = svg!(
+    r#"<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>"#
+);
+pub const INFO: &str =
+    svg!(r#"<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/>"#);
+pub const COPY: &str = svg!(
+    r#"<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6A2.5 2.5 0 0 0 13 3.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>"#
+);
+
 // Ambiance glyphs. Moon, sun and house reuse the shared constants.
 pub const SPARKLE: &str = svg!(
     r#"<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15v4"/><path d="M17 17h4"/>"#

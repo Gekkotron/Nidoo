@@ -39,6 +39,9 @@ pub enum SettingsText {
     No,
     Copy,
     Copied,
+    CopyFailed,
+    GroupHouse,
+    GroupHub,
     Connecting,
     Online,
     Offline,
@@ -112,6 +115,9 @@ impl SettingsText {
         SettingsText::No,
         SettingsText::Copy,
         SettingsText::Copied,
+        SettingsText::CopyFailed,
+        SettingsText::GroupHouse,
+        SettingsText::GroupHub,
         SettingsText::Connecting,
         SettingsText::Online,
         SettingsText::Offline,
@@ -224,6 +230,12 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
         T::No => ("No", "Non"),
         T::Copy => ("Copy", "Copier"),
         T::Copied => ("Copied", "Copié"),
+        T::CopyFailed => (
+            "Copy failed: select the text",
+            "Échec de la copie : sélectionnez le texte",
+        ),
+        T::GroupHouse => ("Your home", "Votre maison"),
+        T::GroupHub => ("Hub and connections", "Hub et connexions"),
         T::Connecting => ("Connecting…", "Connexion…"),
         T::Online => ("Online", "En ligne"),
         T::Offline => ("Offline", "Hors ligne"),
@@ -363,7 +375,7 @@ mod tests {
     #[test]
     fn all_lists_every_variant() {
         // The match in `settings_text` is exhaustive, so a new variant only needs listing here.
-        assert_eq!(SettingsText::ALL.len(), 69);
+        assert_eq!(SettingsText::ALL.len(), 72);
     }
 
     #[test]
