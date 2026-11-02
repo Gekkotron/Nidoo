@@ -2,6 +2,7 @@
 //! renamed copies, check them, then clear the old ones and check again.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -21,6 +22,8 @@ pub const DEFAULT_QUIET: Duration = Duration::from_secs(3);
 const KEEP_ALIVE: Duration = Duration::from_secs(30);
 const MAX_PACKET: usize = 4 * 1024 * 1024;
 const REQUEST_CAPACITY: usize = 64;
+/// How long a read waits for its DISCONNECT to go out before it lets the connection drop.
+const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Where and how to reach the broker.
 #[derive(Debug, Clone)]
@@ -45,9 +48,16 @@ struct BackupLine {
     qos: u8,
 }
 
-fn connect(o: &BrokerOpts) -> (AsyncClient, EventLoop) {
+/// Numbers the connections of this process, so each one has its own client id.
+static CONNECTIONS: AtomicU32 = AtomicU32::new(0);
+
+/// A new connection, under a client id no other connection of this run uses: with a shared id,
+/// the broker hands the session to the newer connection and throws away what it had not yet
+/// read from the older one (Mosquitto: "already connected, closing old connection").
+fn connect(o: &BrokerOpts, capacity: usize) -> (AsyncClient, EventLoop) {
+    let n = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
     let mut options = MqttOptions::new(
-        format!("nidoo-migrate-{}", std::process::id()),
+        format!("nidoo-migrate-{}-{n}", std::process::id()),
         o.host.clone(),
         o.port,
     );
@@ -57,7 +67,7 @@ fn connect(o: &BrokerOpts) -> (AsyncClient, EventLoop) {
     options
         .set_keep_alive(KEEP_ALIVE)
         .set_max_packet_size(MAX_PACKET, MAX_PACKET);
-    AsyncClient::new(options, REQUEST_CAPACITY)
+    AsyncClient::new(options, capacity)
 }
 
 fn qos_from(q: u8) -> QoS {
@@ -105,7 +115,7 @@ pub fn require_retained(msgs: &[Retained]) -> Result<()> {
 
 /// Subscribes to `#` and collects the retained messages, until none new arrived for `quiet`.
 pub async fn read_retained(o: &BrokerOpts, quiet: Duration) -> Result<Vec<Retained>> {
-    let (client, mut eventloop) = connect(o);
+    let (client, mut eventloop) = connect(o, REQUEST_CAPACITY);
     client
         .subscribe("#", QoS::AtLeastOnce)
         .await
@@ -139,46 +149,70 @@ pub async fn read_retained(o: &BrokerOpts, quiet: Duration) -> Result<Vec<Retain
             _ => {}
         }
     }
-    let _ = client.try_disconnect();
+    // Say goodbye instead of dropping the socket. Best effort: the read is complete either way,
+    // and no later connection shares this one's client id.
+    if client.try_disconnect().is_ok() {
+        let _ = tokio::time::timeout(DISCONNECT_TIMEOUT, async {
+            // Stops on an error too: polling again would reconnect.
+            while !matches!(
+                eventloop.poll().await,
+                Ok(Event::Outgoing(Outgoing::Disconnect)) | Err(_)
+            ) {}
+        })
+        .await;
+    }
     Ok(found.into_values().collect())
 }
 
-/// Publishes every `(topic, payload, qos)` retained and waits until the broker acknowledged
-/// them all (QoS 0 messages are flushed by the disconnect).
+/// Publishes every `(topic, payload, qos)` retained, on one connection, and returns once the
+/// broker has processed them all; fails if the connection drops on the way.
+///
+/// A flushed socket is not a delivered message: the broker may not have read the bytes yet
+/// (Mosquitto reads one packet per socket per turn of its loop), and QoS 0 has no ack. So the
+/// publishes are followed by a subscription to a topic nothing is published on: the broker
+/// handles a connection's packets in order, so its SUBACK proves every earlier publish was
+/// processed, without changing any message's QoS or leaving anything retained. QoS 1 and 2
+/// messages are counted by their own acks as well.
 async fn publish_all(o: &BrokerOpts, items: Vec<(String, Vec<u8>, u8)>) -> Result<()> {
     if items.is_empty() {
         return Ok(());
     }
     let expected = items.iter().filter(|(_, _, q)| *q > 0).count();
-    let (client, mut eventloop) = connect(o);
-    let sender = client.clone();
-    let mut sending = tokio::spawn(async move {
-        for (topic, payload, qos) in items {
-            sender
-                .publish(topic, qos_from(qos), true, payload)
-                .await
-                .context("queueing a publish")?;
-        }
-        anyhow::Ok(())
-    });
-    let mut sent = false;
+    // Room for every request up front (the publishes, the barrier and the disconnect), so they
+    // are all queued without waiting and the event loop is the only future this awaits: a
+    // `poll()` dropped half way can lose a packet or reconnect.
+    let (client, mut eventloop) = connect(o, items.len() + 2);
+    for (topic, payload, qos) in items {
+        client
+            .try_publish(topic, qos_from(qos), true, payload)
+            .context("queueing a publish")?;
+    }
+    let barrier = format!(
+        "nidoo-migrate/barrier/{}",
+        eventloop.mqtt_options.client_id()
+    );
+    client
+        .try_subscribe(barrier, QoS::AtMostOnce)
+        .context("queueing the barrier subscription")?;
+    let mut connected = false;
     let mut acked = 0usize;
+    let mut barrier_acked = false;
     let mut disconnecting = false;
     loop {
-        tokio::select! {
-            done = &mut sending, if !sent => {
-                done.context("publisher task")??;
-                sent = true;
+        match eventloop.poll().await.context("publishing to the broker")? {
+            Event::Incoming(Packet::ConnAck(_)) if connected => {
+                bail!(
+                    "the connection to the broker dropped and came back while publishing: \
+                     messages may be lost"
+                );
             }
-            event = eventloop.poll() => {
-                match event.context("publishing to the broker")? {
-                    Event::Incoming(Packet::PubAck(_) | Packet::PubComp(_)) => acked += 1,
-                    Event::Outgoing(Outgoing::Disconnect) => return Ok(()),
-                    _ => {}
-                }
-            }
+            Event::Incoming(Packet::ConnAck(_)) => connected = true,
+            Event::Incoming(Packet::PubAck(_) | Packet::PubComp(_)) => acked += 1,
+            Event::Incoming(Packet::SubAck(_)) => barrier_acked = true,
+            Event::Outgoing(Outgoing::Disconnect) => return Ok(()),
+            _ => {}
         }
-        if sent && acked >= expected && !disconnecting {
+        if barrier_acked && acked >= expected && !disconnecting {
             disconnecting = true;
             client.try_disconnect().context("queueing the disconnect")?;
         }
@@ -422,6 +456,179 @@ mod tests {
             .map(|m| m.topic.as_str())
             .collect();
         assert_eq!(topics, ["oikos/ui/a", "nidoo/ui/b"]);
+    }
+
+    /// A broker on a thread that handles one packet at a time and takes `per_publish` for
+    /// each PUBLISH, like a loaded Mosquitto: bytes the client flushed are not processed yet.
+    /// With `close_after`, it drops the connection after that many PUBLISH packets.
+    struct FakeBroker {
+        port: u16,
+        /// Topics of the PUBLISH packets processed so far, in order.
+        processed: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        /// Client id of every CONNECT.
+        clients: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        /// DISCONNECT packets received.
+        disconnects: std::sync::Arc<AtomicU32>,
+    }
+
+    fn fake_broker(per_publish: Duration, close_after: Option<usize>) -> FakeBroker {
+        use rumqttc::{ConnAck, ConnectReturnCode, PubAck};
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let processed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let clients = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let disconnects = std::sync::Arc::new(AtomicU32::new(0));
+        let (p, c, d) = (processed.clone(), clients.clone(), disconnects.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let (processed, clients, disconnects) = (p.clone(), c.clone(), d.clone());
+                std::thread::spawn(move || {
+                    let mut buf = bytes::BytesMut::new();
+                    let mut chunk = [0u8; 4096];
+                    let mut publishes = 0usize;
+                    loop {
+                        let packet = match Packet::read(&mut buf, MAX_PACKET) {
+                            Ok(packet) => packet,
+                            Err(rumqttc::Error::InsufficientBytes(_)) => {
+                                match stream.read(&mut chunk) {
+                                    Ok(0) | Err(_) => return,
+                                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                                }
+                                continue;
+                            }
+                            Err(_) => return,
+                        };
+                        let reply = match packet {
+                            Packet::Connect(c) => {
+                                clients.lock().unwrap().push(c.client_id);
+                                Some(Packet::ConnAck(ConnAck::new(
+                                    ConnectReturnCode::Success,
+                                    false,
+                                )))
+                            }
+                            Packet::Publish(p) => {
+                                if close_after == Some(publishes) {
+                                    return;
+                                }
+                                publishes += 1;
+                                std::thread::sleep(per_publish);
+                                processed.lock().unwrap().push(p.topic.clone());
+                                (p.qos != QoS::AtMostOnce)
+                                    .then(|| Packet::PubAck(PubAck::new(p.pkid)))
+                            }
+                            Packet::Subscribe(s) => Some(Packet::SubAck(SubAck::new(
+                                s.pkid,
+                                vec![SubscribeReasonCode::Success(QoS::AtMostOnce)],
+                            ))),
+                            Packet::PingReq => Some(Packet::PingResp),
+                            Packet::Disconnect => {
+                                disconnects.fetch_add(1, Ordering::SeqCst);
+                                return;
+                            }
+                            _ => None,
+                        };
+                        if let Some(reply) = reply {
+                            let mut out = bytes::BytesMut::new();
+                            reply.write(&mut out, MAX_PACKET).unwrap();
+                            if stream.write_all(&out).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        FakeBroker {
+            port,
+            processed,
+            clients,
+            disconnects,
+        }
+    }
+
+    /// Whether the fake broker got one DISCONNECT within a second (it counts on its own thread,
+    /// after the client sent it).
+    async fn got_disconnect(broker: &FakeBroker) -> bool {
+        for _ in 0..100 {
+            if broker.disconnects.load(Ordering::SeqCst) == 1 {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    fn opts(port: u16) -> BrokerOpts {
+        BrokerOpts {
+            host: "127.0.0.1".into(),
+            port,
+            user: None,
+            password: None,
+        }
+    }
+
+    fn items(n: usize, qos: u8) -> Vec<(String, Vec<u8>, u8)> {
+        (0..n)
+            .map(|i| (format!("nidoo/ui/t{i}"), format!("{i}").into_bytes(), qos))
+            .collect()
+    }
+
+    /// The CI failure: QoS 0 publishes were flushed to the socket, not yet read by the broker,
+    /// when the next connection took the session over. publish_all must return only once the
+    /// broker processed every message.
+    #[tokio::test]
+    async fn publish_all_returns_after_the_broker_processed_every_qos0_message() {
+        let broker = fake_broker(Duration::from_millis(5), None);
+        publish_all(&opts(broker.port), items(60, 0)).await.unwrap();
+        let processed = broker.processed.lock().unwrap().clone();
+        let want: Vec<String> = items(60, 0).into_iter().map(|(t, _, _)| t).collect();
+        assert_eq!(processed, want);
+        assert_eq!(broker.clients.lock().unwrap().len(), 1, "one connection");
+        assert!(got_disconnect(&broker).await, "a clean DISCONNECT");
+    }
+
+    #[tokio::test]
+    async fn publish_all_waits_for_every_qos1_ack() {
+        let broker = fake_broker(Duration::from_millis(2), None);
+        publish_all(&opts(broker.port), items(150, 1))
+            .await
+            .unwrap();
+        assert_eq!(broker.processed.lock().unwrap().len(), 150);
+    }
+
+    #[tokio::test]
+    async fn publish_all_fails_when_the_broker_drops_the_connection() {
+        let broker = fake_broker(Duration::ZERO, Some(10));
+        let err = publish_all(&opts(broker.port), items(60, 0)).await;
+        assert!(
+            err.is_err(),
+            "a dropped connection must fail, not reconnect"
+        );
+        assert_eq!(broker.clients.lock().unwrap().len(), 1, "no reconnect");
+    }
+
+    #[tokio::test]
+    async fn read_retained_disconnects_cleanly() {
+        let broker = fake_broker(Duration::ZERO, None);
+        let msgs = read_retained(&opts(broker.port), Duration::from_millis(100))
+            .await
+            .unwrap();
+        assert!(msgs.is_empty());
+        assert!(
+            got_disconnect(&broker).await,
+            "read_retained dropped the socket without a DISCONNECT"
+        );
+    }
+
+    #[test]
+    fn every_connection_has_its_own_client_id() {
+        let o = opts(1883);
+        let (_c1, e1) = connect(&o, 1);
+        let (_c2, e2) = connect(&o, 1);
+        assert_ne!(e1.mqtt_options.client_id(), e2.mqtt_options.client_id());
     }
 
     #[test]

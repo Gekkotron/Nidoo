@@ -199,11 +199,13 @@ done
 [ "$tables" -eq 1 ] || { echo "hub created no tables after 60 s" >&2; exit 1; }
 docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
   -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
-# Fifty more, so the publish and clear phases carry many messages, and one
+# 400 more, all QoS 0 like the house's (about 340), so the publish and clear
+# phases carry more than a house holds: a QoS 0 publish has no ack, and the
+# broker must have processed every one before the read-back connects. And one
 # topic the switch-over does not own, which --restore must leave alone.
 # shellcheck disable=SC2016 # expanded by the container's shell
 docker exec -e P="$mqtt_password" nidoo-mosquitto sh -c '
-  for i in $(seq 1 50); do
+  for i in $(seq 1 400); do
     mosquitto_pub -h localhost -u nidoo -P "$P" -r -t "oikos/ui/oikos_t$i" -m "{\"name\":\"oikos t$i\"}"
   done'
 docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
@@ -232,20 +234,22 @@ out=$(migrate --backup /data/backup.jsonl --apply)
 echo "$out"
 grep -q "verify: nothing left with the old name" <<<"$out" \
   || { echo "--apply did not end with a passing verify" >&2; exit 1; }
+grep -q "broker: published 401, cleared 401" <<<"$out" \
+  || { echo "--apply did not move the 401 seeded messages" >&2; exit 1; }
 grep -q "timescaledb background workers started on nidoo" <<<"$out" \
   || { echo "--apply did not restart the TimescaleDB workers" >&2; exit 1; }
 got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t nidoo/ui/nidoo_t -C 1 -W 3)
 [ "$got" = '{"name":"nidoo t"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
 got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
-  -t nidoo/ui/nidoo_t50 -C 1 -W 3)
-[ "$got" = '{"name":"nidoo t50"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
-# The backup holds every retained message, the 51 old ones among them.
+  -t nidoo/ui/nidoo_t400 -C 1 -W 3)
+[ "$got" = '{"name":"nidoo t400"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
+# The backup holds every retained message, the 401 old ones among them.
 in_backup() {
   docker compose run --rm --no-deps -T --entrypoint cat hub "$1" | jq -r .topic
 }
 n=$(in_backup /data/backup.jsonl | grep -c '^oikos/ui/oikos_t' || true)
-[ "$n" -eq 51 ] || { echo "backup holds $n of the 51 old topics" >&2; exit 1; }
+[ "$n" -eq 401 ] || { echo "backup holds $n of the 401 old topics" >&2; exit 1; }
 old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t oikos/ui/oikos_t -C 1 -W 3 || true)
 [ -z "$old" ] || { echo "old retained topic still there: '$old'" >&2; exit 1; }
@@ -304,6 +308,10 @@ migrate --restore /data/backup.jsonl
 got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t oikos/ui/oikos_t -C 1 -W 3)
 [ "$got" = '{"name":"oikos t"}' ] || { echo "restored payload wrong: '$got'" >&2; exit 1; }
+# The last one queued, so the whole batch reached the broker.
+got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
+  -t oikos/ui/oikos_t99 -C 1 -W 3)
+[ "$got" = '{"name":"oikos t99"}' ] || { echo "restored payload wrong: '$got'" >&2; exit 1; }
 got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t zigbee2mqtt/ci_lamp -C 1 -W 3)
 [ "$got" = '{"state":"ON"}' ] || { echo "--restore replayed a topic it does not own: '$got'" >&2; exit 1; }
