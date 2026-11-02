@@ -3,11 +3,11 @@
 use nidoo_api::EntityView;
 use nidoo_api::search::fold;
 use nidoo_api::{Category, CategoryAction, Target, category_members};
-use nidoo_core::model::Command;
+use nidoo_core::model::{Command, EntityCategory, Kind, StateValue};
 
 use crate::house::House;
 use crate::intent::{Intent, parse};
-use crate::reply::{dans, de, number};
+use crate::reply::{dans, de, number, temp};
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
 use crate::view::Trace;
@@ -106,6 +106,11 @@ impl Plan {
         }
     }
 
+    fn with_trace(mut self, trace: Trace) -> Self {
+        *self.trace_mut() = trace;
+        self
+    }
+
     pub fn trace_mut(&mut self) -> &mut Trace {
         match self {
             Plan::Act { trace, .. }
@@ -144,6 +149,7 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
         Intent::Lights {
             on, names, room, ..
         } => lights(req, *on, names, room, house),
+        Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         _ => not_understood(house),
     }
 }
@@ -215,40 +221,18 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
         intent: Some(if on { "lights_on" } else { "lights_off" }.into()),
         ..Default::default()
     };
-    let (area, how) = match &req.area {
-        Some(area) => (area.clone(), "choix".to_string()),
-        None => match resolve_room(house, room) {
-            RoomMatch::One(area) => (area, format!("mots : {}", room.join(", "))),
-            RoomMatch::Many(areas) => return ask_room(req, &areas, house, trace),
-            RoomMatch::Unknown => {
-                return answer(
-                    format!("Je ne connais pas de pièce « {} ».", room.join(" ")),
-                    trace,
-                );
-            }
-            RoomMatch::NoRoomSaid => {
-                let all = light_members(on, None, house);
-                let candidates: Vec<&EntityView> = if names.is_empty() {
-                    all
-                } else {
-                    all.into_iter().filter(|l| named(l, names)).collect()
-                };
-                let areas = areas_of(&candidates, house);
-                match areas.as_slice() {
-                    [] if names.is_empty() => {
-                        return answer("Pas de lumière dans la maison.".into(), trace);
-                    }
-                    [] => {
-                        return answer(
-                            format!("Je ne trouve pas de lumière « {} ».", names.join(" ")),
-                            trace,
-                        );
-                    }
-                    [one] => (one.clone(), "seule pièce possible".to_string()),
-                    _ => return ask_room(req, &areas, house, trace),
-                }
-            }
-        },
+    let candidates: Vec<&EntityView> = light_members(on, None, house)
+        .into_iter()
+        .filter(|l| names.is_empty() || named(l, names))
+        .collect();
+    let none = if names.is_empty() {
+        "Pas de lumière dans la maison.".to_string()
+    } else {
+        format!("Je ne trouve pas de lumière « {} ».", names.join(" "))
+    };
+    let (area, how) = match pick_room(req, room, &areas_of(&candidates, house), none, house) {
+        Ok(found) => found,
+        Err(plan) => return plan.with_trace(trace),
     };
     let area_name = house.area_name(&area).to_string();
     trace.room = Some(area.clone());
@@ -319,6 +303,153 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
             names: chosen.iter().map(|l| l.name.clone()).collect(),
         },
         trace,
+    }
+}
+
+/// The room of a request: the answered one, else the one the words name, else the only
+/// candidate. `Err` is the plan to return instead: a question or a plain answer (`none` when
+/// there is no candidate at all).
+fn pick_room(
+    req: &Request,
+    room: &[String],
+    candidates: &[String],
+    none: String,
+    house: &House,
+) -> Result<(String, String), Plan> {
+    if let Some(area) = &req.area {
+        return Ok((area.clone(), "choix".into()));
+    }
+    match resolve_room(house, room) {
+        RoomMatch::One(area) => Ok((area, format!("mots : {}", room.join(", ")))),
+        RoomMatch::Many(areas) => Err(ask_room(req, &areas, house, Trace::default())),
+        RoomMatch::Unknown => Err(answer(
+            format!("Je ne connais pas de pièce « {} ».", room.join(" ")),
+            Trace::default(),
+        )),
+        RoomMatch::NoRoomSaid => match candidates {
+            [] => Err(answer(none, Trace::default())),
+            [one] => Ok((one.clone(), "seule pièce possible".into())),
+            _ => Err(ask_room(req, candidates, house, Trace::default())),
+        },
+    }
+}
+
+/// The value of a numeric sensor.
+fn sensor_value(e: &EntityView) -> Option<f64> {
+    match e.state.value {
+        StateValue::Number(n) => Some(n),
+        _ => None,
+    }
+}
+
+/// The area's thermometer by the climate engine's rule: a primary temperature sensor of the
+/// area, not a group, not the outdoor sensor, not part of a climate device; the smallest id.
+fn thermometer<'a>(house: &House<'a>, area: &str) -> Option<&'a EntityView> {
+    let climate_devices: Vec<&str> = house
+        .entities
+        .iter()
+        .filter(|e| e.kind == Kind::Climate && e.area == area)
+        .filter_map(|e| e.device_id.as_deref())
+        .collect();
+    house
+        .entities
+        .iter()
+        .filter(|e| {
+            e.kind == Kind::Sensor
+                && e.area == area
+                && e.device_class.as_deref() == Some("temperature")
+                && e.category == EntityCategory::Primary
+                && !e.id.starts_with("group_")
+                && house.outdoor_entity != Some(e.id.as_str())
+                && e.device_id
+                    .as_deref()
+                    .is_none_or(|d| !climate_devices.contains(&d))
+        })
+        .min_by(|a, b| a.id.cmp(&b.id))
+}
+
+/// A room's temperature and its age in seconds: the zone's reading, else its thermometer.
+fn room_reading(house: &House, area: &str) -> Option<(f64, Option<u64>, String)> {
+    if let Some(zone) = house.zone(area)
+        && let Some(reading) = zone.reading
+    {
+        return Some((reading, zone.reading_age_s, format!("zone {area}")));
+    }
+    let sensor = thermometer(house, area)?;
+    let value = sensor_value(sensor)?;
+    let age = sensor
+        .state
+        .last_update
+        .map(|t| house.now.saturating_sub(t));
+    Some((value, age, sensor.id.clone()))
+}
+
+/// ", mesuré il y a 3 h" when the reading is older than the house's stale limit.
+fn age_note(age_s: Option<u64>, house: &House) -> String {
+    match age_s {
+        Some(age) if age > u64::from(house.stale_after_min) * 60 => {
+            let (h, m) = (age / 3600, (age % 3600) / 60);
+            let ago = match (h, m) {
+                (0, m) => format!("{m} min"),
+                (h, _) if h >= 48 => format!("{} j", h / 24),
+                (h, 0) => format!("{h} h"),
+                (h, m) => format!("{h} h {m:02}"),
+            };
+            format!(", mesuré il y a {ago}")
+        }
+        _ => String::new(),
+    }
+}
+
+fn read_temp(req: &Request, room: &[String], outdoor: bool, house: &House) -> Plan {
+    let mut trace = Trace {
+        intent: Some("read_temp".into()),
+        ..Default::default()
+    };
+    if outdoor {
+        let id = house.outdoor_entity.unwrap_or("weather_temperature");
+        trace.entities = vec![id.to_string()];
+        let reading = house.entity(id).and_then(|e| {
+            let age = e.state.last_update.map(|t| house.now.saturating_sub(t));
+            sensor_value(e).map(|v| (v, age))
+        });
+        return match reading {
+            Some((value, age)) => answer(
+                format!("Il fait {} dehors{}.", temp(value), age_note(age, house)),
+                trace,
+            ),
+            None => answer("Pas de température extérieure.".into(), trace),
+        };
+    }
+    let candidates: Vec<String> = house
+        .areas
+        .iter()
+        .filter(|a| room_reading(house, &a.id).is_some())
+        .map(|a| a.id.clone())
+        .collect();
+    let none = "Pas de thermomètre dans la maison.".to_string();
+    let (area, how) = match pick_room(req, room, &candidates, none, house) {
+        Ok(found) => found,
+        Err(plan) => return plan.with_trace(trace),
+    };
+    let name = house.area_name(&area).to_string();
+    trace.room = Some(area.clone());
+    trace.room_how = Some(how);
+    match room_reading(house, &area) {
+        Some((value, age, source)) => {
+            trace.entities = vec![source];
+            trace.value = Some(temp(value));
+            answer(
+                format!(
+                    "Il fait {} {}{}.",
+                    temp(value),
+                    dans(&name),
+                    age_note(age, house)
+                ),
+                trace,
+            )
+        }
+        None => answer(format!("Pas de thermomètre {}.", dans(&name)), trace),
     }
 }
 
@@ -480,6 +611,82 @@ mod tests {
                 on: false,
                 names: vec!["Led".into()]
             }
+        );
+    }
+
+    fn reply_of(plan: &Plan) -> String {
+        match plan {
+            Plan::Answer { reply, .. } => reply.clone(),
+            other => panic!("not an answer: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zone_reading() {
+        assert_eq!(
+            reply_of(&p("quelle température fait-il dans le salon ?")),
+            "Il fait 18,2 °C dans le Salon."
+        );
+    }
+
+    #[test]
+    fn thermometer_without_zone() {
+        let r = reply_of(&p("il fait combien dans le bureau ?"));
+        assert_eq!(r, "Il fait 20,1 °C dans le Bureau.");
+    }
+
+    #[test]
+    fn outdoor() {
+        assert_eq!(
+            reply_of(&p("il fait combien dehors ?")),
+            "Il fait 7 °C dehors."
+        );
+        let mut f = fixture::house();
+        let mut garden = fixture::thermometer("sensor_outdoor", "garage", 5.5);
+        garden.name = "Extérieur".into();
+        f.entities.push(garden);
+        f.outdoor_entity = Some("sensor_outdoor".into());
+        assert_eq!(
+            reply_of(&plan("il fait combien dehors ?", &f.house())),
+            "Il fait 5,5 °C dehors."
+        );
+    }
+
+    #[test]
+    fn stale_reading_says_age() {
+        let mut f = fixture::house();
+        f.zone_mut("salon").reading_age_s = Some(3 * 3600);
+        f.entity_mut("sensor_salon_temperature").state.last_update = Some(fixture::NOW - 3 * 3600);
+        let r = reply_of(&plan("quelle température dans le salon ?", &f.house()));
+        assert!(r.contains("18,2 °C") && r.contains("il y a 3 h"), "{r}");
+        f.entity_mut("sensor_bureau_temperature").state.last_update = Some(fixture::NOW - 90 * 60);
+        let r = reply_of(&plan("il fait combien dans le bureau ?", &f.house()));
+        assert!(r.contains("20,1 °C") && r.contains("il y a 1 h 30"), "{r}");
+    }
+
+    #[test]
+    fn zone_without_reading_uses_the_thermometer() {
+        let mut f = fixture::house();
+        f.zone_mut("salon").reading = None;
+        f.entity_mut("sensor_salon_temperature").state.value =
+            nidoo_core::model::StateValue::Number(17.9);
+        let r = reply_of(&plan("quelle température dans le salon ?", &f.house()));
+        assert_eq!(r, "Il fait 17,9 °C dans le Salon.");
+    }
+
+    #[test]
+    fn no_thermometer() {
+        assert_eq!(
+            reply_of(&p("il fait combien au garage ?")),
+            "Pas de thermomètre dans le Garage."
+        );
+    }
+
+    #[test]
+    fn reading_without_room_asks() {
+        assert_eq!(
+            labels(&p("quelle température fait-il ?")),
+            ["Salon", "Bureau", "Chambre Léa"]
         );
     }
 }
