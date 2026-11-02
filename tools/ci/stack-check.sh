@@ -129,20 +129,26 @@ fi
 # oikos (a bootstrap role cannot be renamed, and the command refuses when the
 # target names already exist, so the bundled nidoo cluster cannot play the
 # old install). Mosquitto keeps the nidoo login; only the topics are old.
+# The seed runs the house's TimescaleDB version, pinned on purpose (the bundled
+# stack above stays on its own tag), and creates oikos at initdb like the
+# house did, so TimescaleDB's scheduler is attached to it when it is renamed.
 echo "== migrate-oikos"
 seed=nidoo-oikos-seed
 seed_port=5434
+scheduler="TimescaleDB Background Worker Scheduler"
 # A leftover from a killed local run would break the docker run below.
 docker rm -fv "$seed" >/dev/null 2>&1 || true
 docker run -d --name "$seed" --network host \
-  -e POSTGRES_PASSWORD="$db_password" \
-  timescale/timescaledb:2.30.2-pg17 postgres -c "port=${seed_port}" >/dev/null
+  -e POSTGRES_PASSWORD="$db_password" -e POSTGRES_DB=oikos \
+  timescale/timescaledb:2.17.2-pg17 postgres -c "port=${seed_port}" >/dev/null
 seed_psql() {
   docker exec "$seed" psql -h localhost -p "$seed_port" -U postgres "$@"
 }
 ready=0
 for _ in $(seq 1 60); do
-  if seed_psql -d postgres -tAc "select 1" >/dev/null 2>&1; then
+  # The entrypoint's initdb server listens on the socket only, so a TCP answer
+  # is the final server.
+  if seed_psql -d oikos -tAc "select 1" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -150,7 +156,20 @@ for _ in $(seq 1 60); do
 done
 [ "$ready" -eq 1 ] || { echo "seed database not ready after 60 s" >&2; exit 1; }
 seed_psql -d postgres -v ON_ERROR_STOP=1 -c "create role oikos superuser login password '${db_password}'"
-seed_psql -d postgres -v ON_ERROR_STOP=1 -c "create database oikos owner oikos"
+seed_psql -d postgres -v ON_ERROR_STOP=1 -c "alter database oikos owner to oikos"
+# Polls until the count query $2 on the seed's database $1 is at least 1.
+seed_eventually() {
+  for _ in $(seq 1 60); do
+    if [ "$(seed_psql -d "$1" -tAc "$2")" -ge 1 ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+seed_eventually postgres \
+  "select count(*) from pg_stat_activity where datname='oikos' and application_name='${scheduler}'" \
+  || { echo "no TimescaleDB scheduler attached to oikos before the switch-over" >&2; exit 1; }
 # The throwaway one-off container reaches the host-network services directly.
 jq -n --arg pw "$mqtt_password" --arg dbpw "$db_password" --arg port "$seed_port" '{
   mqtt: {host: "localhost", port: 1883, user: "nidoo", password: $pw},
@@ -180,6 +199,15 @@ done
 [ "$tables" -eq 1 ] || { echo "hub created no tables after 60 s" >&2; exit 1; }
 docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
   -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
+# Fifty more, so the publish and clear phases carry many messages, and one
+# topic the switch-over does not own, which --restore must leave alone.
+# shellcheck disable=SC2016 # expanded by the container's shell
+docker exec -e P="$mqtt_password" nidoo-mosquitto sh -c '
+  for i in $(seq 1 50); do
+    mosquitto_pub -h localhost -u nidoo -P "$P" -r -t "oikos/ui/oikos_t$i" -m "{\"name\":\"oikos t$i\"}"
+  done'
+docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
+  -r -t zigbee2mqtt/ci_lamp -m '{"state":"OFF"}'
 migrate() {
   docker compose run --rm --no-deps -T hub --data /data migrate-oikos "$@"
 }
@@ -199,10 +227,25 @@ backup=$(docker compose run --rm --no-deps -T --entrypoint sh hub -c \
 [ "$backup" = "absent" ] || { echo "a refused apply left a backup behind: '$backup'" >&2; exit 1; }
 docker compose stop hub
 migrate
-migrate --backup /data/backup.jsonl --apply
+# --apply ends with the same check as --verify.
+out=$(migrate --backup /data/backup.jsonl --apply)
+echo "$out"
+grep -q "verify: nothing left with the old name" <<<"$out" \
+  || { echo "--apply did not end with a passing verify" >&2; exit 1; }
+grep -q "timescaledb background workers started on nidoo" <<<"$out" \
+  || { echo "--apply did not restart the TimescaleDB workers" >&2; exit 1; }
 got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t nidoo/ui/nidoo_t -C 1 -W 3)
 [ "$got" = '{"name":"nidoo t"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
+got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
+  -t nidoo/ui/nidoo_t50 -C 1 -W 3)
+[ "$got" = '{"name":"nidoo t50"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
+# The backup holds every retained message, the 51 old ones among them.
+in_backup() {
+  docker compose run --rm --no-deps -T --entrypoint cat hub "$1" | jq -r .topic
+}
+n=$(in_backup /data/backup.jsonl | grep -c '^oikos/ui/oikos_t' || true)
+[ "$n" -eq 51 ] || { echo "backup holds $n of the 51 old topics" >&2; exit 1; }
 old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t oikos/ui/oikos_t -C 1 -W 3 || true)
 [ -z "$old" ] || { echo "old retained topic still there: '$old'" >&2; exit 1; }
@@ -216,6 +259,18 @@ old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_
 [ "$(seed_psql -d postgres -tAc "select count(*) from pg_roles where rolname='oikos'")" = "0" ] \
   || { echo "role oikos still there after the switch-over" >&2; exit 1; }
 migrate --verify
+# The rename stopped the scheduler; the command started it again on nidoo.
+seed_eventually postgres \
+  "select count(*) from pg_stat_activity where datname='nidoo' and application_name='${scheduler}'" \
+  || { echo "no TimescaleDB scheduler on nidoo after the switch-over" >&2; exit 1; }
+# A second --apply finds nothing to do, through the "already switched" path of
+# the database rename, and still succeeds.
+out=$(migrate --backup /data/b2.jsonl --apply)
+echo "$out"
+grep -q "broker: published 0, cleared 0" <<<"$out" \
+  || { echo "a second --apply moved messages again" >&2; exit 1; }
+grep -q "settings: 0 keys rewritten" <<<"$out" \
+  || { echo "a second --apply rewrote settings again" >&2; exit 1; }
 # The one-off container wrote hub.json as its own user (mode 0600), so read it there.
 migrate_cat() {
   docker compose run --rm --no-deps -T --entrypoint cat hub /data/hub.json
@@ -232,12 +287,25 @@ wait_hub || { echo "hub not healthy on the renamed database" >&2; exit 1; }
 session=0
 for _ in $(seq 1 60); do
   if [ "$(seed_psql -d postgres -tAc \
-    "select count(*) from pg_stat_activity where datname='nidoo' and usename='nidoo' and application_name <> 'psql'")" -ge 1 ]; then
+    "select count(*) from pg_stat_activity where datname='nidoo' and usename='nidoo' and backend_type='client backend' and application_name <> 'psql'")" -ge 1 ]; then
     session=1
     break
   fi
   sleep 1
 done
 [ "$session" -eq 1 ] || { echo "the hub holds no session as nidoo on the renamed database" >&2; exit 1; }
+
+# --restore puts the old topics back from the backup, and nothing else: the
+# topic the switch-over does not own keeps its newer value. Same broker; the
+# hub listens on nidoo/ only, so the restored oikos/ topics are inert here.
+docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
+  -r -t zigbee2mqtt/ci_lamp -m '{"state":"ON"}'
+migrate --restore /data/backup.jsonl
+got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
+  -t oikos/ui/oikos_t -C 1 -W 3)
+[ "$got" = '{"name":"oikos t"}' ] || { echo "restored payload wrong: '$got'" >&2; exit 1; }
+got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
+  -t zigbee2mqtt/ci_lamp -C 1 -W 3)
+[ "$got" = '{"state":"ON"}' ] || { echo "--restore replayed a topic it does not own: '$got'" >&2; exit 1; }
 
 echo "stack ok"
