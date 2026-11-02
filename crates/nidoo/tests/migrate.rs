@@ -16,24 +16,37 @@ async fn count(pool: &PgPool, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
 }
 
-/// Compresses every chunk of the two history hypertables now. Rows older than the policy age
-/// are compressed by a background job at an arbitrary moment; doing it here keeps the tests
-/// deterministic.
+/// Stops the compression policy jobs, so no background job compresses (or recompresses) a
+/// chunk behind a test. Call before inserting.
+async fn pause_compression_jobs(pool: &PgPool) {
+    sqlx::query(
+        "SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs \
+         WHERE proc_name = 'policy_compression'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Compresses every chunk of the history hypertables now and asserts each one reports
+/// compressed. Needs [`pause_compression_jobs`] first.
 async fn compress_all(pool: &PgPool) {
-    for table in ["entity_state", "entity_availability"] {
-        let chunks: Vec<String> =
-            sqlx::query_scalar(&format!("SELECT c::text FROM show_chunks('{table}') c"))
-                .fetch_all(pool)
-                .await
-                .unwrap();
-        for chunk in chunks {
-            // The background policy may compress the chunk between the list and this call
-            // ("already compressed"): the goal is only that it ends up compressed.
-            let _ = sqlx::query("SELECT compress_chunk($1::text::regclass)")
-                .bind(&chunk)
-                .execute(pool)
-                .await;
-        }
+    for table in ["entity_state", "entity_availability", "climate_decision"] {
+        sqlx::query(&format!(
+            "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('{table}') c"
+        ))
+        .execute(pool)
+        .await
+        .unwrap();
+        let not_compressed = count(
+            pool,
+            &format!(
+                "SELECT count(*) FROM timescaledb_information.chunks \
+                 WHERE hypertable_name = '{table}' AND NOT is_compressed"
+            ),
+        )
+        .await;
+        assert_eq!(not_compressed, 0, "{table} chunks not compressed");
     }
 }
 
@@ -76,6 +89,7 @@ async fn renames_entity_ids_in_every_table() {
 async fn renames_rows_in_compressed_chunk() {
     let Some(t) = fresh_db().await else { return };
     let pool = t.db.pool();
+    pause_compression_jobs(pool).await;
     sqlx::query(
         "INSERT INTO entity_state (time, entity_id, value) \
          VALUES (now() - interval '10 days', 'oikos_alarm_house', '1')",
@@ -97,6 +111,7 @@ async fn renames_rows_in_compressed_chunk() {
 async fn entity_id_collision_keeps_new_row() {
     let Some(t) = fresh_db().await else { return };
     let pool = t.db.pool();
+    pause_compression_jobs(pool).await;
     sqlx::query(
         "INSERT INTO entity_state (time, entity_id, value) VALUES \
          ('2026-01-01T00:00:00Z', 'oikos_x', '1'), ('2026-01-01T00:00:00Z', 'nidoo_x', '2')",
@@ -119,6 +134,7 @@ async fn entity_id_collision_keeps_new_row() {
 async fn availability_collision_keeps_new_row_when_compressed() {
     let Some(t) = fresh_db().await else { return };
     let pool = t.db.pool();
+    pause_compression_jobs(pool).await;
     sqlx::query(
         "INSERT INTO entity_availability (time, entity_id, availability) VALUES \
          ('2026-01-01T00:00:00Z', 'oikos_x', 'offline'), ('2026-01-01T00:00:00Z', 'nidoo_x', 'online')",
@@ -141,9 +157,11 @@ async fn availability_collision_keeps_new_row_when_compressed() {
 async fn chunk_without_new_rows_is_renamed_without_a_full_decompress() {
     let Some(t) = fresh_db().await else { return };
     let pool = t.db.pool();
+    pause_compression_jobs(pool).await;
     sqlx::query(
         "INSERT INTO entity_state (time, entity_id, value) VALUES \
-         ('2026-01-01T00:00:00Z', 'oikos_x', '1'), ('2026-01-01T00:00:01Z', 'oikos_y', '2')",
+         ('2026-01-01T00:00:00Z', 'oikos_x', '1'), ('2026-01-01T00:00:01Z', 'oikos_y', '2'), \
+         ('2026-02-01T00:00:00Z', 'oikos_z', '3'), ('2026-02-01T00:00:01Z', 'nidoo_z', '4')",
     )
     .execute(pool)
     .await
@@ -154,18 +172,44 @@ async fn chunk_without_new_rows_is_renamed_without_a_full_decompress() {
         .fetch_all(pool)
         .await
         .unwrap();
-    assert_eq!(ids, vec!["nidoo_x", "nidoo_y"]);
-    // The chunk had no `nidoo_` row, so the collision pass leaves it compressed (the UPDATE
-    // itself may decompress batches into a partial chunk, which still reports compressed).
-    assert_eq!(
-        count(
-            pool,
+    assert_eq!(ids, vec!["nidoo_x", "nidoo_y", "nidoo_z", "nidoo_z"]);
+    // With the policy paused nothing recompresses after the commit. The oikos-only chunk has
+    // no `nidoo_` row, so the collision pass skips it and it stays compressed (a return to
+    // decompress-everything would leave it uncompressed); the control chunk holds a `nidoo_`
+    // row, so it was decompressed.
+    let compressed = |day: &'static str| {
+        format!(
             "SELECT count(*) FROM timescaledb_information.chunks \
-             WHERE hypertable_name = 'entity_state' AND is_compressed"
+             WHERE hypertable_name = 'entity_state' AND is_compressed \
+               AND range_start <= '{day}T00:00:00Z' AND range_end > '{day}T00:00:00Z'"
         )
-        .await,
-        1
-    );
+    };
+    assert_eq!(count(pool, &compressed("2026-01-01")).await, 1);
+    assert_eq!(count(pool, &compressed("2026-02-01")).await, 0);
+    t.drop_db().await;
+}
+
+#[tokio::test]
+async fn climate_decision_collision_keeps_new_row_when_compressed() {
+    let Some(t) = fresh_db().await else { return };
+    let pool = t.db.pool();
+    pause_compression_jobs(pool).await;
+    sqlx::query(
+        "INSERT INTO climate_decision (time, zone, entity_id, mode, source, reason, applied) VALUES \
+         ('2026-01-01T00:00:00Z', 'z', 'oikos_x', 'off', 'old', 'r', true), \
+         ('2026-01-01T00:00:00Z', 'z', 'nidoo_x', 'heat', 'new', 'r', true)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    compress_all(pool).await;
+    rename_entity_ids(pool, false).await.unwrap();
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT entity_id, source FROM climate_decision")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![("nidoo_x".to_string(), "new".to_string())]);
     t.drop_db().await;
 }
 

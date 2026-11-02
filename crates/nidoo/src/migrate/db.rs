@@ -105,22 +105,40 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
         .fetch_one(&mut *tx)
         .await?;
         if compressed {
-            // A colliding pair shares its time key, so both rows sit in one chunk: only a
-            // chunk that already holds a `nidoo_` row can hold a collision. The probe filters
-            // on the segmentby column. On a house with no `nidoo_` rows nothing is decompressed.
-            let chunks: Vec<String> = sqlx::query_scalar(&format!(
-                "SELECT c::text FROM show_chunks('public.{}'::regclass) c",
-                quote_ident(&table).replace('\'', "''")
-            ))
+            // A colliding pair shares its time key, so both rows sit in one chunk: only a chunk
+            // that already holds a `nidoo_` row can hold a collision. That holds when the key
+            // contains the hypertable's partitioning column; if it does not, every compressed
+            // chunk is decompressed (the safe fallback). The probe is cheap where `entity_id`
+            // is the segmentby column and a plain scan elsewhere (e.g. `climate_decision`,
+            // segmented by `zone`). On a house with no `nidoo_` rows nothing is decompressed.
+            let key_has_partitioning: bool = sqlx::query_scalar(
+                "SELECT NOT EXISTS (SELECT 1 FROM timescaledb_information.dimensions \
+                 WHERE hypertable_schema = 'public' AND hypertable_name = $1 \
+                   AND dimension_number = 1 AND NOT (column_name = ANY ($2)))",
+            )
+            .bind(&table)
+            .bind(&keys)
+            .fetch_one(&mut *tx)
+            .await?;
+            let chunks: Vec<String> = sqlx::query_scalar(
+                "SELECT format('%I.%I', chunk_schema, chunk_name) \
+                 FROM timescaledb_information.chunks \
+                 WHERE hypertable_schema = 'public' AND hypertable_name = $1 AND is_compressed",
+            )
+            .bind(&table)
             .fetch_all(&mut *tx)
             .await?;
             for chunk in chunks {
-                let has_new: bool = sqlx::query_scalar(&format!(
-                    "SELECT EXISTS (SELECT 1 FROM {chunk} WHERE entity_id LIKE 'nidoo\\_%')"
-                ))
-                .fetch_one(&mut *tx)
-                .await?;
-                if has_new {
+                let needs_decompress = if key_has_partitioning {
+                    sqlx::query_scalar(&format!(
+                        "SELECT EXISTS (SELECT 1 FROM {chunk} WHERE entity_id LIKE 'nidoo\\_%')"
+                    ))
+                    .fetch_one(&mut *tx)
+                    .await?
+                } else {
+                    true
+                };
+                if needs_decompress {
                     sqlx::query(
                         "SELECT decompress_chunk($1::text::regclass, if_compressed => true)",
                     )
