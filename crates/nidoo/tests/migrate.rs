@@ -21,12 +21,19 @@ async fn count(pool: &PgPool, sql: &str) -> i64 {
 /// deterministic.
 async fn compress_all(pool: &PgPool) {
     for table in ["entity_state", "entity_availability"] {
-        sqlx::query(&format!(
-            "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('{table}') c"
-        ))
-        .execute(pool)
-        .await
-        .unwrap();
+        let chunks: Vec<String> =
+            sqlx::query_scalar(&format!("SELECT c::text FROM show_chunks('{table}') c"))
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        for chunk in chunks {
+            // The background policy may compress the chunk between the list and this call
+            // ("already compressed"): the goal is only that it ends up compressed.
+            let _ = sqlx::query("SELECT compress_chunk($1::text::regclass)")
+                .bind(&chunk)
+                .execute(pool)
+                .await;
+        }
     }
 }
 
