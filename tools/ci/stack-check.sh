@@ -31,7 +31,7 @@ cleanup() {
     docker logs nidoo-oikos-seed 2>&1 | tail -30 || true
   fi
   docker compose down -v || true
-  docker rm -f nidoo-oikos-seed >/dev/null 2>&1 || true
+  docker rm -fv nidoo-oikos-seed >/dev/null 2>&1 || true
   rm -f compose.override.yml
   exit "$status"
 }
@@ -122,6 +122,7 @@ if docker exec nidoo-mosquitto mosquitto_pub -h localhost \
   echo "mosquitto accepted a wrong password" >&2
   exit 1
 fi
+
 # The switch-over, last. The bundled stack now starts as nidoo, so the old
 # oikos install is seeded here: a second throwaway TimescaleDB whose bootstrap
 # superuser is "postgres", holding a superuser role and a database both named
@@ -131,6 +132,8 @@ fi
 echo "== migrate-oikos"
 seed=nidoo-oikos-seed
 seed_port=5434
+# A leftover from a killed local run would break the docker run below.
+docker rm -fv "$seed" >/dev/null 2>&1 || true
 docker run -d --name "$seed" --network host \
   -e POSTGRES_PASSWORD="$db_password" \
   timescale/timescaledb:2.30.2-pg17 postgres -c "port=${seed_port}" >/dev/null
@@ -180,15 +183,20 @@ docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_passwo
 migrate() {
   docker compose run --rm --no-deps -T hub --data /data migrate-oikos "$@"
 }
-# While the hub answers, the command refuses (dry run and apply), writing nothing.
-if migrate --backup /data/refused.jsonl --apply; then
-  echo "migrate-oikos --apply ran while the hub was up" >&2
-  exit 1
-fi
-if [ -e data/refused.jsonl ] || docker compose run --rm --no-deps -T --entrypoint test hub -e /data/refused.jsonl; then
-  echo "a refused apply left a backup behind" >&2
-  exit 1
-fi
+# While the hub answers, the command refuses (dry run and apply), for that
+# reason and no other, writing nothing.
+for args in "" "--backup /data/refused.jsonl --apply"; do
+  # shellcheck disable=SC2086
+  if out=$(migrate $args 2>&1); then
+    echo "migrate-oikos ${args:-(dry run)} ran while the hub was up" >&2
+    exit 1
+  fi
+  grep -q "the hub answers" <<<"$out" \
+    || { echo "migrate-oikos ${args:-(dry run)} refused for the wrong reason: $out" >&2; exit 1; }
+done
+backup=$(docker compose run --rm --no-deps -T --entrypoint sh hub -c \
+  'if [ -e /data/refused.jsonl ]; then echo present; else echo absent; fi')
+[ "$backup" = "absent" ] || { echo "a refused apply left a backup behind: '$backup'" >&2; exit 1; }
 docker compose stop hub
 migrate
 migrate --backup /data/backup.jsonl --apply
@@ -212,8 +220,24 @@ migrate --verify
 migrate_cat() {
   docker compose run --rm --no-deps -T --entrypoint cat hub /data/hub.json
 }
-migrate_cat | jq -e '.database_url | endswith("/nidoo")' >/dev/null
+migrate_cat | jq -e --arg url "postgresql://nidoo:${db_password}@localhost:${seed_port}/nidoo" \
+  '.database_url == $url' >/dev/null \
+  || { echo "hub.json database_url is not the renamed one" >&2; exit 1; }
 docker compose up -d --no-deps hub
 wait_hub || { echo "hub not healthy on the renamed database" >&2; exit 1; }
+# /health says ok whatever the database does, so ask Postgres itself: the hub
+# must hold a session as role nidoo on database nidoo. Asked as the seed's
+# superuser, so this check's own session is not the one counted; polled
+# because the pool connects lazily.
+session=0
+for _ in $(seq 1 60); do
+  if [ "$(seed_psql -d postgres -tAc \
+    "select count(*) from pg_stat_activity where datname='nidoo' and usename='nidoo' and application_name <> 'psql'")" -ge 1 ]; then
+    session=1
+    break
+  fi
+  sleep 1
+done
+[ "$session" -eq 1 ] || { echo "the hub holds no session as nidoo on the renamed database" >&2; exit 1; }
 
 echo "stack ok"
