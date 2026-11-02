@@ -1,10 +1,10 @@
 ---
 title: MCP tools
 sidebar_position: 3
-description: The 43 tools and the one resource of the hub's MCP server, with their arguments.
+description: The 53 tools and the one resource of the hub's MCP server, with their arguments.
 ---
 
-The MCP server is at `http://<host>:8081/mcp` (streamable HTTP, stateful sessions) and offers **fifty tools** and **one resource**. It has the same trust model as the REST API on the same port: LAN-only, no authentication in v1. The tools are defined in [`crates/nidoo/src/mcp`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo/src/mcp). For setup in Claude Code, Codex and Claude Desktop, see [Talking to the house (MCP)](../users/assistants-mcp.md).
+The MCP server is at `http://<host>:8081/mcp` (streamable HTTP, stateful sessions) and offers **fifty-three tools** and **one resource**. It has the same trust model as the REST API on the same port: LAN-only, no authentication in v1. The tools are defined in [`crates/nidoo/src/mcp`](https://github.com/Gekkotron/Nidoo/tree/main/crates/nidoo/src/mcp). For setup in Claude Code, Codex and Claude Desktop, see [Talking to the house (MCP)](../users/assistants-mcp.md).
 
 A failed tool call answers in-band (`isError: true` with the reason as text) so the assistant can retry with better arguments. A refused publish (broker link down) is the same in-band error.
 
@@ -21,6 +21,7 @@ Claude Desktop only speaks stdio, so it launches `nidoo mcp-stdio --server http:
 | Tool | What it does |
 | --- | --- |
 | `bridge_info` | The Zigbee2MQTT bridge (version, coordinator, permit join, online or not) and the state of the link to the broker. |
+| `system_status` | The hub's System view, the same as `GET /api/v1/system` (uptime, restarts, server and hub figures, services, the notify switch). No arguments. Read-only. |
 | `list_areas` | The rooms, each with its entity count and the count of entities shown by default (`primary_count`): declared areas first, then those only carried by entities, then `Unassigned`. |
 | `set_areas` | Replaces the declared rooms (retained on `nidoo/ui/_areas`) and returns the resulting list. Args: `areas` (each with `id`, `name`, optional `icon`, `order`, `groupNames`, `groupFavorites`). A room kept by id keeps the fields you leave out. |
 | `list_devices` | The Zigbee devices with availability, battery and link quality. Args: optional `area` (an area id), `query` (case-insensitive, matched against name, model and vendor). |
@@ -163,4 +164,4 @@ The native alarm (optional, off by default). Its settings are a whole document a
 
 ## Count
 
-Twenty-seven tools live in `tools.rs` (house, overrides, command, groups, network, virtual, history, notifications, weather, solar, home settings), six in `flow_tools.rs`, eleven in `climate_tools.rs`, four in `ambiance_tools.rs` and two in `alarm_tools.rs`: 27 + 6 + 11 + 4 + 2 = 50.
+Thirty tools live in `tools.rs` (house, system, overrides, command, groups, network, virtual, history, notifications, weather, solar, home settings), six in `flow_tools.rs`, eleven in `climate_tools.rs`, four in `ambiance_tools.rs` and two in `alarm_tools.rs`: 30 + 6 + 11 + 4 + 2 = 53.

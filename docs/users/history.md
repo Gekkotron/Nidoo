@@ -18,6 +18,10 @@ Routes under `/api/v1/history/*` (see the [HTTP API](../reference/http-api.md)):
 
 Every entity sheet has a **View history →** link to `/history/<id>`, a full-screen chart with range chips (Last hour, Last 6 hours, Last 24 hours, Last 7 days, Last 30 days, Last year; the range is kept in the URL as `?range=`). A sensor draws a smooth line you can hover for the value, with the min and max band on the 7-day and longer ranges. An energy counter (kWh and similar) draws its paired power sensor over the short ranges, or kWh bars per day over 7, 30 or 365 days (a single day's bar when there is no power sensor). An entity with no rows shows "No data recorded for this entity yet", and a database that is down shows "History is unavailable right now".
 
+## Retention
+
+Nothing is deleted by age, except the [system health](system-health.md) sensors (`system_*`) and the hub's restart log, which are kept 90 days. The rest of the history is kept as long as you keep the database.
+
 ## Backup
 
 Back up with `pg_dump` from any client that can reach the database:
