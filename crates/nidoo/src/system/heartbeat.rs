@@ -1,7 +1,8 @@
 //! Heartbeat file: tells the next boot whether this run ended on purpose.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use nidoo_api::StopKind;
 use serde::{Deserialize, Serialize};
@@ -50,13 +51,29 @@ pub fn classify(prev: &Previous, boot: u64) -> (StopKind, Option<u64>) {
     }
 }
 
+/// The directories whose run wrote its clean-stop marker. Held while any heartbeat file is
+/// written, so a heartbeat cannot land after (and erase) the marker: the signal listener and
+/// the system task write from different threads.
+static STOPPED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn stopped() -> MutexGuard<'static, Vec<PathBuf>> {
+    STOPPED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn write(dir: &Path, value: &Heartbeat) -> io::Result<()> {
     let bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
     write_private_atomic(&dir.join(FILE), &bytes)
 }
 
-/// Record a sign of life (the run is still going).
+/// Record a sign of life (the run is still going). Once this process wrote the clean-stop
+/// marker into `dir`, it does nothing.
 pub fn write_heartbeat(dir: &Path, now: u64) -> io::Result<()> {
+    let stopped = stopped();
+    if stopped.iter().any(|d| d == dir) {
+        return Ok(());
+    }
     write(
         dir,
         &Heartbeat {
@@ -66,8 +83,13 @@ pub fn write_heartbeat(dir: &Path, now: u64) -> io::Result<()> {
     )
 }
 
-/// Record a deliberate stop, keeping the previous heartbeat value.
+/// Record a deliberate stop, keeping the previous heartbeat value. Later heartbeats of this
+/// process into `dir` are skipped, so the marker stays.
 pub fn write_clean_stop(dir: &Path, now: u64) -> io::Result<()> {
+    let mut stopped = stopped();
+    if !stopped.iter().any(|d| d == dir) {
+        stopped.push(dir.to_path_buf());
+    }
     let heartbeat = match read(dir) {
         Previous::Found(h) => h.heartbeat,
         _ => now,
@@ -138,6 +160,15 @@ mod tests {
         write_heartbeat(dir.path(), 10).unwrap();
         assert_eq!(read(dir.path()), found(10, None));
         write_clean_stop(dir.path(), 20).unwrap();
+        assert_eq!(read(dir.path()), found(10, Some(20)));
+    }
+
+    #[test]
+    fn heartbeat_after_clean_stop_keeps_the_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        write_heartbeat(dir.path(), 10).unwrap();
+        write_clean_stop(dir.path(), 20).unwrap();
+        write_heartbeat(dir.path(), 30).unwrap();
         assert_eq!(read(dir.path()), found(10, Some(20)));
     }
 }

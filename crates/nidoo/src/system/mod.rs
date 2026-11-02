@@ -1,9 +1,11 @@
 //! System health: machine figures, restart tracking and service status.
 
+pub mod discovery;
 pub mod heartbeat;
 pub mod restarts;
 pub mod sample;
 pub mod services;
+pub mod task;
 
 use std::sync::atomic::Ordering;
 

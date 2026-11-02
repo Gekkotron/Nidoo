@@ -32,6 +32,11 @@ impl ServiceStatus {
         }
     }
 
+    /// The current state.
+    pub fn state(&self) -> ServiceState {
+        self.state
+    }
+
     pub fn view(&self, service: SystemService) -> ServiceView {
         ServiceView {
             service,

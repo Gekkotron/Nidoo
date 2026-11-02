@@ -261,6 +261,8 @@ pub struct Hub {
     pub(crate) commands_sent: AtomicU64,
     /// The broker's retained-message count; `None` until the first report.
     pub(crate) system_retained: Mutex<Option<u64>>,
+    /// The system task's figures, service states and published sensors.
+    pub(crate) system: Mutex<crate::system::task::SystemState>,
     pub(crate) weather_refresh_minutes: u64,
     pub(crate) weather_city: String,
     pub(crate) weather_country: Option<String>,
@@ -420,6 +422,10 @@ impl Hub {
             system_notify: std::sync::atomic::AtomicBool::new(cfg.system.notify),
             commands_sent: AtomicU64::new(0),
             system_retained: Mutex::new(None),
+            system: Mutex::new(crate::system::task::SystemState::new(
+                cfg.system.notify,
+                clock::now(),
+            )),
             outages: Mutex::new(crate::outage::Outages::new(
                 cfg.weather.notify_unreachable,
                 cfg.solcast.notify_unreachable,
