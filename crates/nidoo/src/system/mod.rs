@@ -35,13 +35,42 @@ impl CommandsToday {
     }
 }
 
+/// How long the broker's retained-message count stays valid without a new report. Mosquitto
+/// sends one about every ten seconds, so three minutes of silence means it stopped telling.
+pub const RETAINED_FRESH_SECS: u64 = 180;
+
+/// The broker's last retained-message report: the count, when it arrived and the
+/// [`Hub::link_epoch`] it arrived in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RetainedReport {
+    count: u64,
+    received_at: u64,
+    epoch: u64,
+}
+
+impl RetainedReport {
+    /// The count while it is fresh at `now` and from the current link, else `None`.
+    fn fresh(&self, now: u64, epoch: u64) -> Option<u64> {
+        (self.epoch == epoch && now.saturating_sub(self.received_at) <= RETAINED_FRESH_SECS)
+            .then_some(self.count)
+    }
+}
+
 impl Hub {
-    /// Retained messages on the broker, `None` until the broker has reported a count.
+    /// Retained messages on the broker; `None` until the broker has reported a count, when
+    /// the last report is older than [`RETAINED_FRESH_SECS`], or after a link drop until the
+    /// next report.
     pub fn retained_count(&self) -> Option<u64> {
-        *self
+        self.retained_count_at(crate::clock::now())
+    }
+
+    /// [`Hub::retained_count`] at a given time.
+    pub fn retained_count_at(&self, now: u64) -> Option<u64> {
+        let report = *self
             .system_retained
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        report?.fresh(now, self.link_epoch())
     }
 
     /// Capture the broker's retained-message count; an unparsable payload is ignored.
@@ -53,10 +82,15 @@ impl Hub {
             .ok()
             .and_then(|text| text.trim().parse::<u64>().ok())
         {
+            let report = RetainedReport {
+                count,
+                received_at: crate::clock::now(),
+                epoch: self.link_epoch(),
+            };
             *self
                 .system_retained
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(count);
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report);
         }
         true
     }
@@ -148,6 +182,35 @@ mod tests {
         let hub = Hub::new(&Config::default(), tx);
         hub.set_setup(Arc::clone(&ctx));
         (hub, ctx)
+    }
+
+    #[test]
+    fn retained_count_goes_stale() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (hub, _ctx) = hub_with(None, tmp.path());
+        let at = crate::clock::now();
+        assert!(hub.ingest_system_retained(services::RETAINED_TOPIC, b"2431"));
+        assert_eq!(hub.retained_count_at(at), Some(2431));
+        assert_eq!(hub.retained_count_at(at + RETAINED_FRESH_SECS), Some(2431));
+        // Mosquitto reports every ten seconds: three minutes of silence is a broker that
+        // stopped telling, and the count is unknown.
+        assert_eq!(hub.retained_count_at(at + RETAINED_FRESH_SECS + 60), None);
+    }
+
+    #[test]
+    fn retained_count_is_unknown_after_a_link_drop_until_reported_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (hub, _ctx) = hub_with(None, tmp.path());
+        hub.set_connection(nidoo_api::ConnectionStatus::Online);
+        hub.ingest_system_retained(services::RETAINED_TOPIC, b"2431");
+        assert_eq!(hub.retained_count(), Some(2431));
+        hub.set_connection(nidoo_api::ConnectionStatus::Offline {
+            reason: "gone".into(),
+        });
+        hub.set_connection(nidoo_api::ConnectionStatus::Online);
+        assert_eq!(hub.retained_count(), None);
+        hub.ingest_system_retained(services::RETAINED_TOPIC, b"2440");
+        assert_eq!(hub.retained_count(), Some(2440));
     }
 
     #[tokio::test]

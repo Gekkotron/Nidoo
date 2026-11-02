@@ -259,8 +259,8 @@ pub struct Hub {
     pub(crate) system_notify: std::sync::atomic::AtomicBool,
     /// Device commands published since boot (one per publish, group members each count).
     pub(crate) commands_sent: AtomicU64,
-    /// The broker's retained-message count; `None` until the first report.
-    pub(crate) system_retained: Mutex<Option<u64>>,
+    /// The broker's last retained-message report; `None` until the first one.
+    pub(crate) system_retained: Mutex<Option<crate::system::RetainedReport>>,
     /// The system task's figures, service states and published sensors.
     pub(crate) system: Mutex<crate::system::task::SystemState>,
     pub(crate) weather_refresh_minutes: u64,
