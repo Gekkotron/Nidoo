@@ -10,6 +10,7 @@ license = "Apache-2.0"
 repository = "https://github.com/Gekkotron/Nidoo"
 
 [workspace.dependencies]
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk", "component"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 rumqttc = "0.25"
 surge-ping = "0.9"
