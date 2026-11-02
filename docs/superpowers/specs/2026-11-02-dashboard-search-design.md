@@ -129,11 +129,11 @@ Top to bottom:
    (`home_counts`, as the sidebar shows it) — that opens `/rooms/<id>`. The virtual Unassigned
    area never gets a tile.
 
-**Card grid.** Extract the presentational part of `RoomSection` — the card grid with its sizes,
-the heading, and the `room-<id>` element id used by `use_back_anchor` — into a component that takes
-an explicit, ordered list of entity ids and has no rename pencil, drag reorder or edit flow.
-`RoomSection` keeps its editing on top of it; the Search page uses the plain one. This is how the
-cards stay identical to the dashboard's (anti-goal) without the search sections being editable.
+**Card grid.** Search sections use the same section markup and grid classes as a room
+(`section.room`, `grid grid--home`) and draw each card with `card_for`, so the cards are the
+dashboard's own (anti-goal). `RoomSection` itself stays as it is — its drag-reorder wrappers and
+edit flow are not needed — and the empty-field Favorites reuse `RoomSection(FAVORITES)`, which is
+already read-only.
 
 **Back to the same place.** Search sections carry the same `room-<id>` anchors as Home and use
 `use_back_anchor`, so returning from a card's sheet restores both the query (`?q=`) and the
@@ -193,6 +193,6 @@ screenshot required.
 - **60-card cap** with a "type more" line.
 - Rooms listed **after** the devices.
 - **Grouped lamps follow Home**: a group that hides its members shows only the group card.
-- The card grid is **extracted from `RoomSection`** and shared, so search cards are the
-  dashboard's own; search sections are not editable.
+- Search sections **reuse the room's grid classes and `card_for`** rather than extracting a
+  component from `RoomSection`; search sections are not editable.
 - The matcher moves to **`nidoo-api`**; no new hub endpoint.
