@@ -74,6 +74,15 @@ pub struct Mounted {
     pub host: web_sys::Element,
 }
 
+impl Mounted {
+    pub fn new(app: impl std::any::Any + 'static, host: web_sys::Element) -> Self {
+        Mounted {
+            _app: Box::new(app),
+            host,
+        }
+    }
+}
+
 impl Drop for Mounted {
     fn drop(&mut self) {
         self.host.remove();

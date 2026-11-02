@@ -554,6 +554,7 @@ body {
   display: none;
 }
 
+.content-header__search,
 .content-header__theme,
 .content-header__lang {
   display: inline-flex;
@@ -572,6 +573,15 @@ body {
   cursor: pointer;
 }
 
+.content-header__search {
+  text-decoration: none;
+}
+
+.content-header__search[aria-current="page"] {
+  background: var(--raised);
+}
+
+.content-header__search svg,
 .content-header__theme svg {
   width: 20px;
   height: 20px;
@@ -587,11 +597,13 @@ body {
   font-weight: 700;
 }
 
+.content-header__search:hover,
 .content-header__theme:hover,
 .content-header__lang:hover {
   background: var(--raised);
 }
 
+.content-header__search:focus-visible,
 .content-header__theme:focus-visible,
 .content-header__lang:focus-visible {
   outline: 2px solid var(--select);
@@ -8211,6 +8223,7 @@ dialog.popup::backdrop {
     cursor: pointer;
   }
 
+  .content-header__search,
   .content-header__theme,
   .content-header__lang {
     min-width: var(--touch-min);
