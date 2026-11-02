@@ -27,6 +27,7 @@ pub struct Config {
     pub history: HistoryConfig,
     pub weather: WeatherConfig,
     pub solcast: SolcastConfig,
+    pub system: SystemConfig,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -420,6 +421,13 @@ impl Default for AutomationConfig {
     fn default() -> Self {
         Self { runs_kept: 20 }
     }
+}
+
+/// System health: whether a hub outage pushes a notification.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SystemConfig {
+    pub notify: bool,
 }
 
 /// Outdoor weather from Open-Meteo. Nothing leaves the LAN while `enabled` is false.

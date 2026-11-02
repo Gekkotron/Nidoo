@@ -8,13 +8,14 @@ use serde_json::Value;
 
 use crate::config::{
     AlarmConfig, AutomationConfig, ClimateConfig, CommandsConfig, Config, FrigateConfig,
-    GroupsConfig, HistoryConfig, SolcastConfig, TopicsConfig, WatchdogConfig, WeatherConfig,
+    GroupsConfig, HistoryConfig, SolcastConfig, SystemConfig, TopicsConfig, WatchdogConfig,
+    WeatherConfig,
 };
 use crate::setup::hub_file::HubFile;
 
 /// The row keys, in the order the sections are listed.
-pub const SECTION_KEYS: [&str; 6] = [
-    "weather", "solcast", "frigate", "push", "climate", "advanced",
+pub const SECTION_KEYS: [&str; 7] = [
+    "weather", "solcast", "frigate", "push", "climate", "advanced", "system",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,6 +137,14 @@ impl Default for AdvancedSection {
     }
 }
 
+/// Stored without a restart (see `Hub::set_system_notify`), so it is not in the generic
+/// settings routes.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SystemSection {
+    pub notify: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sections {
@@ -145,6 +154,7 @@ pub struct Sections {
     pub push: PushSection,
     pub climate: ClimateConfig,
     pub advanced: AdvancedSection,
+    pub system: SystemSection,
 }
 
 impl Sections {
@@ -160,6 +170,7 @@ impl Sections {
             ("push", row(&self.push)),
             ("climate", row(&self.climate)),
             ("advanced", row(&self.advanced)),
+            ("system", row(&self.system)),
         ]
     }
 
@@ -184,6 +195,7 @@ impl Sections {
                 "push" => out.push = parse(&key, value),
                 "climate" => out.climate = parse(&key, value),
                 "advanced" => out.advanced = parse(&key, value),
+                "system" => out.system = parse(&key, value),
                 _ => {}
             }
         }
@@ -237,6 +249,9 @@ pub fn assemble(file: &HubFile, s: &Sections) -> Config {
             api_key: s.solcast.api_key.clone(),
             notify_unreachable: s.solcast.notify_unreachable,
         },
+        system: SystemConfig {
+            notify: s.system.notify,
+        },
         ..Config::default()
     };
     cfg.flows.timezone = file.timezone.clone();
@@ -280,6 +295,7 @@ mod tests {
         s.climate.enabled = true;
         s.advanced.history_buffer_rows = 5;
         s.advanced.topics.z2m_base = "z2m-x".into();
+        s.system.notify = true;
         s
     }
 
@@ -322,6 +338,23 @@ mod tests {
     fn row_keys_match_section_keys() {
         let keys: Vec<_> = Sections::default().to_rows().iter().map(|r| r.0).collect();
         assert_eq!(keys, SECTION_KEYS);
+    }
+
+    #[test]
+    fn system_section_defaults_off_and_round_trips() {
+        // A database or cache from before this section has no "system" row: off.
+        let rows = vec![("weather".to_owned(), json!({"enabled": true}))];
+        let got = Sections::from_rows(rows);
+        assert!(!got.system.notify);
+        assert!(!assemble(&file(), &got).system.notify);
+        let mut on = Sections::default();
+        on.system.notify = true;
+        let back = Sections::from_rows(owned(on.to_rows()));
+        assert!(back.system.notify);
+        assert!(assemble(&file(), &back).system.notify);
+        // An old cache file without the key still parses.
+        let old: Sections = serde_json::from_value(json!({"weather": {"enabled": true}})).unwrap();
+        assert!(!old.system.notify);
     }
 
     #[test]

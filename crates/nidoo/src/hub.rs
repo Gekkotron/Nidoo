@@ -255,6 +255,8 @@ pub struct Hub {
     pub(crate) weather_notify_unreachable: bool,
     pub(crate) solar_notify_unreachable: bool,
     pub(crate) outages: Mutex<crate::outage::Outages>,
+    /// `[system] notify`: push when the hub itself, or a service it depends on, goes down.
+    pub(crate) system_notify: std::sync::atomic::AtomicBool,
     pub(crate) weather_refresh_minutes: u64,
     pub(crate) weather_city: String,
     pub(crate) weather_country: Option<String>,
@@ -411,6 +413,7 @@ impl Hub {
             weather_enabled: cfg.weather.enabled,
             weather_notify_unreachable: cfg.weather.notify_unreachable,
             solar_notify_unreachable: cfg.solcast.notify_unreachable,
+            system_notify: std::sync::atomic::AtomicBool::new(cfg.system.notify),
             outages: Mutex::new(crate::outage::Outages::new(
                 cfg.weather.notify_unreachable,
                 cfg.solcast.notify_unreachable,
