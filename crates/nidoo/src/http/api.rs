@@ -31,6 +31,8 @@ use crate::history::{HistoryError, query as history_query};
 use crate::hub::{Hub, HubError};
 use crate::media::{CameraFile, MediaError, Upstream, is_camera_id};
 
+use nidoo_assist::view::{AssistRequest, AssistTurn, AssistTurns};
+
 type HubState = State<Arc<Hub>>;
 
 /// A JSON body, or the rejection that becomes a JSON error reply.
@@ -77,6 +79,9 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/ambiances", get(list_ambiances))
         .route("/ambiances/{id}", put(put_ambiance).delete(delete_ambiance))
         .route("/ambiances/{id}/apply", post(apply_ambiance))
+        .route("/assist", post(assist))
+        .route("/assist/turns", get(assist_turns))
+        .route("/assist/turns/{id}/wrong", post(assist_wrong))
         .route("/weather", get(weather))
         .route("/solar", get(solar))
         .route("/home/settings", get(home_settings).put(put_home_settings))
@@ -1041,6 +1046,40 @@ async fn learn_climate(
     Path(id): Path<String>,
 ) -> Result<Json<LearnStatus>, HttpError> {
     Ok(Json(hub.learn_climate_zone(&id).await?))
+}
+
+/// `POST /assist` — a sentence or the answer to a pending question; `200` with the turn,
+/// `422` without text or reply, or for a question that expired.
+async fn assist(
+    State(hub): HubState,
+    body: Body<AssistRequest>,
+) -> Result<Json<AssistTurn>, HttpError> {
+    let Json(req) = body?;
+    Ok(Json(hub.assist(req).await?))
+}
+
+/// `GET /assist/turns?limit=` — the recent turns, newest first; `limit` is 50 by default and
+/// 200 at most.
+async fn assist_turns(
+    State(hub): HubState,
+    RawQuery(q): RawQuery,
+) -> Result<Json<AssistTurns>, HttpError> {
+    let params = parse_query(q.as_deref());
+    let limit = match get_one(&params, "limit") {
+        Some(text) => text.parse::<usize>().map_err(|_| bad_request())?,
+        None => 50,
+    };
+    Ok(Json(hub.assist_turns(limit.min(200)).await))
+}
+
+/// `POST /assist/turns/{id}/wrong` — marks the turn as wrongly understood (`204`); `404` for
+/// an unknown id.
+async fn assist_wrong(
+    State(hub): HubState,
+    Path(id): Path<String>,
+) -> Result<StatusCode, HttpError> {
+    hub.assist_mark_wrong(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `GET /climate/zones/{id}/decisions?limit=` — the recent decisions from memory, then older

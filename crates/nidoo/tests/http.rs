@@ -2416,3 +2416,106 @@ async fn put_system_notify_rejects_unknown_fields() {
         .expect("PUT");
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// The assistant.
+
+async fn post_assist(server: &Server, body: Value) -> reqwest::Response {
+    server
+        .client
+        .post(server.url("/api/v1/assist"))
+        .json(&body)
+        .send()
+        .await
+        .expect("POST /assist")
+}
+
+#[tokio::test]
+async fn assist_post_acts() {
+    let server = Server::start_with_flows().await;
+    let resp = post_assist(
+        &server,
+        json!({ "client": "page-1", "text": "allume la led", "simulate": true }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let turn: Value = resp.json().await.unwrap();
+    assert_eq!(turn["outcome"], "acted", "{turn}");
+    assert!(turn["reply"].as_str().unwrap().starts_with("Simulation :"));
+    assert_eq!(turn["trace"]["entities"][0], LED_ID);
+    assert_eq!(turn["simulate"], true);
+    assert_eq!(turn["wrong"], false);
+}
+
+#[tokio::test]
+async fn assist_post_empty_is_422() {
+    let server = Server::start().await;
+    let resp = post_assist(&server, json!({ "client": "page-1" })).await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let resp = post_assist(
+        &server,
+        json!({ "client": "page-1", "reply": { "type": "yes", "pending": "nope" } }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body["error"].as_str().unwrap().contains("question expired"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn assist_turns_lists() {
+    let server = Server::start().await;
+    let posted: Value = post_assist(
+        &server,
+        json!({ "client": "page-1", "text": "fais-moi un café" }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let resp = server.get("/api/v1/assist/turns?limit=5").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let turns: Value = resp.json().await.unwrap();
+    assert_eq!(turns["kept"], false);
+    assert_eq!(turns["turns"][0]["id"], posted["id"]);
+    assert_eq!(turns["turns"][0]["outcome"], "not_understood");
+    let resp = server.get("/api/v1/assist/turns?limit=abc").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn assist_wrong_unknown_is_404() {
+    let server = Server::start().await;
+    let resp = server
+        .client
+        .post(server.url("/api/v1/assist/turns/nope/wrong"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let posted: Value = post_assist(
+        &server,
+        json!({ "client": "page-1", "text": "fais-moi un café" }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let id = posted["id"].as_str().unwrap();
+    let resp = server
+        .client
+        .post(server.url(&format!("/api/v1/assist/turns/{id}/wrong")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let turns: Value = server
+        .get("/api/v1/assist/turns")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(turns["turns"][0]["wrong"], true);
+}
