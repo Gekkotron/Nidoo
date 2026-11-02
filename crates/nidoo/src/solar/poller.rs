@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::read_key_file;
 use crate::hub::Hub;
+use crate::outage::Service;
 
 /// How long the poller waits after the subscription is acknowledged, so the broker can replay
 /// the retained cache before the first decision. Without the cache a restart would look like
@@ -215,6 +216,7 @@ async fn fetch_round(hub: &Hub, client: &Client, sites: &[String], warned: &mut 
                     *warned = true;
                 }
                 hub.record_solar_failure();
+                hub.service_failed(Service::Solar, "answered without any forecast");
                 return Round::Failed;
             }
             Ok(periods) => results.push(periods),
@@ -223,6 +225,7 @@ async fn fetch_round(hub: &Hub, client: &Client, sites: &[String], warned: &mut 
                     "solar: Solcast rejected the API key; no further calls until restart"
                 );
                 hub.record_solar_failure();
+                hub.service_failed(Service::Solar, "API key refused");
                 return Round::Unauthorized;
             }
             Err(SolcastError::QuotaExceeded) => {
@@ -231,6 +234,7 @@ async fn fetch_round(hub: &Hub, client: &Client, sites: &[String], warned: &mut 
                 );
                 hub.record_solar_quota_exceeded();
                 hub.record_solar_failure();
+                hub.service_failed(Service::Solar, "daily quota used up");
                 return Round::Failed;
             }
             Err(e) => {
@@ -239,6 +243,7 @@ async fn fetch_round(hub: &Hub, client: &Client, sites: &[String], warned: &mut 
                     *warned = true;
                 }
                 hub.record_solar_failure();
+                hub.service_failed(Service::Solar, &e.to_string());
                 return Round::Failed;
             }
         }
@@ -253,6 +258,7 @@ async fn fetch_round(hub: &Hub, client: &Client, sites: &[String], warned: &mut 
     }
     forecast.trim(midnight, midnight + ChronoDuration::days(KEEP_DAYS));
     hub.apply_solar_forecast(forecast);
+    hub.service_succeeded(Service::Solar);
     let calls_today = hub.solar_ledger().calls_on(now);
     tracing::info!(calls_today, "solar: forecast applied");
     Round::Fetched

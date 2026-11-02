@@ -160,11 +160,12 @@ pub fn load_section(section: &'static str) -> RwSignal<Option<Result<Value, Stri
 pub fn EnabledRow(
     on: RwSignal<bool>,
     #[prop(optional)] busy: Option<RwSignal<bool>>,
+    #[prop(default = SetupText::SvcEnabled)] label: SetupText,
 ) -> impl IntoView {
     let t = use_setup_text();
     view! {
         <label class="override__flag svc__switch">
-            <span class="override__label">{move || t(SetupText::SvcEnabled)}</span>
+            <span class="override__label">{move || t(label)}</span>
             <button
                 type="button"
                 role="switch"
@@ -177,6 +178,18 @@ pub fn EnabledRow(
                 <span class="switch__knob"></span>
             </button>
         </label>
+    }
+}
+
+/// The "notify me when unreachable" switch of a service form, with its hint.
+#[component]
+pub fn NotifyRow(on: RwSignal<bool>) -> impl IntoView {
+    let t = use_setup_text();
+    view! {
+        <div class="svc__notify">
+            <EnabledRow on=on label=SetupText::SvcNotifyUnreachable />
+            <p class="settings__hint">{move || t(SetupText::SvcNotifyUnreachableHint)}</p>
+        </div>
     }
 }
 

@@ -90,6 +90,7 @@ fn view(section: &str, s: &Sections) -> Value {
             sites: s.solcast.sites.clone(),
             daily_limit: s.solcast.daily_limit,
             api_key: set(&s.solcast.api_key),
+            notify_unreachable: s.solcast.notify_unreachable,
         }),
         "frigate" => {
             let f = &s.frigate;
@@ -232,6 +233,7 @@ fn merge(section: &str, body: Value, next: &mut Sections, file: &HubFile) -> Res
                 sites: input.sites.iter().map(|s| s.trim().to_owned()).collect(),
                 daily_limit: input.daily_limit.unwrap_or(default.daily_limit),
                 api_key: secret::apply(next.solcast.api_key.clone(), input.api_key),
+                notify_unreachable: input.notify_unreachable,
             };
         }
         "frigate" => next.frigate = frigate_candidate(&next.frigate, parse(body, section)?)?,

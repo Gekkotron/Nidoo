@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod media;
 pub mod mqtt;
 pub mod network;
+pub mod outage;
 pub mod pictures;
 pub mod setup;
 pub mod solar;

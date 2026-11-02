@@ -252,6 +252,9 @@ pub struct Hub {
     pub(crate) alarm: AlarmHub,
     /// `[weather] enabled` and `refresh_minutes`.
     pub(crate) weather_enabled: bool,
+    pub(crate) weather_notify_unreachable: bool,
+    pub(crate) solar_notify_unreachable: bool,
+    pub(crate) outages: Mutex<crate::outage::Outages>,
     pub(crate) weather_refresh_minutes: u64,
     pub(crate) weather_city: String,
     pub(crate) weather_country: Option<String>,
@@ -406,6 +409,12 @@ impl Hub {
                 .then(|| ClimateHub::new(&cfg.climate.prefix)),
             alarm: AlarmHub::new(&cfg.alarm.prefix),
             weather_enabled: cfg.weather.enabled,
+            weather_notify_unreachable: cfg.weather.notify_unreachable,
+            solar_notify_unreachable: cfg.solcast.notify_unreachable,
+            outages: Mutex::new(crate::outage::Outages::new(
+                cfg.weather.notify_unreachable,
+                cfg.solcast.notify_unreachable,
+            )),
             weather_refresh_minutes: cfg.weather.refresh_minutes,
             weather_city: cfg.weather.city.trim().to_owned(),
             weather_country: cfg.weather.country.clone(),
@@ -1018,7 +1027,7 @@ impl Hub {
         self.raise_system(alert);
     }
 
-    fn raise_system(&self, alert: Option<serde_json::Value>) {
+    pub(crate) fn raise_system(&self, alert: Option<serde_json::Value>) {
         if let Some(alert) = alert
             && let Err(rejected) = self.notify("system", &alert)
         {

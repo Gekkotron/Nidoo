@@ -80,6 +80,10 @@ Entity ids are `solar_<key>` for the keys below, for instance `solar_forecast_to
 - The entities come back on the next successful refresh.
 - Turning solar off removes the device on the next start, and the hub clears the retained cache and discovery it left on the broker.
 
+## Tell me when Solcast is unreachable
+
+Turn on **Notify me when unreachable** in the Solar forecast settings to get a push alert when a refresh failed and none has succeeded in the 30 minutes since, for example because the key was refused or the daily quota is used up. You get one alert when it goes down (with the last reason) and one when Solcast answers again. A short blip under 30 minutes stays silent, and nothing repeats while the outage lasts. The hub checks every minute, so the alert comes on time even though Solcast is only called a few times a day. The count starts again when the hub restarts. The switch is off by default.
+
 ## In the web UI
 
 **The card.** On the house overview, the **Solar forecast** card sits beside the weather card. It shows:

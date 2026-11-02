@@ -22,6 +22,7 @@ pub const SECTION_KEYS: [&str; 6] = [
 pub struct WeatherSection {
     pub enabled: bool,
     pub refresh_minutes: u64,
+    pub notify_unreachable: bool,
 }
 
 impl Default for WeatherSection {
@@ -29,6 +30,7 @@ impl Default for WeatherSection {
         Self {
             enabled: false,
             refresh_minutes: 15,
+            notify_unreachable: false,
         }
     }
 }
@@ -40,6 +42,7 @@ pub struct SolcastSection {
     pub sites: Vec<String>,
     pub daily_limit: u32,
     pub api_key: Option<String>,
+    pub notify_unreachable: bool,
 }
 
 impl Default for SolcastSection {
@@ -50,6 +53,7 @@ impl Default for SolcastSection {
             sites: d.sites,
             daily_limit: d.daily_limit,
             api_key: None,
+            notify_unreachable: d.notify_unreachable,
         }
     }
 }
@@ -62,6 +66,7 @@ impl fmt::Debug for SolcastSection {
             .field("sites", &self.sites)
             .field("daily_limit", &self.daily_limit)
             .field("api_key", &api_key)
+            .field("notify_unreachable", &self.notify_unreachable)
             .finish()
     }
 }
@@ -221,6 +226,7 @@ pub fn assemble(file: &HubFile, s: &Sections) -> Config {
         weather: WeatherConfig {
             enabled: s.weather.enabled,
             refresh_minutes: s.weather.refresh_minutes,
+            notify_unreachable: s.weather.notify_unreachable,
             ..WeatherConfig::default()
         },
         solcast: SolcastConfig {
@@ -229,6 +235,7 @@ pub fn assemble(file: &HubFile, s: &Sections) -> Config {
             daily_limit: s.solcast.daily_limit,
             api_key_file: None,
             api_key: s.solcast.api_key.clone(),
+            notify_unreachable: s.solcast.notify_unreachable,
         },
         ..Config::default()
     };

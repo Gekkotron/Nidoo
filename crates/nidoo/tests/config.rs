@@ -498,6 +498,7 @@ mod solcast {
             daily_limit,
             api_key_file: key.map(Into::into),
             api_key: None,
+            notify_unreachable: false,
         }
     }
 
@@ -577,6 +578,7 @@ mod solcast {
             daily_limit: 0,
             api_key_file: Some("nope.key".into()),
             api_key: None,
+            notify_unreachable: false,
         };
         assert_eq!(cfg.validate(), Ok(()));
     }

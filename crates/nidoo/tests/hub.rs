@@ -2127,3 +2127,51 @@ async fn restore_recorded_states_broadcasts_once() {
     )]);
     assert_eq!(again, 0);
 }
+
+async fn outage_hub(weather: bool, solar: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+    let mut cfg = config();
+    cfg.weather.notify_unreachable = weather;
+    cfg.solcast.notify_unreachable = solar;
+    let (tx, mut rx) = mpsc::channel(64);
+    let hub = Hub::new(&cfg, tx);
+    hub.set_connection(ConnectionStatus::Online);
+    hub.on_connected();
+    hub.on_suback();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    drain(&mut rx);
+    (hub, rx)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_service_down_for_half_an_hour_reaches_the_system_alerts_once() {
+    use nidoo::outage::Service;
+    let (hub, mut publisher) = outage_hub(true, false).await;
+    assert!(hub.outage_watch_wanted());
+    hub.service_failed_at(Service::Weather, 1_000, "timeout");
+    hub.check_outages_at(1_000 + 29 * 60);
+    assert!(history_ids(&drain(&mut publisher)).is_empty());
+
+    hub.check_outages_at(1_000 + 30 * 60);
+    assert_eq!(
+        history_ids(&drain(&mut publisher)),
+        vec!["service-weather-down-1000".to_owned()]
+    );
+    hub.check_outages_at(1_000 + 31 * 60);
+    assert!(history_ids(&drain(&mut publisher)).is_empty());
+
+    hub.service_succeeded_at(Service::Weather, 1_000 + 45 * 60);
+    let ids = history_ids(&drain(&mut publisher));
+    assert_eq!(ids[0], "service-weather-back-1000");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_service_without_its_switch_never_alerts() {
+    use nidoo::outage::Service;
+    let (hub, mut publisher) = outage_hub(false, false).await;
+    assert!(!hub.outage_watch_wanted());
+    hub.service_failed_at(Service::Solar, 1_000, "API key refused");
+    hub.check_outages_at(1_000 + 3 * 3600);
+    hub.service_succeeded_at(Service::Solar, 1_000 + 4 * 3600);
+    assert!(drain(&mut publisher).is_empty());
+}

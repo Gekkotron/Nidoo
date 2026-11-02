@@ -74,6 +74,10 @@ The Weather device has no room. Move an entity to a room with the usual override
 - The entities come back as soon as a fetch succeeds. After a restart they read unavailable until the first fetch, or until the first failed one if the kept document is under an hour old.
 - Turning weather off removes the Weather device: on the next start the hub clears what it left on the broker. History rows are kept.
 
+## Tell me when Open-Meteo is unreachable
+
+Turn on **Notify me when unreachable** in the Weather settings to get a push alert when the hub has had no answer from Open-Meteo for 30 minutes in a row. You get one alert when it goes down (with the last reason) and one when it answers again, saying how long it was away. A short blip under 30 minutes stays silent, and nothing repeats while the outage lasts. The count starts again when the hub restarts. The switch is off by default.
+
 ## Flow ideas
 
 These are built in the flow editor, or with `set_flow` through [MCP](assistants-mcp.md). Use the ids from your own house.

@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use super::open_meteo::{self, Endpoints, FetchError, Place};
 use crate::clock;
 use crate::hub::Hub;
+use crate::outage::Service;
 
 /// First wait after a failed geocoding; it doubles up to [`GEOCODE_BACKOFF_MAX`].
 pub(crate) const GEOCODE_BACKOFF_START: Duration = Duration::from_secs(30);
@@ -68,7 +69,8 @@ pub async fn run(hub: Arc<Hub>, endpoints: Endpoints) {
             timezone: None,
         },
         None => {
-            let Some(place) = resolve(&client, &endpoints, &city, hub.weather_country()).await
+            let Some(place) =
+                resolve(&hub, &client, &endpoints, &city, hub.weather_country()).await
             else {
                 return;
             };
@@ -83,6 +85,7 @@ pub async fn run(hub: Arc<Hub>, endpoints: Endpoints) {
             Ok(forecast) => {
                 hub.apply_weather(open_meteo::build_view(&forecast, &place, clock::now()));
                 failures = 0;
+                hub.service_succeeded(Service::Weather);
             }
             Err(e) => {
                 if failures == 0 {
@@ -90,6 +93,7 @@ pub async fn run(hub: Arc<Hub>, endpoints: Endpoints) {
                 }
                 failures = failures.saturating_add(1);
                 hub.weather_fetch_failed();
+                hub.service_failed(Service::Weather, &e.to_string());
             }
         }
         let minutes = hub.weather_refresh_minutes();
@@ -107,6 +111,7 @@ pub async fn run(hub: Arc<Hub>, endpoints: Endpoints) {
 /// with a doubling backoff. `None` when the
 /// city does not exist: weather then stays unavailable.
 async fn resolve(
+    hub: &Hub,
     client: &reqwest::Client,
     endpoints: &Endpoints,
     city: &str,
@@ -116,6 +121,7 @@ async fn resolve(
     loop {
         match open_meteo::geocode(client, endpoints, city, country.as_deref()).await {
             Ok(Some(place)) => {
+                hub.service_succeeded(Service::Weather);
                 tracing::info!(
                     name = %place.name,
                     admin = place.admin.as_deref().unwrap_or(""),
@@ -132,6 +138,7 @@ async fn resolve(
             }
             Err(e @ (FetchError::Http(_) | FetchError::Decode(_))) => {
                 tracing::warn!(error = %e, retry_in = ?backoff, "weather: geocoding failed");
+                hub.service_failed(Service::Weather, &e.to_string());
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(GEOCODE_BACKOFF_MAX);
             }

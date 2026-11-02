@@ -7,7 +7,7 @@ use nidoo_api::{FrigateView, PushView, SolcastView, TestResult};
 use serde_json::{Value, json};
 use wasm_bindgen_futures::JsFuture;
 
-use super::{EnabledRow, load_section, save_section, with_fields};
+use super::{EnabledRow, NotifyRow, load_section, save_section, with_fields};
 use crate::api::setup::test_service;
 use crate::i18n::setup::{SetupText, use_setup_text};
 use crate::setup::connection::TextField;
@@ -182,6 +182,7 @@ fn SolcastFields(base: Value, applying_target: String) -> impl IntoView {
     let view = serde_json::from_value::<SolcastView>(base.clone()).ok();
     let key_saved = view.as_ref().is_some_and(|v| v.api_key.set);
     let on = RwSignal::new(view.as_ref().is_some_and(|v| v.enabled));
+    let notify = RwSignal::new(base["notify_unreachable"].as_bool().unwrap_or(false));
     let key = RwSignal::new(String::new());
     let sites = RwSignal::new(
         view.as_ref()
@@ -206,6 +207,7 @@ fn SolcastFields(base: Value, applying_target: String) -> impl IntoView {
                 ("api_key", json!(key.get_untracked())),
                 ("sites", json!(parse_list(&sites.get_untracked()))),
                 ("daily_limit", json!(n)),
+                ("notify_unreachable", json!(notify.get_untracked())),
             ],
         ))
     };
@@ -230,6 +232,7 @@ fn SolcastFields(base: Value, applying_target: String) -> impl IntoView {
     view! {
         <div class="svc__form">
             <EnabledRow on=on />
+            <NotifyRow on=notify />
             <div class="loc__grid">
                 <TextField
                     id="solcast-key"

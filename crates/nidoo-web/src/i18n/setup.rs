@@ -112,6 +112,10 @@ pub enum SetupText {
     DescAlarm,
     /// The enabled switch's label.
     SvcEnabled,
+    /// The weather and Solcast forms' "notify when unreachable" switch label.
+    SvcNotifyUnreachable,
+    /// The hint under that switch.
+    SvcNotifyUnreachableHint,
     RefreshMinutes,
     /// The weather form's problem message.
     MinutesInvalid,
@@ -323,6 +327,13 @@ pub fn setup_text(lang: Lang, k: SetupText) -> &'static str {
             "Capteurs, sirènes et télécommandes",
         ),
         SetupText::SvcEnabled => ("Enabled", "Activé"),
+        SetupText::SvcNotifyUnreachable => {
+            ("Notify me when unreachable", "Me prévenir si injoignable")
+        }
+        SetupText::SvcNotifyUnreachableHint => (
+            "A notification after 30 minutes without an answer, and another when it is back.",
+            "Une notification après 30 minutes sans réponse, puis une autre à son retour.",
+        ),
         SetupText::RefreshMinutes => ("Refresh every (minutes)", "Actualiser toutes les (minutes)"),
         SetupText::MinutesInvalid => (
             "Enter a whole number of minutes, 1 or more.",
@@ -501,6 +512,8 @@ mod tests {
                 SetupText::DescClimate,
                 SetupText::DescAlarm,
                 SetupText::SvcEnabled,
+                SetupText::SvcNotifyUnreachable,
+                SetupText::SvcNotifyUnreachableHint,
                 SetupText::RefreshMinutes,
                 SetupText::MinutesInvalid,
                 SetupText::ClimateBeta,

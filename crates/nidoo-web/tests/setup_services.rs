@@ -271,3 +271,36 @@ async fn an_unreachable_database_is_an_error_not_a_restart() {
             .contains("database unreachable")
     );
 }
+
+#[wasm_bindgen_test]
+async fn the_weather_form_saves_the_notify_switch() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/settings/weather",
+        200,
+        r#"{"enabled":true,"refresh_minutes":15,"notify_unreachable":false}"#,
+    );
+    stub.reply(
+        "PUT",
+        "/api/v1/settings/weather",
+        200,
+        r#"{"restarting":true}"#,
+    );
+    let m = mount();
+    settle().await;
+    click(&m.host, "#svc-weather .svc__head");
+    settle().await;
+    click(&m.host, "#svc-weather .svc__notify button.switch");
+    tick().await;
+    click(&m.host, "#svc-weather .svc__save");
+    settle().await;
+    let put = stub
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "PUT")
+        .expect("a PUT");
+    let body: serde_json::Value = serde_json::from_str(&put.body).unwrap();
+    assert_eq!(body["notify_unreachable"], serde_json::json!(true));
+    assert_eq!(body["enabled"], serde_json::json!(true));
+}

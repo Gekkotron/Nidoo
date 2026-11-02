@@ -4,7 +4,7 @@
 use leptos::prelude::*;
 use serde_json::{Value, json};
 
-use super::{EnabledRow, load_section, place_line, save_section, with_fields};
+use super::{EnabledRow, NotifyRow, load_section, place_line, save_section, with_fields};
 use crate::api::alarm::{get_alarm, put_alarm_settings};
 use crate::i18n::setup::{SetupText, use_setup_text};
 use crate::i18n::use_lang;
@@ -39,6 +39,7 @@ fn load_note(
 fn WeatherFields(base: Value, applying_target: String) -> impl IntoView {
     let t = use_setup_text();
     let on = RwSignal::new(base["enabled"].as_bool().unwrap_or(false));
+    let notify = RwSignal::new(base["notify_unreachable"].as_bool().unwrap_or(false));
     let minutes = RwSignal::new(
         base["refresh_minutes"]
             .as_u64()
@@ -62,6 +63,7 @@ fn WeatherFields(base: Value, applying_target: String) -> impl IntoView {
             &[
                 ("enabled", json!(on.get_untracked())),
                 ("refresh_minutes", json!(n)),
+                ("notify_unreachable", json!(notify.get_untracked())),
             ],
         );
         saving.set(true);
@@ -78,6 +80,7 @@ fn WeatherFields(base: Value, applying_target: String) -> impl IntoView {
         <div class="svc__form">
             <p class="settings__hint svc__place">{move || place_line(state, lang())}</p>
             <EnabledRow on=on />
+            <NotifyRow on=notify />
             <label class="field" for="weather-minutes">
                 <span class="field__caption">{move || t(SetupText::RefreshMinutes)}</span>
                 <input
