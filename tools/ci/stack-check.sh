@@ -28,8 +28,10 @@ cleanup() {
   status=$?
   if [ "$status" -ne 0 ]; then
     docker compose logs mosquitto timescaledb || true
+    docker logs nidoo-oikos-seed 2>&1 | tail -30 || true
   fi
   docker compose down -v || true
+  docker rm -f nidoo-oikos-seed >/dev/null 2>&1 || true
   rm -f compose.override.yml
   exit "$status"
 }
@@ -74,11 +76,11 @@ host_ip=$(hostname -I | awk '{print $1}')
 [ -n "$host_ip" ] || { echo "no non-loopback address found" >&2; exit 1; }
 
 extension=$(docker exec nidoo-timescaledb psql \
-  "postgresql://oikos:${db_password}@${host_ip}:5433/oikos" \
+  "postgresql://nidoo:${db_password}@${host_ip}:5433/nidoo" \
   -tAc "select extname from pg_extension where extname='timescaledb'")
 [ "$extension" = "timescaledb" ] || { echo "timescaledb extension missing: '$extension'" >&2; exit 1; }
 if docker exec nidoo-timescaledb psql \
-  "postgresql://oikos:wrong@${host_ip}:5433/oikos" -tAc "select 1" >/dev/null 2>&1; then
+  "postgresql://nidoo:wrong@${host_ip}:5433/nidoo" -tAc "select 1" >/dev/null 2>&1; then
   echo "timescaledb accepted a wrong password" >&2
   exit 1
 fi
@@ -100,7 +102,7 @@ for _ in $(seq 1 60); do
 done
 [ "$ready" -eq 1 ] || { echo "timescaledb not ready without a password file after 60 s" >&2; exit 1; }
 extension=$(docker exec nidoo-timescaledb psql \
-  "postgresql://oikos:${db_password}@${host_ip}:5433/oikos" \
+  "postgresql://nidoo:${db_password}@${host_ip}:5433/nidoo" \
   -tAc "select extname from pg_extension where extname='timescaledb'")
 [ "$extension" = "timescaledb" ] || { echo "right password refused without a password file: '$extension'" >&2; exit 1; }
 
@@ -108,7 +110,7 @@ echo "== mosquitto"
 published=0
 for _ in $(seq 1 20); do
   if docker exec nidoo-mosquitto mosquitto_pub -h localhost \
-    -u oikos -P "$mqtt_password" -t oikos/ci -m ok >/dev/null 2>&1; then
+    -u nidoo -P "$mqtt_password" -t nidoo/ci -m ok >/dev/null 2>&1; then
     published=1
     break
   fi
@@ -116,18 +118,40 @@ for _ in $(seq 1 20); do
 done
 [ "$published" -eq 1 ] || { echo "mosquitto refused the right password for 20 s" >&2; exit 1; }
 if docker exec nidoo-mosquitto mosquitto_pub -h localhost \
-  -u oikos -P wrong -t oikos/ci -m ok >/dev/null 2>&1; then
+  -u nidoo -P wrong -t nidoo/ci -m ok >/dev/null 2>&1; then
   echo "mosquitto accepted a wrong password" >&2
   exit 1
 fi
-
-# The switch-over, last: it renames the bundled database and role, which the
-# checks above still use under their old names.
+# The switch-over, last. The bundled stack now starts as nidoo, so the old
+# oikos install is seeded here: a second throwaway TimescaleDB whose bootstrap
+# superuser is "postgres", holding a superuser role and a database both named
+# oikos (a bootstrap role cannot be renamed, and the command refuses when the
+# target names already exist, so the bundled nidoo cluster cannot play the
+# old install). Mosquitto keeps the nidoo login; only the topics are old.
 echo "== migrate-oikos"
+seed=nidoo-oikos-seed
+seed_port=5434
+docker run -d --name "$seed" --network host \
+  -e POSTGRES_PASSWORD="$db_password" \
+  timescale/timescaledb:2.30.2-pg17 postgres -c "port=${seed_port}" >/dev/null
+seed_psql() {
+  docker exec "$seed" psql -h localhost -p "$seed_port" -U postgres "$@"
+}
+ready=0
+for _ in $(seq 1 60); do
+  if seed_psql -d postgres -tAc "select 1" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$ready" -eq 1 ] || { echo "seed database not ready after 60 s" >&2; exit 1; }
+seed_psql -d postgres -v ON_ERROR_STOP=1 -c "create role oikos superuser login password '${db_password}'"
+seed_psql -d postgres -v ON_ERROR_STOP=1 -c "create database oikos owner oikos"
 # The throwaway one-off container reaches the host-network services directly.
-jq -n --arg pw "$mqtt_password" --arg dbpw "$db_password" '{
-  mqtt: {host: "localhost", port: 1883, user: "oikos", password: $pw},
-  database_url: "postgresql://oikos:\($dbpw)@localhost:5433/oikos"
+jq -n --arg pw "$mqtt_password" --arg dbpw "$db_password" --arg port "$seed_port" '{
+  mqtt: {host: "localhost", port: 1883, user: "nidoo", password: $pw},
+  database_url: "postgresql://oikos:\($dbpw)@localhost:\($port)/oikos"
 }' > data/hub.json
 wait_hub() {
   for _ in $(seq 1 60); do
@@ -141,19 +165,17 @@ wait_hub() {
 }
 # The hub creates its tables on boot, which the migration expects to find.
 docker compose up -d --no-deps hub
-wait_hub || { echo "hub not healthy on the bundled database" >&2; exit 1; }
+wait_hub || { echo "hub not healthy on the old database" >&2; exit 1; }
 tables=0
 for _ in $(seq 1 60); do
-  if [ "$(docker exec nidoo-timescaledb psql \
-    "postgresql://oikos:${db_password}@${host_ip}:5433/oikos" \
-    -tAc "select to_regclass('settings') is not null")" = "t" ]; then
+  if [ "$(seed_psql -d oikos -tAc "select to_regclass('settings') is not null")" = "t" ]; then
     tables=1
     break
   fi
   sleep 1
 done
 [ "$tables" -eq 1 ] || { echo "hub created no tables after 60 s" >&2; exit 1; }
-docker exec nidoo-mosquitto mosquitto_pub -h localhost -u oikos -P "$mqtt_password" \
+docker exec nidoo-mosquitto mosquitto_pub -h localhost -u nidoo -P "$mqtt_password" \
   -r -t oikos/ui/oikos_t -m '{"name":"oikos t"}'
 migrate() {
   docker compose run --rm --no-deps -T hub --data /data migrate-oikos "$@"
@@ -170,12 +192,21 @@ fi
 docker compose stop hub
 migrate
 migrate --backup /data/backup.jsonl --apply
-got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_password" \
+got=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t nidoo/ui/nidoo_t -C 1 -W 3)
 [ "$got" = '{"name":"nidoo t"}' ] || { echo "migrated payload wrong: '$got'" >&2; exit 1; }
-old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u oikos -P "$mqtt_password" \
+old=$(docker exec nidoo-mosquitto mosquitto_sub -h localhost -u nidoo -P "$mqtt_password" \
   -t oikos/ui/oikos_t -C 1 -W 3 || true)
 [ -z "$old" ] || { echo "old retained topic still there: '$old'" >&2; exit 1; }
+# The database and the role were renamed.
+[ "$(seed_psql -d postgres -tAc "select count(*) from pg_database where datname='nidoo'")" = "1" ] \
+  || { echo "database nidoo missing after the switch-over" >&2; exit 1; }
+[ "$(seed_psql -d postgres -tAc "select count(*) from pg_database where datname='oikos'")" = "0" ] \
+  || { echo "database oikos still there after the switch-over" >&2; exit 1; }
+[ "$(seed_psql -d postgres -tAc "select count(*) from pg_roles where rolname='nidoo'")" = "1" ] \
+  || { echo "role nidoo missing after the switch-over" >&2; exit 1; }
+[ "$(seed_psql -d postgres -tAc "select count(*) from pg_roles where rolname='oikos'")" = "0" ] \
+  || { echo "role oikos still there after the switch-over" >&2; exit 1; }
 migrate --verify
 # The one-off container wrote hub.json as its own user (mode 0600), so read it there.
 migrate_cat() {
