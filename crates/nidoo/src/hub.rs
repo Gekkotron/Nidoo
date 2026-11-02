@@ -714,8 +714,11 @@ impl Hub {
     /// event: a non-retained message on the command topic of a button some flow watches
     /// broadcasts [`WsEvent::ButtonPressed`]. A retained one is a replay, never a press.
     pub fn ingest_message(&self, topic: &str, payload: &[u8], retain: bool) -> Vec<Change> {
-        // A weather device left on the broker by an earlier run is cleared, not applied.
-        if self.clear_disabled_weather(topic, payload, retain) {
+        // A weather device left on the broker by an earlier run is cleared, not applied, and
+        // the retained cache is the poller's data.
+        if self.clear_disabled_weather(topic, payload, retain)
+            || self.ingest_weather_cache(topic, payload)
+        {
             return Vec::new();
         }
         // The same for a solar forecast device, and the retained cache is the poller's data.

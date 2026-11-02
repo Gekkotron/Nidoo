@@ -28,12 +28,21 @@ fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     hub_with(true)
 }
 
-fn drain(publisher: &mut mpsc::Receiver<Publish>) -> Vec<Publish> {
+/// Every publish, the retained cache included.
+fn drain_all(publisher: &mut mpsc::Receiver<Publish>) -> Vec<Publish> {
     let mut out = Vec::new();
     while let Ok(publish) = publisher.try_recv() {
         out.push(publish);
     }
     out
+}
+
+/// The entity publishes: configs, states and availability, without the retained cache.
+fn drain(publisher: &mut mpsc::Receiver<Publish>) -> Vec<Publish> {
+    drain_all(publisher)
+        .into_iter()
+        .filter(|p| p.topic != entities::cache_topic("nidoo"))
+        .collect()
 }
 
 fn sample_view() -> WeatherView {
@@ -353,4 +362,112 @@ fn removed_entity_makes_the_next_apply_republish_the_configs() {
     assert_eq!(config_count(&out), 26);
     assert_eq!(state_count(&out), 26);
     assert!(hub.entity_view("weather_temperature").is_some());
+}
+
+/// The last cache payload `hub` published.
+fn cache_payload(rx: &mut mpsc::Receiver<Publish>) -> String {
+    drain_all(rx)
+        .into_iter()
+        .rfind(|p| p.topic == "nidoo/weather/cache")
+        .map(|p| {
+            assert!(p.retain);
+            p.payload
+        })
+        .expect("a retained cache")
+}
+
+#[test]
+fn apply_publishes_the_whole_view_as_a_retained_cache() {
+    let (hub, mut rx) = hub();
+    let view = sample_view();
+    hub.apply_weather(view.clone());
+    let cached: WeatherView = serde_json::from_str(&cache_payload(&mut rx)).unwrap();
+    assert_eq!(cached, view);
+}
+
+#[test]
+fn cache_restores_the_view_into_a_fresh_hub() {
+    let (first, mut rx) = hub();
+    let view = sample_view();
+    first.apply_weather(view.clone());
+    let cache = cache_payload(&mut rx);
+
+    let (fresh, mut fresh_rx) = hub();
+    let mut events = fresh.subscribe();
+    assert!(fresh.weather_view().is_err());
+    fresh.ingest_message("nidoo/weather/cache", cache.as_bytes(), true);
+    assert_eq!(fresh.weather_view().unwrap(), view);
+    // The web is told, nothing is published, and the cache is never an entity.
+    assert!(matches!(events.try_recv(), Ok(WsEvent::WeatherChanged)));
+    assert!(drain_all(&mut fresh_rx).is_empty());
+    assert!(fresh.entity_view("weather_cache").is_none());
+}
+
+#[test]
+fn cache_never_replaces_a_held_view() {
+    let (hub, mut rx) = hub();
+    let mut old = sample_view();
+    old.fetched_at -= 600;
+    old.current.temperature = Some(2.0);
+    hub.apply_weather(old);
+    let old_cache = cache_payload(&mut rx);
+    let fresh = sample_view();
+    hub.apply_weather(fresh.clone());
+    hub.ingest_message("nidoo/weather/cache", old_cache.as_bytes(), true);
+    assert_eq!(hub.weather_view().unwrap(), fresh);
+}
+
+#[test]
+fn malformed_or_disabled_cache_is_ignored() {
+    let (hub, _rx) = hub();
+    hub.ingest_message("nidoo/weather/cache", b"{nope", true);
+    assert!(hub.weather_view().is_err());
+    assert!(hub.entity_view("weather_cache").is_none());
+
+    let (first, mut rx) = hub_with(true);
+    first.apply_weather(sample_view());
+    let cache = cache_payload(&mut rx);
+    let (off, _off_rx) = hub_with(false);
+    off.ingest_message("nidoo/weather/cache", cache.as_bytes(), true);
+    assert!(off.weather_view().is_err());
+}
+
+#[test]
+fn failed_fetch_keeps_a_recent_restored_view_online() {
+    let (first, mut rx) = hub();
+    first.apply_weather(sample_view());
+    let cache = cache_payload(&mut rx);
+
+    let (fresh, mut fresh_rx) = hub();
+    fresh.publish_weather_configs();
+    fresh.ingest_message("nidoo/weather/cache", cache.as_bytes(), true);
+    drain(&mut fresh_rx);
+    fresh.weather_fetch_failed();
+    let out = drain(&mut fresh_rx);
+    let availability = topic(&out, "nidoo/weather/availability");
+    assert_eq!(availability.len(), 1);
+    assert_eq!(availability[0].payload, "online");
+}
+
+#[test]
+fn failed_fetch_takes_an_hour_old_view_offline() {
+    let (hub, mut rx) = hub();
+    let mut view = sample_view();
+    view.fetched_at -= 3_601;
+    hub.apply_weather(view);
+    drain(&mut rx);
+    hub.weather_fetch_failed();
+    let out = drain(&mut rx);
+    let availability = topic(&out, "nidoo/weather/availability");
+    assert_eq!(availability.len(), 1);
+    assert_eq!(availability[0].payload, "offline");
+}
+
+#[test]
+fn failed_fetch_without_any_view_publishes_nothing() {
+    let (hub, mut rx) = hub();
+    hub.publish_weather_configs();
+    drain(&mut rx);
+    hub.weather_fetch_failed();
+    assert!(drain(&mut rx).is_empty());
 }

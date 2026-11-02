@@ -87,6 +87,11 @@ pub fn state_topic(prefix: &str, key: &str) -> String {
     format!("{prefix}/weather/{key}")
 }
 
+/// The retained topic holding the last view, so a restart serves it before the first fetch.
+pub fn cache_topic(prefix: &str) -> String {
+    format!("{prefix}/weather/cache")
+}
+
 /// The retained `online` / `offline` topic of the whole device.
 pub fn availability_topic(prefix: &str) -> String {
     format!("{prefix}/weather/availability")

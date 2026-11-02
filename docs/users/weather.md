@@ -67,9 +67,11 @@ The Weather device has no room. Move an entity to a room with the usual override
 ## Freshness and offline
 
 - The hub fetches every `refresh_minutes`, with about 10 % random jitter. A failed fetch is logged once per outage and the last good values stay.
+- After a failed fetch the hub tries again sooner: 1 minute later, then 2, 4, 8… minutes, never longer than `refresh_minutes`. The first success goes back to the regular period.
+- Every success is also kept on the broker (retained on `<prefix>/weather/cache`). After a restart the hub serves that last document at once, so the header and the Weather page have data even if Open-Meteo is down at that moment; `stale` still follows the real fetch time.
 - When the last success is older than twice `refresh_minutes`, `stale` is `true` in `GET /api/v1/weather`.
-- After one hour without a success, whatever `refresh_minutes` is, the weather entities go **unavailable**, so a flow sees "unavailable" and not an old number. `GET /api/v1/weather` keeps serving the last document, with `stale` set by the rule above.
-- The entities come back as soon as a fetch succeeds.
+- After one hour without a success (counting the document kept from before a restart), whatever `refresh_minutes` is, the weather entities go **unavailable**, so a flow sees "unavailable" and not an old number. `GET /api/v1/weather` keeps serving the last document, with `stale` set by the rule above.
+- The entities come back as soon as a fetch succeeds. After a restart they read unavailable until the first fetch, or until the first failed one if the kept document is under an hour old.
 - Turning weather off removes the Weather device: on the next start the hub clears what it left on the broker. History rows are kept.
 
 ## Flow ideas
