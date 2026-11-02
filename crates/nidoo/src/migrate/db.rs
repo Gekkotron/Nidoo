@@ -148,6 +148,20 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
     for table in tables {
         let keys = key_columns(&mut tx, &table).await?;
         let t = quote_ident(&table);
+        // A collision needs a `nidoo_` row. With none in the table (the usual case: the old hub
+        // never wrote one) there is nothing to delete or decompress, and the self-join below
+        // must not run: on a large compressed hypertable it decompresses the whole table to
+        // build its `n` side. The probe is cheap where `entity_id` is the segmentby column.
+        let has_new: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS (SELECT 1 FROM {t} WHERE entity_id LIKE 'nidoo\\_%')"
+        ))
+        .fetch_one(&mut *tx)
+        .await?;
+        if !has_new {
+            let n = rename_rows(&mut tx, &t).await?;
+            out.push((table, n));
+            continue;
+        }
         // A DELETE ... USING self-join cannot see rows inside a compressed chunk: the planner
         // has no filter to decompress the target batches with, so the collision rows survive
         // and the UPDATE below then renames into a duplicate. Decompress first, but only where a
@@ -204,9 +218,12 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
                 }
             }
         }
+        // `n.entity_id LIKE 'nidoo\_%'` is implied by the equality, but as a constant filter it
+        // lets TimescaleDB scan only the `nidoo_` segments for the `n` side.
         let mut delete = format!(
             "DELETE FROM {t} o USING {t} n \
              WHERE o.entity_id LIKE 'oikos\\_%' \
+               AND n.entity_id LIKE 'nidoo\\_%' \
                AND n.entity_id = 'nidoo_' || substr(o.entity_id, 7)"
         );
         for k in &keys {
@@ -214,14 +231,7 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
             delete.push_str(&format!(" AND n.{k} = o.{k}"));
         }
         sqlx::query(&delete).execute(&mut *tx).await?;
-        let update = format!(
-            "UPDATE {t} SET entity_id = 'nidoo_' || substr(entity_id, 7) \
-             WHERE entity_id LIKE 'oikos\\_%'"
-        );
-        let n = sqlx::query(&update)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+        let n = rename_rows(&mut tx, &t).await?;
         out.push((table, n));
     }
     if dry_run {
@@ -230,6 +240,18 @@ pub async fn rename_entity_ids(pool: &PgPool, dry_run: bool) -> sqlx::Result<Vec
         tx.commit().await?;
     }
     Ok(out)
+}
+
+/// Renames the `oikos_` entity ids of the (quoted) table `t`; returns the rows renamed.
+async fn rename_rows(conn: &mut PgConnection, t: &str) -> sqlx::Result<u64> {
+    let update = format!(
+        "UPDATE {t} SET entity_id = 'nidoo_' || substr(entity_id, 7) \
+         WHERE entity_id LIKE 'oikos\\_%'"
+    );
+    Ok(sqlx::query(&update)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected())
 }
 
 /// Rewrites every `settings` value that mentions `oikos` (any casing) with

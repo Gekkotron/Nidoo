@@ -106,6 +106,15 @@ async fn renames_rows_in_compressed_chunk() {
         .await
         .unwrap();
     assert_eq!(id, "nidoo_alarm_house");
+    // No `nidoo_` row anywhere: the collision pass (decompress + self-join) is skipped, so the
+    // chunk is still compressed after the commit.
+    let compressed = count(
+        pool,
+        "SELECT count(*) FROM timescaledb_information.chunks \
+         WHERE hypertable_name = 'entity_state' AND is_compressed",
+    )
+    .await;
+    assert_eq!(compressed, 1);
     t.drop_db().await;
 }
 
