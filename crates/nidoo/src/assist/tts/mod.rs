@@ -1,5 +1,6 @@
 //! Text-to-speech: the Phonon model, fetched from Hugging Face and run on the hub's CPU.
 
+pub mod download;
 pub mod hf;
 pub mod source;
 pub mod store;

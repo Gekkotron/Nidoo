@@ -23,6 +23,10 @@ pub struct FakeRepo {
     pub gated: bool,
     pub licence: Option<String>,
     pub files: Vec<(String, Vec<u8>)>,
+    /// A file streamed in small chunks with a delay: (path, chunk size, delay).
+    pub slow: Option<(String, usize, std::time::Duration)>,
+    /// Announced `lfs.oid` values that replace the real hash: (path, oid).
+    pub oids: Vec<(String, String)>,
 }
 
 impl FakeRepo {
@@ -32,6 +36,8 @@ impl FakeRepo {
             sha: sha.into(),
             gated: false,
             licence: None,
+            slow: None,
+            oids: vec![],
             files: files
                 .into_iter()
                 .map(|(p, b)| (p.to_string(), b.to_vec()))
@@ -113,9 +119,14 @@ async fn handle(State(st): State<Fake>, uri: Uri, headers: HeaderMap) -> Respons
                 .files
                 .iter()
                 .map(|(p, b)| {
+                    let oid = repo
+                        .oids
+                        .iter()
+                        .find(|(n, _)| n == p)
+                        .map_or_else(|| hex(&Sha256::digest(b)), |(_, o)| o.clone());
                     json!({
                         "type": "file", "path": p, "size": b.len(),
-                        "lfs": { "oid": hex(&Sha256::digest(b)), "size": b.len() },
+                        "lfs": { "oid": oid, "size": b.len() },
                     })
                 })
                 .collect();
@@ -138,7 +149,23 @@ async fn handle(State(st): State<Fake>, uri: Uri, headers: HeaderMap) -> Respons
         return StatusCode::FORBIDDEN.into_response();
     }
     match repo.files.iter().find(|(p, _)| p == file) {
-        Some((_, bytes)) => bytes.clone().into_response(),
+        Some((p, bytes)) => match &repo.slow {
+            Some((slow, chunk, delay)) if slow == p => {
+                let parts: Vec<Vec<u8>> = bytes.chunks(*chunk).map(<[u8]>::to_vec).collect();
+                let delay = *delay;
+                let stream =
+                    futures_util::stream::unfold(parts.into_iter(), move |mut it| async move {
+                        let part = it.next()?;
+                        tokio::time::sleep(delay).await;
+                        Some((Ok::<_, std::convert::Infallible>(part), it))
+                    });
+                let mut resp = axum::body::Body::from_stream(stream).into_response();
+                resp.headers_mut()
+                    .insert(header::CONTENT_LENGTH, bytes.len().into());
+                resp
+            }
+            _ => bytes.clone().into_response(),
+        },
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
