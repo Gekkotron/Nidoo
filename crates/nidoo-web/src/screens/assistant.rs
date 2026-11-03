@@ -4,6 +4,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use nidoo_assist::pending::PENDING_TTL_S;
 use nidoo_assist::view::{AssistRequest, AssistTurn, PendingReply, Question, QuestionKind, Trace};
 
 use crate::api::assist::{get_turns, mark_wrong, post_assist};
@@ -43,6 +44,14 @@ fn stored_simulate() -> bool {
     storage()
         .and_then(|s| s.get_item(SIMULATE_KEY).ok().flatten())
         .is_some_and(|v| v == "1")
+}
+
+/// How long the answer buttons of a question asked at `at` (hub Unix seconds) stay worth
+/// showing, in milliseconds from `now_ms`: the hub forgets a question after
+/// [`PENDING_TTL_S`]. Never more than the full window, whatever the two clocks say.
+pub fn chip_window_ms(at: u64, now_ms: f64) -> f64 {
+    let window = PENDING_TTL_S as f64 * 1000.0;
+    ((at as f64 * 1000.0 + window) - now_ms).clamp(0.0, window)
 }
 
 /// The rows of the trace panel: label and value, the empty ones left out.
@@ -98,6 +107,11 @@ pub fn AssistantScreen() -> impl IntoView {
     let text = RwSignal::new(String::new());
     let simulate = RwSignal::new(stored_simulate());
     let busy = RwSignal::new(false);
+    // Questions whose buttons are no longer offered: expired, or refused by the hub.
+    let closed = RwSignal::new(Vec::<String>::new());
+    // The turn last received from the hub and when (page clock, ms): its buttons are timed
+    // from then, so a hub clock that differs from the browser's never hides them.
+    let received = RwSignal::new(None::<(String, f64)>);
     let input = NodeRef::<leptos::html::Input>::new();
 
     spawn_local(async move {
@@ -122,11 +136,17 @@ pub fn AssistantScreen() -> impl IntoView {
 
     let submit = move |req: AssistRequest| {
         busy.set(true);
+        let tapped = req.reply.as_ref().map(|reply| match reply {
+            PendingReply::Choice { pending, .. }
+            | PendingReply::Yes { pending }
+            | PendingReply::No { pending } => pending.clone(),
+        });
         spawn_local(async move {
             match post_assist(&req).await {
                 // `try_`: the page may be gone by the time the hub answers.
                 Ok(turn) => {
                     let id = turn.id.clone();
+                    received.try_set(Some((id.clone(), js_sys::Date::now())));
                     turns.try_update(|list| list.push(turn));
                     selected.try_set(Some(id));
                     if kept.try_get_untracked() == Some(None) {
@@ -134,6 +154,10 @@ pub fn AssistantScreen() -> impl IntoView {
                     }
                 }
                 Err(err) => {
+                    // The hub no longer holds that question: stop offering its buttons.
+                    if let Some(id) = tapped {
+                        closed.try_update(|ids| ids.push(id));
+                    }
                     if let Some(toasts) = toasts {
                         toasts.push(format!("{} {}", t(AssistantText::Failed), err.error));
                     }
@@ -167,9 +191,37 @@ pub fn AssistantScreen() -> impl IntoView {
         });
     };
 
-    // Only the latest turn's question is still open.
-    let open_question =
-        Memo::new(move |_| turns.with(|list| list.last().and_then(|turn| turn.question.clone())));
+    // Only the latest turn's question can still be open, until it expires or the hub refuses it.
+    let open_question = Memo::new(move |_| {
+        turns.with(|list| {
+            let last = list.last()?;
+            let q = last.question.clone()?;
+            closed
+                .with(|ids| !ids.contains(&q.pending))
+                .then_some((q, last.at, last.id.clone()))
+        })
+    });
+    // The question's buttons go away when the hub forgets it.
+    Effect::new(move |_| {
+        if let Some((q, at, turn)) = open_question.get() {
+            let now = js_sys::Date::now();
+            let left = match received.get_untracked() {
+                Some((id, ms)) if id == turn => chip_window_ms(0, now - ms),
+                _ => chip_window_ms(at, now),
+            };
+            let id = q.pending;
+            if left <= 0.0 {
+                closed.try_update(|ids| ids.push(id));
+            } else {
+                set_timeout(
+                    move || {
+                        closed.try_update(|ids| ids.push(id));
+                    },
+                    std::time::Duration::from_millis(left as u64),
+                );
+            }
+        }
+    });
     let shown = Memo::new(move |_| {
         turns.with(|list| {
             let id = selected.get();
@@ -220,7 +272,7 @@ pub fn AssistantScreen() -> impl IntoView {
                         }
                     />
                 </ol>
-                {move || open_question.get().map(|q| chips(q, lang(), answer))}
+                {move || open_question.get().map(|(q, ..)| chips(q, lang(), answer))}
                 <div class="assist__bar">
                     <input
                         node_ref=input
@@ -349,6 +401,18 @@ fn chips(q: Question, lang: Lang, answer: impl Fn(PendingReply) + Copy + 'static
 mod tests {
     use super::*;
     use nidoo_assist::view::ActionTrace;
+
+    #[test]
+    fn chips_live_as_long_as_the_hub_keeps_the_question() {
+        let window = PENDING_TTL_S as f64 * 1000.0;
+        // Just asked: the whole window, whatever the clocks say.
+        assert_eq!(chip_window_ms(1_000, 1_000_000.0), window);
+        assert_eq!(chip_window_ms(1_000, 990_000.0), window);
+        assert_eq!(chip_window_ms(1_000, 1_030_000.0), window - 30_000.0);
+        // Expired, long ago or just now.
+        assert_eq!(chip_window_ms(1_000, 1_060_000.0), 0.0);
+        assert_eq!(chip_window_ms(1_000, 9_000_000.0), 0.0);
+    }
 
     #[test]
     fn trace_rows_leave_out_empty_fields() {

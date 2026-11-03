@@ -744,10 +744,7 @@ mod learning {
                 .join("climate__daikin_192_0_2_150__climate.json"),
         )
         .expect("fixture");
-        hub.ingest(
-            "nidoo/climate/daikin_192_0_2_150/climate/config",
-            &fixture,
-        );
+        hub.ingest("nidoo/climate/daikin_192_0_2_150/climate/config", &fixture);
         let id = hub
             .snapshot()
             .entities

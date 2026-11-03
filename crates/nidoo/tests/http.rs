@@ -2465,6 +2465,22 @@ async fn assist_post_empty_is_422() {
 }
 
 #[tokio::test]
+async fn assist_overlong_client_is_422() {
+    let server = Server::start().await;
+    let resp = post_assist(
+        &server,
+        json!({ "client": "x".repeat(200), "text": "il fait combien dehors ?" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body: Value = resp.json().await.unwrap();
+    assert!(
+        body["error"].as_str().unwrap().contains("too long"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn assist_turns_lists() {
     let server = Server::start().await;
     let posted: Value = post_assist(

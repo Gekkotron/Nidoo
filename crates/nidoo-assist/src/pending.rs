@@ -8,6 +8,9 @@ use crate::reply::{dans, de, le};
 use crate::room::{name_words, score};
 use crate::text::{Word, number_text, words};
 
+/// How long a question waits for its answer, in seconds (the hub drops it after that).
+pub const PENDING_TTL_S: u64 = 60;
+
 /// What the hub keeps while a question waits for its answer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Pending {
@@ -75,18 +78,25 @@ const NO: &[&str] = &[
     "non", "nan", "annule", "annuler", "laisse", "tomber", "rien", "merci", "stp", "svp",
 ];
 
-/// Reads a typed sentence as the answer to `pending`: a yes / no to a confirmation, or the
-/// one choice it names. `None` means the sentence is a new request.
+/// Reads a typed sentence as the answer to `pending`: a no to either kind of question, a yes
+/// to a confirmation, or the one choice a choice question names. `None` means the sentence is a new request.
 pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
     let ws = words(sentence);
     let texts: Vec<&str> = ws.iter().filter_map(Word::text).collect();
     if texts.is_empty() && ws.len() != 1 {
         return None;
     }
+    let all_in = |set: &[&str]| ws.len() == texts.len() && texts.iter().all(|w| set.contains(w));
+    // A refusal cancels either kind of question; a bare command is not one.
+    if texts
+        .iter()
+        .any(|w| matches!(*w, "non" | "nan" | "annule" | "annuler" | "laisse"))
+        && all_in(NO)
+    {
+        return Some(PendingAnswer::No);
+    }
     match pending {
         Pending::Confirm(_) => {
-            let all_in =
-                |set: &[&str]| ws.len() == texts.len() && texts.iter().all(|w| set.contains(w));
             if texts.iter().any(|w| {
                 matches!(
                     *w,
@@ -105,12 +115,6 @@ pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
             }) && all_in(YES)
             {
                 Some(PendingAnswer::Yes)
-            } else if texts
-                .iter()
-                .any(|w| matches!(*w, "non" | "nan" | "annule" | "annuler" | "laisse"))
-                && all_in(NO)
-            {
-                Some(PendingAnswer::No)
             } else {
                 None
             }
@@ -236,8 +240,18 @@ mod tests {
             assert_eq!(answer_text(no, &confirm()), Some(PendingAnswer::No), "{no}");
         }
         assert_eq!(answer_text("oui", &rooms()), None);
-        assert_eq!(answer_text("non", &rooms()), None);
         assert_eq!(answer_text("oui mets le salon à 25", &confirm()), None);
+    }
+
+    #[test]
+    fn a_refusal_cancels_a_choice_question_too() {
+        for no in ["non", "Non merci", "annule", "laisse tomber"] {
+            assert_eq!(answer_text(no, &rooms()), Some(PendingAnswer::No), "{no}");
+        }
+        // A command, even a short one, is still a new sentence.
+        assert_eq!(answer_text("allume la cuisine", &rooms()), None);
+        assert_eq!(answer_text("non allume la cuisine", &rooms()), None);
+        assert_eq!(answer_text("oui", &rooms()), None);
     }
 
     #[test]
