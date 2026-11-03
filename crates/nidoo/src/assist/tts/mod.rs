@@ -8,6 +8,7 @@ pub mod phonon;
 pub mod source;
 pub mod store;
 pub mod tone;
+pub mod voices;
 
 /// The Hugging Face site every model comes from.
 pub const HF_BASE: &str = "https://huggingface.co";

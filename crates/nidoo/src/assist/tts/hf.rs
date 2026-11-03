@@ -67,6 +67,14 @@ impl HfClient {
         }
     }
 
+    /// The same client without a token, for public repositories.
+    pub fn without_token(&self) -> HfClient {
+        HfClient {
+            token: None,
+            ..self.clone()
+        }
+    }
+
     async fn send(&self, url: String) -> Result<reqwest::Response, TtsError> {
         let mut req = self.http.get(url);
         if let Some(token) = &self.token {
