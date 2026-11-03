@@ -22,9 +22,11 @@ A room's lights are the ones a mood's "lights" action uses: every light of the r
 **Heating setpoints**, for a room whose [climate](climate.md) zone is active:
 
 - an exact value: « mets le salon à 20 », « règle la chambre de Léa à 19,5 degrés »
-- a change from the current setpoint: « monte le chauffage d'un degré au bureau », « baisse un peu le chauffage du salon » (a bare "monte", "baisse" or "un peu" is 0,5 °C), « chauffage +2 au bureau »
+- a change from the current setpoint: « monte le chauffage d'un degré au bureau », « baisse un peu le chauffage du salon » (a bare "monte" or "baisse" is 1 °C, "un peu" is 0,5 °C), « chauffage +2 au bureau »
 
-The setpoint holds until the zone's next scheduled change, at most the zone's manual hold (4 h by default): the same hold a change made by hand on the device gets. "Allume le chauffage" alone is not a setpoint; the assistant asks for a temperature.
+A change starts from what the room's devices are really set to, a temperature set by hand included. If they disagree (two units, one changed by hand), the assistant names the values and asks for a temperature. When the room's current reading is fresh and already past the setpoint, a raise starts from the reading if it is higher, and a lower from the reading if it is lower: with a setpoint of 15,5 °C in a room at 18 °C, "monte" gives 19 °C.
+
+The setpoint holds until the zone's next scheduled change, at most the zone's manual hold (4 h by default): the same hold a change made by hand on the device gets. It replaces a temperature set by hand on a unit of the zone, so every unit follows it. "Allume le chauffage" alone is not a setpoint; the assistant asks for a temperature.
 
 **Temperatures**: « quelle température fait-il dans le salon ? », « il fait combien au bureau ? », « il fait combien dehors ? ». A room's temperature is its climate zone's reading, else its thermometer; outdoors is the climate engine's outdoor sensor, else the weather. An old reading is said with its age.
 
@@ -43,7 +45,7 @@ Every reply names the room, what was done and the value, for example "Chambre L�
 
 The **Simulation** switch under the field plans and replies but sends nothing to the house; replies start with "Simulation :". It is the safe way to try phrasings. The page remembers it per browser.
 
-The panel next to the conversation, **How it understood**, shows the selected turn: the normalised words, the intent, the room and how it was found, the devices, the value and its arithmetic ("19 − 0,5 = 18,5 °C"), the safety check, each action with its result, and the time taken. **Faux** marks a turn as wrongly understood, so it can be found in the log later.
+The panel next to the conversation, **How it understood**, shows the selected turn: the normalised words, the intent, the room and how it was found, the devices, the value and its arithmetic ("19 − 1 = 18 °C", or "mesure 18 > consigne 15,5 : 18 + 1 = 19 °C" when the reading was the start), the safety check, each action with its result, and the time taken. **Faux** marks a turn as wrongly understood, so it can be found in the log later.
 
 With the history database, turns are kept 90 days. Without it, the hub keeps the last 100 turns in memory and the page says history is not kept.
 

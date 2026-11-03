@@ -190,6 +190,25 @@ impl Hub {
         zone: &str,
         ov: Override,
     ) -> Result<(), HubError> {
+        self.set_climate_override_inner(zone, ov, false).await
+    }
+
+    /// [`Self::set_climate_override`] that also drops the zone's per-device overrides, so the
+    /// devices follow the new override: for a setpoint the assistant was asked for.
+    pub async fn replace_climate_overrides(
+        self: &Arc<Self>,
+        zone: &str,
+        ov: Override,
+    ) -> Result<(), HubError> {
+        self.set_climate_override_inner(zone, ov, true).await
+    }
+
+    async fn set_climate_override_inner(
+        self: &Arc<Self>,
+        zone: &str,
+        ov: Override,
+        drop_device_overrides: bool,
+    ) -> Result<(), HubError> {
         self.require_climate()?;
         self.require_zone(zone)?;
         let now = clock::now();
@@ -222,7 +241,11 @@ impl Hub {
             ..ov
         };
         self.update_overrides(zone, |list| {
-            list.retain(|o| o.until > now && o.entity != ov.entity);
+            list.retain(|o| {
+                o.until > now
+                    && o.entity != ov.entity
+                    && !(drop_device_overrides && o.entity.is_some())
+            });
             list.push(ov);
         });
         Ok(())

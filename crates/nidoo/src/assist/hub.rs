@@ -508,7 +508,7 @@ impl Hub {
                         until: self.hand_hold_until(zone, now),
                         origin: OverrideOrigin::User,
                     };
-                    match self.set_climate_override(zone, ov).await {
+                    match self.replace_climate_overrides(zone, ov).await {
                         Ok(()) => (ActionResult::Ok, None),
                         Err(err) => failed(err.to_string()),
                     }
