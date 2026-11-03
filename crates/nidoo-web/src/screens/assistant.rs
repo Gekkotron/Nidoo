@@ -21,6 +21,8 @@ const LIMIT: u32 = 50;
 const HISTORY_KEY: &str = "nidoo.assist.history";
 /// How many sent sentences the up arrow can reach.
 const HISTORY_MAX: usize = 50;
+/// Where this browser last cleared the conversation (a [`ClearMark`]).
+const CLEARED_KEY: &str = "nidoo.assist.cleared";
 
 /// The sentences sent, browsed with the arrows as in a shell: up for older, down for newer,
 /// and down past the newest gives back the sentence being typed.
@@ -101,6 +103,52 @@ fn stored_history() -> History {
 fn store_history(h: &History) {
     if let (Some(s), Ok(v)) = (storage(), serde_json::to_string(h.sent())) {
         let _ = s.set_item(HISTORY_KEY, &v);
+    }
+}
+
+/// The newest turn when the conversation was cleared: it and the older ones stay hidden in this
+/// browser. The hub keeps them all, and the up arrow still reaches the sentences.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClearMark {
+    pub id: String,
+    /// Hub Unix seconds.
+    pub at: u64,
+}
+
+impl ClearMark {
+    /// The mark for clearing `turns` (oldest first); `None` when there is nothing to clear.
+    pub fn of(turns: &[AssistTurn]) -> Option<Self> {
+        turns.last().map(|t| Self {
+            id: t.id.clone(),
+            at: t.at,
+        })
+    }
+}
+
+/// The turns (oldest first) said after the clear `mark`: those after the marked turn, or, once
+/// it is no longer listed, those from a later second.
+pub fn after_clear(mut turns: Vec<AssistTurn>, mark: Option<&ClearMark>) -> Vec<AssistTurn> {
+    let Some(mark) = mark else {
+        return turns;
+    };
+    match turns.iter().position(|t| t.id == mark.id) {
+        Some(at) => turns.split_off(at + 1),
+        None => {
+            turns.retain(|t| t.at > mark.at);
+            turns
+        }
+    }
+}
+
+fn stored_clear_mark() -> Option<ClearMark> {
+    storage()
+        .and_then(|s| s.get_item(CLEARED_KEY).ok().flatten())
+        .and_then(|v| serde_json::from_str(&v).ok())
+}
+
+fn store_clear_mark(mark: &ClearMark) {
+    if let (Some(s), Ok(v)) = (storage(), serde_json::to_string(mark)) {
+        let _ = s.set_item(CLEARED_KEY, &v);
     }
 }
 
@@ -205,7 +253,7 @@ pub fn AssistantScreen() -> impl IntoView {
         if let Ok(list) = get_turns(LIMIT).await {
             let mut list_turns = list.turns;
             list_turns.reverse();
-            let _ = turns.try_set(list_turns);
+            let _ = turns.try_set(after_clear(list_turns, stored_clear_mark().as_ref()));
             let _ = kept.try_set(Some(list.kept));
         }
     });
@@ -320,6 +368,18 @@ pub fn AssistantScreen() -> impl IntoView {
                 .or_else(|| list.last().cloned())
         })
     });
+    // Hides the conversation in this browser; the hub and the up arrow keep it.
+    let clear = move || {
+        let Some(mark) = turns.with_untracked(|list| ClearMark::of(list)) else {
+            return;
+        };
+        store_clear_mark(&mark);
+        turns.set(Vec::new());
+        selected.set(None);
+        if let Some(field) = input.get_untracked() {
+            let _ = field.focus();
+        }
+    };
     let mark = move |id: String| {
         spawn_local(async move {
             if mark_wrong(&id).await.is_ok() {
@@ -335,7 +395,18 @@ pub fn AssistantScreen() -> impl IntoView {
     view! {
         <div class="assist">
             <section class="assist__talk">
-                <p class="assist__hint">{move || t(AssistantText::Hint)}</p>
+                <div class="assist__head">
+                    <p class="assist__hint">{move || t(AssistantText::Hint)}</p>
+                    <button
+                        type="button"
+                        class="assist__clear"
+                        title=move || t(AssistantText::ClearHint)
+                        disabled=move || turns.with(Vec::is_empty)
+                        on:click=move |_| clear()
+                    >
+                        {move || t(AssistantText::Clear)}
+                    </button>
+                </div>
                 <Show when=move || kept.get() == Some(false)>
                     <p class="assist__note">{move || t(AssistantText::NotKept)}</p>
                 </Show>
@@ -569,6 +640,60 @@ mod tests {
         }
         assert_eq!(h.sent().len(), HISTORY_MAX);
         assert_eq!(h.sent().last().map(String::as_str), Some("s54"));
+    }
+
+    fn turn(id: &str, at: u64) -> AssistTurn {
+        AssistTurn {
+            id: id.into(),
+            at,
+            client: "c".into(),
+            text: "allume le salon".into(),
+            simulate: false,
+            outcome: nidoo_assist::view::OutcomeKind::Acted,
+            reply: "C'est fait.".into(),
+            question: None,
+            trace: Trace::default(),
+            wrong: false,
+        }
+    }
+
+    fn ids(list: &[AssistTurn]) -> Vec<&str> {
+        list.iter().map(|t| t.id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_clear_hides_the_turns_up_to_the_mark() {
+        let list = vec![turn("a", 10), turn("b", 20), turn("c", 20), turn("d", 30)];
+        assert_eq!(ids(&after_clear(list.clone(), None)), ["a", "b", "c", "d"]);
+        // The marked turn is in the list: only what came after it, even within the same second.
+        let mark = ClearMark {
+            id: "b".into(),
+            at: 20,
+        };
+        assert_eq!(ids(&after_clear(list.clone(), Some(&mark))), ["c", "d"]);
+        // The marked turn has aged out of the list or the hub forgot it: go by its time.
+        let mark = ClearMark {
+            id: "gone".into(),
+            at: 20,
+        };
+        assert_eq!(ids(&after_clear(list.clone(), Some(&mark))), ["d"]);
+        let mark = ClearMark {
+            id: "d".into(),
+            at: 30,
+        };
+        assert!(after_clear(list, Some(&mark)).is_empty());
+    }
+
+    #[test]
+    fn the_mark_is_the_newest_turn() {
+        assert_eq!(ClearMark::of(&[]), None);
+        assert_eq!(
+            ClearMark::of(&[turn("a", 10), turn("b", 20)]),
+            Some(ClearMark {
+                id: "b".into(),
+                at: 20
+            })
+        );
     }
 
     #[test]

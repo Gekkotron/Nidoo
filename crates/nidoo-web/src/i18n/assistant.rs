@@ -32,6 +32,9 @@ pub enum AssistantText {
     NotKept,
     NoTrace,
     Failed,
+    /// The button that empties the conversation on this page.
+    Clear,
+    ClearHint,
 }
 
 /// A fixed word or sentence of the Assistant page.
@@ -76,6 +79,11 @@ pub fn assistant_text(lang: Lang, k: AssistantText) -> &'static str {
             "Envoyez une phrase pour voir ce qui est compris.",
         ),
         Failed => ("The hub did not answer.", "Le hub n'a pas répondu."),
+        Clear => ("Clear", "Effacer"),
+        ClearHint => (
+            "Empty this conversation. The hub keeps it, and ↑ still recalls your sentences.",
+            "Vider cette conversation. Le hub la garde, et ↑ rappelle toujours vos phrases.",
+        ),
     };
     match lang {
         Lang::En => en,
@@ -115,6 +123,8 @@ mod tests {
                 NotKept,
                 NoTrace,
                 Failed,
+                Clear,
+                ClearHint,
             ],
             assistant_text,
             &[Title, Simulation, Actions],
