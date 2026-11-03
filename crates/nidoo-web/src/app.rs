@@ -21,6 +21,7 @@ use crate::i18n::install_lang;
 use crate::nav::{TrackBackStack, install_nav};
 use crate::screens::alert_detail::AlertDetailScreen;
 use crate::screens::alerts::AlertsScreen;
+use crate::screens::assistant::AssistantScreen;
 use crate::screens::climate::ClimateScreen;
 use crate::screens::dashboard::DashboardScreen;
 use crate::screens::devices::DevicesScreen;
@@ -216,6 +217,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/weather") view=WeatherScreen />
                     <Route path=path!("/solar") view=SolarScreen />
                     <Route path=path!("/search") view=SearchScreen />
+                    <Route path=path!("/assistant") view=AssistantScreen />
                     <Route path=path!("/alerts") view=AlertsScreen />
                     <Route path=path!("/alerts/:id") view=AlertDetailScreen />
                     <Route path=path!("/ambiances") view=AmbiancesScreen />

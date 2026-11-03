@@ -2174,6 +2174,7 @@ dependencies = [
  "mime_guess",
  "nidoo-alarm",
  "nidoo-api",
+ "nidoo-assist",
  "nidoo-climate",
  "nidoo-core",
  "nidoo-frigate",
@@ -2218,6 +2219,19 @@ dependencies = [
 name = "nidoo-api"
 version = "0.1.0"
 dependencies = [
+ "nidoo-core",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nidoo-assist"
+version = "0.1.0"
+dependencies = [
+ "nidoo-api",
+ "nidoo-assist",
+ "nidoo-climate",
  "nidoo-core",
  "schemars",
  "serde",
@@ -2311,6 +2325,7 @@ dependencies = [
  "leptos_router",
  "nidoo-alarm",
  "nidoo-api",
+ "nidoo-assist",
  "nidoo-climate",
  "nidoo-core",
  "nidoo-frigate",

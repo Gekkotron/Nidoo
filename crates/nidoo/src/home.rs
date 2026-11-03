@@ -26,6 +26,9 @@ const ECO_MAX: f64 = 30.0;
 const THRESHOLD_MIN: f64 = 5.0;
 /// The highest accepted cold or hot threshold, in °C.
 const THRESHOLD_MAX: f64 = 35.0;
+/// The bounds of the assistant's no-question range, in °C.
+const ASSIST_MIN: f64 = 5.0;
+const ASSIST_MAX: f64 = 35.0;
 
 /// The topic the document is retained on.
 pub fn topic(ui_prefix: &str) -> String {
@@ -85,6 +88,22 @@ pub fn validate(settings: &HomeSettings, reg: &Registry) -> Result<(), String> {
         && cold >= hot
     {
         return Err("cold_below must be lower than hot_above".to_owned());
+    }
+    for (name, value) in [
+        ("assist_min_c", settings.assist_min_c),
+        ("assist_max_c", settings.assist_max_c),
+    ] {
+        if let Some(v) = value
+            && !(v.is_finite() && (ASSIST_MIN..=ASSIST_MAX).contains(&v))
+        {
+            return Err(format!(
+                "{name} must be between {ASSIST_MIN} and {ASSIST_MAX} °C"
+            ));
+        }
+    }
+    let (min, max) = settings.assist_range();
+    if min >= max {
+        return Err("assist_min_c must be lower than assist_max_c".to_owned());
     }
     if let Some(id) = &settings.mode_entity {
         match reg.entity(id) {

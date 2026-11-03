@@ -1128,14 +1128,28 @@ async fn purge_removes_only_system_rows() {
         })
         .await
         .unwrap();
-    // The live database compresses old chunks: the purge must work on them too.
+    // The live database compresses old chunks: the purge must work on them too. The rows are
+    // from 1970, so the database's own compression policy may compress a chunk at the same
+    // moment; `if_not_compressed` only checks first, so "already compressed" (42710) still
+    // means the chunk is compressed, which is all this needs.
     for table in ["entity_state", "entity_availability"] {
-        sqlx::query(&format!(
-            "SELECT compress_chunk(c, if_not_compressed => true) FROM show_chunks('{table}') c"
-        ))
-        .fetch_all(tdb.db.pool())
-        .await
-        .unwrap();
+        let chunks: Vec<String> =
+            sqlx::query_scalar(&format!("SELECT c::text FROM show_chunks('{table}') c"))
+                .fetch_all(tdb.db.pool())
+                .await
+                .unwrap();
+        for chunk in chunks {
+            let compressed = sqlx::query(&format!(
+                "SELECT compress_chunk('{chunk}'::regclass, if_not_compressed => true)"
+            ))
+            .execute(tdb.db.pool())
+            .await;
+            match compressed {
+                Ok(_) => {}
+                Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42710") => {}
+                Err(err) => panic!("compress {chunk}: {err}"),
+            }
+        }
     }
 
     let removed = tdb.db.purge_system_before(2_000_000).await.unwrap();

@@ -34,6 +34,10 @@ At most 60 cards are drawn; past that a line reads "type more to narrow it down"
 
 Search covers devices only. Flows, moods and settings are not searched.
 
+## Assistant
+
+**Assistant** in the sidebar, or the round button in the bottom-right corner of every other page, opens the Assistant page (`/assistant`): type a short French sentence such as "allume la lumière du salon" or "mets la chambre à 19" and press Enter. The hub replies in one line; when it needs an answer (which room, or Oui / Non for an unusual setpoint) the choices appear as buttons. The panel beside the conversation shows how the selected sentence was understood, with a **Faux** button to mark it wrong, and the **Simulation** switch tries sentences without touching the house. See [Assistant](assistant.md).
+
 ## Home header
 
 The house overview (**House**, first under Overview) opens with a header above its cards: the date, a greeting, one sentence about the house, a detail line, a row of chips and, when weather is on, a weather card (with a [solar card](#solar-card) beside it when the solar forecast is on). The overview always has it; your own dashboards show it only when their **Show header** switch is on. With live view on in **Settings → Cameras** a **Cameras** section follows the moods: every Frigate camera, one live 16:9 tile each, side by side on a computer and stacked on a phone; it is hidden while `live` is off. The overview ends with a **Recent alerts** list and a **See all** button.

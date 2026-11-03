@@ -91,7 +91,7 @@ impl<'a> EntityMatcher<'a> {
 }
 
 /// Lowercases `text` and folds accented letters to ASCII (`Lumière` becomes `lumiere`).
-fn fold(text: &str) -> String {
+pub fn fold(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars().flat_map(char::to_lowercase) {
         match c {

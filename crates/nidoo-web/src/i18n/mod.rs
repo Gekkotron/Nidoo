@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 mod alarm;
 mod ambiances;
+mod assistant;
 pub mod climate;
 mod dashboards;
 pub mod devices;
@@ -27,6 +28,7 @@ mod weather;
 
 pub use alarm::*;
 pub use ambiances::*;
+pub use assistant::*;
 pub use dashboards::*;
 pub use home::*;
 pub use network::*;

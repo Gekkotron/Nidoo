@@ -2,6 +2,7 @@
 
 pub mod alarm;
 pub mod ambiances;
+pub mod assist;
 pub mod climate;
 mod core;
 pub mod history;

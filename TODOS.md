@@ -15,6 +15,17 @@ Spec: `docs/superpowers/specs/2026-10-22-climate-engine-design.md`. Plan: `docs/
 - **Final** overlapping learning sequences / manual learn_climate_zone bypasses claim_run — Ruling: practically unreachable, conclude is serialised — deferred.
 - **Final** one failed re-assert right after reconnect turns drift into a hold after ~121 s — Ruling: never fights the user; frost overrides — deferred.
 
+## Assistant v1 (branch feat/audio-assistant-mcp-tools, 2026-11-02)
+
+Spec: `docs/superpowers/specs/2026-11-02-assist-design.md`. Plan: `docs/superpowers/plans/2026-11-02-assist.md`. Typed French sentences only; the items below are the direction, each its own brainstorm.
+
+- [ ] **P2** Speech in, on the hub, in Rust: a French CTC acoustic model (ONNX, run with `ort`) decoded against a grammar compiled from the sentences `nidoo-assist` understands plus the house's names, with a confidence gate; whisper.cpp as fallback; Silero VAD for the end of speech. Spike accuracy (allume / éteins) and CPU latency first.
+- [ ] **P3** Speech out: Phonon (weights CC BY-NC: download, never bundle) or Piper.
+- [ ] **P3** Satellites: ESP32-S3 boards streaming 16 kHz audio over MQTT.
+- [ ] **P3** LLM fallback behind the same plan and safety layer, with tiny tools (the spike: 15/16 with three purpose-built tools, 0/3 with the raw MCP tools).
+- [ ] **P3** Learned shortcuts shared with the Android app; English sentences.
+- [ ] **P3** The floating button opens the conversation as a panel over the page instead of navigating.
+
 ## Other backlog ideas (unrelated to dashboards)
 
 ### Homey-gap features

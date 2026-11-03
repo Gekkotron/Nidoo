@@ -1,0 +1,182 @@
+/* The Assistant page and its floating button. */
+
+.assist {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--grid-gap);
+  align-items: start;
+}
+
+.assist__talk,
+.assist__trace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--card-padding);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: var(--card-bg);
+}
+
+.assist__hint,
+.assist__note {
+  margin: 0;
+  color: var(--muted);
+}
+
+.assist__note {
+  font-size: 0.9em;
+}
+
+.assist__turns {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assist__turn {
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-nav);
+  cursor: pointer;
+}
+
+.assist__turn--selected {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+}
+
+.assist__turn--wrong .assist__reply {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+}
+
+.assist__said {
+  margin: 0 0 4px;
+  color: var(--muted);
+}
+
+.assist__reply {
+  margin: 0;
+  color: var(--ink);
+}
+
+.assist__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assist__chip,
+.assist__send,
+.assist__wrong {
+  padding: 8px 14px;
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.assist__chip:hover,
+.assist__send:hover,
+.assist__wrong:hover:not(:disabled) {
+  border-color: var(--accent-ring);
+}
+
+.assist__wrong[aria-pressed="true"] {
+  border-color: var(--danger);
+  color: var(--danger);
+  cursor: default;
+}
+
+.assist__bar {
+  display: flex;
+  gap: 8px;
+}
+
+.assist__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.assist__simulate {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.assist__trace-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.assist__rows {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.assist__rows dt {
+  color: var(--muted);
+}
+
+.assist__rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .assist {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The floating button: above the page and the phone widget library (40), under the edit
+   sheets (45), the phone drawer (46/47) and the toasts (50). Dialogs sit in the top layer. */
+.assist-fab {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 44;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--btn-dark-bg);
+  color: var(--btn-dark-ink);
+  box-shadow: var(--shadow);
+  transition: transform var(--motion-short) var(--ease);
+}
+
+.assist-fab:hover {
+  transform: scale(1.05);
+}
+
+.assist-fab:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 3px;
+}
+
+.assist-fab svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* Editing a dashboard puts its widget library in that corner. */
+.shell:has(.dashboard-edit-layout) .assist-fab {
+  display: none;
+}

@@ -12,9 +12,9 @@ use crate::app::landing_path;
 use crate::components::status_pill::StatusPill;
 use crate::dashboards::create_dashboard;
 use crate::house::House;
-use crate::i18n::{Key, Lang, unseen_alerts, use_text};
+use crate::i18n::{AssistantText, Key, Lang, assistant_text, unseen_alerts, use_text};
 use crate::icons::{
-    BELL, BOLT, FLOW_NODES, GEAR, HOUSE, LAYERS, PLUS, SHIELD, SPARKLE, THERMOMETER,
+    BELL, BOLT, FLOW_NODES, GEAR, HOUSE, LAYERS, PLUS, SHIELD, SPARKLE, SPEECH, THERMOMETER,
 };
 use crate::nav::BackStack;
 use crate::rooms::{sidebar_rooms, use_room_chips};
@@ -273,6 +273,14 @@ pub fn Sidebar(
                             </a>
                         </li>
                     </Show>
+                    <li>
+                        <a class="sidebar__link" href="/assistant" aria-current=current(Section::Assistant)>
+                            <span class="nav__glyph" inner_html=SPEECH></span>
+                            <span class="nav__label">
+                                {move || assistant_text(lang.map_or(Lang::En, |l| l.get()), AssistantText::Title)}
+                            </span>
+                        </a>
+                    </li>
                     <li>
                         <a class="sidebar__link" href="/alerts" aria-current=current(Section::Alerts)>
                             <span class="nav__glyph" inner_html=BELL></span>
