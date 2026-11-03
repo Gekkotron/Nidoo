@@ -339,6 +339,19 @@ mod tests {
     }
 
     #[test]
+    fn typed_choice_may_say_chambre_before_a_person_named_room() {
+        let choices = Pending::Choose(vec![
+            ("Salon".into(), req("salon")),
+            ("Léa".into(), req("chambre_lea")),
+        ]);
+        assert_eq!(
+            answer_text("la chambre de léa", &choices),
+            Some(PendingAnswer::Choice(1))
+        );
+        assert_eq!(answer_text("la chambre du salon", &choices), None);
+    }
+
+    #[test]
     fn a_bare_number_names_a_numbered_room_before_a_position() {
         let choices = Pending::Choose(vec![
             ("Chambre 2".into(), req("chambre_2")),

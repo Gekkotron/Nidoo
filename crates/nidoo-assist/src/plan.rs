@@ -1145,6 +1145,24 @@ mod tests {
     }
 
     #[test]
+    fn heating_in_the_chambre_of_a_person_named_room() {
+        let f = fixture::person_rooms();
+        let p = |s: &str| plan(s, &f.house());
+        let got = p("augmente le chauffage dans la chambre de léa");
+        assert!(acts(&got), "{got:?}");
+        assert_eq!(got.trace().room.as_deref(), Some("lea"));
+        // A bare "chambre" asks among the rooms that may be bedrooms: never the Salon.
+        assert_eq!(
+            labels(&p("augmente le chauffage dans la chambre")),
+            ["Léa", "Tom"]
+        );
+        assert_eq!(
+            reply_of(&p("augmente le chauffage dans la chambre du salon")),
+            "Je ne connais pas de pièce « chambre salon »."
+        );
+    }
+
+    #[test]
     fn zone_choices_follow_the_room_order() {
         let mut f = fixture::house();
         f.zones.reverse();

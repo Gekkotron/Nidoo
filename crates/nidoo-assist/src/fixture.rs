@@ -232,3 +232,29 @@ pub fn house() -> Fixture {
         now: NOW,
     }
 }
+
+/// [`house`] with the bedrooms named after their person only: area `lea` "Léa" and `tom`
+/// "Tom", as a house whose rooms are named for who sleeps there.
+pub fn person_rooms() -> Fixture {
+    let mut f = house();
+    let rename = |id: &str| match id {
+        "chambre_lea" => "lea".to_string(),
+        "chambre_tom" => "tom".to_string(),
+        other => other.to_string(),
+    };
+    for a in &mut f.areas {
+        a.id = rename(&a.id);
+        a.name = a.name.trim_start_matches("Chambre ").to_string();
+    }
+    for e in &mut f.entities {
+        e.area = rename(&e.area);
+    }
+    for z in &mut f.zones {
+        z.zone = rename(&z.zone);
+        z.name = z.name.trim_start_matches("Chambre ").to_string();
+        if let Some(d) = &mut z.decision {
+            d.zone = rename(&d.zone);
+        }
+    }
+    f
+}

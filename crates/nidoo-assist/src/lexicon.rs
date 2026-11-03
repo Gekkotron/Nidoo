@@ -283,6 +283,53 @@ const TABLE: &[(Class, &[&str])] = &[
     ),
 ];
 
+/// Words for a bedroom, which a room named after its person leaves out ("chambre de Léa" for a
+/// room named "Léa"). Kept out of the table: they still reach the room words.
+pub const BEDROOM: &[&str] = &["chambre", "chambres"];
+
+/// Words that say a room is not a bedroom (French, plus the English of discovered area ids), so
+/// that a bedroom word never lands on the living room. Generic room kinds, never a house's names.
+pub const NOT_BEDROOM: &[&str] = &[
+    "salon",
+    "sejour",
+    "living",
+    "cuisine",
+    "kitchen",
+    "bureau",
+    "office",
+    "salle",
+    "bain",
+    "bath",
+    "bathroom",
+    "douche",
+    "shower",
+    "wc",
+    "toilette",
+    "toilettes",
+    "garage",
+    "dehors",
+    "exterieur",
+    "outside",
+    "jardin",
+    "garden",
+    "terrasse",
+    "balcon",
+    "escalier",
+    "stair",
+    "stairs",
+    "etage",
+    "upstairs",
+    "couloir",
+    "hall",
+    "entree",
+    "cave",
+    "cellier",
+    "grenier",
+    "buanderie",
+    "veranda",
+    "dressing",
+];
+
 /// Classes a typo may reach. Set, raise and lower never do: a typo must not invent a setpoint
 /// ("laisse" is not "baisse").
 fn fuzzy(class: Class) -> bool {
