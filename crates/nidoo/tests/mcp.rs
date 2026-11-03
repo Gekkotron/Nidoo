@@ -1470,15 +1470,15 @@ async fn climate_status_enabled_returns_zones() {
     let server = Server::start_with(cfg).await;
     server.online();
     server.hub.ingest(
-        "nidoo/climate/daikin_192_168_1_150/climate/config",
-        &fixture("discovery/climate__daikin_192_168_1_150__climate.json"),
+        "nidoo/climate/daikin_192_0_2_150/climate/config",
+        &fixture("discovery/climate__daikin_192_0_2_150__climate.json"),
     );
     let id = server
         .hub
         .snapshot()
         .entities
         .into_iter()
-        .find(|e| e.id.starts_with("daikin_192_168_1_150"))
+        .find(|e| e.id.starts_with("daikin_192_0_2_150"))
         .expect("daikin")
         .id;
     let mut patch = serde_json::Map::new();

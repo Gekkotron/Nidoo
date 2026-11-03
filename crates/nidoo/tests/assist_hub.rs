@@ -58,10 +58,10 @@ async fn place(hub: &Hub, prefix: &str, area: &str) -> String {
 
 /// The recorded Daikin `n`, placed in `area`.
 async fn feed_daikin(hub: &Hub, n: u8, area: &str) -> String {
-    let name = format!("climate__daikin_192_168_1_15{n}__climate.json");
-    let topic = format!("nidoo/climate/daikin_192_168_1_15{n}/climate/config");
+    let name = format!("climate__daikin_192_0_2_15{n}__climate.json");
+    let topic = format!("nidoo/climate/daikin_192_0_2_15{n}/climate/config");
     hub.ingest(&topic, &fixture(&name));
-    place(hub, &format!("daikin_192_168_1_15{n}"), area).await
+    place(hub, &format!("daikin_192_0_2_15{n}"), area).await
 }
 
 fn set_led(hub: &Hub, on: bool) {

@@ -1309,10 +1309,10 @@ mod tests {
         let hub = Hub::new(&cfg, tx);
         hub.set_connection(ConnectionStatus::Online);
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-            "../nidoo-core/tests/fixtures/discovery/climate__daikin_192_168_1_150__climate.json",
+            "../nidoo-core/tests/fixtures/discovery/climate__daikin_192_0_2_150__climate.json",
         );
         hub.ingest(
-            "nidoo/climate/daikin_192_168_1_150/climate/config",
+            "nidoo/climate/daikin_192_0_2_150/climate/config",
             &std::fs::read(fixture).unwrap(),
         );
         let id = hub.snapshot().entities[0].id.clone();
@@ -1352,10 +1352,10 @@ mod tests {
         let hub = Hub::new(&cfg, tx);
         hub.set_connection(ConnectionStatus::Online);
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
-            "../nidoo-core/tests/fixtures/discovery/climate__daikin_192_168_1_150__climate.json",
+            "../nidoo-core/tests/fixtures/discovery/climate__daikin_192_0_2_150__climate.json",
         );
         hub.ingest(
-            "nidoo/climate/daikin_192_168_1_150/climate/config",
+            "nidoo/climate/daikin_192_0_2_150/climate/config",
             &std::fs::read(fixture).unwrap(),
         );
         let id = hub.snapshot().entities[0].id.clone();

@@ -450,10 +450,10 @@ fn climate_set_temperature_with_template() {
     ));
 
     // Recorded Daikin bridge: bare values, no templates.
-    let daikin = common::parse_fixture("climate__daikin_192_168_1_150__climate");
+    let daikin = common::parse_fixture("climate__daikin_192_0_2_150__climate");
     assert_eq!(
         ok(&daikin, &Command::SetTemperature { temperature: 23.5 }),
-        vec![publish("daikin/192.168.1.150/ha/temperature/set", "23.5")]
+        vec![publish("daikin/192.0.2.150/ha/temperature/set", "23.5")]
     );
     assert_eq!(
         ok(
@@ -462,7 +462,7 @@ fn climate_set_temperature_with_template() {
                 mode: "cool".to_owned()
             }
         ),
-        vec![publish("daikin/192.168.1.150/ha/mode/set", "cool")]
+        vec![publish("daikin/192.0.2.150/ha/mode/set", "cool")]
     );
 }
 

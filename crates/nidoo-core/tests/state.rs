@@ -549,8 +549,8 @@ fn cover_state_and_position() {
 
 #[test]
 fn climate_fields() {
-    let climate = common::parse_fixture("climate__daikin_192_168_1_150__climate");
-    let topic = "daikin/192.168.1.150/ha/state";
+    let climate = common::parse_fixture("climate__daikin_192_0_2_150__climate");
+    let topic = "daikin/192.0.2.150/ha/state";
     let mut state = EntityState::default();
     assert_eq!(
         apply(

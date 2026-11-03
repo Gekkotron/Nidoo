@@ -2083,8 +2083,8 @@ async fn apply_returns_report_json() {
     assert_eq!(report["actions"][0]["outcome"], "skipped");
 }
 
-const DAIKIN_TOPIC: &str = "nidoo/climate/daikin_192_168_1_150/climate/config";
-const DAIKIN_FIXTURE: &str = "discovery/climate__daikin_192_168_1_150__climate.json";
+const DAIKIN_TOPIC: &str = "nidoo/climate/daikin_192_0_2_150/climate/config";
+const DAIKIN_FIXTURE: &str = "discovery/climate__daikin_192_0_2_150__climate.json";
 
 /// A server with `[climate] enabled`, the broker link up and one Daikin placed in `living`.
 async fn climate_server() -> Server {
@@ -2098,7 +2098,7 @@ async fn climate_server() -> Server {
         .snapshot()
         .entities
         .into_iter()
-        .find(|e| e.id.starts_with("daikin_192_168_1_150"))
+        .find(|e| e.id.starts_with("daikin_192_0_2_150"))
         .expect("daikin")
         .id;
     let mut patch = serde_json::Map::new();
