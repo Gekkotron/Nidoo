@@ -134,7 +134,10 @@ area named "Léa" or "Chambre Léa". Exact folded-name match beats substring
 match; two equally good areas → ask. No room said:
 
 - lights / temperature → ask "Dans quelle pièce ?" with the candidate rooms
-  (rooms that have lights / a thermometer) as choices, at most 6;
+  (rooms that have lights / a thermometer) as choices, at most 6; when only
+  one room can be meant (a named light that exists in a single room, or a
+  house with lights in a single room) the lights act there without asking
+  *(user decision, 2026-11-03)*;
 - heating → same, with active climate zones as choices; a house with a
   single active zone uses it.
 

@@ -393,7 +393,7 @@ Rules `decide()` must implement (spec §5.1, §5.4, §7):
 #[test] fn climate_empty_prefix_rejected_when_enabled() { /* validate() Err contains "prefix" */ }
 ```
 
-`tests/climate_hub.rs` (helpers: `hub(enabled: bool)` like `tests/hub.rs:hub_with_timeout` with `cfg.climate.enabled = enabled`; `feed_daikin(&hub, n, area)` ingests `climate__daikin_192_168_1_15{n}__climate.json` from `oikos-core/tests/fixtures/discovery` and sets the area with `set_areas`/override as `tests/hub.rs` does):
+`tests/climate_hub.rs` (helpers: `hub(enabled: bool)` like `tests/hub.rs:hub_with_timeout` with `cfg.climate.enabled = enabled`; `feed_daikin(&hub, n, area)` ingests `climate__daikin_192_0_2_15{n}__climate.json` from `oikos-core/tests/fixtures/discovery` and sets the area with `set_areas`/override as `tests/hub.rs` does):
 
 ```rust
 #[tokio::test] async fn disabled_has_no_filters_and_refuses() {
