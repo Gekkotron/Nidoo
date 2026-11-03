@@ -10,8 +10,10 @@ use crate::plan::Done;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ActionResult {
     Ok,
-    /// Nothing to do: already in the wanted state, or offline.
+    /// Nothing to do: already in the wanted state.
     Skipped,
+    /// The device is offline: nothing was sent, and the reply says it did not answer.
+    Offline,
     Failed(String),
 }
 
@@ -175,6 +177,7 @@ fn lights(area: &str, on: bool, names: &[String], results: &[ActionResult]) -> S
         .zip(results)
         .filter_map(|(name, r)| match r {
             ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
+            ActionResult::Offline => Some((name.as_str(), "hors ligne")),
             _ => None,
         })
         .collect();

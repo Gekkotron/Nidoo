@@ -1,7 +1,7 @@
 //! What a sentence asks for, before looking at the house.
 
 use crate::lexicon::{Class, class};
-use crate::text::Word;
+use crate::text::{Word, number_text};
 
 /// What the sentence asks, with the words left that may name a room or a light.
 #[derive(Clone, Debug, PartialEq)]
@@ -78,9 +78,53 @@ fn tag(words: &[Word]) -> Vec<Tok> {
     out
 }
 
+/// What each number of the sentence is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Role {
+    /// After "à": "mets le salon à 19".
+    AfterA,
+    /// Before "degré(s)" / "°", or after "de" / "d'": "d'un degré", "de 2".
+    Amount,
+    /// Right before a light word: "les 3 lumières".
+    Count,
+    /// Anything else is part of a name: "la chambre 2".
+    Name,
+}
+
+fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
+    toks.iter()
+        .enumerate()
+        .map(|(i, t)| {
+            if !matches!(t, Tok::Number(_)) {
+                return None;
+            }
+            let before = i.checked_sub(1).and_then(|j| toks.get(j));
+            let after = toks.get(i + 1);
+            let linker = |t: Option<&Tok>, words: &[&str]| {
+                matches!(t, Some(Tok::Known(Class::Linker, w)) if words.contains(&w.as_str()))
+            };
+            Some(if linker(before, &["a"]) {
+                Role::AfterA
+            } else if matches!(after, Some(Tok::Known(Class::Degree, _)))
+                || linker(before, &["de", "d"])
+            {
+                Role::Amount
+            } else if matches!(
+                after,
+                Some(Tok::Known(Class::Light | Class::LightNamed, _))
+            ) {
+                Role::Count
+            } else {
+                Role::Name
+            })
+        })
+        .collect()
+}
+
 /// Parses a normalised sentence; `None` when it is not understood. Never guesses: two
-/// opposite verbs, a negation, a percentage or a device this version does not handle all give
-/// `None`.
+/// opposite verbs, a negation, a percentage, a device this version does not handle, or a
+/// statement or question that is not a polite request ("il fait 18 degrés", "qui a éteint")
+/// all give `None` (a temperature question is read, never acted on).
 pub fn parse(words: &[Word]) -> Option<Intent> {
     let toks = tag(words);
     let has = |c: Class| {
@@ -90,6 +134,17 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     if has(Class::Percent) || has(Class::OtherDevice) || has(Class::Negation) {
         return None;
     }
+    // "à -2": a signed value after "à" is neither a setpoint nor a change.
+    if toks.windows(2).any(
+        |w| matches!((&w[0], &w[1]), (Tok::Known(Class::Linker, a), Tok::Signed(_)) if a == "a"),
+    ) {
+        return None;
+    }
+    let question_word = toks
+        .iter()
+        .any(|t| matches!(t, Tok::Known(Class::Question, w) if w != "?"));
+    let describes = has(Class::Statement) || has(Class::Fait) || question_word;
+    let blocked = describes && !has(Class::Request);
     let (on, off, set) = (has(Class::On), has(Class::Off), has(Class::Set));
     let (raise, lower) = (has(Class::Raise), has(Class::Lower));
     if (on && off) || (raise && lower) {
@@ -97,46 +152,46 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     }
     let light = has(Class::Light) || has(Class::LightNamed);
     let heating = has(Class::Heating);
-    let numbers: Vec<f64> = toks
-        .iter()
-        .filter_map(|t| match t {
-            Tok::Number(n) => Some(*n),
+    let roles = roles(&toks);
+    let number_with = |role: Role| {
+        toks.iter().zip(&roles).find_map(|(t, r)| match (t, r) {
+            (Tok::Number(n), Some(r)) if *r == role => Some(*n),
             _ => None,
         })
-        .collect();
+    };
+    let after_a = number_with(Role::AfterA);
+    let amount = number_with(Role::Amount);
     let signed = toks.iter().find_map(|t| match t {
         Tok::Signed(n) => Some(*n),
         _ => None,
     });
-    // The number right after "à": "mets le salon à 19".
-    let after_a = toks.windows(2).find_map(|w| match (&w[0], &w[1]) {
-        (Tok::Known(Class::Linker, a), Tok::Number(n)) if a == "a" => Some(*n),
-        _ => None,
-    });
+    // Room words: the free words and the numbers that are part of a name.
     let free: Vec<String> = toks
         .iter()
-        .filter_map(|t| match t {
-            Tok::Free(w) => Some(w.clone()),
+        .zip(&roles)
+        .filter_map(|(t, r)| match (t, r) {
+            (Tok::Free(w), _) => Some(w.clone()),
+            (Tok::Number(n), Some(Role::Name)) => Some(number_text(*n)),
             _ => None,
         })
         .collect();
     let action = on || off || set || raise || lower;
+    let valued = after_a.is_some() || amount.is_some() || signed.is_some();
 
-    if !action && numbers.is_empty() && signed.is_none() && !heating && !light {
-        let asks = has(Class::Temperature) || (has(Class::Fait) && has(Class::Question));
-        if asks {
-            return Some(Intent::ReadTemp {
-                room: free,
-                outdoor: has(Class::Outdoor),
-            });
-        }
+    let asks = has(Class::Temperature) || (has(Class::Fait) && question_word);
+    if (blocked || !action) && !heating && !light && asks && !(has(Class::Fait) && valued) {
+        return Some(Intent::ReadTemp {
+            room: free,
+            outdoor: has(Class::Outdoor),
+        });
+    }
+    if blocked || (!action && !valued && !heating) {
         return None;
     }
 
-    let heating_ctx =
-        heating || has(Class::Degree) || (has(Class::Temperature) && !numbers.is_empty());
+    let heating_ctx = heating || has(Class::Degree) || (has(Class::Temperature) && valued);
     if heating_ctx {
-        if light || (off && !numbers.is_empty()) {
+        if light || (off && valued) {
             return None;
         }
         let room = free;
@@ -147,7 +202,7 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
                     let step = if has(Class::Little) {
                         LITTLE
                     } else {
-                        signed.or(numbers.first().copied()).map_or(LITTLE, f64::abs)
+                        signed.or(amount).map_or(LITTLE, f64::abs)
                     };
                     Change::Relative(if lower { -step } else { step })
                 }
@@ -160,7 +215,7 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
                 room,
             });
         }
-        if let Some(n) = after_a.or(numbers.last().copied()) {
+        if let Some(n) = after_a.or(amount) {
             return Some(Intent::SetTemp {
                 change: Change::Absolute(n),
                 room,
@@ -183,28 +238,33 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     }
 
     if on || off {
-        return Some(lights(&toks, on, has(Class::All)));
+        return Some(lights(&toks, &roles, on, has(Class::All)));
     }
     None
 }
 
-/// Lights: named-light words are names; other free words before the first linker are names
-/// too ("la led du salon"), the ones after it name the room. Without a linker every free word
-/// names the room.
-fn lights(toks: &[Tok], on: bool, all: bool) -> Intent {
+/// Lights: named-light words are names; other free words (and name numbers) before the first
+/// linker are names too ("la led du salon"), the ones after it name the room. Without a linker
+/// every free word names the room. A count ("les 3 lumières") is dropped.
+fn lights(toks: &[Tok], roles: &[Option<Role>], on: bool, all: bool) -> Intent {
     let linker = toks
         .iter()
         .position(|t| matches!(t, Tok::Known(Class::Linker, _)));
     let mut names = Vec::new();
     let mut room = Vec::new();
     for (i, t) in toks.iter().enumerate() {
-        match t {
-            Tok::Known(Class::LightNamed, w) => names.push(w.clone()),
-            Tok::Free(w) => match linker {
-                Some(l) if i < l => names.push(w.clone()),
-                _ => room.push(w.clone()),
-            },
-            _ => {}
+        let word = match (t, roles[i]) {
+            (Tok::Known(Class::LightNamed, w), _) => {
+                names.push(w.clone());
+                continue;
+            }
+            (Tok::Free(w), _) => w.clone(),
+            (Tok::Number(n), Some(Role::Name)) => number_text(*n),
+            _ => continue,
+        };
+        match linker {
+            Some(l) if i < l => names.push(word),
+            _ => room.push(word),
         }
     }
     Intent::Lights {

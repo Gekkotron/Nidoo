@@ -17,7 +17,7 @@ Rooms are your own rooms, by name ("salon", "la chambre de Léa", "chez Léa", "
 - « allume la lumière du salon », « éteins le salon », « éteins tout dans le bureau »
 - « éteins la led du salon », « allume la lampe de la chambre »
 
-A room's lights are the ones a mood's "lights" action uses: every light of the room, the ones hidden from the dashboard included, but not groups. Lights already in the wanted state and offline ones are left alone.
+A room's lights are the ones a mood's "lights" action uses: every light of the room, the ones hidden from the dashboard included, but not groups. Lights already in the wanted state are left alone; an offline light gets no command and the reply says it did not answer.
 
 **Heating setpoints**, for a room whose [climate](climate.md) zone is active:
 
@@ -30,6 +30,7 @@ The setpoint holds until the zone's next scheduled change, at most the zone's ma
 
 ## Safety
 
+- **A statement or a question is not an order.** "Il fait 18 degrés au salon", "la lumière du salon est allumée ?" or "qui a éteint le salon ?" never act (a temperature question is answered). A polite request still is one: « peux-tu allumer la lumière du salon ? ».
 - **Not sure, no action.** Two opposite orders ("allume et éteins"), a negation ("n'éteins pas"), a percentage ("à 50 %") or a device it does not handle yet (shutters, plugs) give "Je n'ai pas compris", with a few example sentences built from your rooms.
 - **Ambiguous room, a question.** "La chambre" with two bedrooms asks "Dans quelle pièce ?" with the rooms as buttons. You can also type the answer ("Léa").
 - **Unusual setpoint, a confirmation.** A setpoint outside **16–23 °C**, or more than **3 °C** away from the room's current temperature, is asked first: "Passer le Salon à 25 °C ?" with **Oui** / **Non** (typing "oui" or "non" works too). A yes applies exactly the value asked about. The 16–23 °C range is set by `assist_min_c` and `assist_max_c` in the [home settings](../reference/http-api.md#home-settings).

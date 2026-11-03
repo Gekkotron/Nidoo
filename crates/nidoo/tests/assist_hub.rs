@@ -488,3 +488,35 @@ async fn without_db_history_is_memory_only() {
     assert_eq!(turns.turns.len(), 100);
     assert!(turns.turns.iter().all(|t| t.id != first.id));
 }
+
+#[tokio::test]
+async fn a_simulated_question_stays_simulated() {
+    let (hub, mut rx) = house().await;
+    drain(&mut rx);
+    let asked = hub.assist(simulated("mets le salon à 25")).await.unwrap();
+    // The switch went off before the answer: the answer is still a simulation.
+    let turn = hub
+        .assist(reply(PendingReply::Yes {
+            pending: pending_id(&asked),
+        }))
+        .await
+        .unwrap();
+    assert!(turn.simulate);
+    assert!(turn.reply.starts_with("Simulation :"), "{}", turn.reply);
+    hub.assist(simulated("mets le salon à 25")).await.unwrap();
+    let typed = say(&hub, "oui").await;
+    assert!(typed.simulate && typed.reply.starts_with("Simulation :"));
+    assert!(drain(&mut rx).is_empty());
+    assert!(overrides(&hub, "living").is_empty());
+}
+
+#[tokio::test]
+async fn an_offline_light_is_reported_as_not_answering() {
+    let (hub, _rx) = house().await;
+    hub.ingest("zigbee2mqtt/bridge/state", br#"{"state":"offline"}"#);
+    let turn = say(&hub, "allume la lumière du salon").await;
+    assert_eq!(turn.outcome, OutcomeKind::Failed, "{turn:?}");
+    assert!(turn.reply.contains("n'a pas répondu"), "{}", turn.reply);
+    assert!(!turn.reply.contains("déjà"), "{}", turn.reply);
+    assert_eq!(turn.trace.actions[0].result, "offline");
+}

@@ -4,7 +4,7 @@ use nidoo_api::search::fold;
 
 use crate::house::House;
 use crate::lexicon::{Class, class};
-use crate::text::{Word, words};
+use crate::text::{Word, number_text, words};
 
 /// The area the room words name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,7 +23,8 @@ pub fn name_words(name: &str) -> Vec<String> {
         .into_iter()
         .filter_map(|w| match w {
             Word::Text(t) => Some(t),
-            _ => None,
+            Word::Number(n) => Some(number_text(n)),
+            Word::Signed(_) => None,
         })
         .filter(|t| !matches!(class(t), Some(Class::Linker | Class::Noise)))
         .collect()
@@ -31,7 +32,7 @@ pub fn name_words(name: &str) -> Vec<String> {
 
 /// How well `said` names an area whose words are `name`: 2 when they are the same words, 1
 /// when every said word is one of the name's, 0 otherwise.
-fn score(said: &[String], name: &[String]) -> u8 {
+pub(crate) fn score(said: &[String], name: &[String]) -> u8 {
     if !said.iter().all(|w| name.contains(w)) {
         return 0;
     }

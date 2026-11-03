@@ -124,12 +124,13 @@ pub fn AssistantScreen() -> impl IntoView {
         busy.set(true);
         spawn_local(async move {
             match post_assist(&req).await {
+                // `try_`: the page may be gone by the time the hub answers.
                 Ok(turn) => {
                     let id = turn.id.clone();
-                    turns.update(|list| list.push(turn));
-                    selected.set(Some(id));
-                    if kept.get_untracked().is_none() {
-                        kept.set(Some(true));
+                    turns.try_update(|list| list.push(turn));
+                    selected.try_set(Some(id));
+                    if kept.try_get_untracked() == Some(None) {
+                        kept.try_set(Some(true));
                     }
                 }
                 Err(err) => {
@@ -179,7 +180,7 @@ pub fn AssistantScreen() -> impl IntoView {
     let mark = move |id: String| {
         spawn_local(async move {
             if mark_wrong(&id).await.is_ok() {
-                turns.update(|list| {
+                turns.try_update(|list| {
                     if let Some(turn) = list.iter_mut().find(|turn| turn.id == id) {
                         turn.wrong = true;
                     }

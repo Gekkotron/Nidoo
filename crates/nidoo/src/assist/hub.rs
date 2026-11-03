@@ -39,6 +39,8 @@ struct Slot {
     id: String,
     pending: Pending,
     expires_at: u64,
+    /// Asked in Simulation: its answer is simulated too, whatever the switch says then.
+    simulate: bool,
 }
 
 impl AssistState {
@@ -55,7 +57,7 @@ impl AssistState {
     }
 
     /// Leaves `pending` as the client's one question; returns its id.
-    fn put(&self, client: &str, pending: Pending, now: u64) -> String {
+    fn put(&self, client: &str, pending: Pending, now: u64, simulate: bool) -> String {
         let id = new_id();
         self.slots().insert(
             client.to_owned(),
@@ -63,26 +65,27 @@ impl AssistState {
                 id: id.clone(),
                 pending,
                 expires_at: now + PENDING_TTL_S,
+                simulate,
             },
         );
         id
     }
 
     /// Takes the client's question `id` when it is still open.
-    fn take(&self, client: &str, id: &str, now: u64) -> Option<Pending> {
+    fn take(&self, client: &str, id: &str, now: u64) -> Option<(Pending, bool)> {
         let mut slots = self.slots();
         let open = slots
             .get(client)
             .is_some_and(|s| s.id == id && now < s.expires_at);
         let slot = slots.remove(client)?;
-        open.then_some(slot.pending)
+        open.then_some((slot.pending, slot.simulate))
     }
 
     /// The client's open question, if any; an expired one is dropped.
-    fn current(&self, client: &str, now: u64) -> Option<Pending> {
+    fn current(&self, client: &str, now: u64) -> Option<(Pending, bool)> {
         let mut slots = self.slots();
         match slots.get(client) {
-            Some(slot) if now < slot.expires_at => Some(slot.pending.clone()),
+            Some(slot) if now < slot.expires_at => Some((slot.pending.clone(), slot.simulate)),
             Some(_) => {
                 slots.remove(client);
                 None
@@ -161,6 +164,7 @@ fn result_text(result: &ActionResult, simulate: bool) -> String {
         (_, true) => "simulated".into(),
         (ActionResult::Ok, _) => "ok".into(),
         (ActionResult::Skipped, _) => "skipped".into(),
+        (ActionResult::Offline, _) => "offline".into(),
         (ActionResult::Failed(why), _) => format!("failed: {why}"),
     }
 }
@@ -206,6 +210,7 @@ impl Hub {
             now,
         };
         let text = req.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
+        let mut simulate = req.simulate;
         let (said, plan) = match (&req.reply, text) {
             (Some(reply), _) => {
                 let (id, answer) = match reply {
@@ -215,26 +220,31 @@ impl Hub {
                     PendingReply::Yes { pending } => (pending, PendingAnswer::Yes),
                     PendingReply::No { pending } => (pending, PendingAnswer::No),
                 };
-                let pending = self
+                let (pending, asked_simulated) = self
                     .assist
                     .take(&client, id, now)
                     .ok_or_else(|| HubError::Rejected("question expired".into()))?;
+                simulate |= asked_simulated;
                 (said(&pending, answer), answered(&pending, answer, &house))
             }
             (None, Some(text)) => {
                 let open = self.assist.current(&client, now);
                 // An answer or not, a new sentence closes the question.
                 self.assist.forget(&client);
-                let plan = match open.and_then(|p| answer_text(text, &p).map(|a| (p, a))) {
-                    Some((pending, answer)) => answered(&pending, answer, &house),
-                    None => plan(text, &house),
-                };
+                let plan =
+                    match open.and_then(|(p, sim)| answer_text(text, &p).map(|a| (p, a, sim))) {
+                        Some((pending, answer, asked_simulated)) => {
+                            simulate |= asked_simulated;
+                            answered(&pending, answer, &house)
+                        }
+                        None => plan(text, &house),
+                    };
                 (text.to_owned(), plan)
             }
             (None, None) => return Err(HubError::Rejected("text or reply is required".into())),
         };
         let turn = self
-            .run_plan(plan, &client, said, req.simulate, &house, now)
+            .run_plan(plan, &client, said, simulate, &house, now)
             .await;
         let mut turn = turn;
         turn.trace.elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -276,7 +286,9 @@ impl Hub {
                     })
                     .collect();
                 let failed = !results.is_empty()
-                    && results.iter().all(|r| matches!(r, ActionResult::Failed(_)));
+                    && results
+                        .iter()
+                        .all(|r| matches!(r, ActionResult::Failed(_) | ActionResult::Offline));
                 let outcome = if failed {
                     OutcomeKind::Failed
                 } else {
@@ -296,7 +308,9 @@ impl Hub {
                 trace,
             } => {
                 let labels: Vec<String> = choices.iter().map(|(l, _)| l.clone()).collect();
-                let id = self.assist.put(client, Pending::Choose(choices), now);
+                let id = self
+                    .assist
+                    .put(client, Pending::Choose(choices), now, simulate);
                 let text = format!("{question} {}.", list_fr(&labels));
                 let question = Question {
                     pending: id,
@@ -310,7 +324,9 @@ impl Hub {
                 request,
                 trace,
             } => {
-                let id = self.assist.put(client, Pending::Confirm(request), now);
+                let id = self
+                    .assist
+                    .put(client, Pending::Confirm(request), now, simulate);
                 let q = Question {
                     pending: id,
                     kind: QuestionKind::Confirm,
@@ -363,9 +379,10 @@ impl Hub {
                     let Some(view) = house.entity(entity) else {
                         return ActionResult::Failed("inconnue".into());
                     };
-                    if view.state.availability == Availability::Offline
-                        || already_there(view, command)
-                    {
+                    if view.state.availability == Availability::Offline {
+                        return ActionResult::Offline;
+                    }
+                    if already_there(view, command) {
                         return ActionResult::Skipped;
                     }
                     match self.send_command(entity, command.clone()).await {

@@ -29,6 +29,10 @@ pub enum Class {
     OtherDevice,
     /// "ne ... pas": never act on a negated order.
     Negation,
+    /// A statement or a past tense ("est", "qui", "j'ai"): describes, never orders.
+    Statement,
+    /// "peux-tu", "voudrais": a polite request, which is an order even as a question.
+    Request,
     /// A word that introduces the room ("du", "dans", "chez").
     Linker,
     Noise,
@@ -187,6 +191,19 @@ const TABLE: &[(Class, &[&str])] = &[
     ),
     (Class::Negation, &["ne", "n", "pas", "jamais"]),
     (
+        Class::Statement,
+        &[
+            "est", "sont", "etait", "etaient", "ete", "qui", "pourquoi", "ai", "as", "avons",
+            "avez", "ont",
+        ],
+    ),
+    (
+        Class::Request,
+        &[
+            "peux", "peut", "pouvez", "pourrais", "pourriez", "veux", "voudrais", "veuillez",
+        ],
+    ),
+    (
         Class::Linker,
         &[
             "du", "de", "des", "d", "dans", "au", "aux", "chez", "a", "sur", "en",
@@ -218,7 +235,6 @@ const TABLE: &[(Class, &[&str])] = &[
             "cela",
             "qu",
             "que",
-            "est",
             "s",
             "y",
             "si",
@@ -229,14 +245,6 @@ const TABLE: &[(Class, &[&str])] = &[
             "bonjour",
             "salut",
             "maintenant",
-            "peux",
-            "peut",
-            "pouvez",
-            "pourrais",
-            "pourriez",
-            "veux",
-            "voudrais",
-            "veuillez",
             "ok",
             "vas",
             "dis",
@@ -250,19 +258,38 @@ const TABLE: &[(Class, &[&str])] = &[
             "fais",
             "faire",
             "piece",
+            "dire",
+            "donner",
+            "savoir",
+            "laisse",
+            "laisser",
+            "laissez",
+            "laisses",
+            "montrer",
+            "monde",
+            "couple",
+            "couples",
+            "allure",
+            "pause",
+            "metre",
+            "metres",
+            "allumee",
+            "allumees",
+            "eteinte",
+            "eteintes",
+            "coupee",
+            "coupees",
         ],
     ),
 ];
 
-/// Classes a typo may reach: the words that decide what to do.
+/// Classes a typo may reach. Set, raise and lower never do: a typo must not invent a setpoint
+/// ("laisse" is not "baisse").
 fn fuzzy(class: Class) -> bool {
     matches!(
         class,
         Class::On
             | Class::Off
-            | Class::Set
-            | Class::Raise
-            | Class::Lower
             | Class::Light
             | Class::LightNamed
             | Class::Heating

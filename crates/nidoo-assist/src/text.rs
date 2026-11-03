@@ -26,6 +26,15 @@ impl Word {
     }
 }
 
+/// A number as a word of a name ("Chambre 2" → `2`), the same for a room's name and a sentence.
+pub fn number_text(n: f64) -> String {
+    if n.fract() == 0.0 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
+}
+
 /// Splits `sentence` into folded words and numbers. Apostrophe elisions split (`d'un` is `d`
 /// then 1), hyphens split (`fait-il`), punctuation is dropped except `?`, `%` and `°`.
 pub fn words(sentence: &str) -> Vec<Word> {

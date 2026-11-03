@@ -485,6 +485,19 @@ fn zone_limits(zone: &ZoneView, house: &House) -> (f64, Option<f64>, Option<f64>
     (step.unwrap_or(DEFAULT_STEP), min, max)
 }
 
+/// Down or up to the step; a value already on it (within float noise) stays.
+fn round_down(value: f64, step: f64) -> f64 {
+    clean((value / step + 1e-9).floor() * step)
+}
+
+fn round_up(value: f64, step: f64) -> f64 {
+    clean((value / step - 1e-9).ceil() * step)
+}
+
+fn clean(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
 fn round_to(value: f64, step: f64) -> f64 {
     ((value / step).round() * step * 100.0).round() / 100.0
 }
@@ -610,7 +623,12 @@ fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Pl
         }
     };
     let (step, min, max) = zone_limits(zone, house);
-    let target = round_to(wanted, step);
+    // A change rounds towards itself, so a step never rounds back to the setpoint it left.
+    let target = match change {
+        Change::Relative(delta) if delta < 0.0 => round_down(wanted, step),
+        Change::Relative(_) => round_up(wanted, step),
+        Change::Absolute(_) => round_to(wanted, step),
+    };
     if target != round_to(wanted, 0.01) {
         let shown = trace.value.take().unwrap_or_default();
         trace.value = Some(format!(
@@ -1118,6 +1136,120 @@ mod tests {
         assert_eq!(
             labels(&plan("mets le chauffage à 20", &f.house())),
             ["Salon", "Chambre Léa"]
+        );
+    }
+
+    fn acts(plan: &Plan) -> bool {
+        matches!(plan, Plan::Act { .. } | Plan::Confirm { .. })
+    }
+
+    #[test]
+    fn statements_and_questions_never_act() {
+        for sentence in [
+            // C1: a temperature in a statement or a question is not an order.
+            "il fait 18 degrés au salon",
+            "est-ce que la température du salon est à 20 ?",
+            "le chauffage du salon est à 20 ?",
+            "le salon est à 19 degrés",
+            "quelle est la consigne du salon à 19 ?",
+            // C2: real words one edit from a verb.
+            "laisse le chauffage allumé dans le salon",
+            "le chauffage du salon, laisse-le",
+            "laissez le chauffage du salon",
+            "peux-tu me montrer la consigne du salon ?",
+            // I1: questions and past tense about the lights.
+            "est-ce que la lumière du salon est allumée ?",
+            "la lumière du salon est éteinte ?",
+            "qui a éteint le salon ?",
+            "j'ai éteint la lumière du salon",
+            // M1: "à" then a signed number.
+            "mets le chauffage du salon à -2",
+            // I2: a stray number.
+            "mets le salon à 19 , 5",
+        ] {
+            let plan = p(sentence);
+            assert!(!acts(&plan), "{sentence:?} → {plan:?}");
+            assert!(!matches!(plan, Plan::Ask { .. }), "{sentence:?} → {plan:?}");
+        }
+    }
+
+    #[test]
+    fn polite_requests_still_act() {
+        assert_eq!(
+            lights_of(&p("peux-tu allumer la lumière du salon ?")).len(),
+            4
+        );
+        assert_eq!(
+            setpoint_of(&p("est-ce que tu peux mettre le salon à 20 ?")),
+            ("salon".into(), 20.0)
+        );
+        assert_eq!(lights_of(&p("allume le salon ?")).len(), 4);
+        assert_eq!(
+            reply_of(&p("est-ce que tu peux me dire la température du salon ?")),
+            "Il fait 18,2 °C dans le Salon."
+        );
+    }
+
+    fn numbered_house() -> fixture::Fixture {
+        use nidoo_climate::doc::{Setpoint, ZoneState};
+        let mut f = fixture::house();
+        f.areas.push(fixture::area("chambre_1", "Chambre 1"));
+        f.areas.push(fixture::area("chambre_2", "Chambre 2"));
+        f.entities.push(fixture::climate("climate_c1", "chambre_1"));
+        f.entities.push(fixture::climate("climate_c2", "chambre_2"));
+        f.entities
+            .push(fixture::light("light_c2", "Plafonnier", "chambre_2", false));
+        for (id, name) in [("chambre_1", "Chambre 1"), ("chambre_2", "Chambre 2")] {
+            f.zones.push(fixture::zone(
+                id,
+                name,
+                ZoneState::Active,
+                Some(Setpoint::Temp(19.0)),
+                Some(19.0),
+                &[if id == "chambre_1" {
+                    "climate_c1"
+                } else {
+                    "climate_c2"
+                }],
+            ));
+        }
+        f
+    }
+
+    #[test]
+    fn digits_in_a_room_name_are_the_room() {
+        let f = numbered_house();
+        let h = f.house();
+        assert_eq!(
+            setpoint_of(&plan("monte le chauffage de la chambre 2", &h)),
+            ("chambre_2".into(), 19.5)
+        );
+        assert_eq!(
+            setpoint_of(&plan("monte la chambre 2 d'un degré", &h)),
+            ("chambre_2".into(), 20.0)
+        );
+        assert_eq!(
+            setpoint_of(&plan("mets la chambre 1 à 20", &h)),
+            ("chambre_1".into(), 20.0)
+        );
+        assert_eq!(
+            lights_of(&plan("allume la chambre 2", &h)),
+            vec![("light_c2".to_string(), on())]
+        );
+    }
+
+    #[test]
+    fn relative_changes_round_towards_the_change() {
+        let mut f = fixture::house();
+        f.entity_mut("climate_salon").capabilities.temp_step = Some(1.0);
+        let h = f.house();
+        assert_eq!(
+            setpoint_of(&plan("baisse le chauffage du salon", &h)),
+            ("salon".into(), 18.0)
+        );
+        assert_eq!(
+            setpoint_of(&plan("monte un peu le chauffage du salon", &h)),
+            ("salon".into(), 20.0)
         );
     }
 }

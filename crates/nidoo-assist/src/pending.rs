@@ -5,8 +5,8 @@ use crate::intent::parse;
 use crate::lexicon::{Class, class};
 use crate::plan::{Plan, Request, plan_request};
 use crate::reply::{dans, de, le};
-use crate::room::name_words;
-use crate::text::{Word, words};
+use crate::room::{name_words, score};
+use crate::text::{Word, number_text, words};
 
 /// What the hub keeps while a question waits for its answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -116,30 +116,36 @@ pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
             }
         }
         Pending::Choose(choices) => {
-            if let [Word::Number(n)] = ws.as_slice() {
-                let i = *n as usize;
-                return (n.fract() == 0.0 && i >= 1 && i <= choices.len())
-                    .then(|| PendingAnswer::Choice(i - 1));
-            }
-            let said: Vec<String> = texts
+            // The said words, numbers kept: "chambre 2", or a bare "2".
+            let said: Vec<String> = ws
                 .iter()
+                .filter_map(|w| match w {
+                    Word::Text(t) => Some(t.clone()),
+                    Word::Number(n) => Some(number_text(*n)),
+                    Word::Signed(_) => None,
+                })
                 .filter(|w| !matches!(class(w), Some(Class::Linker | Class::Noise)))
-                .map(|w| w.to_string())
                 .collect();
-            if said.is_empty() || ws.len() != texts.len() {
+            if said.is_empty() || ws.iter().any(|w| matches!(w, Word::Signed(_))) {
                 return None;
             }
-            let matching: Vec<usize> = choices
+            // The best-named choice, exact before partial ("salon" picks Salon over Salon TV).
+            let scores: Vec<u8> = choices
                 .iter()
-                .enumerate()
-                .filter(|(_, (label, _))| {
-                    let label = name_words(label);
-                    said.iter().all(|w| label.contains(w))
-                })
-                .map(|(i, _)| i)
+                .map(|(label, _)| score(&said, &name_words(label)))
                 .collect();
-            match matching.as_slice() {
-                [one] => Some(PendingAnswer::Choice(*one)),
+            let best = scores.iter().copied().max().unwrap_or(0);
+            let winners: Vec<usize> = (0..choices.len()).filter(|i| scores[*i] == best).collect();
+            match (best, winners.as_slice()) {
+                (1.., [one]) => Some(PendingAnswer::Choice(*one)),
+                // A bare number no label holds is a position: "2" is the second choice.
+                (0, _) => match ws.as_slice() {
+                    [Word::Number(n)] if n.fract() == 0.0 && *n >= 1.0 => {
+                        let i = *n as usize;
+                        (i <= choices.len()).then(|| PendingAnswer::Choice(i - 1))
+                    }
+                    _ => None,
+                },
                 _ => None,
             }
         }
@@ -295,5 +301,39 @@ mod tests {
             .push(fixture::light("light_volets", "Lampe", "volets", false));
         let ex = examples(&f.house());
         assert!(ex.iter().all(|e| !e.contains("Volets")), "{ex:?}");
+    }
+
+    #[test]
+    fn typed_choice_prefers_the_exact_name() {
+        let choices = Pending::Choose(vec![
+            ("Salon".into(), req("salon")),
+            ("Salon TV".into(), req("salon_tv")),
+            ("Chambre Léa".into(), req("chambre_lea")),
+        ]);
+        assert_eq!(
+            answer_text("salon", &choices),
+            Some(PendingAnswer::Choice(0))
+        );
+        assert_eq!(
+            answer_text("le salon", &choices),
+            Some(PendingAnswer::Choice(0))
+        );
+        assert_eq!(
+            answer_text("salon tv", &choices),
+            Some(PendingAnswer::Choice(1))
+        );
+    }
+
+    #[test]
+    fn a_bare_number_names_a_numbered_room_before_a_position() {
+        let choices = Pending::Choose(vec![
+            ("Chambre 2".into(), req("chambre_2")),
+            ("Chambre 1".into(), req("chambre_1")),
+        ]);
+        assert_eq!(answer_text("2", &choices), Some(PendingAnswer::Choice(0)));
+        assert_eq!(
+            answer_text("chambre 1", &choices),
+            Some(PendingAnswer::Choice(1))
+        );
     }
 }
