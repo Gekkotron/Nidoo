@@ -17,6 +17,92 @@ const CLIENT_KEY: &str = "nidoo.assist.client";
 const SIMULATE_KEY: &str = "nidoo.assist.simulate";
 /// How many past turns the page shows when it opens.
 const LIMIT: u32 = 50;
+/// The sentences sent from this browser, oldest first, for the up arrow.
+const HISTORY_KEY: &str = "nidoo.assist.history";
+/// How many sent sentences the up arrow can reach.
+const HISTORY_MAX: usize = 50;
+
+/// The sentences sent, browsed with the arrows as in a shell: up for older, down for newer,
+/// and down past the newest gives back the sentence being typed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct History {
+    /// Oldest first.
+    sent: Vec<String>,
+    /// The sentence shown while browsing, and the one typed before browsing began.
+    browsing: Option<(usize, String)>,
+}
+
+impl History {
+    pub fn new(sent: Vec<String>) -> Self {
+        let mut h = Self::default();
+        for s in sent {
+            h.push(s);
+        }
+        h
+    }
+
+    pub fn sent(&self) -> &[String] {
+        &self.sent
+    }
+
+    /// Keeps a sent sentence (once when said twice in a row) and stops browsing.
+    pub fn push(&mut self, sentence: String) {
+        self.browsing = None;
+        if sentence.is_empty() || self.sent.last() == Some(&sentence) {
+            return;
+        }
+        self.sent.push(sentence);
+        if self.sent.len() > HISTORY_MAX {
+            self.sent.remove(0);
+        }
+    }
+
+    /// The older sentence to show, `typed` being the field's text; `None` when there is none.
+    pub fn up(&mut self, typed: &str) -> Option<String> {
+        let at = match &self.browsing {
+            None if self.sent.is_empty() => return None,
+            None => self.sent.len() - 1,
+            Some((0, _)) => return None,
+            Some((at, _)) => at - 1,
+        };
+        let draft = self
+            .browsing
+            .take()
+            .map_or_else(|| typed.to_owned(), |(_, d)| d);
+        self.browsing = Some((at, draft));
+        Some(self.sent[at].clone())
+    }
+
+    /// The newer sentence to show, or the one typed before browsing; `None` when not browsing.
+    pub fn down(&mut self) -> Option<String> {
+        let (at, draft) = self.browsing.take()?;
+        if at + 1 < self.sent.len() {
+            self.browsing = Some((at + 1, draft));
+            Some(self.sent[at + 1].clone())
+        } else {
+            Some(draft)
+        }
+    }
+
+    /// The field was edited: the shown sentence becomes the one being typed.
+    pub fn edited(&mut self) {
+        self.browsing = None;
+    }
+}
+
+fn stored_history() -> History {
+    let sent = storage()
+        .and_then(|s| s.get_item(HISTORY_KEY).ok().flatten())
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+        .unwrap_or_default();
+    History::new(sent)
+}
+
+fn store_history(h: &History) {
+    if let (Some(s), Ok(v)) = (storage(), serde_json::to_string(h.sent())) {
+        let _ = s.set_item(HISTORY_KEY, &v);
+    }
+}
 
 fn storage() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|w| w.local_storage().ok().flatten())
@@ -113,6 +199,7 @@ pub fn AssistantScreen() -> impl IntoView {
     // from then, so a hub clock that differs from the browser's never hides them.
     let received = RwSignal::new(None::<(String, f64)>);
     let input = NodeRef::<leptos::html::Input>::new();
+    let history = StoredValue::new(stored_history());
 
     spawn_local(async move {
         if let Ok(list) = get_turns(LIMIT).await {
@@ -172,6 +259,10 @@ pub fn AssistantScreen() -> impl IntoView {
             return;
         }
         text.set(String::new());
+        history.update_value(|h| {
+            h.push(sentence.clone());
+            store_history(h);
+        });
         submit(AssistRequest {
             client: client.get_value(),
             text: Some(sentence),
@@ -282,11 +373,30 @@ pub fn AssistantScreen() -> impl IntoView {
                         placeholder=move || t(AssistantText::Placeholder)
                         aria-label=move || t(AssistantText::Placeholder)
                         prop:value=move || text.get()
-                        on:input=move |ev| text.set(event_target_value(&ev))
+                        on:input=move |ev| {
+                            history.update_value(History::edited);
+                            text.set(event_target_value(&ev));
+                        }
                         on:keydown=move |ev: web_sys::KeyboardEvent| {
-                            if ev.key() == "Enter" && !ev.is_composing() {
-                                ev.prevent_default();
-                                send_text();
+                            if ev.is_composing() {
+                                return;
+                            }
+                            let recalled = match ev.key().as_str() {
+                                "Enter" => {
+                                    ev.prevent_default();
+                                    send_text();
+                                    return;
+                                }
+                                "ArrowUp" => {
+                                    let typed = text.get_untracked();
+                                    history.try_update_value(|h| h.up(&typed)).flatten()
+                                }
+                                "ArrowDown" => history.try_update_value(History::down).flatten(),
+                                _ => return,
+                            };
+                            ev.prevent_default();
+                            if let Some(sentence) = recalled {
+                                text.set(sentence);
                             }
                         }
                     />
@@ -412,6 +522,53 @@ mod tests {
         // Expired, long ago or just now.
         assert_eq!(chip_window_ms(1_000, 1_060_000.0), 0.0);
         assert_eq!(chip_window_ms(1_000, 9_000_000.0), 0.0);
+    }
+
+    fn h(sent: &[&str]) -> History {
+        History::new(sent.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn up_walks_back_and_down_gives_back_the_typed_sentence() {
+        let mut h = h(&["allume le salon", "éteins le salon"]);
+        assert_eq!(h.up("mets le"), Some("éteins le salon".into()));
+        assert_eq!(h.up("éteins le salon"), Some("allume le salon".into()));
+        // The oldest: up stays put.
+        assert_eq!(h.up("allume le salon"), None);
+        assert_eq!(h.down(), Some("éteins le salon".into()));
+        assert_eq!(h.down(), Some("mets le".into()));
+        // Not browsing any more.
+        assert_eq!(h.down(), None);
+    }
+
+    #[test]
+    fn nothing_sent_nothing_to_recall() {
+        let mut h = h(&[]);
+        assert_eq!(h.up(""), None);
+        assert_eq!(h.down(), None);
+    }
+
+    #[test]
+    fn an_edit_stops_browsing() {
+        let mut h = h(&["a", "b"]);
+        assert_eq!(h.up(""), Some("b".into()));
+        h.edited();
+        assert_eq!(h.down(), None);
+        assert_eq!(h.up("b!"), Some("b".into()));
+        assert_eq!(h.down(), Some("b!".into()));
+    }
+
+    #[test]
+    fn sending_keeps_the_sentence_once_and_caps_the_list() {
+        let mut h = h(&["a"]);
+        h.push("a".into());
+        h.push("b".into());
+        assert_eq!(h.sent(), ["a", "b"]);
+        for i in 0..HISTORY_MAX + 5 {
+            h.push(format!("s{i}"));
+        }
+        assert_eq!(h.sent().len(), HISTORY_MAX);
+        assert_eq!(h.sent().last().map(String::as_str), Some("s54"));
     }
 
     #[test]
