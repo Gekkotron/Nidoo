@@ -18,6 +18,35 @@
   background: var(--card-bg);
 }
 
+.assist__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assist__clear {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.assist__clear:hover:not(:disabled) {
+  border-color: var(--accent-ring);
+  color: var(--ink);
+}
+
+.assist__clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .assist__hint,
 .assist__note {
   margin: 0;
