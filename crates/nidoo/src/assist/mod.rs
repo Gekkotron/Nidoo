@@ -5,5 +5,6 @@
 mod db;
 mod hub;
 pub(crate) mod log;
+pub mod tts;
 
 pub use hub::{AssistState, MAX_CLIENT_LEN, PENDING_TTL_S};
