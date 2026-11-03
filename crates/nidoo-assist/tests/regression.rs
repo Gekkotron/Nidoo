@@ -78,11 +78,11 @@ const ROWS: &[(&str, Expect)] = &[
     ),
     (
         "baisse un peu le chauffage du salon",
-        Setpoint("salon", 18.5),
+        Setpoint("salon", 17.5),
     ),
     (
         "monte le chauffage d'un degré chez Léa",
-        Confirm("chambre_lea", 15.0),
+        Setpoint("chambre_lea", 17.5),
     ),
     (
         "mets la chambre de Léa à dix-huit",

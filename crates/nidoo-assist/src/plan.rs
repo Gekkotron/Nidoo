@@ -592,6 +592,61 @@ fn heating_no_value(req: &Request, room: &[String], house: &House) -> Plan {
     answer(ask_value(&name), trace)
 }
 
+/// What a zone's units are really set to.
+#[derive(Clone, Debug, PartialEq)]
+enum RealSetpoint {
+    Temp(f64),
+    /// The units disagree: the distinct values, ascending.
+    Differ(Vec<f64>),
+    Off,
+    Unknown,
+}
+
+/// A held unit counts at its own setpoint, any other at the zone's decided setpoint (not the
+/// unit's target, which carries the thermometer correction). No unit listed: the zone's.
+fn real_setpoint(zone: &ZoneView) -> RealSetpoint {
+    let Some(decision) = zone.decision.as_ref() else {
+        return RealSetpoint::Unknown;
+    };
+    let zone_temp = match decision.setpoint {
+        Some(Setpoint::Temp(t)) => Some(t),
+        _ => None,
+    };
+    let zone_value = match zone_temp {
+        Some(t) => RealSetpoint::Temp(t),
+        None if decision.setpoint == Some(Setpoint::Off) => RealSetpoint::Off,
+        None => RealSetpoint::Unknown,
+    };
+    if decision.entities.is_empty() {
+        return zone_value;
+    }
+    let mut values: Vec<f64> = Vec::new();
+    for target in decision.entities.values() {
+        let value = if target.held {
+            if target.mode == "off" {
+                return RealSetpoint::Off;
+            }
+            match target.setpoint {
+                Some(t) => t,
+                None => return RealSetpoint::Off,
+            }
+        } else {
+            match zone_value {
+                RealSetpoint::Temp(t) => t,
+                ref other => return other.clone(),
+            }
+        };
+        if !values.iter().any(|v| (v - value).abs() < 0.01) {
+            values.push(value);
+        }
+    }
+    values.sort_by(f64::total_cmp);
+    match values.as_slice() {
+        [only] => RealSetpoint::Temp(*only),
+        _ => RealSetpoint::Differ(values),
+    }
+}
+
 fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Plan {
     let mut trace = Trace {
         intent: Some("set_temp".into()),
@@ -601,9 +656,9 @@ fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Pl
         Ok(found) => found,
         Err(plan) => return *plan,
     };
-    let current = zone.decision.as_ref().and_then(|d| d.setpoint);
-    let from = match current {
-        Some(Setpoint::Temp(t)) => Some(t),
+    let real = real_setpoint(zone);
+    let from = match real {
+        RealSetpoint::Temp(t) => Some(t),
         _ => None,
     };
     let wanted = match change {
@@ -612,25 +667,65 @@ fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Pl
             t
         }
         Change::Relative(delta) => {
-            let Some(base) = from else {
-                let why = if current == Some(Setpoint::Off) {
-                    format!("Le chauffage {} est sur arrêt", de(&name))
-                } else {
-                    format!("Je ne connais pas la consigne {}", de(&name))
-                };
-                return answer(
-                    format!(
-                        "{why} : dis-moi une température, par exemple « {} ».",
-                        example_for(&name)
-                    ),
-                    trace,
-                );
+            let base = match real {
+                RealSetpoint::Temp(t) => t,
+                RealSetpoint::Differ(values) => {
+                    let shown = match values.split_last() {
+                        Some((last, rest)) if !rest.is_empty() => format!(
+                            "{} et {}",
+                            rest.iter()
+                                .map(|v| number(*v))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            temp(*last)
+                        ),
+                        _ => String::new(),
+                    };
+                    return answer(
+                        format!(
+                            "Les appareils {} ont des consignes différentes ({shown}) : dis-moi une température, par exemple « {} ».",
+                            de(&name),
+                            example_for(&name)
+                        ),
+                        trace,
+                    );
+                }
+                RealSetpoint::Off | RealSetpoint::Unknown => {
+                    let why = if real == RealSetpoint::Off {
+                        format!("Le chauffage {} est sur arrêt", de(&name))
+                    } else {
+                        format!("Je ne connais pas la consigne {}", de(&name))
+                    };
+                    return answer(
+                        format!(
+                            "{why} : dis-moi une température, par exemple « {} ».",
+                            example_for(&name)
+                        ),
+                        trace,
+                    );
+                }
             };
             let sign = if delta < 0.0 { "−" } else { "+" };
-            let t = base + delta;
+            // A step starts from the room's reading when that is already past the setpoint.
+            let fresh_reading = zone.reading.filter(|_| {
+                zone.reading_age_s
+                    .is_none_or(|a| a <= u64::from(house.stale_after_min) * 60)
+            });
+            let past = fresh_reading.filter(|r| if delta < 0.0 { *r < base } else { *r > base });
+            let (start, lead) = match past {
+                Some(r) => {
+                    let cmp = if delta < 0.0 { "<" } else { ">" };
+                    (
+                        r,
+                        format!("mesure {} {cmp} consigne {} : ", number(r), number(base)),
+                    )
+                }
+                None => (base, String::new()),
+            };
+            let t = start + delta;
             trace.value = Some(format!(
-                "{} {sign} {} = {}",
-                number(base),
+                "{lead}{} {sign} {} = {}",
+                number(start),
                 number(delta.abs()),
                 temp(t)
             ));
@@ -993,9 +1088,12 @@ mod tests {
     fn relative_from_decided_setpoint() {
         assert_eq!(
             setpoint_of(&p("baisse un peu le chauffage du salon")),
-            ("salon".into(), 18.5)
+            ("salon".into(), 17.5)
         );
-        let plan = p("monte le chauffage d'un degré chez Léa");
+        // A stale reading is ignored: the step starts from the setpoint.
+        let mut f = fixture::house();
+        f.zone_mut("chambre_lea").reading_age_s = Some(3 * 3600);
+        let plan = plan("monte le chauffage d'un degré chez Léa", &f.house());
         let (question, request) = confirm_of(&plan);
         assert_eq!(question, "Passer la Chambre Léa à 15 °C ?");
         let f = fixture::house();
@@ -1128,8 +1226,9 @@ mod tests {
 
     #[test]
     fn confirmed_value_is_the_one_asked() {
-        let (_, request) = confirm_of(&p("monte le chauffage d'un degré chez Léa"));
         let mut f = fixture::house();
+        f.zone_mut("chambre_lea").reading_age_s = Some(3 * 3600);
+        let (_, request) = confirm_of(&plan("monte le chauffage d'un degré chez Léa", &f.house()));
         // The schedule moved on before the answer came.
         f.zone_mut("chambre_lea")
             .decision
@@ -1255,7 +1354,7 @@ mod tests {
         let h = f.house();
         assert_eq!(
             setpoint_of(&plan("monte le chauffage de la chambre 2", &h)),
-            ("chambre_2".into(), 19.5)
+            ("chambre_2".into(), 20.0)
         );
         assert_eq!(
             setpoint_of(&plan("monte la chambre 2 d'un degré", &h)),
@@ -1323,6 +1422,7 @@ mod tests {
     fn relative_changes_round_towards_the_change() {
         let mut f = fixture::house();
         f.entity_mut("climate_salon").capabilities.temp_step = Some(1.0);
+        f.zone_mut("salon").reading = Some(19.0);
         let h = f.house();
         assert_eq!(
             setpoint_of(&plan("baisse le chauffage du salon", &h)),
@@ -1332,5 +1432,132 @@ mod tests {
             setpoint_of(&plan("monte un peu le chauffage du salon", &h)),
             ("salon".into(), 20.0)
         );
+    }
+
+    fn target(setpoint: f64, held: bool) -> nidoo_climate::doc::DeviceTarget {
+        nidoo_climate::doc::DeviceTarget {
+            setpoint: Some(setpoint),
+            mode: "heat".into(),
+            held,
+        }
+    }
+
+    fn salon_with(setpoint: f64, reading: f64, units: &[(&str, f64, bool)]) -> fixture::Fixture {
+        let mut f = fixture::house();
+        let zone = f.zone_mut("salon");
+        zone.reading = Some(reading);
+        let d = zone.decision.as_mut().unwrap();
+        d.setpoint = Some(Setpoint::Temp(setpoint));
+        for (id, t, held) in units {
+            d.entities.insert((*id).into(), target(*t, *held));
+        }
+        f
+    }
+
+    #[test]
+    fn raise_starts_from_what_a_held_unit_is_set_to() {
+        let f = salon_with(15.5, 14.7, &[("climate_salon", 19.0, true)]);
+        let got = plan("augmente le chauffage du salon", &f.house());
+        let (question, _) = confirm_of(&got);
+        assert_eq!(question, "Passer le Salon à 20 °C ?");
+        assert_eq!(got.trace().value.as_deref(), Some("19 + 1 = 20 °C"));
+    }
+
+    #[test]
+    fn done_carries_the_real_setpoint() {
+        let f = salon_with(15.5, 19.0, &[("climate_salon", 19.0, true)]);
+        let Plan::Act { done, .. } = plan("augmente le chauffage du salon", &f.house()) else {
+            panic!("not an act")
+        };
+        assert_eq!(
+            done,
+            Done::Setpoint {
+                zone: "salon".into(),
+                from: Some(19.0),
+                to: 20.0
+            }
+        );
+    }
+
+    #[test]
+    fn raise_starts_from_a_fresh_reading_past_the_setpoint() {
+        let f = salon_with(15.5, 18.0, &[]);
+        let got = plan("augmente le chauffage du salon", &f.house());
+        assert_eq!(setpoint_of(&got), ("salon".into(), 19.0));
+        assert_eq!(
+            got.trace().value.as_deref(),
+            Some("mesure 18 > consigne 15,5 : 18 + 1 = 19 °C")
+        );
+    }
+
+    #[test]
+    fn lower_starts_from_a_fresh_reading_below_the_setpoint() {
+        let f = salon_with(19.0, 17.5, &[]);
+        let got = plan("baisse le chauffage du salon", &f.house());
+        assert_eq!(setpoint_of(&got), ("salon".into(), 16.5));
+        let f = salon_with(17.0, 18.0, &[]);
+        let got = plan("baisse le chauffage du salon", &f.house());
+        assert_eq!(setpoint_of(&got), ("salon".into(), 16.0));
+        assert_eq!(got.trace().value.as_deref(), Some("17 − 1 = 16 °C"));
+    }
+
+    #[test]
+    fn lower_below_a_reading_below_the_setpoint_says_why() {
+        let f = salon_with(16.5, 14.0, &[]);
+        let got = plan("baisse le chauffage du salon", &f.house());
+        assert_eq!(
+            got.trace().value.as_deref(),
+            Some("mesure 14 < consigne 16,5 : 14 − 1 = 13 °C")
+        );
+    }
+
+    #[test]
+    fn a_stale_reading_is_ignored() {
+        let mut f = salon_with(15.5, 18.0, &[]);
+        f.zone_mut("salon").reading_age_s = Some(3 * 3600);
+        let got = plan("augmente le chauffage du salon", &f.house());
+        assert_eq!(setpoint_of(&got), ("salon".into(), 16.5));
+        assert_eq!(got.trace().value.as_deref(), Some("15,5 + 1 = 16,5 °C"));
+    }
+
+    #[test]
+    fn units_with_different_setpoints_are_not_guessed() {
+        let f = salon_with(
+            15.5,
+            14.7,
+            &[
+                ("climate_salon", 19.0, true),
+                ("climate_salon_2", 15.5, false),
+            ],
+        );
+        let r = reply_of(&plan("augmente le chauffage du salon", &f.house()));
+        assert!(
+            r.contains("consignes différentes (15,5 et 19 °C)") && r.contains("température"),
+            "{r}"
+        );
+        // An absolute value is unaffected.
+        setpoint_of(&plan("mets le salon à 16", &f.house()));
+    }
+
+    #[test]
+    fn a_unit_off_by_hand_needs_a_value() {
+        let mut f = salon_with(15.5, 14.7, &[("climate_salon", 19.0, true)]);
+        f.zone_mut("salon")
+            .decision
+            .as_mut()
+            .unwrap()
+            .entities
+            .get_mut("climate_salon")
+            .unwrap()
+            .mode = "off".into();
+        let r = reply_of(&plan("augmente le chauffage du salon", &f.house()));
+        assert!(r.contains("arrêt"), "{r}");
+    }
+
+    #[test]
+    fn a_little_step_stays_half_a_degree() {
+        let f = salon_with(19.0, 19.0, &[]);
+        let got = plan("monte un peu le chauffage du salon", &f.house());
+        assert_eq!(setpoint_of(&got), ("salon".into(), 19.5));
     }
 }

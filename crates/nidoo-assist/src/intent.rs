@@ -34,8 +34,11 @@ pub enum Change {
     Relative(f64),
 }
 
-/// The step of a bare "monte" / "baisse" or of "un peu".
+/// The step of "un peu" / "légèrement".
 pub const LITTLE: f64 = 0.5;
+
+/// The step of a bare "monte" / "baisse".
+pub const STEP: f64 = 1.0;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
@@ -202,7 +205,7 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
                     let step = if has(Class::Little) {
                         LITTLE
                     } else {
-                        signed.or(amount).map_or(LITTLE, f64::abs)
+                        signed.or(amount).map_or(STEP, f64::abs)
                     };
                     Change::Relative(if lower { -step } else { step })
                 }
@@ -390,7 +393,11 @@ mod tests {
             p("baisse un peu le chauffage"),
             set(Change::Relative(-0.5), &[])
         );
-        assert_eq!(p("monte le chauffage"), set(Change::Relative(0.5), &[]));
+        assert_eq!(p("monte le chauffage"), set(Change::Relative(1.0), &[]));
+        assert_eq!(
+            p("monte un peu le chauffage"),
+            set(Change::Relative(0.5), &[])
+        );
         assert_eq!(
             p("chauffage +2 au bureau"),
             set(Change::Relative(2.0), &["bureau"])

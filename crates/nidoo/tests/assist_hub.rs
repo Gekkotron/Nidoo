@@ -222,6 +222,44 @@ async fn setpoint_override_shape() {
 }
 
 #[tokio::test]
+async fn setpoint_replaces_hand_holds_on_the_units() {
+    use nidoo_climate::doc::{Mode, Override};
+    let (hub, _rx) = house().await;
+    let now = clock::now();
+    let until = hub.hand_hold_until("living", now);
+    let unit = hub
+        .snapshot()
+        .entities
+        .into_iter()
+        .find(|e| e.id.starts_with("daikin_192_0_2_150"))
+        .expect("living unit")
+        .id;
+    hub.set_climate_override(
+        "living",
+        Override {
+            entity: Some(unit),
+            setpoint: Some(Setpoint::Temp(19.0)),
+            mode: Some(Mode::Heat),
+            until,
+            origin: OverrideOrigin::Hand,
+        },
+    )
+    .await
+    .expect("hand hold");
+    assert_eq!(overrides(&hub, "living").len(), 1);
+    let turn = hub
+        .assist_at(text("mets le salon à 20"), now)
+        .await
+        .expect("assist");
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    let held = overrides(&hub, "living");
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert_eq!(held[0].entity, None);
+    assert_eq!(held[0].setpoint, Some(Setpoint::Temp(20.0)));
+    assert_eq!(held[0].origin, OverrideOrigin::User);
+}
+
+#[tokio::test]
 async fn simulate_publishes_nothing() {
     let (hub, mut rx) = house().await;
     drain(&mut rx);
