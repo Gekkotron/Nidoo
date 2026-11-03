@@ -84,3 +84,50 @@ fn speaks_and_prints_timings() {
         }
     }
 }
+
+#[test]
+#[ignore = "needs a Phonon model folder in NIDOO_TTS_MODEL_DIR"]
+fn the_engine_loads_and_speaks_with_phonon() {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use nidoo::assist::tts::engine::start;
+    use nidoo::assist::tts::phonon::PhononLoader;
+    use nidoo_api::EngineState;
+
+    let Ok(dir) = std::env::var("NIDOO_TTS_MODEL_DIR") else {
+        eprintln!("NIDOO_TTS_MODEL_DIR is not set: skipping");
+        return;
+    };
+    let weights = std::env::var("NIDOO_TTS_WEIGHTS").unwrap_or_else(|_| "model.q8.gguf".into());
+    let engine = start(Arc::new(PhononLoader));
+    engine.load("real", dir.into(), weights);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !matches!(engine.state(), EngineState::Ready { .. }) {
+        assert!(
+            !matches!(engine.state(), EngineState::Error { .. }),
+            "{:?}",
+            engine.state()
+        );
+        assert!(Instant::now() < deadline, "the model never became ready");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(engine.sample_rate(), Some(24_000));
+    let (tx, rx) = std::sync::mpsc::channel();
+    engine
+        .speak(
+            SENTENCES[1].into(),
+            None,
+            Box::new(move |item| tx.send(item).is_ok()),
+        )
+        .unwrap();
+    let mut samples = 0;
+    loop {
+        match rx.recv_timeout(Duration::from_secs(30)).unwrap() {
+            Some(Ok(chunk)) => samples += chunk.len(),
+            Some(Err(e)) => panic!("{e}"),
+            None => break,
+        }
+    }
+    assert!(samples > 0, "no audio produced");
+}

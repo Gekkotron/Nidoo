@@ -8,10 +8,11 @@ repository.workspace = true
 
 [features]
 default = ["tts"]
-tts = ["dep:ptts"]
+tts = ["dep:ptts", "dep:xn"]
 
 [dependencies]
 ptts = { version = "=0.6.0", default-features = false, features = ["hf"], optional = true }
+xn = { version = "=0.2.13", optional = true }
 if-addrs = "0.13"
 anyhow.workspace = true
 axum.workspace = true

@@ -1,12 +1,32 @@
 //! Text-to-speech: the Phonon model, fetched from Hugging Face and run on the hub's CPU.
 
 pub mod download;
+pub mod engine;
 pub mod hf;
+#[cfg(feature = "tts")]
+pub mod phonon;
 pub mod source;
 pub mod store;
+pub mod tone;
 
 /// The Hugging Face site every model comes from.
 pub const HF_BASE: &str = "https://huggingface.co";
+
+/// Limit the CPU threads the speech engine may use, unless the user already did.
+///
+/// When `RAYON_NUM_THREADS` is unset, this caps the engine at half the logical
+/// cores (at least one); when it is set, that value is the user's override and
+/// is left alone. Without the `tts` feature it does nothing.
+///
+/// This sets an environment variable internally: call it before any other
+/// thread exists (first thing in `main`).
+pub fn limit_threads() {
+    #[cfg(feature = "tts")]
+    if std::env::var_os("RAYON_NUM_THREADS").is_none() {
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        xn::set_num_threads((cores / 2).max(1));
+    }
+}
 
 /// Why a speech operation failed.
 #[derive(Debug, thiserror::Error)]
