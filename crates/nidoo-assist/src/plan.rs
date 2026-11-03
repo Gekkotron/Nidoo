@@ -224,6 +224,21 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
         intent: Some(if on { "lights_on" } else { "lights_off" }.into()),
         ..Default::default()
     };
+    // Words before a linker that name no light but do name a room are the room
+    // ("allume le salon" said with a linker after it).
+    let (names, room) = if room.is_empty()
+        && !names.is_empty()
+        && !light_members(on, None, house)
+            .iter()
+            .any(|l| named(l, names))
+        && matches!(
+            resolve_room(house, names),
+            RoomMatch::One(_) | RoomMatch::Many(_)
+        ) {
+        (&[][..], names)
+    } else {
+        (names, room)
+    };
     let candidates: Vec<&EntityView> = light_members(on, None, house)
         .into_iter()
         .filter(|l| names.is_empty() || named(l, names))
@@ -1235,6 +1250,54 @@ mod tests {
         assert_eq!(
             lights_of(&plan("allume la chambre 2", &h)),
             vec![("light_c2".to_string(), on())]
+        );
+    }
+
+    #[test]
+    fn ordinal_indicator_typo_is_degrees() {
+        let f = fixture::house();
+        let h = f.house();
+        assert_eq!(
+            setpoint_of(&plan("mets le salon à 20ºC", &h)),
+            setpoint_of(&plan("mets le salon à 20°C", &h))
+        );
+    }
+
+    #[test]
+    fn room_right_after_the_verb_with_a_number_is_not_a_light_name() {
+        let f = fixture::house();
+        let h = f.house();
+        for s in ["allume le salon à 20", "éteins le salon à 20"] {
+            let plan = plan(s, &h);
+            assert!(matches!(plan, Plan::NotUnderstood { .. }), "{s}: {plan:?}");
+        }
+    }
+
+    #[test]
+    fn plain_room_after_the_verb_lights_the_room() {
+        let f = fixture::house();
+        let h = f.house();
+        assert_eq!(
+            lights_of(&plan("allume le salon", &h)),
+            lights_of(&plan("allume la lumière du salon", &h))
+        );
+        assert!(!lights_of(&plan("allume le salon", &h)).is_empty());
+    }
+
+    #[test]
+    fn room_before_a_linker_is_the_room_when_no_light_has_that_name() {
+        let f = fixture::house();
+        let h = f.house();
+        let req = Request::new(Intent::Lights {
+            on: true,
+            all: false,
+            names: vec!["salon".into()],
+            room: vec![],
+        });
+        let plan = plan_request(&req, &h);
+        assert_eq!(
+            lights_of(&plan),
+            lights_of(&p("allume la lumière du salon"))
         );
     }
 
