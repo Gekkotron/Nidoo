@@ -6,7 +6,12 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["tts"]
+tts = ["dep:ptts"]
+
 [dependencies]
+ptts = { version = "=0.6.0", default-features = false, features = ["hf"], optional = true }
 if-addrs = "0.13"
 anyhow.workspace = true
 axum.workspace = true
