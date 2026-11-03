@@ -25,6 +25,11 @@ impl TurnLog {
         self.turns.iter().rev().take(limit).cloned().collect()
     }
 
+    /// Whether the kept turn `id` is flagged as wrongly understood.
+    pub fn is_wrong(&self, id: &str) -> bool {
+        self.turns.iter().any(|t| t.id == id && t.wrong)
+    }
+
     /// Flags the turn as wrongly understood; false when it is not kept.
     pub fn mark_wrong(&mut self, id: &str) -> bool {
         match self.turns.iter_mut().find(|t| t.id == id) {

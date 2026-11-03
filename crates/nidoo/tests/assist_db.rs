@@ -103,3 +103,37 @@ async fn purge_drops_older_than_90_days() {
     assert_eq!(ids, ["new"]);
     tdb.drop_db().await;
 }
+
+/// The turn row is written in the background: a "Faux" tapped right after the reply, before
+/// the row exists, must still end up in the database.
+#[tokio::test]
+async fn wrong_tapped_before_the_row_is_written_is_kept() {
+    let Some(tdb) = fresh_db().await else { return };
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    let hub = nidoo::hub::Hub::new(&nidoo::config::Config::default(), tx);
+    hub.set_history(nidoo::history::History::with_db(
+        tdb.db.clone(),
+        chrono_tz::UTC,
+    ));
+    let turn = hub
+        .assist(nidoo_assist::view::AssistRequest {
+            client: "page-1".into(),
+            text: Some("bonjour".into()),
+            reply: None,
+            simulate: false,
+        })
+        .await
+        .unwrap();
+    hub.assist_mark_wrong(&turn.id).await.unwrap();
+    let mut kept = false;
+    for _ in 0..50 {
+        let rows = tdb.db.assist_turns(10).await.unwrap();
+        if rows.iter().any(|t| t.id == turn.id && t.wrong) {
+            kept = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(kept, "the wrong flag never reached the database");
+    tdb.drop_db().await;
+}

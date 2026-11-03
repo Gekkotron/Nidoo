@@ -238,6 +238,11 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     }
 
     if on || off {
+        // "allume le salon à 20": a light verb with a value is neither lights nor heating;
+        // switching lights while ignoring the number would be a guess.
+        if after_a.is_some() {
+            return None;
+        }
         return Some(lights(&toks, &roles, on, has(Class::All)));
     }
     None

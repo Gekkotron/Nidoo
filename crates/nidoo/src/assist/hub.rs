@@ -25,7 +25,13 @@ use crate::hub::{Hub, HubError};
 const DB_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a question waits for its answer, in seconds.
-pub const PENDING_TTL_S: u64 = 60;
+pub use nidoo_assist::pending::PENDING_TTL_S;
+
+/// The longest client id the hub accepts (the page makes 16 characters).
+pub const MAX_CLIENT_LEN: usize = 64;
+
+/// How many pending questions the hub keeps at once; the oldest goes first.
+const MAX_SLOTS: usize = 256;
 
 /// The assistant's memory: pending questions by client, and the turn log.
 #[derive(Debug, Default)]
@@ -43,6 +49,17 @@ struct Slot {
     simulate: bool,
 }
 
+/// What tapping an answer to question `id` finds.
+#[derive(Debug)]
+pub(crate) enum Taken {
+    /// The question was open: it is now closed, and this is it (and whether it was simulated).
+    Open(Pending, bool),
+    /// The client has no open question, or it expired.
+    Gone,
+    /// The client's open question is another one; it is left as it was.
+    Superseded,
+}
+
 impl AssistState {
     fn slots(&self) -> std::sync::MutexGuard<'_, HashMap<String, Slot>> {
         self.pending
@@ -56,10 +73,13 @@ impl AssistState {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Leaves `pending` as the client's one question; returns its id.
-    fn put(&self, client: &str, pending: Pending, now: u64, simulate: bool) -> String {
+    /// Leaves `pending` as the client's one question; returns its id. Expired questions of
+    /// any client are dropped, and past [`MAX_SLOTS`] the oldest questions go.
+    pub(crate) fn put(&self, client: &str, pending: Pending, now: u64, simulate: bool) -> String {
         let id = new_id();
-        self.slots().insert(
+        let mut slots = self.slots();
+        slots.retain(|_, s| now < s.expires_at);
+        slots.insert(
             client.to_owned(),
             Slot {
                 id: id.clone(),
@@ -68,34 +88,46 @@ impl AssistState {
                 simulate,
             },
         );
+        while slots.len() > MAX_SLOTS {
+            let oldest = slots
+                .iter()
+                .filter(|(k, _)| k.as_str() != client)
+                .min_by_key(|(_, s)| s.expires_at)
+                .map(|(k, _)| k.clone());
+            match oldest {
+                Some(key) => slots.remove(&key),
+                None => break,
+            };
+        }
         id
     }
 
-    /// Takes the client's question `id` when it is still open.
-    fn take(&self, client: &str, id: &str, now: u64) -> Option<(Pending, bool)> {
+    /// Takes the client's question `id` when it is still open. A tap on another question
+    /// (a stale button) leaves the client's current one alone.
+    pub(crate) fn take(&self, client: &str, id: &str, now: u64) -> Taken {
         let mut slots = self.slots();
-        let open = slots
-            .get(client)
-            .is_some_and(|s| s.id == id && now < s.expires_at);
-        let slot = slots.remove(client)?;
-        open.then_some((slot.pending, slot.simulate))
-    }
-
-    /// The client's open question, if any; an expired one is dropped.
-    fn current(&self, client: &str, now: u64) -> Option<(Pending, bool)> {
-        let mut slots = self.slots();
+        slots.retain(|_, s| now < s.expires_at);
         match slots.get(client) {
-            Some(slot) if now < slot.expires_at => Some((slot.pending.clone(), slot.simulate)),
-            Some(_) => {
-                slots.remove(client);
-                None
-            }
-            None => None,
+            None => Taken::Gone,
+            Some(slot) if slot.id != id => Taken::Superseded,
+            Some(_) => match slots.remove(client) {
+                Some(slot) => Taken::Open(slot.pending, slot.simulate),
+                None => Taken::Gone,
+            },
         }
     }
 
-    fn forget(&self, client: &str) {
-        self.slots().remove(client);
+    /// A new sentence closes the client's question: takes it, in one step, when it is still
+    /// open, so that a tap and a typed answer never both get it.
+    pub(crate) fn close(&self, client: &str, now: u64) -> Option<(Pending, bool)> {
+        let mut slots = self.slots();
+        slots.retain(|_, s| now < s.expires_at);
+        slots.remove(client).map(|s| (s.pending, s.simulate))
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.slots().len()
     }
 }
 
@@ -124,6 +156,15 @@ fn said(pending: &Pending, answer: PendingAnswer) -> String {
         (_, PendingAnswer::Yes) => "Oui".into(),
         (_, PendingAnswer::No) => "Non".into(),
         (_, PendingAnswer::Choice(i)) => format!("choix {}", i + 1),
+    }
+}
+
+/// What a tap said when its question is no longer known.
+fn tapped(answer: PendingAnswer) -> String {
+    match answer {
+        PendingAnswer::Yes => "Oui".into(),
+        PendingAnswer::No => "Non".into(),
+        PendingAnswer::Choice(i) => format!("choix {}", i + 1),
     }
 }
 
@@ -159,13 +200,49 @@ fn what(action: &Action) -> (String, String) {
     }
 }
 
-fn result_text(result: &ActionResult, simulate: bool) -> String {
-    match (result, simulate) {
-        (_, true) => "simulated".into(),
-        (ActionResult::Ok, _) => "ok".into(),
-        (ActionResult::Skipped, _) => "skipped".into(),
-        (ActionResult::Offline, _) => "offline".into(),
-        (ActionResult::Failed(why), _) => format!("failed: {why}"),
+/// One action's result, and the English detail of a failure (kept for the trace and the log;
+/// the result itself carries French for the reply).
+type Executed = (ActionResult, Option<String>);
+
+fn result_text(result: &Executed, simulate: bool) -> String {
+    let base = match result {
+        (ActionResult::Ok, _) => "ok".to_owned(),
+        (ActionResult::Skipped, _) => "skipped".to_owned(),
+        (ActionResult::Offline, _) => "offline".to_owned(),
+        (ActionResult::Failed(fr), detail) => {
+            format!("failed: {}", detail.as_deref().unwrap_or(fr))
+        }
+    };
+    if simulate {
+        format!("simulated {base}")
+    } else {
+        base
+    }
+}
+
+/// A short French reason for a refusal of the device-command layer, which words them in
+/// English. Anything unknown gets a generic text; the English stays in the trace.
+pub(crate) fn reason_fr(english: &str) -> &'static str {
+    let e = english.to_lowercase();
+    let has = |needle: &str| e.contains(needle);
+    if has("no state change") || has("no echo") {
+        "pas de réponse de l'appareil"
+    } else if has("groups disabled") {
+        "les groupes sont désactivés"
+    } else if has("no reachable member") {
+        "aucun appareil joignable"
+    } else if has("unknown group") || has("unknown entity") {
+        "appareil inconnu"
+    } else if has("publish") || has("broker") || has("disconnected") {
+        "le lien avec le broker est coupé"
+    } else if has("shutting down") {
+        "le hub s'arrête"
+    } else if has("not active") {
+        "la zone n'est pas active"
+    } else if has("offline") || has("unavailable") {
+        "hors ligne"
+    } else {
+        "refusé par le hub"
     }
 }
 
@@ -186,6 +263,11 @@ impl Hub {
         let client = req.client.trim().to_owned();
         if client.is_empty() {
             return Err(HubError::Rejected("client is required".into()));
+        }
+        if client.chars().count() > MAX_CLIENT_LEN {
+            return Err(HubError::Rejected(format!(
+                "client is too long ({MAX_CLIENT_LEN} characters at most)"
+            )));
         }
         let (areas, entities) = {
             let reg = self.read();
@@ -220,17 +302,28 @@ impl Hub {
                     PendingReply::Yes { pending } => (pending, PendingAnswer::Yes),
                     PendingReply::No { pending } => (pending, PendingAnswer::No),
                 };
-                let (pending, asked_simulated) = self
-                    .assist
-                    .take(&client, id, now)
-                    .ok_or_else(|| HubError::Rejected("question expired".into()))?;
-                simulate |= asked_simulated;
-                (said(&pending, answer), answered(&pending, answer, &house))
+                match self.assist.take(&client, id, now) {
+                    Taken::Open(pending, asked_simulated) => {
+                        simulate |= asked_simulated;
+                        (said(&pending, answer), answered(&pending, answer, &house))
+                    }
+                    Taken::Gone => return Err(HubError::Rejected("question expired".into())),
+                    // A stale button: the current question stays open.
+                    Taken::Superseded => (
+                        tapped(answer),
+                        Plan::Answer {
+                            reply: "Cette question n'est plus d'actualité : réponds à la \
+                                    dernière, ou écris une nouvelle demande."
+                                .into(),
+                            trace: Default::default(),
+                        },
+                    ),
+                }
             }
             (None, Some(text)) => {
-                let open = self.assist.current(&client, now);
-                // An answer or not, a new sentence closes the question.
-                self.assist.forget(&client);
+                // An answer or not, a new sentence closes the question, and takes it in one
+                // step so that no tap can answer it too.
+                let open = self.assist.close(&client, now);
                 let plan =
                     match open.and_then(|(p, sim)| answer_text(text, &p).map(|a| (p, a, sim))) {
                         Some((pending, answer, asked_simulated)) => {
@@ -249,7 +342,12 @@ impl Hub {
         let mut turn = turn;
         turn.trace.elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         self.assist.turns().push(turn.clone());
-        self.log_turn(&turn).await;
+        // The database may be slow: the reply never waits for it.
+        if self.assist_db().is_some() {
+            let hub = Arc::clone(self);
+            let logged = turn.clone();
+            tokio::spawn(async move { hub.log_turn(&logged).await });
+        }
         Ok(turn)
     }
 
@@ -268,14 +366,10 @@ impl Hub {
                 done,
                 mut trace,
             } => {
-                let results = if simulate {
-                    vec![ActionResult::Ok; actions.len()]
-                } else {
-                    self.execute(&actions, house, now).await
-                };
+                let executed = self.execute(&actions, house, now, simulate).await;
                 trace.actions = actions
                     .iter()
-                    .zip(&results)
+                    .zip(&executed)
                     .map(|(action, result)| {
                         let (target, what) = what(action);
                         ActionTrace {
@@ -285,6 +379,7 @@ impl Hub {
                         }
                     })
                     .collect();
+                let results: Vec<ActionResult> = executed.into_iter().map(|(r, _)| r).collect();
                 let failed = !results.is_empty()
                     && results
                         .iter()
@@ -366,34 +461,46 @@ impl Hub {
     }
 
     /// Runs the actions, lights together; one result per action, in order. A light already
-    /// in the wanted state, or offline, is skipped.
+    /// in the wanted state, or offline, is skipped. In Simulation the same checks run and the
+    /// results are what a real run would report, but nothing is sent.
     async fn execute(
         self: &Arc<Self>,
         actions: &[Action],
         house: &House<'_>,
         now: u64,
-    ) -> Vec<ActionResult> {
+        simulate: bool,
+    ) -> Vec<Executed> {
+        let failed = |english: String| {
+            let fr = reason_fr(&english).to_owned();
+            (ActionResult::Failed(fr), Some(english))
+        };
         join_all(actions.iter().map(|action| async move {
             match action {
                 Action::Light { entity, command } => {
                     let Some(view) = house.entity(entity) else {
-                        return ActionResult::Failed("inconnue".into());
+                        return (ActionResult::Failed("inconnue".into()), None);
                     };
                     if view.state.availability == Availability::Offline {
-                        return ActionResult::Offline;
+                        return (ActionResult::Offline, None);
                     }
                     if already_there(view, command) {
-                        return ActionResult::Skipped;
+                        return (ActionResult::Skipped, None);
+                    }
+                    if simulate {
+                        return (ActionResult::Ok, None);
                     }
                     match self.send_command(entity, command.clone()).await {
-                        Ok(response) if response.accepted => ActionResult::Ok,
-                        Ok(response) => ActionResult::Failed(
-                            response.reason.unwrap_or_else(|| "pas de réponse".into()),
-                        ),
-                        Err(err) => ActionResult::Failed(err.to_string()),
+                        Ok(response) if response.accepted => (ActionResult::Ok, None),
+                        Ok(response) => {
+                            failed(response.reason.unwrap_or_else(|| "no response".into()))
+                        }
+                        Err(err) => failed(err.to_string()),
                     }
                 }
                 Action::Setpoint { zone, setpoint } => {
+                    if simulate {
+                        return (ActionResult::Ok, None);
+                    }
                     let ov = Override {
                         entity: None,
                         setpoint: Some(Setpoint::Temp(*setpoint)),
@@ -402,8 +509,8 @@ impl Hub {
                         origin: OverrideOrigin::User,
                     };
                     match self.set_climate_override(zone, ov).await {
-                        Ok(()) => ActionResult::Ok,
-                        Err(err) => ActionResult::Failed(format!("refusé par le hub ({err})")),
+                        Ok(()) => (ActionResult::Ok, None),
+                        Err(err) => failed(err.to_string()),
                     }
                 }
             }
@@ -421,6 +528,15 @@ impl Hub {
     async fn log_turn(&self, turn: &AssistTurn) {
         let Some(db) = self.assist_db() else { return };
         match timeout(DB_TIMEOUT, db.insert_assist_turn(turn)).await {
+            // The row is written in the background: a "Faux" tapped before it existed
+            // updated nothing in the database, so carry the flag over now.
+            Ok(Ok(())) if self.assist.turns().is_wrong(&turn.id) => {
+                match timeout(DB_TIMEOUT, db.mark_assist_wrong(&turn.id)).await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "could not mark the assistant turn"),
+                    Err(_) => tracing::warn!("marking the assistant turn timed out"),
+                }
+            }
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "could not log the assistant turn"),
             Err(_) => tracing::warn!("logging the assistant turn timed out"),
@@ -459,5 +575,97 @@ impl Hub {
         } else {
             Err(HubError::UnknownTurn(id.to_owned()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nidoo_assist::Request;
+    use nidoo_assist::intent::Intent;
+
+    fn confirm() -> Pending {
+        Pending::Confirm(Request::new(Intent::ReadTemp {
+            room: vec![],
+            outdoor: true,
+        }))
+    }
+
+    #[test]
+    fn a_stale_id_leaves_the_current_question() {
+        let state = AssistState::default();
+        let id = state.put("c", confirm(), 100, false);
+        assert!(matches!(state.take("c", "old", 101), Taken::Superseded));
+        assert!(matches!(state.take("c", &id, 102), Taken::Open(..)));
+        assert!(matches!(state.take("c", &id, 103), Taken::Gone));
+    }
+
+    #[test]
+    fn a_tap_and_a_typed_answer_have_one_winner() {
+        let state = AssistState::default();
+        let id = state.put("c", confirm(), 100, false);
+        assert!(state.close("c", 101).is_some());
+        assert!(matches!(state.take("c", &id, 101), Taken::Gone));
+        let id = state.put("c", confirm(), 100, false);
+        assert!(matches!(state.take("c", &id, 101), Taken::Open(..)));
+        assert!(state.close("c", 101).is_none());
+    }
+
+    #[test]
+    fn an_expired_question_is_gone() {
+        let state = AssistState::default();
+        let id = state.put("c", confirm(), 100, false);
+        assert!(matches!(
+            state.take("c", &id, 100 + PENDING_TTL_S),
+            Taken::Gone
+        ));
+        state.put("c", confirm(), 100, false);
+        assert!(state.close("c", 100 + PENDING_TTL_S).is_none());
+    }
+
+    #[test]
+    fn other_clients_expired_slots_are_pruned() {
+        let state = AssistState::default();
+        for i in 0..10 {
+            state.put(&format!("gone-{i}"), confirm(), 100, false);
+        }
+        assert_eq!(state.len(), 10);
+        state.put("fresh", confirm(), 100 + PENDING_TTL_S, false);
+        assert_eq!(state.len(), 1);
+        state.put("other", confirm(), 100 + PENDING_TTL_S, false);
+        let _ = state.take("fresh", "x", 100 + 2 * PENDING_TTL_S);
+        assert_eq!(state.len(), 0);
+    }
+
+    #[test]
+    fn the_slots_are_capped_and_the_oldest_go() {
+        let state = AssistState::default();
+        state.put("first", confirm(), 100, false);
+        for i in 0..MAX_SLOTS + 10 {
+            state.put(&format!("c{i}"), confirm(), 150, false);
+        }
+        assert_eq!(state.len(), MAX_SLOTS);
+        assert!(state.close("first", 151).is_none());
+        let last = MAX_SLOTS + 9;
+        assert!(state.close(&format!("c{last}"), 151).is_some());
+    }
+
+    #[test]
+    fn refusals_are_told_in_french() {
+        assert_eq!(
+            reason_fr("no state change within 50 ms"),
+            "pas de réponse de l'appareil"
+        );
+        assert_eq!(reason_fr("Led: no echo"), "pas de réponse de l'appareil");
+        assert_eq!(reason_fr("groups disabled"), "les groupes sont désactivés");
+        assert_eq!(
+            reason_fr("publish: broker link down"),
+            "le lien avec le broker est coupé"
+        );
+        assert_eq!(
+            reason_fr("rejected: zone is not active"),
+            "la zone n'est pas active"
+        );
+        assert_eq!(reason_fr("something new"), "refusé par le hub");
     }
 }

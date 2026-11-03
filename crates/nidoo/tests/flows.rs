@@ -2606,7 +2606,7 @@ async fn set_flow_refuses_bad_math_targets() {
 }
 
 const VACUUM_ID: &str = "roborock_40313ca8b964";
-const CLIMATE_ID: &str = "daikin_192_168_1_150";
+const CLIMATE_ID: &str = "daikin_192_0_2_150";
 
 /// A hub that knows a vacuum and a climate.
 fn hub_with_vacuum_and_climate() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
@@ -2616,8 +2616,8 @@ fn hub_with_vacuum_and_climate() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
         &fixture("discovery/vacuum__roborock_40313ca8b964__roborock_40313ca8b964.json"),
     );
     hub.ingest(
-        "nidoo/climate/daikin_192_168_1_150/config",
-        &fixture("discovery/climate__daikin_192_168_1_150__climate.json"),
+        "nidoo/climate/daikin_192_0_2_150/config",
+        &fixture("discovery/climate__daikin_192_0_2_150__climate.json"),
     );
     (hub, rx)
 }

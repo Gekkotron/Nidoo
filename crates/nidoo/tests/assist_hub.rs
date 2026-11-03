@@ -58,10 +58,10 @@ async fn place(hub: &Hub, prefix: &str, area: &str) -> String {
 
 /// The recorded Daikin `n`, placed in `area`.
 async fn feed_daikin(hub: &Hub, n: u8, area: &str) -> String {
-    let name = format!("climate__daikin_192_168_1_15{n}__climate.json");
-    let topic = format!("nidoo/climate/daikin_192_168_1_15{n}/climate/config");
+    let name = format!("climate__daikin_192_0_2_15{n}__climate.json");
+    let topic = format!("nidoo/climate/daikin_192_0_2_15{n}/climate/config");
     hub.ingest(&topic, &fixture(&name));
-    place(hub, &format!("daikin_192_168_1_15{n}"), area).await
+    place(hub, &format!("daikin_192_0_2_15{n}"), area).await
 }
 
 fn set_led(hub: &Hub, on: bool) {
@@ -519,4 +519,109 @@ async fn an_offline_light_is_reported_as_not_answering() {
     assert!(turn.reply.contains("n'a pas répondu"), "{}", turn.reply);
     assert!(!turn.reply.contains("déjà"), "{}", turn.reply);
     assert_eq!(turn.trace.actions[0].result, "offline");
+}
+
+#[tokio::test]
+async fn a_stale_tap_leaves_the_current_question_open() {
+    let (hub, _rx) = house().await;
+    let asked = say(&hub, "mets le salon à 25").await;
+    let stale = hub
+        .assist(reply(PendingReply::Yes {
+            pending: "not-this-one".into(),
+        }))
+        .await
+        .expect("a reply, not an error");
+    assert_eq!(stale.outcome, OutcomeKind::Answered, "{stale:?}");
+    assert!(stale.reply.contains("plus d'actualité"), "{}", stale.reply);
+    assert!(overrides(&hub, "living").is_empty());
+    // The real question still answers.
+    let turn = hub
+        .assist(reply(PendingReply::Yes {
+            pending: pending_id(&asked),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(
+        overrides(&hub, "living")[0].setpoint,
+        Some(Setpoint::Temp(25.0))
+    );
+}
+
+#[tokio::test]
+async fn typed_no_cancels_a_choice_question() {
+    let (hub, _rx) = house().await;
+    let asked = say(&hub, "mets le chauffage à 20").await;
+    assert_eq!(asked.outcome, OutcomeKind::Asked);
+    let turn = say(&hub, "non").await;
+    assert_eq!(turn.outcome, OutcomeKind::Answered, "{turn:?}");
+    assert!(turn.reply.starts_with("D'accord"), "{}", turn.reply);
+    assert!(overrides(&hub, "living").is_empty());
+    assert!(overrides(&hub, "office").is_empty());
+    // A bare command after a choice question is a new sentence.
+    say(&hub, "mets le chauffage à 20").await;
+    let turn = say(&hub, "allume la lumière du salon").await;
+    assert_ne!(turn.outcome, OutcomeKind::NotUnderstood, "{turn:?}");
+}
+
+#[tokio::test]
+async fn an_overlong_client_id_is_rejected() {
+    let (hub, _rx) = house().await;
+    let long = AssistRequest {
+        client: "x".repeat(nidoo::assist::MAX_CLIENT_LEN + 1),
+        ..text("il fait combien dehors ?")
+    };
+    assert!(matches!(hub.assist(long).await, Err(HubError::Rejected(_))));
+    let fine = AssistRequest {
+        client: "x".repeat(nidoo::assist::MAX_CLIENT_LEN),
+        ..text("il fait combien dehors ?")
+    };
+    assert!(hub.assist(fine).await.is_ok());
+}
+
+#[tokio::test]
+async fn simulation_reports_like_a_real_run() {
+    let (hub, mut rx) = house().await;
+    drain(&mut rx);
+    // The LED is off: switching it off is "already so", switching it on would act.
+    let turn = hub
+        .assist(simulated("éteins la lumière du salon"))
+        .await
+        .unwrap();
+    assert!(turn.reply.contains("déjà"), "{}", turn.reply);
+    assert_eq!(turn.trace.actions[0].result, "simulated skipped");
+    let turn = hub
+        .assist(simulated("allume la lumière du salon"))
+        .await
+        .unwrap();
+    assert!(!turn.reply.contains("déjà"), "{}", turn.reply);
+    assert_eq!(turn.trace.actions[0].result, "simulated ok");
+    hub.ingest("zigbee2mqtt/bridge/state", br#"{"state":"offline"}"#);
+    let turn = hub
+        .assist(simulated("allume la lumière du salon"))
+        .await
+        .unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::Failed, "{turn:?}");
+    assert!(turn.reply.contains("n'a pas répondu"), "{}", turn.reply);
+    assert_eq!(turn.trace.actions[0].result, "simulated offline");
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn a_refusal_is_told_in_french_and_kept_in_english_in_the_trace() {
+    // Nobody echoes the command: the hub gives up with an English reason.
+    let (hub, _rx) = house().await;
+    let turn = say(&hub, "allume la lumière du salon").await;
+    assert_eq!(turn.outcome, OutcomeKind::Failed, "{turn:?}");
+    assert!(
+        turn.reply.contains("pas de réponse de l'appareil"),
+        "{}",
+        turn.reply
+    );
+    assert!(!turn.reply.contains("no state change"), "{}", turn.reply);
+    assert!(
+        turn.trace.actions[0].result.contains("no state change"),
+        "{}",
+        turn.trace.actions[0].result
+    );
 }

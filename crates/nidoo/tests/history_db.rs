@@ -741,18 +741,15 @@ mod learning {
         let fixture = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../nidoo-core/tests/fixtures/discovery/")
-                .join("climate__daikin_192_168_1_150__climate.json"),
+                .join("climate__daikin_192_0_2_150__climate.json"),
         )
         .expect("fixture");
-        hub.ingest(
-            "nidoo/climate/daikin_192_168_1_150/climate/config",
-            &fixture,
-        );
+        hub.ingest("nidoo/climate/daikin_192_0_2_150/climate/config", &fixture);
         let id = hub
             .snapshot()
             .entities
             .into_iter()
-            .find(|e| e.id.starts_with("daikin_192_168_1_150"))
+            .find(|e| e.id.starts_with("daikin_192_0_2_150"))
             .expect("daikin entity")
             .id;
         let mut patch = serde_json::Map::new();

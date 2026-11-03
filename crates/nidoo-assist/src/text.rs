@@ -38,7 +38,8 @@ pub fn number_text(n: f64) -> String {
 /// Splits `sentence` into folded words and numbers. Apostrophe elisions split (`d'un` is `d`
 /// then 1), hyphens split (`fait-il`), punctuation is dropped except `?`, `%` and `°`.
 pub fn words(sentence: &str) -> Vec<Word> {
-    merge_numbers(tokens(&fold(sentence)))
+    // "ºC" (masculine ordinal indicator) is a common typo for "°C".
+    merge_numbers(tokens(&fold(sentence).replace('º', "°")))
 }
 
 fn tokens(folded: &str) -> Vec<Word> {
@@ -203,6 +204,14 @@ mod tests {
             vec![t("d"), Word::Number(1.0), t("degre")]
         );
         assert_eq!(words("l'entrée"), vec![t("l"), t("entree")]);
+    }
+
+    #[test]
+    fn ordinal_indicator_is_the_degree_sign() {
+        assert_eq!(words("20ºC"), words("20°C"));
+        assert_eq!(words("20º"), words("20°"));
+        assert_eq!(words("20 ºC"), words("20 °C"));
+        assert_eq!(words("20°C"), vec![Word::Number(20.0), t("°")]);
     }
 
     #[test]

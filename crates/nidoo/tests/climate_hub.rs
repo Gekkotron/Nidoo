@@ -33,10 +33,10 @@ fn hub(enabled: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
 
 /// The recorded Daikin `n` (0..=3), placed in `area` by override; returns its entity id.
 async fn feed_daikin(hub: &Hub, n: u8, area: &str) -> String {
-    let name = format!("climate__daikin_192_168_1_15{n}__climate.json");
-    let topic = format!("nidoo/climate/daikin_192_168_1_15{n}/climate/config");
+    let name = format!("climate__daikin_192_0_2_15{n}__climate.json");
+    let topic = format!("nidoo/climate/daikin_192_0_2_15{n}/climate/config");
     hub.ingest(&topic, &fixture(&name));
-    place(hub, &format!("daikin_192_168_1_15{n}"), area).await
+    place(hub, &format!("daikin_192_0_2_15{n}"), area).await
 }
 
 /// Puts the entity whose id starts with `prefix` in `area`.
@@ -120,9 +120,9 @@ async fn zone_settings_doc_is_not_a_device() {
 #[tokio::test]
 async fn climate_group_discovery_still_reaches_registry() {
     let (hub, _rx) = hub(true);
-    let text = String::from_utf8(fixture("climate__daikin_192_168_1_150__climate.json"))
+    let text = String::from_utf8(fixture("climate__daikin_192_0_2_150__climate.json"))
         .unwrap()
-        .replace("daikin_192_168_1_150", "group_g1");
+        .replace("daikin_192_0_2_150", "group_g1");
     hub.ingest_message("nidoo/climate/group/g1/config", text.as_bytes(), true);
     assert!(
         hub.snapshot()
@@ -166,9 +166,9 @@ async fn view_lists_area_zones_and_skips_groups() {
     let (hub, _rx) = hub(true);
     let a = feed_daikin(&hub, 0, "living").await;
     let b = feed_daikin(&hub, 1, "living").await;
-    let text = String::from_utf8(fixture("climate__daikin_192_168_1_152__climate.json"))
+    let text = String::from_utf8(fixture("climate__daikin_192_0_2_152__climate.json"))
         .unwrap()
-        .replace("daikin_192_168_1_152", "group_g1");
+        .replace("daikin_192_0_2_152", "group_g1");
     hub.ingest("nidoo/climate/group/g1/config", text.as_bytes());
     place(&hub, "group_g1", "living").await;
 
@@ -433,7 +433,7 @@ mod engine {
                 payload["fan_mode"] = serde_json::Value::from(fan.clone());
             }
             hub.ingest(
-                &format!("daikin/192.168.1.15{n}/ha/state"),
+                &format!("daikin/192.0.2.15{n}/ha/state"),
                 payload.to_string().as_bytes(),
             );
         }
@@ -445,7 +445,7 @@ mod engine {
                 hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
                 return;
             }
-            let Some(rest) = p.topic.strip_prefix("daikin/192.168.1.15") else {
+            let Some(rest) = p.topic.strip_prefix("daikin/192.0.2.15") else {
                 return;
             };
             if self.drop_link {
@@ -562,7 +562,7 @@ mod engine {
     fn commands(out: &[Publish]) -> Vec<(String, String)> {
         out.iter()
             .filter_map(|p| {
-                let rest = p.topic.strip_prefix("daikin/192.168.1.15")?;
+                let rest = p.topic.strip_prefix("daikin/192.0.2.15")?;
                 Some((rest[1..].to_owned(), p.payload.clone()))
             })
             .collect()
@@ -1068,7 +1068,7 @@ mod engine {
         rig.pass(0).await;
         // The device leaves the house (the ledger forgets it) and comes back.
         rig.hub
-            .ingest("nidoo/climate/daikin_192_168_1_150/climate/config", b"");
+            .ingest("nidoo/climate/daikin_192_0_2_150/climate/config", b"");
         rig.pass(61).await;
         feed_daikin(&rig.hub, 0, "living").await;
         rig.sim.set(&rig.hub, 0, "heat", 17.0, 20.0);
@@ -1416,7 +1416,7 @@ mod engine {
 
         // The held device disappears from the house; the other keeps following the rules.
         rig.hub
-            .ingest("nidoo/climate/daikin_192_168_1_150/climate/config", b"");
+            .ingest("nidoo/climate/daikin_192_0_2_150/climate/config", b"");
         assert!(rig.hub.snapshot().entities.iter().all(|e| e.id != rig.id));
         rig.sim.report(&rig.hub, 1);
         rig.settings(heat_rules(18.0));
@@ -1932,7 +1932,7 @@ mod engine {
 
     /// The fan commands sent to unit `n`.
     fn fan_commands_to(out: &[Publish], n: u8) -> Vec<String> {
-        let topic = format!("daikin/192.168.1.15{n}/ha/fan_mode/set");
+        let topic = format!("daikin/192.0.2.15{n}/ha/fan_mode/set");
         out.iter()
             .filter(|p| p.topic == topic)
             .map(|p| p.payload.clone())

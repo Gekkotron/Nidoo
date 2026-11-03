@@ -109,6 +109,65 @@ async fn choice_chips_send_the_index() {
 }
 
 #[wasm_bindgen_test]
+async fn an_expired_question_shows_no_chips() {
+    let stub = FetchStub::install();
+    let mut old = turn(
+        "t0",
+        "confirming",
+        "Passer le Salon à 25 °C ?",
+        json!({ "pending": "p0", "kind": "confirm", "choices": [] }),
+    );
+    // Asked long ago: the hub forgot it.
+    old["at"] = json!(1000u64);
+    stub.reply(
+        "GET",
+        TURNS,
+        200,
+        &json!({ "turns": [old], "kept": true }).to_string(),
+    );
+    let m = mount();
+    wait_for(&m.host, ".assist__reply").await;
+    settle().await;
+    assert!(
+        find(&m.host, ".assist__chip").is_none(),
+        "{}",
+        text(&m.host)
+    );
+}
+
+#[wasm_bindgen_test]
+async fn chips_go_when_the_hub_refuses_the_question() {
+    let stub = FetchStub::install();
+    stub.reply("GET", TURNS, 200, r#"{"turns":[],"kept":true}"#);
+    let asked = turn(
+        "t1",
+        "confirming",
+        "Passer le Salon à 25 °C ?",
+        json!({ "pending": "p1", "kind": "confirm", "choices": [] }),
+    );
+    stub.reply("POST", "/api/v1/assist", 200, &asked.to_string());
+    let m = mount();
+    wait_for(&m.host, ".assist__input").await;
+    send(&m.host, "mets le salon à 25");
+    wait_for(&m.host, ".assist__chip").await;
+    // The hub no longer knows the question: the next post is refused.
+    stub.reply(
+        "POST",
+        "/api/v1/assist",
+        422,
+        r#"{"error":"question expired"}"#,
+    );
+    all(&m.host, ".assist__chip")[0].click();
+    settle().await;
+    settle().await;
+    assert!(
+        find(&m.host, ".assist__chip").is_none(),
+        "{}",
+        text(&m.host)
+    );
+}
+
+#[wasm_bindgen_test]
 async fn trace_panel_shows_value() {
     let stub = FetchStub::install();
     let past = turn("t0", "acted", "Salon réglé à 18,5 °C.", Value::Null);

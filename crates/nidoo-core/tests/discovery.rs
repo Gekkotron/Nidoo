@@ -247,7 +247,7 @@ fn cover_number_select_alarm_capabilities() {
     );
     assert_eq!(vacuum.capabilities.fan_speeds.len(), 6);
 
-    let climate = parse_fixture("climate__daikin_192_168_1_150__climate");
+    let climate = parse_fixture("climate__daikin_192_0_2_150__climate");
     assert_eq!(climate.capabilities.hvac_modes.len(), 6);
     assert_eq!(climate.capabilities.fan_modes.len(), 7);
     assert_eq!(climate.capabilities.min_temp, Some(10.0));
