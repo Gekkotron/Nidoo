@@ -445,7 +445,7 @@ mod engine {
                 hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
                 return;
             }
-            let Some(rest) = p.topic.strip_prefix("daikin/192.168.1.15") else {
+            let Some(rest) = p.topic.strip_prefix("daikin/192.0.2.15") else {
                 return;
             };
             if self.drop_link {
@@ -562,7 +562,7 @@ mod engine {
     fn commands(out: &[Publish]) -> Vec<(String, String)> {
         out.iter()
             .filter_map(|p| {
-                let rest = p.topic.strip_prefix("daikin/192.168.1.15")?;
+                let rest = p.topic.strip_prefix("daikin/192.0.2.15")?;
                 Some((rest[1..].to_owned(), p.payload.clone()))
             })
             .collect()
