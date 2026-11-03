@@ -100,14 +100,15 @@ async fn handle(State(st): State<Fake>, uri: Uri, headers: HeaderMap) -> Respons
         let Some((repo, tail)) = find(&st.repos, rest) else {
             return StatusCode::NOT_FOUND.into_response();
         };
-        if tail.is_empty() {
+        let known = |rev: &str| rev == repo.sha || rev == "main";
+        if tail.is_empty() || tail.strip_prefix("revision/").is_some_and(known) {
             let mut body = json!({ "sha": repo.sha, "gated": if repo.gated { json!("auto") } else { json!(false) } });
             if let Some(l) = &repo.licence {
                 body["cardData"] = json!({ "license": l });
             }
             return axum::Json(body).into_response();
         }
-        if tail.starts_with("tree/") {
+        if tail.strip_prefix("tree/").is_some_and(known) {
             let entries: Vec<_> = repo
                 .files
                 .iter()

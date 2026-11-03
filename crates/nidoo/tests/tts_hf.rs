@@ -103,3 +103,14 @@ async fn a_gated_file_without_the_token_is_denied() {
         .unwrap_err();
     assert!(matches!(err, TtsError::Denied), "{err}");
 }
+
+#[tokio::test]
+async fn a_branch_address_is_pinned_to_its_commit() {
+    let (base, _log) = serve(vec![phonon(vec![])]).await;
+    let src = parse_source("https://huggingface.co/gradium/phonon/tree/main").unwrap();
+    let l = HfClient::new(&base, None).inspect(&src).await.unwrap();
+    assert_eq!(l.revision, "c0ffee");
+    let src = parse_source("hf://gradium/phonon@nope").unwrap();
+    let err = HfClient::new(&base, None).inspect(&src).await.unwrap_err();
+    assert!(matches!(err, TtsError::NotFound(_)), "{err}");
+}

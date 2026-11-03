@@ -89,12 +89,16 @@ impl HfClient {
     pub async fn inspect(&self, src: &HfSource) -> Result<RepoListing, TtsError> {
         let repo = &src.repo;
         let info: ModelInfo = self
-            .send(format!("{}/api/models/{repo}", self.base))
+            .send(match &src.rev {
+                Some(rev) => format!("{}/api/models/{repo}/revision/{rev}", self.base),
+                None => format!("{}/api/models/{repo}", self.base),
+            })
             .await?
             .json()
             .await
             .map_err(|_| TtsError::Upstream("unreadable repository answer".into()))?;
-        let revision = src.rev.clone().unwrap_or(info.sha);
+        // Always the commit the metadata described, never a moving branch name.
+        let revision = info.sha;
         let files = self.files(repo, &revision).await?;
         let size_of = |name: &str| files.iter().find(|f| f.path == name).map(|f| f.size);
         let weights: Vec<WeightFile> = WEIGHT_FILES
