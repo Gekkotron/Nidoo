@@ -346,6 +346,20 @@ Engine state is `{state: "no_model"}`, `{state: "loading", model}`, `{state: "re
 
 Speech management errors use the [common statuses](#errors) and also: `413` for an upload file over its cap, and `502` when Hugging Face cannot be reached while listing a repository. Download refusals (not enough disk space, a file over its size cap, a token the account has not accepted the terms for, a wrong token) are not HTTP errors: the `POST` answers `202` and the job then shows as `failed` with the reason in `error`.
 
+## Speech input
+
+Talking to a [satellite](../users/sound.md): the recognition model, its settings and the satellites' shared key (the UDP messages are in the [voice protocol](voice-protocol.md)). Field names are camelCase. Every route answers `409` when the hub has no speech input.
+
+| Route | What it does |
+|-------|--------------|
+| `GET /api/v1/assist/stt/status` | `{built, installed, engine, download, settings, hasKey, portInUse}`: `built` is false for a hub built without the `stt` feature; `engine` is the recognizer's state as for speech (`no_model`, `loading`, `ready`, `error`); `download` the running or last model download; `portInUse` the UDP port bound when the hub started. |
+| `PUT /api/v1/assist/stt/settings` | `{threads, gain, port, listenMarginMs}` (threads 1–16, default 4; gain 1–16, default 4; port 1024–65535, default 4960; margin 0–2000 ms, default 300); returns the status. `422` out of range. A new port applies when the hub starts again. |
+| `POST /api/v1/assist/stt/download` | Fetches the pinned Parakeet archive (about 490 MB, about 670 MB once unpacked) and the Silero VAD from the sherpa-onnx release, checking every file's size and SHA-256; returns the job (`202`). `409` while a download runs or once the model is installed. A refusal for disk space or a file that does not match shows as a `failed` job with the reason in `error`. |
+| `DELETE /api/v1/assist/stt/download` | Cancels the download and deletes its temporary files (`204`); `404` when none runs. |
+| `DELETE /api/v1/assist/stt/model` | Removes the model files (`204`); `409` while a download runs. |
+| `GET /api/v1/assist/stt/key` | `{key}`: the satellites' shared key, 64 hex characters (`voice_key` in each board's `secrets.yaml`); `404` before one is made. |
+| `POST /api/v1/assist/stt/key` | Makes a new key and returns it; satellites with the old key are no longer heard. |
+
 ## Sound
 
 The speaker satellites of the `nidoo-sound` service (see [Sound](../users/sound.md)).

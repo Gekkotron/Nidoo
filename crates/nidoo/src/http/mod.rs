@@ -4,6 +4,7 @@
 mod api;
 mod sound;
 mod static_ui;
+mod stt;
 mod tts;
 mod ws;
 

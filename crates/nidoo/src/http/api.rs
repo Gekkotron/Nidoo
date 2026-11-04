@@ -82,6 +82,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/assist", post(assist))
         .merge(super::tts::routes())
         .merge(super::sound::routes())
+        .merge(super::stt::routes())
         .route("/assist/turns", get(assist_turns))
         .route("/assist/turns/{id}/wrong", post(assist_wrong))
         .route("/weather", get(weather))
@@ -259,6 +260,24 @@ impl From<crate::assist::tts::TtsError> for HttpError {
             E::Upstream(_) | E::Denied => StatusCode::BAD_GATEWAY,
             E::NoSpace { .. } => StatusCode::INSUFFICIENT_STORAGE,
             E::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            E::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            error: err.to_string(),
+        }
+    }
+}
+
+impl From<crate::assist::stt::SttError> for HttpError {
+    fn from(err: crate::assist::stt::SttError) -> Self {
+        use crate::assist::stt::SttError as E;
+        let status = match &err {
+            E::NotFound(_) => StatusCode::NOT_FOUND,
+            E::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            E::Conflict(_) => StatusCode::CONFLICT,
+            E::Upstream(_) => StatusCode::BAD_GATEWAY,
+            E::NoSpace { .. } => StatusCode::INSUFFICIENT_STORAGE,
             E::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
