@@ -83,7 +83,7 @@ No internet on the hub, or a token you would rather not use? Under **Upload from
 
 **Languages** (« Langues ») has one tab per language the hub speaks, named in the screen's language (French, English…), each with a dot for its model's state: green Ready, amber Loading, red Error, grey No model. The first tab is the **house language**: the one speech uses when a request names no language. Any other tab has a **Make house language** button that moves it first. The screen remembers the tab you were on, per browser.
 
-**+ Add** lists the languages the installed models speak that are not set up yet. Pick one: if a single model speaks it, it is added with that model; if several do, the screen asks which one. When no installed model speaks another language, it says so. So the first step is always to install a model, then to add its language.
+**+ Add** lists the languages the installed models speak that are not set up yet. Pick one: if a single model speaks it, it is added with that model; if several do, the screen asks which one. A model whose files name no language is offered under every language; when it is installed, **+ Add** also takes a typed language code (such as `de`). When no installed model speaks another language, it says so. So the first step is always to install a model, then to add its language.
 
 Each language has its own model. One multilingual model can serve several languages, or each language can have its own model. Every model a language uses stays loaded in memory (about 125 MB for a 40m `q8` model), so switching from one language to another costs nothing; a model no language uses is unloaded.
 
@@ -98,7 +98,7 @@ In a language's tab:
 
 ### Testing
 
-On the hub's processor the first sound should come in about a second. Each loaded model's engine uses half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
+On the hub's processor the first sound should come in about a second. The engines share half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
 
 ### The speech address
 

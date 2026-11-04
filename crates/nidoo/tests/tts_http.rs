@@ -896,6 +896,34 @@ async fn voices_follow_the_requested_language() {
 }
 
 #[tokio::test]
+async fn a_shared_model_keeps_catalog_voices_to_their_language() {
+    // English chooses Bob on the model French also speaks with: the engine now holds Bob, but
+    // he stays an English voice.
+    let r = rig().await;
+    let id = r.install_repo(BILINGUAL).await;
+    r.set_language("fr", json!({"model": id})).await;
+    r.set_language("en", json!({"model": id, "voice": "Bob"}))
+        .await;
+    r.language_until(1, "ready").await;
+    let (_, en) = r.get("/voices?language=en").await;
+    assert!(names(&en).contains(&"Bob".to_string()), "{en}");
+    let (_, fr) = r.get("/voices?language=fr").await;
+    assert!(!names(&fr).contains(&"Bob".to_string()), "{fr}");
+    let (s, t) = r
+        .speak(json!({"text": "Bonjour", "language": "fr", "voice": "Bob"}))
+        .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{t}");
+    let (s, _) = r
+        .send(
+            reqwest::Method::PUT,
+            "/languages/fr",
+            json!({"model": id, "voice": "Bob"}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn a_named_catalog_voice_speaks_on_its_first_use() {
     // Registering a voice is a message to the engine thread: the speech asking for it must
     // still get it, even when the thread has not taken the voice in yet.

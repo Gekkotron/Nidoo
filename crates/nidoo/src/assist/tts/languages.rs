@@ -1,9 +1,9 @@
 //! The languages the hub speaks: an ordered list of (code, model, voice), the first being the
 //! house language. Pure rules; the facade applies them and saves the result.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use nidoo_api::DEFAULT_VOICE;
+use nidoo_api::{AvailableLanguage, DEFAULT_VOICE};
 use serde::{Deserialize, Serialize};
 
 use super::TtsError;
@@ -103,16 +103,54 @@ pub fn detach_model(list: &mut [LanguageEntry], model: &str) {
     }
 }
 
-/// Turns the single-model state of earlier hubs into a one-language list: the active model's
-/// first language (`fr` when it lists none), with the chosen voice.
-pub fn migrate(state: &mut TtsState, first_language_of: impl Fn(&str) -> Option<String>) {
+/// The codes the installed `models` (id, manifest languages) speak that `list` does not yet,
+/// each with the models that speak it. A model listing no languages speaks any, so it is
+/// offered under every code.
+pub fn available(
+    models: &[(String, Vec<String>)],
+    list: &[LanguageEntry],
+) -> Vec<AvailableLanguage> {
+    let mut by_code: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (id, langs) in models {
+        for code in langs.iter().filter_map(|l| normalise_code(l).ok()) {
+            if !list.iter().any(|l| l.code == code) {
+                by_code.entry(code).or_default().push(id.clone());
+            }
+        }
+    }
+    let blank: Vec<&String> = models
+        .iter()
+        .filter(|(_, langs)| langs.is_empty())
+        .map(|(id, _)| id)
+        .collect();
+    by_code
+        .into_iter()
+        .map(|(code, mut ids)| {
+            ids.extend(blank.iter().map(|id| (*id).clone()));
+            AvailableLanguage { code, models: ids }
+        })
+        .collect()
+}
+
+/// Turns the single-model state of earlier hubs into a one-language list, with the chosen
+/// voice. Those hubs always spoke French, so the language is `fr` when the active model speaks
+/// it (or lists nothing, or is gone); otherwise the model's first valid code.
+pub fn migrate(state: &mut TtsState, languages_of: impl Fn(&str) -> Vec<String>) {
     let Some(id) = state.active.take() else {
         return;
     };
     if !state.languages.is_empty() {
         return;
     }
-    let code = first_language_of(&id).unwrap_or_else(|| "fr".to_owned());
+    let model_languages: Vec<String> = languages_of(&id)
+        .iter()
+        .filter_map(|l| normalise_code(l).ok())
+        .collect();
+    let code = if speaks(&model_languages, "fr") {
+        "fr".to_owned()
+    } else {
+        model_languages[0].clone()
+    };
     state.languages.push(LanguageEntry {
         code,
         model: Some(id),
@@ -215,24 +253,25 @@ mod tests {
 
     #[test]
     fn migrate_old_state() {
+        let langs = |l: &[&str]| l.iter().map(|c| c.to_string()).collect::<Vec<_>>();
         let mut s = TtsState {
             active: Some("m".into()),
             voice: "Élise".into(),
             ..TtsState::default()
         };
-        migrate(&mut s, |_| Some("fr".into()));
+        migrate(&mut s, |_| langs(&["fr"]));
         assert_eq!(s.languages, [entry("fr", "m", "Élise")]);
         assert_eq!(s.active, None);
 
         let mut none = TtsState::default();
-        migrate(&mut none, |_| Some("en".into()));
+        migrate(&mut none, |_| langs(&["en"]));
         assert!(none.languages.is_empty());
 
         let mut unknown = TtsState {
             active: Some("m".into()),
             ..TtsState::default()
         };
-        migrate(&mut unknown, |_| None);
+        migrate(&mut unknown, |_| vec![]);
         assert_eq!(unknown.languages, [entry("fr", "m", "default")]);
 
         // Already migrated: the list is left alone.
@@ -241,7 +280,39 @@ mod tests {
             active: Some("m".into()),
             ..TtsState::default()
         };
-        migrate(&mut done, |_| Some("fr".into()));
+        migrate(&mut done, |_| langs(&["fr"]));
         assert_eq!(done.languages, [entry("en", "e", "Bob")]);
+    }
+
+    #[test]
+    fn migration_keeps_french_when_the_model_speaks_it() {
+        // Earlier hubs always spoke French, whatever order a multilingual model lists.
+        let old = || TtsState {
+            active: Some("m".into()),
+            voice: "Noemie".into(),
+            ..TtsState::default()
+        };
+        let mut multi = old();
+        migrate(&mut multi, |_| vec!["en".into(), "fr".into(), "de".into()]);
+        assert_eq!(multi.languages, [entry("fr", "m", "Noemie")]);
+        // A model without French: its first language, as the hub writes codes.
+        let mut other = old();
+        migrate(&mut other, |_| vec!["DE".into(), "en".into()]);
+        assert_eq!(other.languages, [entry("de", "m", "Noemie")]);
+    }
+
+    #[test]
+    fn a_model_listing_no_language_is_offered_under_every_code() {
+        let models = vec![
+            ("both".to_owned(), vec!["fr".to_owned(), "EN".to_owned()]),
+            ("blank".to_owned(), vec![]),
+        ];
+        let used = [entry("fr", "both", "default")];
+        let found = available(&models, &used);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "en");
+        assert_eq!(found[0].models, ["both", "blank"]);
+        // Alone, it offers no code: the screen asks for one.
+        assert!(available(&models[1..], &[]).is_empty());
     }
 }

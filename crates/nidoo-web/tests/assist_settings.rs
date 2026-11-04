@@ -213,3 +213,96 @@ async fn a_live_hub_shows_its_models_and_voices() {
         "{fold}"
     );
 }
+
+#[wasm_bindgen_test]
+async fn leaving_the_tab_while_speaking_is_safe() {
+    // The hub answers ▶ after the tab is left: the answer finds its panel gone. A panic in
+    // that late task would not fail the test by itself, so a hook records it.
+    static PANICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {
+        PANICKED.store(true, std::sync::atomic::Ordering::SeqCst)
+    }));
+    let stub = FetchStub::install();
+    two_languages(&stub);
+    stub.reply_after(
+        "POST",
+        "/api/v1/assist/speech",
+        201,
+        r#"{"id":"c1","url":"/api/v1/assist/speech/c1.wav"}"#,
+        100,
+    );
+    let m = mount();
+    settle().await;
+    click(&m.host, ".assist-set__listen", 0);
+    leptos::task::tick().await;
+    click(&m.host, ".assist-set__tab", 1);
+    gloo_timers::future::TimeoutFuture::new(300).await;
+    settle().await;
+    let tabs = texts(&m.host, ".assist-set__tab--on");
+    std::panic::set_hook(previous);
+    assert!(
+        !PANICKED.load(std::sync::atomic::Ordering::SeqCst),
+        "the late answer panicked"
+    );
+    assert_eq!(tabs, ["English"], "the page still answers");
+}
+
+#[wasm_bindgen_test]
+async fn a_model_listing_no_language_takes_a_typed_code() {
+    // An uploaded model whose files name no language: + Add asks for a code instead of
+    // leaving the model unusable.
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        &format!("{BASE}/status"),
+        200,
+        r#"{"languages":[],"token_set":false,"download":null,"speech_built":true}"#,
+    );
+    stub.reply(
+        "GET",
+        &format!("{BASE}/models"),
+        200,
+        r#"[{"id":"up--q8","repo":null,"revision":null,"weights":"model.q8.gguf","size":1000,
+             "licence":null,"languages":[],"source":"upload","installed_at":1800000000,
+             "used_by":[]}]"#,
+    );
+    stub.reply("GET", &format!("{BASE}/languages/available"), 200, "[]");
+    const AFTER: &str = r#"{"languages":[{"code":"de","model":"up--q8","voice":"default",
+           "engine":{"state":"loading","model":"up--q8"}}],
+        "token_set":false,"download":null,"speech_built":true}"#;
+    stub.reply("PUT", &format!("{BASE}/languages/de"), 200, AFTER);
+    let m = mount();
+    settle().await;
+    click(&m.host, ".assist-set__tab", 0);
+    settle().await;
+    let input = m
+        .host
+        .query_selector(".assist-set__code")
+        .unwrap()
+        .expect("a code field")
+        .unchecked_into::<web_sys::HtmlInputElement>();
+    input.set_value(" DE ");
+    input
+        .dispatch_event(&web_sys::Event::new("input").unwrap())
+        .unwrap();
+    settle().await;
+    // The hub now speaks German; the reload after the write reads that.
+    stub.reply("GET", &format!("{BASE}/status"), 200, AFTER);
+    click(&m.host, ".assist-set__code-add", 0);
+    settle().await;
+    let put: Vec<_> = stub
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == "PUT")
+        .collect();
+    assert_eq!(put.len(), 1, "{put:?}");
+    assert_eq!(put[0].url, format!("{BASE}/languages/de"));
+    assert!(
+        put[0].body.contains(r#""model":"up--q8""#),
+        "{}",
+        put[0].body
+    );
+    let tabs = texts(&m.host, ".assist-set__tab");
+    assert_eq!(tabs[0], "German", "{tabs:?}");
+}

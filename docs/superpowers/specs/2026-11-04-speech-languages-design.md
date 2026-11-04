@@ -110,13 +110,14 @@ languages: [ { code: "fr", model: "<model id>" | null, voice: "default" | "<name
   Normalisation uses the part before `-` when parsing a `ptts::Lang` *(my
   call)*.
 - A model whose manifest lists **no languages** can be used for any code. It
-  is offered under every language with "languages unknown", so it is never
-  stranded *(my call)*.
+  is offered under every language with "languages unknown", and **+ Add**
+  takes a typed code while one is installed, so it is never stranded *(my call)*.
 - Removing the first entry makes the next one the house language. An empty
   list is allowed; speech then answers `409` *(my call)*.
 - Migration on read: an old file with `active` and `voice` becomes one entry.
-  The code is the active model's first manifest language, or `fr` when the
-  manifest lists none *(my call)*. With no active model, the list is empty.
+  The code is `fr` when the active model speaks it or lists nothing (earlier
+  hubs always spoke French), else its first manifest language *(my call,
+  revised in the final review)*. With no active model, the list is empty.
   The new shape is written back on the next save.
 
 ### 2. Engines

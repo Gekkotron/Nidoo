@@ -327,7 +327,7 @@ Engine state is `{state: "no_model"}`, `{state: "loading", model}`, `{state: "re
 | `GET /api/v1/assist/tts/status` | `{languages, token_set, download, speech_built}`, the house language first. The token itself is never returned. |
 | `GET /api/v1/assist/tts/models` | The installed models, a list. |
 | `DELETE /api/v1/assist/tts/models/{id}` | Removes a model (`204`); `404` for an unknown id. The languages using it stay in the list with `model: null`, and it unloads. |
-| `GET /api/v1/assist/tts/languages/available` | The codes the installed models speak that are not in the list yet, each with the models that speak it: `[{code, models}]`. |
+| `GET /api/v1/assist/tts/languages/available` | The codes the installed models speak that are not in the list yet, each with the models that speak it: `[{code, models}]`. A model whose files list no languages is added under every code (and, alone, offers none: any valid code can then be `PUT`). |
 | `PUT /api/v1/assist/tts/languages/{code}` | `{model, voice?}`: adds the language at the end, or changes its model or voice; returns the status. A new model loads in the background (state `loading`). Changing the model resets the voice to `default` unless one is given; a catalog voice is downloaded first (about 256 KB). `404` for an unknown model; `422` when the model does not speak `code`, for a bad code or for an unknown voice. |
 | `DELETE /api/v1/assist/tts/languages/{code}` | Stops speaking the language and returns the status (`200`); its model unloads if no other language uses it. `404` for a language not in the list. |
 | `PUT /api/v1/assist/tts/languages/house` | `{code}`: moves that language first, making it the house language; returns the status. `404` for a language not in the list. |
