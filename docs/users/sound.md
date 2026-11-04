@@ -135,7 +135,8 @@ up under **Speech settings**, from the gear on the Assistant page, see
 - **An assistant.** The MCP tool `speak` does the same: "say dinner is ready
   in the kitchen".
 
-Only satellites whose **Allowed** and **Connected** are both on speak. A muted
+Only satellites whose **Allowed** and **Connected** are both on speak, and only
+while `nidoo-sound` runs. A muted
 satellite counts but stays silent, as it does for music. When no satellite of
 the room can speak, the sentence is refused with "no satellite can speak in
 this room" rather than lost.
