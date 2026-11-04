@@ -82,6 +82,7 @@ pub fn LanguagesCard(
     };
 
     // ---- Tabs ----
+    // Styled as the app's chips; `assist-set__tab(--on)` stay as hooks for the browser tests.
     let chosen = RwSignal::new(saved_tab());
     let adding = RwSignal::new(false);
     let selected = Memo::new(move |_| {
@@ -778,7 +779,7 @@ pub fn LanguagesCard(
                                     role="tab"
                                     class={
                                         let on = on.clone();
-                                        move || if on() { "chip chip--selected" } else { "chip" }
+                                        move || if on() { "chip chip--selected assist-set__tab assist-set__tab--on" } else { "chip assist-set__tab" }
                                     }
                                     aria-selected=move || if on() { "true" } else { "false" }
                                     on:click=move |_| pick_tab(code.clone())
@@ -793,7 +794,7 @@ pub fn LanguagesCard(
                 <button
                     type="button"
                     role="tab"
-                    class=move || if adding.get() { "chip chip--selected" } else { "chip chip--add" }
+                    class=move || if adding.get() { "chip chip--selected assist-set__tab assist-set__tab--on" } else { "chip chip--add assist-set__tab" }
                     aria-selected=move || if adding.get() { "true" } else { "false" }
                     on:click=move |_| open_add()
                 >
