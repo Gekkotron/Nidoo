@@ -12,6 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use nidoo_sound::clock::{Clock, FakeClock};
 use nidoo_sound::group::FromPlayer;
 use nidoo_sound::listen::accept_players;
+use nidoo_sound::player::Liveness;
 use nidoo_sound::player::{PlayerCmd, PlayerEvent, run_player};
 use nidoo_sound::proto::messages::PCM_48K_STEREO_16;
 use nidoo_sound::proto::noise::{SENTINEL_PSK, ServerIdentity, psk_id};
@@ -78,6 +79,23 @@ impl FakePlayer {
             Got::Json(v) => v,
             other => panic!("expected JSON, got {other:?}"),
         }
+    }
+
+    /// Sends nothing for `d` while still reading, as a browser tab whose
+    /// timers are throttled does (its network stack still answers pings).
+    async fn idle(&mut self, d: Duration) -> usize {
+        let mut pings = 0;
+        let end = tokio::time::Instant::now() + d;
+        while let Ok(Some(msg)) = tokio::time::timeout_at(end, self.ws.next()).await {
+            // The server may drop us meanwhile: then there is nothing more to read.
+            let Ok(msg) = msg else { break };
+            match msg {
+                Message::Ping(_) => pings += 1,
+                Message::Pong(_) => {}
+                other => panic!("expected nothing but pings, got {other:?}"),
+            }
+        }
+        pings
     }
 
     /// Asserts nothing arrives for a short while.
@@ -504,6 +522,10 @@ struct Listening {
 }
 
 async fn listen() -> Listening {
+    listen_with(Liveness::INBOUND).await
+}
+
+async fn listen_with(liveness: Liveness) -> Listening {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -511,7 +533,7 @@ async fn listen() -> Listening {
         Arc::new(ServerIdentity::load_or_create(&dir.path().join("identity.key")).unwrap());
     let clock: Arc<dyn Clock> = Arc::new(FakeClock::default());
     let (tx, to_group) = mpsc::channel(64);
-    tokio::spawn(accept_players(listener, identity, clock, tx));
+    tokio::spawn(accept_players(listener, identity, clock, tx, liveness));
     Listening {
         addr,
         to_group,
@@ -687,4 +709,56 @@ async fn delta_client_state_keeps_earlier_fields() {
         p.recv_json().await["payload"]["player"],
         json!({"command":"volume","volume":5})
     );
+}
+
+/// Joins `l` with a fresh player; returns it with its command sender.
+async fn joined(l: &mut Listening) -> (FakePlayer, mpsc::Sender<PlayerCmd>) {
+    let mut p = player_handshake(l.open("/sendspin").await.unwrap(), false).await;
+    p.send_json(FakePlayer::hello(400_000)).await;
+    let FromPlayer::Accepted { cmds, .. } = l.next().await else {
+        panic!("expected Accepted")
+    };
+    assert!(matches!(
+        l.next().await,
+        FromPlayer::Event {
+            event: PlayerEvent::Connected(_),
+            ..
+        }
+    ));
+    (p, cmds)
+}
+
+#[tokio::test]
+async fn pongs_keep_a_quiet_client_initiated_player() {
+    let mut l = listen_with(Liveness {
+        silence: Duration::from_millis(400),
+        ping_every: Some(Duration::from_millis(100)),
+    })
+    .await;
+    let (mut p, cmds) = joined(&mut l).await;
+    let pings = p.idle(Duration::from_millis(1200)).await;
+    assert!(pings >= 5, "pinged {pings} times");
+    l.expect_quiet().await;
+    cmds.send(PlayerCmd::Activate { playback: true })
+        .await
+        .unwrap();
+    assert_eq!(p.recv_json().await["type"], "server/activate");
+}
+
+#[tokio::test]
+async fn a_silent_player_without_pings_is_dropped() {
+    let mut l = listen_with(Liveness {
+        silence: Duration::from_millis(400),
+        ping_every: None,
+    })
+    .await;
+    let (mut p, _cmds) = joined(&mut l).await;
+    p.idle(Duration::from_millis(800)).await;
+    assert!(matches!(
+        l.next().await,
+        FromPlayer::Event {
+            event: PlayerEvent::Gone { .. },
+            ..
+        }
+    ));
 }
