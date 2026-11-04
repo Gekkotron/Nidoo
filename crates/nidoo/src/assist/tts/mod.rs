@@ -477,7 +477,10 @@ mod tests {
         let read = tokio::time::timeout(Duration::from_secs(2), to_bytes(body, usize::MAX))
             .await
             .expect("the clip body hung");
-        assert!(read.is_err(), "the body ends with a failure, not as a clean clip");
+        assert!(
+            read.is_err(),
+            "the body ends with a failure, not as a clean clip"
+        );
     }
 
     #[tokio::test]
