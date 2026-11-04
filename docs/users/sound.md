@@ -13,8 +13,8 @@ Each satellite shows up in Nidoo as a device with:
 
 - **Volume** (0–100) and **Mute**, usable from dashboards, flows, the Android
   app and the assistants like any other control;
-- **Allowed** (a configuration switch): a new satellite plays nothing until
-  you switch it on;
+- **Allowed**: a new satellite plays nothing until you switch it on (in
+  **Settings → Sound**);
 - **Connected** (diagnostic): whether the satellite is online.
 
 Volume, mute and Allowed are remembered: they survive a satellite reboot, a
@@ -77,6 +77,14 @@ login). Use the same login as the hub; with the bundled broker it is
 `mqtt_user` and `mqtt_password` in `data/bundled.json`. Every setting is
 listed in `crates/nidoo-sound/README.md`.
 
+Set the login even if the service seems to work without it. A broker with
+access rules accepts a connection with no login and then drops its messages
+without an error: the service finds the satellites, but they never show up
+in Nidoo, so you cannot switch them on. The log
+says `broker_user=(none)` and warns at startup when no login is set. After
+changing `.env`, recreate the container so it reads the file again:
+`docker compose up -d --force-recreate sound`.
+
 If something else already listens on port 4953 (a Snapcast server from an
 older setup, for example), stop it first. With a firewall on the host, allow
 4953/TCP in from the phones, 8927/TCP in from players that connect themselves
@@ -95,9 +103,10 @@ the container (the satellites' settings stay in `data/sound/`).
 
 1. Build and flash it: [`satellite/README.md`](https://github.com/Gekkotron/Nidoo/tree/main/satellite)
    has the parts, the wiring and the commands.
-2. Within a few seconds it appears in Nidoo under its ESPHome name, with
-   **Allowed** off.
-3. Switch **Allowed** on. If music is playing, the satellite joins in sync.
+2. Within a few seconds it appears in **Settings → Sound** under its ESPHome
+   name, marked "Waiting for approval", with **Allowed** off.
+3. Switch **Allowed** on there. If music is playing, the satellite joins in
+   sync. The same page has each satellite's **Mute** and **Volume**.
 4. Put the device in its room like any other device.
 
 ## Known limits
