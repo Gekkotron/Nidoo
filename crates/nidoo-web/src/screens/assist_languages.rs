@@ -166,6 +166,29 @@ pub fn LanguagesCard(
             reload.try_run(());
         });
     };
+    // Models whose files name no language: they speak any, so + Add takes a typed code.
+    let code_typed = RwSignal::new(String::new());
+    let blank_models = move || {
+        models.with(|list| {
+            list.iter()
+                .filter(|m| m.languages.is_empty())
+                .map(|m| m.id.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    let add_typed = move || {
+        let code = code_typed.get_untracked().trim().to_ascii_lowercase();
+        if code.is_empty() {
+            return;
+        }
+        let ids = blank_models();
+        match ids.as_slice() {
+            [] => return,
+            [one] => add(code, one.clone()),
+            _ => which.set(Some(AvailableLanguage { code, models: ids })),
+        }
+        code_typed.set(String::new());
+    };
     let model_label = move |id: &str| {
         models.with(|list| {
             list.iter()
@@ -186,10 +209,11 @@ pub fn LanguagesCard(
             {move || match available.get() {
                 None => view! { <p class="assist-set__muted">{move || t(T::Loading)}</p> }.into_any(),
                 Some(Err(e)) => view! { <p class="assist-set__error">{e}</p> }.into_any(),
-                Some(Ok(list)) if list.is_empty() => {
+                Some(Ok(list)) if list.is_empty() && blank_models().is_empty() => {
                     view! { <p class="assist-set__muted">{move || t(T::NoOtherLanguage)}</p> }
                         .into_any()
                 }
+                Some(Ok(list)) if list.is_empty() => ().into_any(),
                 Some(Ok(list)) => {
                     view! {
                         <div class="assist-set__row">
@@ -213,6 +237,33 @@ pub fn LanguagesCard(
                         .into_any()
                 }
             }}
+            <Show when=move || !blank_models().is_empty()>
+                <div class="assist-set__row">
+                    <input
+                        class="field assist-set__code"
+                        type="text"
+                        autocomplete="off"
+                        aria-label=move || t(T::CodeLabel)
+                        placeholder=move || t(T::CodePlaceholder)
+                        prop:value=move || code_typed.get()
+                        on:input=move |ev| code_typed.set(event_target_value(&ev))
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.key() == "Enter" && !ev.is_composing() {
+                                ev.prevent_default();
+                                add_typed();
+                            }
+                        }
+                    />
+                    <button
+                        type="button"
+                        class="btn assist-set__btn assist-set__code-add"
+                        disabled=move || code_typed.with(|c| c.trim().is_empty())
+                        on:click=move |_| add_typed()
+                    >
+                        {move || t(T::AddCode)}
+                    </button>
+                </div>
+            </Show>
             {move || {
                 which
                     .get()
@@ -349,7 +400,8 @@ pub fn LanguagesCard(
         let speak_and_play = move |req: SpeechRequest| async move {
             let start = js_sys::Date::now();
             let ticket = tts::speak(&req).await.map_err(|e| e.error)?;
-            let Some(el) = audio.get_untracked() else {
+            // `try_`: the tab may have been left, and its player disposed, by the answer.
+            let Some(el) = audio.try_get_untracked().flatten() else {
                 return Ok(());
             };
             clicked_at.try_set(Some(start));

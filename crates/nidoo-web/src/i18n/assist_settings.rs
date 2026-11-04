@@ -93,6 +93,9 @@ pub enum AssistSettingsText {
     LanguagesUnknown,
     TokenFold,
     TypeSentence,
+    CodeLabel,
+    CodePlaceholder,
+    AddCode,
     // Units.
     UnitB,
     UnitKb,
@@ -228,6 +231,9 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
             "Jeton Hugging Face : seulement pour les dépôts protégés",
         ),
         TypeSentence => ("Type a sentence", "Tapez une phrase"),
+        CodeLabel => ("Language code", "Code de langue"),
+        CodePlaceholder => ("Language code, e.g. de", "Code de langue, ex. de"),
+        AddCode => ("Add", "Ajouter"),
         UnitB => ("B", "o"),
         UnitKb => ("KB", "Ko"),
         UnitMb => ("MB", "Mo"),
@@ -328,6 +334,9 @@ mod tests {
             | LanguagesUnknown
             | TokenFold
             | TypeSentence
+            | CodeLabel
+            | CodePlaceholder
+            | AddCode
             | UnitB
             | UnitKb
             | UnitMb
@@ -412,6 +421,9 @@ mod tests {
             LanguagesUnknown,
             TokenFold,
             TypeSentence,
+            CodeLabel,
+            CodePlaceholder,
+            AddCode,
             UnitB,
             UnitKb,
             UnitMb,

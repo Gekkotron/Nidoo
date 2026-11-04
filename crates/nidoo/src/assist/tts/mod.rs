@@ -1,6 +1,6 @@
 //! Text-to-speech: the Phonon model, fetched from Hugging Face and run on the hub's CPU.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -198,7 +198,10 @@ impl Tts {
         let migrating = state.active.is_some();
         let before = state.languages.clone();
         languages::migrate(&mut state, |id| {
-            tts.store.get(id).and_then(|m| m.languages.first().cloned())
+            tts.store
+                .get(id)
+                .map(|m| m.languages.clone())
+                .unwrap_or_default()
         });
         for entry in &mut state.languages {
             if entry
@@ -335,11 +338,14 @@ impl Tts {
             return Ok(());
         }
         let engine = self.engine_for(model);
-        if engine
-            .as_ref()
-            .is_some_and(|e| e.voices().iter().any(|v| v == voice))
-        {
-            return Ok(());
+        if let Some(e) = &engine {
+            let (list, _) = self.catalog.list(&self.client()).await;
+            if voices_for_language(e.voices(), code, &list)
+                .iter()
+                .any(|v| v == voice)
+            {
+                return Ok(());
+            }
         }
         let path = self.fetch_catalog_voice(voice, &[code.to_owned()]).await?;
         if let Some(engine) = engine {
@@ -448,23 +454,13 @@ impl Tts {
 
     /// The languages installed models speak that the hub does not speak yet, by code.
     pub fn available_languages(&self) -> Vec<AvailableLanguage> {
-        let used: HashSet<String> = self.languages().into_iter().map(|l| l.code).collect();
-        let mut by_code: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for model in self.store.list() {
-            for code in model
-                .languages
-                .iter()
-                .filter_map(|l| languages::normalise_code(l).ok())
-            {
-                if !used.contains(&code) {
-                    by_code.entry(code).or_default().push(model.id.clone());
-                }
-            }
-        }
-        by_code
+        let models: Vec<(String, Vec<String>)> = self
+            .store
+            .list()
             .into_iter()
-            .map(|(code, models)| AvailableLanguage { code, models })
-            .collect()
+            .map(|m| (m.id.clone(), m.languages.clone()))
+            .collect();
+        languages::available(&models, &self.languages())
     }
 
     /// Reads a Hugging Face repository.
@@ -537,10 +533,6 @@ impl Tts {
         let engine = entry
             .and_then(|e| e.model.as_deref())
             .and_then(|m| self.engine_for(m));
-        let mut model_voices = engine.map(|e| e.voices()).unwrap_or_default();
-        if model_voices.is_empty() {
-            model_voices.push(DEFAULT_VOICE.to_owned());
-        }
         let codes: Vec<String> = entry
             .filter(|e| e.model.is_some())
             .map(|e| vec![e.code.clone()])
@@ -550,6 +542,13 @@ impl Tts {
         } else {
             self.catalog.list(&self.client()).await
         };
+        let mut model_voices = match (engine, entry) {
+            (Some(e), Some(entry)) => voices_for_language(e.voices(), &entry.code, &list),
+            _ => vec![],
+        };
+        if model_voices.is_empty() {
+            model_voices.push(DEFAULT_VOICE.to_owned());
+        }
         voices::view(
             &model_voices,
             &codes,
@@ -626,6 +625,25 @@ impl Tts {
     pub fn clip(&self, id: &str) -> Option<Arc<speech::Clip>> {
         self.clips.get(id)
     }
+}
+
+/// The voices an engine holds that the language `code` may use: the model's own, and the
+/// catalogue voices in `code`. An engine shared by several languages also holds the other
+/// languages' catalogue voices, which stay theirs.
+fn voices_for_language(
+    engine_voices: Vec<String>,
+    code: &str,
+    catalog: &[voices::CatalogVoice],
+) -> Vec<String> {
+    engine_voices
+        .into_iter()
+        .filter(|v| {
+            catalog
+                .iter()
+                .find(|c| c.name == *v)
+                .is_none_or(|c| c.language.as_deref() == Some(code))
+        })
+        .collect()
 }
 
 #[cfg(test)]
