@@ -39,9 +39,15 @@ pub struct SoundConfig {
     /// Silence on a connected input after which playback stops.
     pub idle_stop_ms: u32,
     pub discovery_prefix: String,
+    /// The hub's web address, where its speech clips are fetched
+    /// (`NIDOO_SOUND_HUB_URL`); by default the one in `hub.json`.
+    pub hub_url: Option<String>,
     /// The broker login came from the hub's `hub.json` (for the startup log).
     #[serde(skip)]
     pub broker_from_hub: bool,
+    /// The hub's web address derived from `hub.json`'s `http.bind`.
+    #[serde(skip)]
+    pub hub_http: Option<String>,
 }
 
 impl Default for SoundConfig {
@@ -55,7 +61,9 @@ impl Default for SoundConfig {
             input_buffer_ms: 250,
             idle_stop_ms: 5000,
             discovery_prefix: "homeassistant".into(),
+            hub_url: None,
             broker_from_hub: false,
+            hub_http: None,
         }
     }
 }
@@ -81,14 +89,39 @@ impl SoundConfig {
         let defaults = || Figment::from(Serialized::defaults(SoundConfig::default()));
         // data_dir itself may come from the file or the environment.
         let first = own(defaults())?;
-        let Some(hub) = hub_broker(&first.data_dir.join(HUB_FILE)) else {
-            return Ok(first);
+        let hub = read_hub_file(&first.data_dir.join(HUB_FILE)).unwrap_or_default();
+        let mut config = match &hub.mqtt {
+            None => first,
+            Some(broker) => {
+                let mut config = own(defaults().merge(Serialized::default("mqtt", broker)))?;
+                config.broker_from_hub =
+                    config.mqtt.user == broker.user && config.mqtt.password == broker.password;
+                config
+            }
         };
-        let mut config = own(defaults().merge(Serialized::default("mqtt", &hub)))?;
-        config.broker_from_hub =
-            config.mqtt.user == hub.user && config.mqtt.password == hub.password;
+        config.hub_http = hub.http.map(|h| http_url(&h.bind));
         Ok(config)
     }
+
+    /// Where the hub answers: `hub_url`, else the address in `hub.json`, else
+    /// the hub's default port on this machine.
+    pub fn hub_base_url(&self) -> String {
+        self.hub_url
+            .clone()
+            .or_else(|| self.hub_http.clone())
+            .unwrap_or_else(|| "http://127.0.0.1:8081".into())
+    }
+}
+
+/// `http://host:port` for a bind address; an "any address" bind is reached
+/// on this machine.
+fn http_url(bind: &str) -> String {
+    let (host, port) = bind.rsplit_once(':').unwrap_or((bind, "8081"));
+    let host = match host {
+        "0.0.0.0" | "[::]" | "" => "127.0.0.1",
+        other => other,
+    };
+    format!("http://{host}:{port}")
 }
 
 /// The broker part of the hub's `hub.json`. Its client id is left out on
@@ -101,16 +134,26 @@ struct HubBroker {
     password: Option<String>,
 }
 
-/// The hub's broker, or `None` when the file is missing, unreadable or has
-/// none yet (a hub still in its setup wizard).
-fn hub_broker(path: &Path) -> Option<HubBroker> {
-    #[derive(Deserialize)]
-    struct HubFile {
-        mqtt: Option<HubBroker>,
-    }
+#[derive(Debug, Deserialize)]
+struct HubHttp {
+    bind: String,
+}
+
+/// The parts of the hub's `hub.json` we use.
+#[derive(Debug, Default, Deserialize)]
+struct HubFile {
+    #[serde(default)]
+    mqtt: Option<HubBroker>,
+    #[serde(default)]
+    http: Option<HubHttp>,
+}
+
+/// The hub's settings file, or `None` when it is missing or unreadable. Its
+/// broker is absent while the hub is still in its setup wizard.
+fn read_hub_file(path: &Path) -> Option<HubFile> {
     let text = std::fs::read_to_string(path).ok()?;
     match serde_json::from_str::<HubFile>(&text) {
-        Ok(file) => file.mqtt,
+        Ok(file) => Some(file),
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "ignoring the hub's settings file");
             None
@@ -259,6 +302,49 @@ mod tests {
             assert_eq!(
                 (c.mqtt, c.broker_from_hub),
                 (MqttSettings::default(), false)
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hub_url_comes_from_hub_json() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("data")?;
+            jail.create_file("data/hub.json", r#"{"http":{"bind":"0.0.0.0:9090"}}"#)?;
+            assert_eq!(
+                SoundConfig::load(None).unwrap().hub_base_url(),
+                "http://127.0.0.1:9090"
+            );
+            jail.create_file("data/hub.json", r#"{"http":{"bind":"10.0.0.5:8081"}}"#)?;
+            assert_eq!(
+                SoundConfig::load(None).unwrap().hub_base_url(),
+                "http://10.0.0.5:8081"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hub_url_env_wins() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("data")?;
+            jail.create_file("data/hub.json", r#"{"http":{"bind":"0.0.0.0:9090"}}"#)?;
+            jail.set_env("NIDOO_SOUND_HUB_URL", "http://hub:1");
+            assert_eq!(
+                SoundConfig::load(None).unwrap().hub_base_url(),
+                "http://hub:1"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hub_url_default() {
+        figment::Jail::expect_with(|_jail| {
+            assert_eq!(
+                SoundConfig::load(None).unwrap().hub_base_url(),
+                "http://127.0.0.1:8081"
             );
             Ok(())
         });
