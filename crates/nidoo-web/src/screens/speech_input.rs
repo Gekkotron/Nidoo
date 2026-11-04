@@ -120,21 +120,6 @@ pub fn SpeechInputSection() -> impl IntoView {
             }
         });
     };
-    let toggle_key = move |_| {
-        if key.get_untracked().is_some() {
-            key.set(None);
-            return;
-        }
-        spawn_local(async move {
-            match stt::get_key().await {
-                Ok(k) => {
-                    key.try_set(Some(k.key));
-                }
-                Err(e) => failed(e),
-            }
-        });
-    };
-
     let has_key = move || status.with(|s| s.as_ref().is_some_and(|s| s.has_key));
     let number = move |value: String, set: &dyn Fn(&mut SttSettings, f64)| {
         if let Ok(v) = value.trim().parse::<f64>() {
@@ -283,10 +268,10 @@ pub fn SpeechInputSection() -> impl IntoView {
                     </div>
                 }
             >
+                <Show when=move || key.get().is_none()>
+                    <p class="assist-set__muted">{move || t(T::KeyOnce)}</p>
+                </Show>
                 <div class="assist-set__row">
-                    <button type="button" class="btn assist-set__btn speech-in__show" on:click=toggle_key>
-                        {move || t(if key.get().is_some() { T::HideKey } else { T::ShowKey })}
-                    </button>
                     <button
                         type="button"
                         class="btn assist-set__btn speech-in__replace"

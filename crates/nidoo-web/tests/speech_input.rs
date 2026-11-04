@@ -165,6 +165,10 @@ async fn replacing_the_key_asks_first() {
             .unwrap()
             .is_none()
     );
+    assert!(
+        text(&m.host).contains("shows a key only once"),
+        "no way to read it back"
+    );
     click(&m.host, ".speech-in__replace");
     settle().await;
     assert!(text(&m.host).contains("stop being heard"));

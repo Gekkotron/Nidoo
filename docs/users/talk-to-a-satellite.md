@@ -32,8 +32,9 @@ typing it.
 3. **The key.** Press **Create key** and copy the line it shows
    (`voice_key: "…"`) into the satellite's `secrets.yaml`, then flash the
    satellite again (see `satellite/README.md`). Every satellite uses the same
-   key. **Replace key** makes a new one; satellites with the old key are no
-   longer heard until they are flashed with it.
+   key, so keep that line with your satellite secrets: the hub shows a key
+   only once, when it is made. **Replace key** makes a new one; satellites
+   with the old key are no longer heard until they are flashed with it.
 4. **Allow the satellite** in Nidoo, as for music, and give it a room.
 
 The satellite's light blinking twice after "Hey Jarvis" means the hub has not
