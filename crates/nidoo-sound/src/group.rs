@@ -15,8 +15,9 @@ use tokio::task::JoinHandle;
 
 use crate::clock::Clock;
 use crate::discover::{Discovered, DiscoveryEvent};
+use crate::hold::{HoldRequest, Holds};
 use crate::input::InputEvent;
-use crate::mixer::SpeechMixer;
+use crate::mixer::{FADE_FRAMES, SpeechMixer, fade_in};
 use crate::pacer::{CHUNK_BYTES, CHUNK_US, Pacer};
 use crate::player::{PlayerCmd, PlayerEvent, run_player};
 use crate::proto::messages::PCM_48K_STEREO_16;
@@ -153,6 +154,10 @@ struct Link {
     /// are stale and must not overwrite the saved prefs.
     expect_volume: Option<u8>,
     expect_mute: Option<bool>,
+    /// Its music was held for the last chunk sent.
+    held: bool,
+    /// Its music is coming back after a hold: the fade's next frame.
+    fade_from: Option<usize>,
     /// Earliest timestamp the next audio chunk may carry in this stream:
     /// timestamps only go up, even when music and speech take turns.
     /// `NO_TS` when the stream has sent nothing yet.
@@ -173,6 +178,8 @@ impl Link {
             output_delay_us: 0,
             expect_volume: None,
             expect_mute: None,
+            held: false,
+            fade_from: None,
             next_ts: AtomicI64::new(NO_TS),
         }
     }
@@ -241,6 +248,8 @@ pub struct Group {
     playing: bool,
     /// Sentences to say over (or without) the music.
     mixer: SpeechMixer,
+    /// Satellites whose music is held while someone talks to the house.
+    holds: Holds,
     /// Without music: the next speech chunk's timestamp.
     speech_clock: Option<i64>,
     /// With music: end of the last music chunk sent.
@@ -262,6 +271,7 @@ impl Group {
             pacer: Pacer::new(lead_us),
             playing: false,
             mixer: SpeechMixer::new(),
+            holds: Holds::default(),
             speech_clock: None,
             music_sent_until: i64::MIN,
             to_group,
@@ -287,6 +297,7 @@ impl Group {
         mut input: mpsc::Receiver<InputEvent>,
         mut control: mpsc::Receiver<Control>,
         mut speech: mpsc::Receiver<Speech>,
+        mut holds: mpsc::Receiver<HoldRequest>,
         publish: mpsc::Sender<Published>,
     ) -> anyhow::Result<()> {
         let to_group = self.to_group.clone();
@@ -308,6 +319,7 @@ impl Group {
                 Some(c) = control.recv() => self.on_control(c, &publish).await,
                 Some(m) = self.from_players.recv() => self.on_player(m, &publish).await,
                 Some(s) = speech.recv() => self.on_speech(s),
+                Some(h) = holds.recv() => self.holds.apply(h, self.clock.now_us()),
                 _ = tick.tick(), if self.playing || self.mixer.is_playing() || self.mixer.has_queued() => {
                     self.on_tick().await
                 }
@@ -681,19 +693,16 @@ impl Group {
         } else {
             Vec::new()
         };
+        self.holds.expire(now);
         if let Some(last) = chunks.last() {
-            // One mix per chunk, the same for every satellite of the sentence.
-            let mixed: Vec<Option<bytes::Bytes>> = chunks
-                .iter()
-                .map(|c| self.mixer.mix_chunk(c.timestamp_us, Some(&c.data)))
-                .collect();
-            for link in self.links().filter(|l| l.streaming) {
+            let links = self.instances.values_mut().filter_map(|i| i.link.as_mut());
+            for link in links.filter(|l| l.streaming) {
                 let target = is_target(link);
-                for (c, m) in chunks.iter().zip(&mixed) {
-                    let data = match m {
-                        Some(m) if target => m.clone(),
-                        _ => c.data.clone(),
-                    };
+                let held = link
+                    .short_id()
+                    .is_some_and(|sid| self.holds.is_held(&sid, now));
+                for c in &chunks {
+                    let data = music_for(link, c.timestamp_us, &c.data, &self.mixer, target, held);
                     link.audio(c.timestamp_us, data);
                 }
             }
@@ -753,6 +762,44 @@ impl Group {
         if !self.playing {
             self.speech_clock = Some(start);
         }
+    }
+}
+
+/// Silence, for a held satellite's music.
+static SILENCE: [u8; CHUNK_BYTES] = [0; CHUNK_BYTES];
+
+/// The chunk `link` plays at `ts`: the music (silence while held, fading back in after a
+/// hold), with the sentence mixed in when `link` is one of its satellites. The same inputs
+/// give the same bytes, so the satellites of one sentence stay identical.
+fn music_for(
+    link: &mut Link,
+    ts: i64,
+    music: &bytes::Bytes,
+    mixer: &SpeechMixer,
+    target: bool,
+    held: bool,
+) -> bytes::Bytes {
+    let base = if held {
+        link.held = true;
+        link.fade_from = None;
+        bytes::Bytes::from_static(&SILENCE)
+    } else {
+        if std::mem::take(&mut link.held) {
+            link.fade_from = Some(0);
+        }
+        match link.fade_from {
+            Some(from) => {
+                let next = from + crate::pacer::CHUNK_FRAMES;
+                link.fade_from = (next < FADE_FRAMES).then_some(next);
+                fade_in(music, from)
+            }
+            None => music.clone(),
+        }
+    };
+    if target {
+        mixer.mix_chunk(ts, Some(&base)).unwrap_or(base)
+    } else {
+        base
     }
 }
 
@@ -876,6 +923,7 @@ mod tests {
         input: mpsc::Sender<InputEvent>,
         control: mpsc::Sender<Control>,
         speech: mpsc::Sender<crate::speech::Speech>,
+        holds: mpsc::Sender<crate::hold::HoldRequest>,
         published: mpsc::Receiver<Published>,
         links: mpsc::Receiver<Fake>,
         /// Where an inbound (client-initiated) connection reports.
@@ -933,12 +981,14 @@ mod tests {
             let (control, c_rx) = mpsc::channel(8);
             let (p_tx, published) = mpsc::channel(64);
             let (speech, s_rx) = mpsc::channel(8);
-            tokio::spawn(group.run(d_rx, i_rx, c_rx, s_rx, p_tx));
+            let (holds, h_rx) = mpsc::channel(8);
+            tokio::spawn(group.run(d_rx, i_rx, c_rx, s_rx, h_rx, p_tx));
             Harness {
                 discovery,
                 input,
                 control,
                 speech,
+                holds,
                 published,
                 links,
                 to_group,
@@ -1603,5 +1653,126 @@ mod tests {
         let got_a = audio_of(&a.drain().await);
         assert!(!got_a.is_empty());
         assert_eq!(got_a, audio_of(&b.drain().await));
+    }
+
+    // ---- hold ----
+
+    use crate::hold::HoldRequest;
+
+    impl Harness {
+        /// Holds (or, with `for_ms: 0`, releases) these client ids' music.
+        async fn hold(&self, ids: &[&str], for_ms: u32) {
+            self.holds
+                .send(HoldRequest {
+                    id: "exchange".into(),
+                    players: ids.iter().map(|id| short_id(id)).collect(),
+                    for_ms,
+                })
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+
+        /// Starts `chunks` of music (samples 257) at the current time.
+        async fn play_long(&self, chunks: usize) {
+            self.input.send(InputEvent::Started).await.unwrap();
+            self.input
+                .send(InputEvent::Pcm(bytes::Bytes::from(vec![
+                    1u8;
+                    chunks
+                        * CHUNK_BYTES
+                ])))
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }
+
+    fn samples(data: &[u8]) -> impl Iterator<Item = i16> + '_ {
+        data.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes(*b))
+    }
+
+    #[tokio::test]
+    async fn held_player_gets_silence_others_keep_music() {
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("B", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        let (mut b, _) = h.ready_player("b", "B").await;
+        h.hold(&["A"], 30_000).await;
+        h.play_long(50).await;
+        h.clock.advance(500_000);
+        let got_a = audio_of(&a.drain().await);
+        let got_b = audio_of(&b.drain().await);
+        assert!(!got_a.is_empty());
+        assert!(
+            got_a.iter().all(|(_, d)| samples(d).all(|v| v == 0)),
+            "A is held"
+        );
+        assert!(
+            got_b.iter().any(|(_, d)| has_sample(d, 257)),
+            "B keeps the music"
+        );
+    }
+
+    #[tokio::test]
+    async fn held_player_still_hears_speech() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.hold(&["A"], 30_000).await;
+        h.play_long(50).await;
+        h.say(speech_for(&["A"], 8_000, CHUNK_FRAMES)).await;
+        h.clock.advance(1_000_000);
+        let got = audio_of(&a.drain().await);
+        assert!(
+            got.iter().any(|(_, d)| has_sample(d, 8_000)),
+            "the sentence is heard"
+        );
+        assert!(
+            got.iter()
+                .all(|(_, d)| samples(d).all(|v| v == 0 || v == 8_000)),
+            "over silence, not over ducked music"
+        );
+    }
+
+    #[tokio::test]
+    async fn released_player_fades_back_in() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.hold(&["A"], 30_000).await;
+        h.play_long(100).await;
+        h.clock.advance(200_000);
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        h.hold(&["A"], 0).await;
+        h.clock.advance(800_000);
+        let got = audio_of(&a.drain().await);
+        let first = got
+            .iter()
+            .position(|(_, d)| samples(d).any(|v| v != 0))
+            .expect("the music comes back");
+        assert!(
+            samples(&got[first].1).all(|v| v < 257),
+            "the first chunk back is faded"
+        );
+        assert!(
+            got[first..]
+                .iter()
+                .any(|(_, d)| samples(d).all(|v| v == 257))
+        );
+    }
+
+    #[tokio::test]
+    async fn hold_on_unknown_player_is_harmless() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.hold(&["nobody"], 30_000).await;
+        h.play_long(50).await;
+        h.clock.advance(500_000);
+        assert!(
+            audio_of(&a.drain().await)
+                .iter()
+                .any(|(_, d)| has_sample(d, 257))
+        );
     }
 }

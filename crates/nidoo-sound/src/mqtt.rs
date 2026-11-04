@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::config::MqttSettings;
 use crate::group::{Control, Published};
+use crate::hold::{HOLD_TOPIC, HoldRequest, parse_hold};
 use crate::speech::{SPEAK_TOPIC, SpeakRequest, Waiting, parse_speak};
 use crate::state::{PlayerPrefs, short_id};
 
@@ -164,6 +165,7 @@ pub enum Incoming {
     HaOnline,
     Control(Control),
     Speak(SpeakRequest),
+    Hold(HoldRequest),
     Ignored,
 }
 
@@ -179,6 +181,9 @@ pub fn route(topic: &str, payload: &[u8], ha_status: &str) -> Incoming {
     if topic == SPEAK_TOPIC {
         return parse_speak(payload).map_or(Incoming::Ignored, Incoming::Speak);
     }
+    if topic == HOLD_TOPIC {
+        return parse_hold(payload).map_or(Incoming::Ignored, Incoming::Hold);
+    }
     parse_command(topic, payload).map_or(Incoming::Ignored, Incoming::Control)
 }
 
@@ -188,6 +193,7 @@ pub async fn run_mqtt(
     mut publish: mpsc::Receiver<Published>,
     control: mpsc::Sender<Control>,
     speak: mpsc::Sender<Waiting>,
+    hold: mpsc::Sender<HoldRequest>,
 ) -> anyhow::Result<()> {
     let mut options = MqttOptions::new(cfg.client_id.clone(), cfg.host.clone(), cfg.port);
     options.set_keep_alive(Duration::from_secs(30));
@@ -214,6 +220,7 @@ pub async fn run_mqtt(
                     client.subscribe(format!("{TOPIC_ROOT}/+/+/set"), QoS::AtLeastOnce).await?;
                     client.subscribe(ha_status.clone(), QoS::AtLeastOnce).await?;
                     client.subscribe(SPEAK_TOPIC, QoS::AtLeastOnce).await?;
+                    client.subscribe(HOLD_TOPIC, QoS::AtLeastOnce).await?;
                     announced.clear();
                     for (prefs, connected) in known.values() {
                         send(&client, discovery_prefix, prefs, *connected, &mut announced).await?;
@@ -236,6 +243,12 @@ pub async fn run_mqtt(
                         tracing::info!(id = %req.id, players = req.players.len(), "speak");
                         if speak.try_send((tokio::time::Instant::now(), req)).is_err() {
                             tracing::warn!("speech queue full, sentence dropped");
+                        }
+                    }
+                    Incoming::Hold(req) => {
+                        tracing::debug!(id = %req.id, players = req.players.len(), for_ms = req.for_ms, "hold");
+                        if hold.send(req).await.is_err() {
+                            return Ok(());
                         }
                     }
                     Incoming::Ignored => tracing::debug!(topic = %p.topic, "ignored message"),
@@ -482,5 +495,23 @@ mod tests {
             Incoming::Control(Control::SetMute { muted: true, .. })
         ));
         assert_eq!(route("elsewhere", b"x", ha), Incoming::Ignored);
+    }
+
+    #[test]
+    fn hold_topic_is_routed() {
+        let ha = "homeassistant/status";
+        assert_eq!(
+            route(
+                HOLD_TOPIC,
+                br#"{"id":"x","players":["abc"],"for_ms":30000}"#,
+                ha
+            ),
+            Incoming::Hold(HoldRequest {
+                id: "x".into(),
+                players: vec!["abc".into()],
+                for_ms: 30_000,
+            })
+        );
+        assert_eq!(route(HOLD_TOPIC, b"nope", ha), Incoming::Ignored);
     }
 }

@@ -51,6 +51,7 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | `<prefix>/panel/set` (alarm) | in | no | The panel's commands: `ARM_AWAY`, `ARM_HOME`, `ARM_NIGHT` or `DISARM`. A retained replay is never acted on | `[alarm] prefix` |
 | `<first discovery prefix>/alarm_control_panel/alarm/house/config` | out | yes | Discovery of the alarm panel, entity `nidoo_alarm_house`. Published while the alarm is on; an empty payload removes it | `[topics] discovery_prefixes` (first entry), `[alarm] prefix` |
 | `nidoo-sound/speak` | out | no | `{"id", "url", "players"}`: a sentence for the `nidoo-sound` service to fetch (`url`, `/api/v1/assist/speech/<id>.wav` on the hub) and say on the satellites listed by short id | — |
+| `nidoo-sound/hold` | out | no | `{"id", "players", "for_ms"}`: while someone talks to a satellite, the music of the listed satellites (short ids) is replaced by silence for `for_ms` (at most 60 000) unless refreshed; speech is still heard. `for_ms: 0` releases that `id`. Never saved: a restart of `nidoo-sound` brings the music back | — |
 | `<topic_prefix>/events`, default `frigate/events` | in | no | Frigate event JSON; subscribed only with the bridge on | `[frigate] bridge`, `[frigate] topic_prefix` |
 | `<prefix>/+`, default `encryption-gateway/health/+` | in | yes (by the gateway) | `{"status": "ok" \| "fail" \| "config_error", …}` per component | `[watchdog.gateway] enabled`, `prefix` |
 | `$SYS/broker/log/#` | in | no | Mosquitto log lines | `[watchdog.acl] source = "topic"`, `log_topic` |
@@ -64,4 +65,4 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 - **Retained history.** `nidoo/push/history` is the history itself: the hub adopts it at its first sync.
 - **After each (re)connect** the hub waits for its subscription to be acknowledged, then 2 s more for the retained tokens, before it sends; alerts arriving meanwhile wait in the queue.
 - **Flows and dashboards read as written.** An invalid flow or dashboard document is kept and shown with its reason, never run.
-- **Broker permissions.** Give the hub user read and write on `nidoo/#` (or the narrower sets above), write on `nidoo-sound/speak` (satellite speech), read on `<topic_prefix>/events` and `<gateway prefix>/+`, and for the ACL watchdog read on `$SYS/broker/log/#`. Mosquitto denies silently.
+- **Broker permissions.** Give the hub user read and write on `nidoo/#` (or the narrower sets above), write on `nidoo-sound/speak` and `nidoo-sound/hold` (satellite speech and listening), read on `<topic_prefix>/events` and `<gateway prefix>/+`, and for the ACL watchdog read on `$SYS/broker/log/#`. Mosquitto denies silently.

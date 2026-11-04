@@ -117,6 +117,7 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         speech_tx,
     ));
     let (publish_tx, publish_rx) = mpsc::channel(256);
+    let (hold_tx, hold_rx) = mpsc::channel(16);
     let lead_us = i64::from(cfg.lead_ms) * 1_000;
     let group = Group::new(
         store,
@@ -140,7 +141,9 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
             Liveness::INBOUND,
         ));
     }
-    let group = tokio::spawn(group.run(discovery, input_rx, control_rx, speech_rx, publish_tx));
+    let group = tokio::spawn(group.run(
+        discovery, input_rx, control_rx, speech_rx, hold_rx, publish_tx,
+    ));
     let mqtt = {
         let cfg = cfg.clone();
         tokio::spawn(async move {
@@ -150,6 +153,7 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
                 publish_rx,
                 control_tx,
                 speak_tx,
+                hold_tx,
             )
             .await
         })
