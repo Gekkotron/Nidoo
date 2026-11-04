@@ -106,4 +106,4 @@ For other clients, such as the future satellites, speech is two HTTP calls: a `P
 
 ## Not yet
 
-Speech in (the microphone), spoken Assist replies, English sentences, shutters, brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.
+Speaking to the assistant works through the satellites: see [Talk to a satellite](talk-to-a-satellite.md); a spoken turn shows the satellite and its room in the history. English sentences, shutters, brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.
