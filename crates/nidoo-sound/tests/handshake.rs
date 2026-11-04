@@ -571,9 +571,15 @@ async fn client_initiated_player_joins_after_its_hello() {
     // Nothing reaches the group before client/hello.
     l.expect_quiet().await;
     p.send_json(FakePlayer::hello(400_000)).await;
-    let FromPlayer::Accepted { instance, cmds } = l.next().await else {
+    let FromPlayer::Accepted {
+        instance,
+        cmds,
+        peer,
+    } = l.next().await
+    else {
         panic!("expected Accepted first")
     };
+    assert!(peer.is_some_and(|ip| ip.is_loopback()), "{peer:?}");
     match l.next().await {
         FromPlayer::Event {
             instance: i,
@@ -610,6 +616,7 @@ async fn two_client_initiated_players_get_distinct_instances() {
     let FromPlayer::Accepted {
         instance: ia,
         cmds: _a_cmds,
+        ..
     } = l.next().await
     else {
         panic!("expected Accepted")

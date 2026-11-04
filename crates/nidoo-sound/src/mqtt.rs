@@ -4,6 +4,7 @@
 //! back on `nidoo-sound/<short id>/<control>/set`.
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
@@ -18,6 +19,8 @@ use crate::state::{PlayerPrefs, short_id};
 
 /// Topic root for this service's own topics (the hub owns `nidoo/`).
 pub const TOPIC_ROOT: &str = "nidoo-sound";
+/// "A sentence finished playing": `{"id", "played"}`, not retained.
+pub const SPOKEN_TOPIC: &str = "nidoo-sound/spoken";
 /// `online` / `offline` (last will), retained.
 pub const STATUS_TOPIC: &str = "nidoo-sound/status";
 
@@ -89,6 +92,14 @@ pub fn discovery_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(Strin
                        "payload_on": "ON", "payload_off": "OFF"}),
             ),
         ),
+        (
+            "sensor",
+            "address",
+            with(
+                base("Address", "address"),
+                json!({"entity_category": "diagnostic", "icon": "mdi:ip-network"}),
+            ),
+        ),
     ];
     configs
         .into_iter()
@@ -101,8 +112,12 @@ pub fn discovery_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(Strin
         .collect()
 }
 
-/// Retained state values for one satellite.
-pub fn state_messages(p: &PlayerPrefs, connected: bool) -> Vec<(String, String)> {
+/// Retained state values for one satellite; the address is `""` when unknown.
+pub fn state_messages(
+    p: &PlayerPrefs,
+    connected: bool,
+    address: Option<Ipv4Addr>,
+) -> Vec<(String, String)> {
     let sid = short_id(&p.client_id);
     vec![
         (format!("{TOPIC_ROOT}/{sid}/volume"), p.volume.to_string()),
@@ -114,6 +129,10 @@ pub fn state_messages(p: &PlayerPrefs, connected: bool) -> Vec<(String, String)>
         (
             format!("{TOPIC_ROOT}/{sid}/connected"),
             on_off(connected).into(),
+        ),
+        (
+            format!("{TOPIC_ROOT}/{sid}/address"),
+            address.map(|a| a.to_string()).unwrap_or_default(),
         ),
     ]
 }
@@ -208,7 +227,7 @@ pub async fn run_mqtt(
     ));
     let (client, mut eventloop) = AsyncClient::new(options, 256);
     let ha_status = format!("{discovery_prefix}/status");
-    let mut known: HashMap<String, (PlayerPrefs, bool)> = HashMap::new();
+    let mut known: HashMap<String, (PlayerPrefs, bool, Option<Ipv4Addr>)> = HashMap::new();
     let mut announced: HashMap<String, String> = HashMap::new();
 
     loop {
@@ -222,15 +241,15 @@ pub async fn run_mqtt(
                     client.subscribe(SPEAK_TOPIC, QoS::AtLeastOnce).await?;
                     client.subscribe(HOLD_TOPIC, QoS::AtLeastOnce).await?;
                     announced.clear();
-                    for (prefs, connected) in known.values() {
-                        send(&client, discovery_prefix, prefs, *connected, &mut announced).await?;
+                    for (prefs, connected, address) in known.values() {
+                        send(&client, discovery_prefix, prefs, *connected, *address, &mut announced).await?;
                     }
                 }
                 Ok(Event::Incoming(Packet::Publish(p))) => match route(&p.topic, &p.payload, &ha_status) {
                     Incoming::HaOnline => {
                         announced.clear();
-                        for (prefs, connected) in known.values() {
-                            send(&client, discovery_prefix, prefs, *connected, &mut announced).await?;
+                        for (prefs, connected, address) in known.values() {
+                            send(&client, discovery_prefix, prefs, *connected, *address, &mut announced).await?;
                         }
                     }
                     Incoming::Control(c) => {
@@ -260,7 +279,16 @@ pub async fn run_mqtt(
                 }
             },
             msg = publish.recv() => {
-                let Some(Published::Player { short_id, prefs, connected }) = msg else {
+                let (short_id, prefs, connected, address) = match msg {
+                    Some(Published::Player { short_id, prefs, connected, address }) => {
+                        (short_id, prefs, connected, address)
+                    }
+                    Some(Published::Spoken { id, played }) => {
+                        let payload = json!({"id": id, "played": played}).to_string();
+                        client.publish(SPOKEN_TOPIC, QoS::AtLeastOnce, false, payload).await?;
+                        continue;
+                    }
+                    None => {
                     let _ = client.publish(STATUS_TOPIC, QoS::AtLeastOnce, true, "offline").await;
                     let _ = client.disconnect().await;
                     // Let the event loop flush the last messages.
@@ -269,9 +297,10 @@ pub async fn run_mqtt(
                     })
                     .await;
                     return Ok(());
+                    }
                 };
-                send(&client, discovery_prefix, &prefs, connected, &mut announced).await?;
-                known.insert(short_id, (prefs, connected));
+                send(&client, discovery_prefix, &prefs, connected, address, &mut announced).await?;
+                known.insert(short_id, (prefs, connected, address));
             }
         }
     }
@@ -283,6 +312,7 @@ async fn send(
     discovery_prefix: &str,
     prefs: &PlayerPrefs,
     connected: bool,
+    address: Option<Ipv4Addr>,
     announced: &mut HashMap<String, String>,
 ) -> anyhow::Result<()> {
     if announced.get(&prefs.client_id) != Some(&prefs.name) {
@@ -293,7 +323,7 @@ async fn send(
         }
         announced.insert(prefs.client_id.clone(), prefs.name.clone());
     }
-    for (topic, payload) in state_messages(prefs, connected) {
+    for (topic, payload) in state_messages(prefs, connected, address) {
         client
             .publish(topic, QoS::AtLeastOnce, true, payload)
             .await?;
@@ -359,6 +389,11 @@ mod tests {
                     format!("nidoo_sound_{sid}_connected"),
                     EntityCategory::Diagnostic
                 ),
+                (
+                    Kind::Sensor,
+                    format!("nidoo_sound_{sid}_address"),
+                    EntityCategory::Diagnostic
+                ),
             ]
         );
     }
@@ -401,7 +436,7 @@ mod tests {
         let sid = short_id(ID);
         let mut p = prefs();
         p.muted = true;
-        let msgs = state_messages(&p, false);
+        let msgs = state_messages(&p, false, None);
         assert!(msgs.contains(&(format!("nidoo-sound/{sid}/volume"), "45".into())));
         assert!(msgs.contains(&(format!("nidoo-sound/{sid}/mute"), "ON".into())));
         assert!(msgs.contains(&(format!("nidoo-sound/{sid}/allowed"), "ON".into())));
@@ -513,5 +548,15 @@ mod tests {
             })
         );
         assert_eq!(route(HOLD_TOPIC, b"nope", ha), Incoming::Ignored);
+    }
+
+    #[test]
+    fn address_state_is_dotted_or_empty() {
+        let sid = short_id(ID);
+        let topic = format!("nidoo-sound/{sid}/address");
+        let with = state_messages(&prefs(), true, Some("192.0.2.10".parse().unwrap()));
+        assert!(with.contains(&(topic.clone(), "192.0.2.10".into())));
+        let without = state_messages(&prefs(), false, None);
+        assert!(without.contains(&(topic, String::new())));
     }
 }

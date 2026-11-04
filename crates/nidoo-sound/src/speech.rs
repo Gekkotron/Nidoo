@@ -51,6 +51,8 @@ pub type Waiting = (tokio::time::Instant, SpeakRequest);
 /// A sentence ready to play: stream-format audio for these satellites.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Speech {
+    /// The hub's clip id, reported back once played.
+    pub id: String,
     pub players: Vec<String>,
     pub pcm: Bytes,
 }
@@ -197,6 +199,7 @@ pub async fn fetch_speech_with(
         .with_context(|| format!("fetching {url}"))?;
     let pcm = wav_to_stream_pcm(&body).with_context(|| format!("decoding {url}"))?;
     Ok(Speech {
+        id: req.id.clone(),
         players: req.players.clone(),
         pcm,
     })
@@ -208,12 +211,15 @@ pub async fn run_speech_fetcher(
     hub_url: String,
     mut requests: tokio::sync::mpsc::Receiver<Waiting>,
     to_group: tokio::sync::mpsc::Sender<Speech>,
+    publish: tokio::sync::mpsc::Sender<crate::group::Published>,
 ) {
+    let not_played = |id: String| crate::group::Published::Spoken { id, played: false };
     let client = reqwest::Client::new();
     while let Some((received, req)) = requests.recv().await {
         let waited = received.elapsed();
         if waited > MAX_WAIT {
             tracing::warn!(id = %req.id, waited_s = waited.as_secs(), "speech waited too long, dropped");
+            publish.send(not_played(req.id)).await.ok();
             continue;
         }
         match fetch_speech(&client, &hub_url, &req).await {
@@ -223,7 +229,8 @@ pub async fn run_speech_fetcher(
                 }
             }
             Err(error) => {
-                tracing::warn!(id = %req.id, error = format!("{error:#}"), "speech not played")
+                tracing::warn!(id = %req.id, error = format!("{error:#}"), "speech not played");
+                publish.send(not_played(req.id)).await.ok();
             }
         }
     }
@@ -321,7 +328,8 @@ mod tests {
         let old = tokio::time::Instant::now() - MAX_WAIT - Duration::from_secs(1);
         requests.send((old, clip_request())).await.unwrap();
         drop(requests);
-        run_speech_fetcher(format!("http://{addr}"), rx, to_group).await;
+        let (publish, _published) = tokio::sync::mpsc::channel(4);
+        run_speech_fetcher(format!("http://{addr}"), rx, to_group, publish).await;
         assert!(spoken.recv().await.is_none());
         let asked = tokio::time::timeout(Duration::from_millis(100), listener.accept()).await;
         assert!(asked.is_err(), "the hub was asked for the clip");
@@ -482,5 +490,37 @@ mod tests {
         )
         .await;
         assert!(got.is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_fetch_reports_not_played() {
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel(1);
+        let (to_group, _group_rx) = tokio::sync::mpsc::channel(1);
+        let (publish, mut published) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(run_speech_fetcher(
+            "http://127.0.0.1:1".into(),
+            req_rx,
+            to_group,
+            publish,
+        ));
+        let req = SpeakRequest {
+            id: "gone".into(),
+            url: "/api/v1/assist/speech/gone.wav".into(),
+            players: vec!["p1".into()],
+        };
+        req_tx
+            .send((tokio::time::Instant::now(), req))
+            .await
+            .unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(15), published.recv())
+            .await
+            .unwrap();
+        assert_eq!(
+            got,
+            Some(crate::group::Published::Spoken {
+                id: "gone".into(),
+                played: false
+            })
+        );
     }
 }

@@ -53,6 +53,7 @@ Per satellite (`<sid>` = first 12 hex characters of SHA-256 of its Sendspin
 | Mute (switch) | `…/switch/nidoo_sound_<sid>/mute/config` | `nidoo-sound/<sid>/mute` | `…/mute/set` (`ON`/`OFF`) |
 | Allowed (switch) | `…/switch/nidoo_sound_<sid>/allowed/config` | `nidoo-sound/<sid>/allowed` | `…/allowed/set` |
 | Connected (binary sensor, diagnostic) | `…/binary_sensor/nidoo_sound_<sid>/connected/config` | `nidoo-sound/<sid>/connected` | |
+| Address (sensor, diagnostic) | `…/sensor/nidoo_sound_<sid>/address/config` | `nidoo-sound/<sid>/address` (IPv4, empty when not connected) | |
 
 Availability: `nidoo-sound/status` (`online`, last will `offline`).
 
@@ -67,6 +68,11 @@ Hold: while someone talks to a satellite, the hub publishes `nidoo-sound/hold`
 silence instead of music (speech is still mixed in) until `for_ms` runs out (at
 most 60 s) or a `for_ms: 0` releases that `id`; the music then fades back in over
 150 ms. Holds are never saved, so a restart brings the music back at once.
+
+Played: once a sentence's last sample plays on the satellites (on the shared
+clock), the service publishes `nidoo-sound/spoken` (not retained) as
+`{"id": "<clip id>", "played": true}`; a sentence that is dropped (no satellite,
+queue full, fetch failed) is reported at once with `"played": false`.
 
 ## Protocol and known deviations
 

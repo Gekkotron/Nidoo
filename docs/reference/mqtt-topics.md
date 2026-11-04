@@ -52,6 +52,8 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | `<first discovery prefix>/alarm_control_panel/alarm/house/config` | out | yes | Discovery of the alarm panel, entity `nidoo_alarm_house`. Published while the alarm is on; an empty payload removes it | `[topics] discovery_prefixes` (first entry), `[alarm] prefix` |
 | `nidoo-sound/speak` | out | no | `{"id", "url", "players"}`: a sentence for the `nidoo-sound` service to fetch (`url`, `/api/v1/assist/speech/<id>.wav` on the hub) and say on the satellites listed by short id | — |
 | `nidoo-sound/hold` | out | no | `{"id", "players", "for_ms"}`: while someone talks to a satellite, the music of the listed satellites (short ids) is replaced by silence for `for_ms` (at most 60 000) unless refreshed; speech is still heard. `for_ms: 0` releases that `id`. Never saved: a restart of `nidoo-sound` brings the music back | — |
+| `nidoo-sound/spoken` | in | no | `{"id", "played"}`: the sentence with clip `id` finished playing on its satellites (`true`, the instant its last sample plays) or was dropped (`false`) | — |
+| `nidoo-sound/<sid>/address` | in | yes | The satellite's IPv4 address while it is connected (empty otherwise); its discovery entity is a diagnostic sensor folded into the satellite's Volume | — |
 | `<topic_prefix>/events`, default `frigate/events` | in | no | Frigate event JSON; subscribed only with the bridge on | `[frigate] bridge`, `[frigate] topic_prefix` |
 | `<prefix>/+`, default `encryption-gateway/health/+` | in | yes (by the gateway) | `{"status": "ok" \| "fail" \| "config_error", …}` per component | `[watchdog.gateway] enabled`, `prefix` |
 | `$SYS/broker/log/#` | in | no | Mosquitto log lines | `[watchdog.acl] source = "topic"`, `log_topic` |

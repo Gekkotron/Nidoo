@@ -110,13 +110,14 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     // Requests wait here while one clip is fetched: no more than the sentences the mixer queues.
     let (speak_tx, speak_rx) = mpsc::channel(nidoo_sound::mixer::MAX_QUEUED);
     let (speech_tx, speech_rx) = mpsc::channel(4);
+    let (publish_tx, publish_rx) = mpsc::channel(256);
     tracing::info!(hub = %cfg.hub_base_url(), "speech clips come from the hub");
     tokio::spawn(nidoo_sound::speech::run_speech_fetcher(
         cfg.hub_base_url(),
         speak_rx,
         speech_tx,
+        publish_tx.clone(),
     ));
-    let (publish_tx, publish_rx) = mpsc::channel(256);
     let (hold_tx, hold_rx) = mpsc::channel(16);
     let lead_us = i64::from(cfg.lead_ms) * 1_000;
     let group = Group::new(
