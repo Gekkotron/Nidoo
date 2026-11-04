@@ -64,6 +64,7 @@ enum Msg {
     },
     Unload,
     AddVoice {
+        generation: u64,
         name: String,
         path: PathBuf,
     },
@@ -93,6 +94,44 @@ fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
     shared.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The message shown when the engine thread is gone.
+const THREAD_STOPPED: &str = "the speech thread stopped";
+
+/// The model named by a state, if any.
+fn model_of(state: &EngineState) -> Option<String> {
+    match state {
+        EngineState::NoModel => None,
+        EngineState::Loading { model } | EngineState::Ready { model } => Some(model.clone()),
+        EngineState::Error { model, .. } => model.clone(),
+    }
+}
+
+/// Marks the engine as stopped: nothing is loaded and speaking is refused.
+fn mark_stopped(shared: &Mutex<Shared>, model: Option<String>) {
+    let mut s = lock(shared);
+    s.generation += 1;
+    s.voices.clear();
+    s.languages.clear();
+    s.sample_rate = None;
+    s.state = EngineState::Error {
+        model: model.or_else(|| model_of(&s.state)),
+        message: THREAD_STOPPED.into(),
+    };
+}
+
+/// Turns a panic that ends the engine thread into an error state.
+struct ThreadGuard {
+    shared: Arc<Mutex<Shared>>,
+}
+
+impl Drop for ThreadGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            mark_stopped(&self.shared, None);
+        }
+    }
+}
+
 /// Start the engine thread with no model loaded.
 pub fn start(loader: Arc<dyn SpeakerLoader>) -> Engine {
     let (tx, rx) = channel();
@@ -107,7 +146,10 @@ pub fn start(loader: Arc<dyn SpeakerLoader>) -> Engine {
     let (s, w) = (shared.clone(), waiting.clone());
     if let Err(e) = std::thread::Builder::new()
         .name("tts".into())
-        .spawn(move || run(loader, rx, s, w))
+        .spawn(move || {
+            let _guard = ThreadGuard { shared: s.clone() };
+            run(loader, rx, s, w)
+        })
     {
         lock(&shared).state = EngineState::Error {
             model: None,
@@ -135,14 +177,20 @@ impl Engine {
             s.state = EngineState::Loading {
                 model: model.to_string(),
             };
+            s.voices.clear();
+            s.languages.clear();
+            s.sample_rate = None;
             s.generation
         };
-        let _ = self.tx.send(Msg::Load {
+        let sent = self.tx.send(Msg::Load {
             generation,
             model: model.to_string(),
             dir,
             weights,
         });
+        if sent.is_err() {
+            mark_stopped(&self.shared, Some(model.to_string()));
+        }
     }
 
     /// Drop the loaded model.
@@ -155,12 +203,22 @@ impl Engine {
             s.languages.clear();
             s.sample_rate = None;
         }
-        let _ = self.tx.send(Msg::Unload);
+        if self.tx.send(Msg::Unload).is_err() {
+            mark_stopped(&self.shared, None);
+        }
     }
 
     /// Register a voice file with the loaded model (ignored when none is loaded).
     pub fn add_voice(&self, name: String, path: PathBuf) {
-        let _ = self.tx.send(Msg::AddVoice { name, path });
+        let generation = lock(&self.shared).generation;
+        let msg = Msg::AddVoice {
+            generation,
+            name,
+            path,
+        };
+        if self.tx.send(msg).is_err() {
+            mark_stopped(&self.shared, None);
+        }
     }
 
     /// The languages of the loaded model.
@@ -248,11 +306,26 @@ fn run(
                 }
                 match result {
                     Ok(sp) => {
-                        s.voices = sp.voices();
-                        s.languages = sp.languages();
-                        s.sample_rate = Some(sp.sample_rate());
-                        s.state = EngineState::Ready { model };
-                        speaker = Some(sp);
+                        let info = catch_unwind(AssertUnwindSafe(|| {
+                            (sp.voices(), sp.languages(), sp.sample_rate())
+                        }));
+                        match info {
+                            Ok((voices, languages, rate)) => {
+                                s.voices = voices;
+                                s.languages = languages;
+                                s.sample_rate = Some(rate);
+                                s.state = EngineState::Ready { model };
+                                speaker = Some(sp);
+                            }
+                            Err(_) => {
+                                s.state = EngineState::Error {
+                                    model: Some(model),
+                                    message: "the speech model crashed while loading".into(),
+                                };
+                                // Dropping a broken model may panic too.
+                                let _ = catch_unwind(AssertUnwindSafe(|| drop(sp)));
+                            }
+                        }
                     }
                     Err(message) => {
                         s.voices.clear();
@@ -266,11 +339,40 @@ fn run(
                 }
             }
             Msg::Unload => speaker = None,
-            Msg::AddVoice { name, path } => {
+            Msg::AddVoice {
+                generation,
+                name,
+                path,
+            } => {
                 if let Some(sp) = speaker.as_mut() {
-                    match sp.add_voice(&name, &path) {
-                        Ok(()) => lock(&shared).voices = sp.voices(),
-                        Err(e) => tracing::warn!("could not add the voice {name}: {e}"),
+                    let added = catch_unwind(AssertUnwindSafe(|| {
+                        sp.add_voice(&name, &path).map(|()| sp.voices())
+                    }));
+                    match added {
+                        Ok(Ok(voices)) => {
+                            let mut s = lock(&shared);
+                            if s.generation == generation {
+                                s.voices = voices;
+                            }
+                        }
+                        Ok(Err(e)) => tracing::warn!("could not add the voice {name}: {e}"),
+                        Err(_) => {
+                            // The model is in an unknown state: drop it and say so.
+                            if let Some(broken) = speaker.take() {
+                                let _ = catch_unwind(AssertUnwindSafe(|| drop(broken)));
+                            }
+                            let mut s = lock(&shared);
+                            if s.generation == generation {
+                                s.generation += 1;
+                                s.voices.clear();
+                                s.languages.clear();
+                                s.sample_rate = None;
+                                s.state = EngineState::Error {
+                                    model: model_of(&s.state),
+                                    message: "the speech model crashed".into(),
+                                };
+                            }
+                        }
                     }
                 }
             }
@@ -480,5 +582,157 @@ mod tests {
         engine.speak("un".into(), None, sink).unwrap();
         while rx.recv_timeout(Duration::from_secs(2)).unwrap().is_some() {}
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// A speaker that panics where the test says: `voices()` or `add_voice`.
+    struct Crashy {
+        on_voices: bool,
+    }
+
+    impl Speaker for Crashy {
+        fn sample_rate(&self) -> u32 {
+            24_000
+        }
+        fn languages(&self) -> Vec<String> {
+            vec!["fr".into()]
+        }
+        fn voices(&self) -> Vec<String> {
+            if self.on_voices {
+                panic!("voices broke");
+            }
+            vec!["default".into()]
+        }
+        fn add_voice(&mut self, _name: &str, _path: &Path) -> Result<(), String> {
+            panic!("add_voice broke");
+        }
+        fn speak(
+            &mut self,
+            _text: &str,
+            _voice: Option<&str>,
+            _chunk: &mut dyn FnMut(&[f32]) -> bool,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    struct CrashyLoader {
+        on_voices: bool,
+    }
+
+    impl SpeakerLoader for CrashyLoader {
+        fn load(&self, _dir: &Path, _weights: &str) -> Result<Box<dyn Speaker>, String> {
+            Ok(Box::new(Crashy {
+                on_voices: self.on_voices,
+            }))
+        }
+    }
+
+    fn wait_error(engine: &Engine) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if matches!(engine.state(), EngineState::Error { .. }) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("state is {:?}, wanted an error", engine.state());
+    }
+
+    #[test]
+    fn a_model_whose_voices_panic_is_an_error_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = start(Arc::new(CrashyLoader { on_voices: true }));
+        engine.load("m", dir.path().into(), "model.q8.gguf".into());
+        wait_error(&engine);
+        let (sink, _rx) = channel_sink();
+        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        assert!(matches!(err, TtsError::Conflict(_)));
+    }
+
+    #[test]
+    fn a_model_whose_add_voice_panics_is_an_error_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = start(Arc::new(CrashyLoader { on_voices: false }));
+        engine.load("m", dir.path().into(), "model.q8.gguf".into());
+        wait_for(&engine, &ready("m"));
+        engine.add_voice("v".into(), dir.path().join("v.safetensors"));
+        wait_error(&engine);
+        let (sink, _rx) = channel_sink();
+        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        assert!(matches!(err, TtsError::Conflict(_)));
+    }
+
+    #[test]
+    fn a_dead_thread_is_an_error_state_and_drops_queued_sinks() {
+        struct Flag(mpsc::Sender<()>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (loader, release) = BlockingLoader::new();
+        let engine = start(Arc::new(loader));
+        engine.load("m", dir.path().into(), "model.q8.gguf".into());
+        wait_for(&engine, &ready("m"));
+        // The first sink panics at the end of its speech, outside the guarded call.
+        engine
+            .speak(
+                "un".into(),
+                None,
+                Box::new(|item| {
+                    if item.is_none() {
+                        panic!("sink broke");
+                    }
+                    true
+                }),
+            )
+            .unwrap();
+        assert!(release.wait_started(1));
+        let (flag_tx, flag_rx) = mpsc::channel();
+        let flag = Flag(flag_tx);
+        engine
+            .speak(
+                "deux".into(),
+                None,
+                Box::new(move |_| {
+                    let _keep = &flag;
+                    true
+                }),
+            )
+            .unwrap();
+        release.release_all();
+        wait_for(
+            &engine,
+            &EngineState::Error {
+                model: Some("m".into()),
+                message: "the speech thread stopped".into(),
+            },
+        );
+        flag_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("the queued sink was never dropped");
+        let (sink, _rx) = channel_sink();
+        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        assert!(matches!(err, TtsError::Conflict(_)));
+        // Loading on a dead thread stays an error instead of hanging in Loading.
+        engine.load("n", dir.path().into(), "model.q8.gguf".into());
+        assert!(matches!(engine.state(), EngineState::Error { .. }));
+    }
+
+    #[test]
+    fn load_clears_the_previous_models_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let (loader, _release) = BlockingLoader::new();
+        let engine = start(Arc::new(loader));
+        engine.load("a", dir.path().into(), "model.q8.gguf".into());
+        wait_for(&engine, &ready("a"));
+        std::fs::write(dir.path().join("fail"), "").unwrap();
+        engine.load("b", dir.path().into(), "model.q8.gguf".into());
+        assert!(engine.voices().is_empty());
+        assert_eq!(engine.sample_rate(), None);
+        wait_error(&engine);
+        assert!(engine.voices().is_empty());
+        assert_eq!(engine.sample_rate(), None);
     }
 }

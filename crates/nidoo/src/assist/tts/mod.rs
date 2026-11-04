@@ -128,6 +128,48 @@ pub struct Tts {
     clips: speech::Clips,
 }
 
+/// Ends its clip when dropped unfinished, so a request that never runs frees its readers.
+struct ClipGuard {
+    clip: Arc<speech::Clip>,
+    finished: bool,
+}
+
+impl Drop for ClipGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.clip.finish(Some("speech stopped".into()));
+        }
+    }
+}
+
+/// The sink that fills `clip` from the engine thread.
+fn clip_sink(clip: Arc<speech::Clip>) -> engine::Sink {
+    let mut guard = ClipGuard {
+        clip,
+        finished: false,
+    };
+    Box::new(move |item| {
+        match item {
+            Some(Ok(samples)) => {
+                let mut pcm = Vec::new();
+                speech::to_pcm16(&samples, &mut pcm);
+                guard.clip.push(&pcm);
+                // Nobody can fetch an expired clip nobody is reading: stop early.
+                return !(guard.clip.expired() && Arc::strong_count(&guard.clip) == 1);
+            }
+            Some(Err(message)) => {
+                guard.finished = true;
+                guard.clip.finish(Some(message));
+            }
+            None => {
+                guard.finished = true;
+                guard.clip.finish(None);
+            }
+        }
+        true
+    })
+}
+
 impl Tts {
     /// Opens the store and loads the chosen model. Never fails: problems show as the
     /// engine's state.
@@ -401,21 +443,7 @@ impl Tts {
         let wanted = req.voice.unwrap_or_else(|| self.chosen_voice());
         let voice = self.engine.voices().contains(&wanted).then_some(wanted);
         let (id, clip) = self.clips.create();
-        let sink_clip = Arc::clone(&clip);
-        let sink: engine::Sink = Box::new(move |item| {
-            match item {
-                Some(Ok(samples)) => {
-                    let mut pcm = Vec::new();
-                    speech::to_pcm16(&samples, &mut pcm);
-                    sink_clip.push(&pcm);
-                    // Nobody can fetch an expired clip nobody is reading: stop early.
-                    return !(sink_clip.expired() && Arc::strong_count(&sink_clip) == 1);
-                }
-                Some(Err(message)) => sink_clip.finish(Some(message)),
-                None => sink_clip.finish(None),
-            }
-            true
-        });
+        let sink = clip_sink(Arc::clone(&clip));
         if let Err(e) = self.engine.speak(text.to_owned(), voice, sink) {
             self.clips.remove(&id);
             return Err(e);
@@ -427,5 +455,41 @@ impl Tts {
     /// A clip that can still be fetched.
     pub fn clip(&self, id: &str) -> Option<Arc<speech::Clip>> {
         self.clips.get(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use axum::body::to_bytes;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_dropped_request_ends_its_clip() {
+        let clips = speech::Clips::default();
+        let (_id, clip) = clips.create();
+        let sink = clip_sink(Arc::clone(&clip));
+        // The engine thread died with the request still queued.
+        drop(sink);
+        let body = Arc::clone(&clip).body(24_000);
+        let read = tokio::time::timeout(Duration::from_secs(2), to_bytes(body, usize::MAX))
+            .await
+            .expect("the clip body hung");
+        assert!(read.is_err(), "the body ends with a failure, not as a clean clip");
+    }
+
+    #[tokio::test]
+    async fn a_finished_clip_is_not_failed_by_its_sink_dropping() {
+        let clips = speech::Clips::default();
+        let (_id, clip) = clips.create();
+        let mut sink = clip_sink(Arc::clone(&clip));
+        assert!(sink(Some(Ok(vec![0.0; 10]))));
+        assert!(sink(None));
+        drop(sink);
+        let body = Arc::clone(&clip).body(24_000);
+        let bytes = to_bytes(body, usize::MAX).await.unwrap();
+        assert_eq!(bytes.len(), 44 + 20);
     }
 }
