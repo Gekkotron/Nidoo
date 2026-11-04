@@ -37,6 +37,7 @@ the same values as `NIDOO_SOUND_MQTT__*`.
 | `mqtt.user` | `NIDOO_SOUND_MQTT__USER` | the hub's, else none | |
 | `mqtt.password` | `NIDOO_SOUND_MQTT__PASSWORD` | the hub's, else none | |
 | `mqtt.client_id` | `NIDOO_SOUND_MQTT__CLIENT_ID` | `nidoo-sound` | |
+| `hub_url` | `NIDOO_SOUND_HUB_URL` | the hub's `http.bind` from `hub.json`, else `http://127.0.0.1:8081` | where spoken sentences are fetched (`/api/v1/assist/speech/<id>.wav`) |
 
 `sound/identity.key` is the server's Sendspin identity (a Curve25519 key):
 keep it with your backups.
@@ -54,6 +55,12 @@ Per satellite (`<sid>` = first 12 hex characters of SHA-256 of its Sendspin
 | Connected (binary sensor, diagnostic) | `…/binary_sensor/nidoo_sound_<sid>/connected/config` | `nidoo-sound/<sid>/connected` | |
 
 Availability: `nidoo-sound/status` (`online`, last will `offline`).
+
+Speech: the hub publishes `nidoo-sound/speak` (not retained) as
+`{"id", "url", "players": ["<sid>", …]}`. The service fetches `hub_url + url`
+(a WAV, at most 60 s), and plays it on those players over the music, which is
+turned down by 15 dB with a 150 ms fade while the sentence plays. One sentence
+at a time; up to four wait, a fifth is dropped with a warning.
 
 ## Protocol and known deviations
 

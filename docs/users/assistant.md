@@ -51,7 +51,7 @@ With the history database, turns are kept 90 days. Without it, the hub keeps the
 
 ## Voice
 
-The hub can turn text into speech, in each language you set up, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Speech settings** (« Réglages de la voix » in French). The Assistant page reads each new reply aloud once the hub speaks **French** with a model (replies are written in French): the speaker switch in its header turns that off, remembered per browser, and **▶** on a reply reads it again. Who speaks where is decided once satellites (microphone and speaker boards) exist.
+The hub can turn text into speech, in each language you set up, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Speech settings** (« Réglages de la voix » in French). The Assistant page reads each new reply aloud once the hub speaks **French** with a model (replies are written in French): the speaker switch in its header turns that off, remembered per browser, and **▶** on a reply reads it again. The [sound satellites](sound.md#speak-in-a-room) say sentences with it too: from Settings → Sound, a flow's Speak card or the MCP tool `speak`.
 
 The engine is [Phonon](https://huggingface.co/gradium) by Gradium. The hub never ships the model files: you download them yourself, under their licence.
 

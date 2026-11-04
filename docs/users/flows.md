@@ -48,6 +48,7 @@ The parameters of each node are in [Flow nodes](../reference/flow-nodes.md).
 - **Actions** do something:
   - `command` sends a command to an entity.
   - `notify` sends a phone push notification.
+  - `speak` says a sentence out loud on the speaker satellites of one room, or of every room (see [Sound satellites](sound.md#speak-in-a-room)).
   - `flow.enable` enables or disables a flow, its own by default.
 - **Waits** pause the run:
   - `delay` waits for `for`, for example `90s`, `5m` or `1h30m`. With an optional `up_to` it waits a random time between the two.

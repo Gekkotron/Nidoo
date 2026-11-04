@@ -316,10 +316,10 @@ mod tests {
                 SoundConfig::load(None).unwrap().hub_base_url(),
                 "http://127.0.0.1:9090"
             );
-            jail.create_file("data/hub.json", r#"{"http":{"bind":"10.0.0.5:8081"}}"#)?;
+            jail.create_file("data/hub.json", r#"{"http":{"bind":"192.0.2.5:8081"}}"#)?;
             assert_eq!(
                 SoundConfig::load(None).unwrap().hub_base_url(),
-                "http://10.0.0.5:8081"
+                "http://192.0.2.5:8081"
             );
             Ok(())
         });
