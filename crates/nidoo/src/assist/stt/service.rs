@@ -38,12 +38,66 @@ pub async fn run_voice(hub: Arc<Hub>, stt: Arc<Stt>) -> anyhow::Result<()> {
     run_voice_on(hub, stt, socket, BOARD_PORT).await
 }
 
+/// Asks the assistant for `sid`'s phrase and speaks the reply on that satellite: the clip
+/// being spoken (none when nothing is said) and whether the reply is a question.
+pub type AskFn = Arc<
+    dyn Fn(
+            Arc<Hub>,
+            String,
+            String,
+        ) -> futures_util::future::BoxFuture<'static, (Option<String>, bool)>
+        + Send
+        + Sync,
+>;
+
+/// A real turn (`satellite:<sid>`, not simulated), its reply said on that satellite.
+pub fn default_ask() -> AskFn {
+    Arc::new(|hub: Arc<Hub>, sid: String, text: String| {
+        Box::pin(async move {
+            let request = AssistRequest {
+                client: format!("satellite:{sid}"),
+                text: Some(text),
+                reply: None,
+                simulate: false,
+            };
+            match hub.assist(request).await {
+                Ok(turn) => {
+                    let target = SpeakTarget::Satellite(sid.clone());
+                    let clip = match hub.speak_clip(target, &turn.reply, None, None).await {
+                        Ok((clip, _)) => Some(clip),
+                        Err(e) => {
+                            tracing::info!(%sid, "the reply is not spoken: {e}");
+                            None
+                        }
+                    };
+                    (clip, turn.question.is_some())
+                }
+                Err(e) => {
+                    tracing::warn!(%sid, "voice turn refused: {e}");
+                    (None, false)
+                }
+            }
+        })
+    })
+}
+
 /// [`run_voice`] on a bound socket, with the boards on `board_port` (tests).
 pub async fn run_voice_on(
     hub: Arc<Hub>,
     stt: Arc<Stt>,
     socket: UdpSocket,
     board_port: u16,
+) -> anyhow::Result<()> {
+    run_voice_with(hub, stt, socket, board_port, default_ask()).await
+}
+
+/// [`run_voice_on`] with another way to ask and answer (tests).
+pub async fn run_voice_with(
+    hub: Arc<Hub>,
+    stt: Arc<Stt>,
+    socket: UdpSocket,
+    board_port: u16,
+    ask: AskFn,
 ) -> anyhow::Result<()> {
     let socket = Arc::new(socket);
     let (events, mut results) = mpsc::channel(64);
@@ -59,6 +113,7 @@ pub async fn run_voice_on(
         started: Instant::now(),
         events,
         refused: 0,
+        ask,
     };
     let mut hello = tokio::time::interval(HELLO_EVERY);
     let mut tick = tokio::time::interval(TICK);
@@ -83,6 +138,17 @@ pub async fn run_voice_on(
             },
         }
     }
+}
+
+/// What becomes of a wake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// Not a satellite the hub greets, or a stale or replayed wake: no answer at all.
+    Unknown,
+    /// Signed and fresh, but the hub does not take it: the board is told to close.
+    Refused,
+    /// Fed to the satellite's session.
+    Admitted,
 }
 
 /// What a background job found.
@@ -121,6 +187,7 @@ struct Voice {
     events: mpsc::Sender<Event>,
     /// Datagrams refused so far (logged now and then).
     refused: u64,
+    ask: AskFn,
 }
 
 fn unix_us() -> u64 {
@@ -212,14 +279,29 @@ impl Voice {
                 kind,
                 listen_ctr,
             } => {
-                if !self.admit_wake(&sid, nonce, session, kind, now) {
-                    return;
+                match self.admit_wake(&sid, nonce, session, kind, now) {
+                    Verdict::Unknown => return,
+                    Verdict::Refused => {}
+                    Verdict::Admitted => {
+                        let wake = Input::Wake {
+                            session,
+                            kind,
+                            listen_ctr,
+                        };
+                        self.feed(&sid, wake).await;
+                    }
                 }
-                Input::Wake {
-                    session,
-                    kind,
-                    listen_ctr,
+                // A board whose window the hub does not take closes it at once: its speaker
+                // and LED come back, and its next Listen is not lost in a useless window.
+                let listening = self
+                    .sats
+                    .get(&sid)
+                    .is_some_and(|sat| sat.session.is_listening(session));
+                if !listening {
+                    let hub_ctr = self.counter.next(unix_us());
+                    self.send(&sid, &HubMsg::Stop { hub_ctr, session }).await;
                 }
+                return;
             }
             BoardMsg::Audio {
                 session,
@@ -235,8 +317,9 @@ impl Voice {
         self.feed(&sid, input).await;
     }
 
-    /// A signed wake from a greeted satellite with a fresh nonce; for a wake word, one that
-    /// may still take part and whose room has no exchange yet. Starts a fresh exchange.
+    /// A signed wake from a greeted satellite with a fresh nonce is `Refused` or
+    /// `Admitted`; a wake word is admitted when the satellite may still take part and its
+    /// room has no exchange yet, which starts a fresh exchange.
     fn admit_wake(
         &mut self,
         sid: &str,
@@ -244,21 +327,21 @@ impl Voice {
         session: u32,
         kind: WakeKind,
         now: u64,
-    ) -> bool {
+    ) -> Verdict {
         let Some(sat) = self.sats.get_mut(sid) else {
-            return false;
+            return Verdict::Unknown;
         };
         if !sat.guard.accept_wake(nonce, session) {
-            return false;
+            return Verdict::Unknown;
         }
         if kind == WakeKind::FollowUp {
-            return true;
+            return Verdict::Admitted;
         }
         let Some(engines) = self.stt.engines() else {
-            return false;
+            return Verdict::Refused;
         };
         if !sat.session.is_idle() {
-            return false;
+            return Verdict::Refused;
         }
         let (able, room) = {
             let reg = self.hub.read();
@@ -266,12 +349,12 @@ impl Voice {
             (able, room_of(&reg, sid).unwrap_or_else(|| sid.to_owned()))
         };
         if !able || !self.rooms.admit(sid, &room) {
-            return false;
+            return Verdict::Refused;
         }
         sat.session = Session::new(session_cfg(&self.stt));
         sat.vad = engines.vads.new_vad();
         sat.stages = vec![("wake", now)];
-        true
+        Verdict::Admitted
     }
 
     async fn on_tick(&mut self) {
@@ -352,33 +435,12 @@ impl Voice {
                 });
             }
             Output::Ask(text) => {
+                let ask = Arc::clone(&self.ask);
                 let hub = Arc::clone(&self.hub);
                 let events = self.events.clone();
                 let sid = sid.to_owned();
                 tokio::spawn(async move {
-                    let request = AssistRequest {
-                        client: format!("satellite:{sid}"),
-                        text: Some(text),
-                        reply: None,
-                        simulate: false,
-                    };
-                    let (clip, question) = match hub.assist(request).await {
-                        Ok(turn) => {
-                            let target = SpeakTarget::Satellite(sid.clone());
-                            let clip = match hub.speak_clip(target, &turn.reply, None, None).await {
-                                Ok((clip, _)) => Some(clip),
-                                Err(e) => {
-                                    tracing::info!(%sid, "the reply is not spoken: {e}");
-                                    None
-                                }
-                            };
-                            (clip, turn.question.is_some())
-                        }
-                        Err(e) => {
-                            tracing::warn!(%sid, "voice turn refused: {e}");
-                            (None, false)
-                        }
-                    };
+                    let (clip, question) = ask(hub, sid.clone(), text).await;
                     let _ = events
                         .send(Event::Replied {
                             sid,
@@ -515,7 +577,20 @@ mod tests {
             "zigbee2mqtt/rooms/living/led_ceiling",
             br#"{"state":"OFF","brightness":100}"#,
         );
-        let device = format!("{SOUND_DEVICE_PREFIX}{SID}");
+        add_satellite(&hub, SID).await;
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Some(p) = rx.recv().await {
+                sink.lock().unwrap().push(p);
+            }
+        });
+        (hub, log)
+    }
+
+    /// An Allowed, connected satellite at 127.0.0.1 in the living room.
+    async fn add_satellite(hub: &Hub, sid: &str) {
+        let device = format!("{SOUND_DEVICE_PREFIX}{sid}");
         for (component, object) in [
             ("number", "volume"),
             ("switch", "mute"),
@@ -526,23 +601,23 @@ mod tests {
             let mut config = json!({
                 "name": object,
                 "unique_id": format!("{device}_{object}"),
-                "state_topic": format!("nidoo-sound/{SID}/{object}"),
+                "state_topic": format!("nidoo-sound/{sid}/{object}"),
                 "availability_topic": "nidoo-sound/status",
-                "device": { "identifiers": [device], "name": "Satellite" },
+                "device": { "identifiers": [device], "name": sid },
             });
             if matches!(component, "switch" | "binary_sensor") {
                 config["payload_on"] = json!("ON");
                 config["payload_off"] = json!("OFF");
             }
             if component != "binary_sensor" && component != "sensor" {
-                config["command_topic"] = json!(format!("nidoo-sound/{SID}/{object}/set"));
+                config["command_topic"] = json!(format!("nidoo-sound/{sid}/{object}/set"));
             }
             hub.ingest(
                 &format!("nidoo/{component}/{device}/{object}/config"),
                 config.to_string().as_bytes(),
             );
         }
-        place(&hub, &format!("{device}_volume"), "living").await;
+        place(hub, &format!("{device}_volume"), "living").await;
         hub.ingest("nidoo-sound/status", b"online");
         for (object, value) in [
             ("volume", "40"),
@@ -551,16 +626,8 @@ mod tests {
             ("connected", "ON"),
             ("address", "127.0.0.1"),
         ] {
-            hub.ingest(&format!("nidoo-sound/{SID}/{object}"), value.as_bytes());
+            hub.ingest(&format!("nidoo-sound/{sid}/{object}"), value.as_bytes());
         }
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let sink = Arc::clone(&log);
-        tokio::spawn(async move {
-            while let Some(p) = rx.recv().await {
-                sink.lock().unwrap().push(p);
-            }
-        });
-        (hub, log)
     }
 
     /// Speech input with the model "installed" and engines that always hear `heard`.
@@ -605,24 +672,70 @@ mod tests {
         }
 
         async fn send(&self, to: SocketAddrV4, msg: BoardMsg, key: &Key) {
+            self.send_as(SID, to, msg, key).await;
+        }
+
+        async fn send_as(&self, sid: &str, to: SocketAddrV4, msg: BoardMsg, key: &Key) {
             self.socket
-                .send_to(&encode_board(key, SID, &msg), to)
+                .send_to(&encode_board(key, sid, &msg), to)
                 .await
                 .unwrap();
+        }
+
+        /// The next hub message and the satellite it is for.
+        async fn recv_for(&self) -> Option<(String, HubMsg)> {
+            let mut buf = [0u8; 2048];
+            let (n, _) = tokio::time::timeout(WAIT, self.socket.recv_from(&mut buf))
+                .await
+                .ok()?
+                .ok()?;
+            decode_hub(&self.key, &buf[..n]).ok()
+        }
+
+        /// A phrase (0.8 s of speech, 0.6 s of silence) in window `session` of `sid`.
+        async fn phrase(&self, sid: &str, to: SocketAddrV4, session: u32) {
+            for seq in 1..=35u32 {
+                let level = if seq <= 20 { 4_000 } else { 0 };
+                let audio = BoardMsg::Audio {
+                    session,
+                    seq,
+                    samples: vec![level; 640],
+                };
+                self.send_as(sid, to, audio, &self.key.clone()).await;
+            }
         }
     }
 
     async fn start(
         with_key: bool,
     ) -> (Arc<Hub>, Arc<Mutex<Vec<Publish>>>, Board, tempfile::TempDir) {
+        start_with(with_key, None, None).await
+    }
+
+    /// With a second satellite in the same room, and a stand-in for the assistant.
+    async fn start_with(
+        with_key: bool,
+        second: Option<&str>,
+        ask: Option<AskFn>,
+    ) -> (Arc<Hub>, Arc<Mutex<Vec<Publish>>>, Board, tempfile::TempDir) {
         let (hub, log) = house().await;
+        if let Some(sid) = second {
+            add_satellite(&hub, sid).await;
+        }
         let dir = tempfile::tempdir().unwrap();
         let stt = stt(dir.path(), with_key, "Jarvis, allume la lumière du salon.").await;
         let board = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let board_port = board.local_addr().unwrap().port();
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let key = stt.key().unwrap_or_else(|| Key::from_bytes([1; 32]));
-        tokio::spawn(run_voice_on(Arc::clone(&hub), stt, socket, board_port));
+        let ask = ask.unwrap_or_else(default_ask);
+        tokio::spawn(run_voice_with(
+            Arc::clone(&hub),
+            stt,
+            socket,
+            board_port,
+            ask,
+        ));
         (hub, log, Board { socket: board, key }, dir)
     }
 
@@ -728,5 +841,114 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(500), board.socket.recv_from(&mut buf))
                 .await;
         assert!(got.is_err(), "the board heard something");
+    }
+
+    const SID2: &str = "abcdef012345";
+
+    #[tokio::test]
+    async fn a_refused_wake_is_stopped_at_once() {
+        // Two satellites of one room hear the wake word: the second is told to close its
+        // window at once (its speaker unmutes, its LED goes off), and gets no exchange.
+        let (hub, log, board, _dir) = start_with(true, Some(SID2), None).await;
+        let mut hellos = HashMap::new();
+        while hellos.len() < 2 {
+            if let Some((sid, HubMsg::Hello { nonce, hub: to, .. })) = board.recv_for().await {
+                hellos.insert(sid, (nonce, to));
+            }
+        }
+        let key = board.key.clone();
+        let wake = |nonce| BoardMsg::Wake {
+            nonce,
+            session: 1,
+            kind: WakeKind::WakeWord,
+            listen_ctr: 0,
+        };
+        let (nonce_a, to) = hellos[SID];
+        board.send_as(SID, to, wake(nonce_a), &key).await;
+        wait_for("the first hold", || !holds(&log).is_empty()).await;
+        let (nonce_b, to) = hellos[SID2];
+        board.send_as(SID2, to, wake(nonce_b), &key).await;
+        let started = Instant::now();
+        loop {
+            assert!(
+                started.elapsed() < WAIT,
+                "the second satellite was never stopped"
+            );
+            match board.recv_for().await {
+                Some((sid, HubMsg::Stop { session: 1, .. })) if sid == SID2 => break,
+                Some(_) => {}
+                None => panic!("the second satellite was never stopped"),
+            }
+        }
+        assert!(started.elapsed() < Duration::from_millis(500), "at once");
+        assert!(
+            holds(&log).iter().all(|h| h["id"] == SID),
+            "no exchange for the second"
+        );
+        assert!(hub.assist_turns(10).await.turns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_question_reopens_the_window_after_it_is_spoken() {
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = Arc::clone(&asked);
+        let ask: AskFn = Arc::new(move |_hub, _sid, _text| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { (Some("clip-1".to_owned()), true) })
+        });
+        let (hub, log, board, _dir) = start_with(true, None, Some(ask)).await;
+        let Some(HubMsg::Hello { nonce, hub: to, .. }) = board.recv().await else {
+            panic!("no hello")
+        };
+        let key = board.key.clone();
+        let wake = BoardMsg::Wake {
+            nonce,
+            session: 1,
+            kind: WakeKind::WakeWord,
+            listen_ctr: 0,
+        };
+        board.send(to, wake, &key).await;
+        board.phrase(SID, to, 1).await;
+        // The reply "plays": nidoo-sound reports it (again until the hub has the reply).
+        let listen_ctr = loop {
+            hub.ingest_message(
+                crate::sound::SPOKEN_TOPIC,
+                br#"{"id":"clip-1","played":true}"#,
+                false,
+            );
+            match tokio::time::timeout(Duration::from_millis(500), board.recv_for()).await {
+                Ok(Some((_, HubMsg::Listen { hub_ctr }))) => break hub_ctr,
+                Ok(Some(_)) | Err(_) => {}
+                Ok(None) => panic!("the board was never asked to listen"),
+            }
+        };
+        let follow = BoardMsg::Wake {
+            nonce,
+            session: 2,
+            kind: WakeKind::FollowUp,
+            listen_ctr,
+        };
+        board.send(to, follow, &key).await;
+        board.phrase(SID, to, 2).await;
+        loop {
+            match board.recv_for().await {
+                Some((_, HubMsg::Stop { session: 2, .. })) => break,
+                Some(_) => {}
+                None => panic!("the follow-up was not heard"),
+            }
+        }
+        wait_for("the answer asked", || {
+            asked.load(std::sync::atomic::Ordering::SeqCst) == 2
+        })
+        .await;
+        assert_eq!(
+            holds(&log)[0]["for_ms"],
+            HOLD_MS,
+            "held through the question"
+        );
+        assert!(
+            holds(&log).iter().all(|h| h["for_ms"] != 0),
+            "not released between the question and the answer"
+        );
     }
 }

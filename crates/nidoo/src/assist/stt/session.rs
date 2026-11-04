@@ -144,6 +144,11 @@ impl Session {
         self.phase == Phase::Idle
     }
 
+    /// The window `session` of the board is open and heard.
+    pub fn is_listening(&self, session: u32) -> bool {
+        matches!(self.phase, Phase::Listening { session: open, .. } if open == session)
+    }
+
     /// The Listen asked for went out with this counter.
     pub fn listening(&mut self, listen_ctr: u64) {
         if let Phase::FollowUp {
