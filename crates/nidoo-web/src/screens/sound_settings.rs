@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use leptos::prelude::*;
 use leptos_router::components::A;
 use nidoo_api::EntityView;
-use nidoo_core::model::{Availability, Command, EntityState, StateValue};
+use nidoo_core::model::{Availability, Command, EntityState, SOUND_DEVICE_PREFIX, StateValue};
 
 use crate::cards::Sender;
 use crate::components::card_frame::sheet_path;
@@ -14,11 +14,6 @@ use crate::format::{area_name, room_name};
 use crate::house::House;
 use crate::i18n::{Lang, SoundText, sound_text, use_lang, use_sound_text};
 use crate::screens::alarm_settings::SwitchRow;
-
-/// Every device id of a satellite starts with this; the entity ids are `<device id>_volume`,
-/// `_mute`, `_allowed` and `_connected`. It is the contract of the `nidoo-sound` crate's
-/// discovery messages (`crates/nidoo-sound/src/mqtt.rs`).
-const SATELLITE_DEVICE_PREFIX: &str = "nidoo_sound_";
 
 /// One speaker satellite, gathered from its entities.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,7 +70,7 @@ pub fn satellites(entities: &BTreeMap<String, EntityView>) -> Vec<Satellite> {
         let Some(device_id) = e
             .device_id
             .as_deref()
-            .filter(|d| d.starts_with(SATELLITE_DEVICE_PREFIX))
+            .filter(|d| d.starts_with(SOUND_DEVICE_PREFIX))
         else {
             continue;
         };
