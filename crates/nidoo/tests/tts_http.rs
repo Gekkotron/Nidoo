@@ -12,6 +12,7 @@ use futures_util::stream;
 use nidoo::assist::tts::engine::NoSpeechLoader;
 use nidoo::assist::tts::store::MAX_WEIGHTS_BYTES;
 use nidoo::assist::tts::tone::ToneLoader;
+use nidoo::assist::tts::voices::{VOICE_CATALOG_REPO, VOICE_CATALOG_REV};
 use nidoo::assist::tts::{Tts, TtsConfig};
 use nidoo::config::Config;
 use nidoo::http::router;
@@ -22,6 +23,22 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 const REPO: &str = "gradium/phonon-test";
+
+const VOICES_JSONL: &str = concat!(
+    "{\"filename\":\"voices/AAA.safetensors\",\"name\":\"Noemie\",\"voice_id\":\"AAA\",\"language\":\"fr\"}\n",
+    "{\"filename\":\"voices/BBB.safetensors\",\"name\":\"Bob\",\"voice_id\":\"BBB\",\"language\":\"en\"}\n",
+);
+
+fn voice_catalog() -> FakeRepo {
+    FakeRepo::new(
+        VOICE_CATALOG_REPO,
+        VOICE_CATALOG_REV,
+        vec![
+            ("voices.jsonl", VOICES_JSONL.as_bytes()),
+            ("voices/AAA.safetensors", b"voicebytes"),
+        ],
+    )
+}
 
 fn repo() -> FakeRepo {
     FakeRepo::new(
@@ -116,7 +133,7 @@ async fn start_tts(root: std::path::PathBuf, base: &str) -> Arc<Tts> {
 }
 
 async fn rig_with(with_tts: bool, prepare: impl FnOnce(&std::path::Path)) -> Rig {
-    let (base, _log) = serve(vec![repo()]).await;
+    let (base, _log) = serve(vec![repo(), voice_catalog()]).await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tts");
     prepare(&root);
@@ -499,4 +516,74 @@ async fn an_abandoned_upload_is_replaced_by_the_next() {
         put_file(&r, &old, "config.json", b"{}".to_vec()).await,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn aborting_an_upload_removes_its_files_and_ends_the_session() {
+    let r = rig().await;
+    let (_, v) = open_upload(&r).await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        put_file(&r, &id, "tokenizer.json", b"{}".to_vec()).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(staging_dirs(&r), 1);
+    let resp = r
+        .client
+        .delete(r.url(&format!("/uploads/{id}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(staging_dirs(&r), 0, "the staging folder is gone");
+    let (s, _) = r
+        .send(
+            reqwest::Method::POST,
+            &format!("/uploads/{id}/finish"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_catalog_voice_can_be_chosen_end_to_end() {
+    let r = rig().await;
+    let id = r.install().await;
+    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
+        .await;
+    r.status_until("ready").await;
+    let (_, before) = r.get("/voices").await;
+    let noemie = before["voices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "Noemie")
+        .expect("the French catalog voice is offered");
+    assert_eq!(noemie["on_disk"], false);
+    assert!(
+        before["voices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| v["name"] != "Bob"),
+        "a voice in another language is not offered"
+    );
+    let (s, v) = r
+        .send(reqwest::Method::PUT, "/voice", json!({"voice": "Noemie"}))
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, voices) = r.get("/voices").await;
+    assert_eq!(voices["chosen"], "Noemie");
+    assert_eq!(voices["fell_back"], false);
+    let chosen = voices["voices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["name"] == "Noemie")
+        .unwrap();
+    assert_eq!(chosen["on_disk"], true);
+    let (_, status) = r.get("/status").await;
+    assert_eq!(status["voice"], "Noemie");
+    assert!(r.root().join("voices/AAA.safetensors").is_file());
 }
