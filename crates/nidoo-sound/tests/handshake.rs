@@ -1,5 +1,7 @@
 //! End to end: `run_player` against a fake Sendspin player on localhost that
-//! does the real handshake (KKpsk2 responder, Sentinel PSK) like sendspin-cpp.
+//! does the real handshake (KKpsk2 responder, Sentinel PSK) like sendspin-cpp,
+//! and the same fake player connecting to `accept_players` (client-initiated,
+//! like sendspin-js).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,6 +10,8 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures_util::{SinkExt, StreamExt};
 use nidoo_sound::clock::{Clock, FakeClock};
+use nidoo_sound::group::FromPlayer;
+use nidoo_sound::listen::accept_players;
 use nidoo_sound::player::{PlayerCmd, PlayerEvent, run_player};
 use nidoo_sound::proto::messages::PCM_48K_STEREO_16;
 use nidoo_sound::proto::noise::{SENTINEL_PSK, ServerIdentity, psk_id};
@@ -115,7 +119,7 @@ async fn accept_player(listener: TcpListener) -> FakePlayer {
     let (tcp, _) = listener.accept().await.unwrap();
     let mut origin_seen = false;
     let mut path_ok = false;
-    let mut ws = tokio_tungstenite::accept_hdr_async(tcp, |req: &Request, resp: Response| {
+    let ws = tokio_tungstenite::accept_hdr_async(tcp, |req: &Request, resp: Response| {
         origin_seen = req.headers().contains_key("origin");
         path_ok = req.uri().path() == "/sendspin";
         Ok(resp)
@@ -123,7 +127,12 @@ async fn accept_player(listener: TcpListener) -> FakePlayer {
     .await
     .unwrap();
     assert!(path_ok, "server must connect to the advertised path");
+    player_handshake(ws, origin_seen).await
+}
 
+/// The player side of the handshake on an open WebSocket, whichever side
+/// opened it, up to receiving `server/hello`.
+async fn player_handshake(mut ws: WebSocketStream<TcpStream>, origin_seen: bool) -> FakePlayer {
     let params: snow::params::NoiseParams = "Noise_KKpsk2_25519_ChaChaPoly_SHA256".parse().unwrap();
     let keys = snow::Builder::new(params.clone())
         .generate_keypair()
@@ -485,4 +494,128 @@ async fn close_command_ends_the_connection() {
         end,
         None | Some(Ok(Message::Close(_))) | Some(Err(_))
     ));
+}
+
+/// `accept_players` on a fresh port; the test owns the group's end.
+struct Listening {
+    addr: std::net::SocketAddr,
+    to_group: mpsc::Receiver<FromPlayer>,
+    _dir: tempfile::TempDir,
+}
+
+async fn listen() -> Listening {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let identity =
+        Arc::new(ServerIdentity::load_or_create(&dir.path().join("identity.key")).unwrap());
+    let clock: Arc<dyn Clock> = Arc::new(FakeClock::default());
+    let (tx, to_group) = mpsc::channel(64);
+    tokio::spawn(accept_players(listener, identity, clock, tx));
+    Listening {
+        addr,
+        to_group,
+        _dir: dir,
+    }
+}
+
+impl Listening {
+    async fn open(&self, path: &str) -> anyhow::Result<WebSocketStream<TcpStream>> {
+        let tcp = TcpStream::connect(self.addr).await?;
+        let url = format!("ws://{}{path}", self.addr);
+        let (ws, _) = tokio_tungstenite::client_async(url, tcp).await?;
+        Ok(ws)
+    }
+
+    async fn next(&mut self) -> FromPlayer {
+        tokio::time::timeout(WAIT, self.to_group.recv())
+            .await
+            .expect("timed out waiting for the group message")
+            .expect("listener ended")
+    }
+
+    async fn expect_quiet(&mut self) {
+        if let Ok(m) = tokio::time::timeout(QUIET, self.to_group.recv()).await {
+            panic!("expected nothing for the group, got {m:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_initiated_player_joins_after_its_hello() {
+    let mut l = listen().await;
+    let ws = l.open("/sendspin").await.unwrap();
+    let mut p = player_handshake(ws, false).await;
+    // Nothing reaches the group before client/hello.
+    l.expect_quiet().await;
+    p.send_json(FakePlayer::hello(400_000)).await;
+    let FromPlayer::Accepted { instance, cmds } = l.next().await else {
+        panic!("expected Accepted first")
+    };
+    match l.next().await {
+        FromPlayer::Event {
+            instance: i,
+            event: PlayerEvent::Connected(info),
+        } => {
+            assert_eq!(i, instance);
+            assert_eq!(info.client_id, p.client_id);
+        }
+        other => panic!("expected Connected, got {other:?}"),
+    }
+    cmds.send(PlayerCmd::Activate { playback: true })
+        .await
+        .unwrap();
+    assert_eq!(p.recv_json().await["type"], "server/activate");
+
+    p.send_json(json!({"type":"client/goodbye","payload":{"reason":"user_request"}}))
+        .await;
+    assert!(matches!(
+        l.next().await,
+        FromPlayer::Event {
+            event: PlayerEvent::Gone { .. },
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn two_client_initiated_players_get_distinct_instances() {
+    let mut l = listen().await;
+    let mut a = player_handshake(l.open("/sendspin").await.unwrap(), false).await;
+    let mut b = player_handshake(l.open("/sendspin").await.unwrap(), false).await;
+    a.send_json(FakePlayer::hello(400_000)).await;
+    // Kept: dropping a player's command sender ends its connection.
+    let FromPlayer::Accepted {
+        instance: ia,
+        cmds: _a_cmds,
+    } = l.next().await
+    else {
+        panic!("expected Accepted")
+    };
+    l.next().await;
+    b.send_json(FakePlayer::hello(400_000)).await;
+    let FromPlayer::Accepted { instance: ib, .. } = l.next().await else {
+        panic!("expected Accepted")
+    };
+    assert_ne!(ia, ib);
+}
+
+#[tokio::test]
+async fn other_paths_are_refused() {
+    let l = listen().await;
+    assert!(l.open("/other").await.is_err());
+}
+
+#[tokio::test]
+async fn failed_handshake_never_reaches_the_group() {
+    let mut l = listen().await;
+    let mut ws = l.open("/sendspin").await.unwrap();
+    ws.send(Message::Text("not json".into())).await.unwrap();
+    // The server answers server/error and closes.
+    while let Some(Ok(_)) = tokio::time::timeout(WAIT, ws.next()).await.unwrap() {}
+    l.expect_quiet().await;
+    // The listener keeps serving.
+    let mut p = player_handshake(l.open("/sendspin").await.unwrap(), false).await;
+    p.send_json(FakePlayer::hello(400_000)).await;
+    assert!(matches!(l.next().await, FromPlayer::Accepted { .. }));
 }

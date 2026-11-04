@@ -6,6 +6,10 @@
 # TCP port of the music input: raw PCM, s16le, 48 kHz, stereo (Oikos Cast).
 input_port = 4953
 
+# TCP port where players that connect themselves (e.g. a web player) open
+# ws://<host>:<port>/sendspin. 0 turns this endpoint off.
+listen_port = 8927
+
 # Holds sound/identity.key (the server's Sendspin identity: keep it) and
 # sound/players.json (each satellite's volume, mute and approval).
 data_dir = "./data"

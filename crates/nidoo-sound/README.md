@@ -18,6 +18,7 @@ then environment variables (`__` nests a section). See
 | Key | Environment | Default | Meaning |
 |---|---|---|---|
 | `input_port` | `NIDOO_SOUND_INPUT_PORT` | `4953` | TCP port of the PCM input (s16le, 48 kHz, stereo) |
+| `listen_port` | `NIDOO_SOUND_LISTEN_PORT` | `8927` | players that connect themselves open `ws://<host>:<port>/sendspin`; `0` turns it off |
 | `data_dir` | `NIDOO_SOUND_DATA_DIR` | `./data` | holds `sound/identity.key` and `sound/players.json` |
 | `lead_ms` | `NIDOO_SOUND_LEAD_MS` | `500` | how far ahead audio is timestamped; raised to cover the players' `min_buffer_ms + output_delay_ms` |
 | `idle_stop_ms` | `NIDOO_SOUND_IDLE_STOP_MS` | `5000` | silence on a connected input that stops playback |
@@ -57,8 +58,11 @@ Deliberate subset of the spec, which asks more of a full server:
 
 - **PCM only** (48 kHz, stereo, 16 bit); the spec says servers must also
   produce FLAC.
-- **Server-initiated connections only** (`_sendspin._tcp`); no
-  `_sendspin-server._tcp` listener.
+- **Both connection directions, one advertised**: the server connects to
+  players advertising `_sendspin._tcp` and accepts players on port 8927, path
+  `/sendspin`, but does not advertise `_sendspin-server._tcp` itself (a
+  player that both advertises and dials advertised servers would get two
+  connections); a client-initiated player is given the URL.
 - **No pairing**: unpaired access with the Sentinel PSK only, so no
   protection against a man in the middle on the LAN.
 - No controller, metadata, artwork or visualizer roles; no `group/update`.
