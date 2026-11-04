@@ -3,7 +3,7 @@
 # with an environment variable: NIDOO_SOUND_<KEY>, `__` for nesting, e.g.
 # NIDOO_SOUND_INPUT_PORT=4953, NIDOO_SOUND_MQTT__HOST=localhost.
 
-# TCP port of the music input: raw PCM, s16le, 48 kHz, stereo (Oikos Cast).
+# TCP port of the music input: raw PCM, s16le, 48 kHz, stereo (the phone's casting app).
 input_port = 4953
 
 # TCP port where players that connect themselves (e.g. a web player) open
