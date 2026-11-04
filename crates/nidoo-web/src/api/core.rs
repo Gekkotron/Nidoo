@@ -79,6 +79,18 @@ pub(crate) async fn check_unless_503(
     }
 }
 
+/// Like [`check`], but a 404 is `Ok(None)`: the hub has nothing of that kind.
+pub(crate) async fn check_unless_404(
+    request: Result<Request, gloo_net::Error>,
+) -> Result<Option<Response>, ApiError> {
+    let response = send(request).await?;
+    match response.status() {
+        404 => Ok(None),
+        status if status >= 400 => Err(reject(response).await),
+        _ => Ok(Some(response)),
+    }
+}
+
 pub(crate) async fn read_json<T: DeserializeOwned>(response: Response) -> Result<T, ApiError> {
     response
         .json::<T>()

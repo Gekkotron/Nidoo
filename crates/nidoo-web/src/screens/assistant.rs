@@ -9,7 +9,10 @@ use nidoo_assist::view::{AssistRequest, AssistTurn, PendingReply, Question, Ques
 
 use crate::api::assist::{get_turns, mark_wrong, post_assist};
 use crate::components::toast::Toasts;
-use crate::i18n::{AssistantText, Lang, assistant_text, use_lang};
+use crate::i18n::{
+    AssistSettingsText, AssistantText, Lang, assist_settings_text, assistant_text, use_lang,
+};
+use crate::icons::GEAR;
 
 /// The id this browser gives the hub, so its pending question is its own.
 const CLIENT_KEY: &str = "nidoo.assist.client";
@@ -397,6 +400,13 @@ pub fn AssistantScreen() -> impl IntoView {
             <section class="assist__talk">
                 <div class="assist__head">
                     <p class="assist__hint">{move || t(AssistantText::Hint)}</p>
+                    <a
+                        class="assist__settings"
+                        href="/assistant/settings"
+                        aria-label=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
+                        title=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
+                        inner_html=GEAR
+                    ></a>
                     <button
                         type="button"
                         class="assist__clear"
