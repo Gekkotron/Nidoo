@@ -10,4 +10,5 @@ pub mod input;
 pub mod pacer;
 pub mod player;
 pub mod proto;
+pub mod state;
 pub mod tone;
