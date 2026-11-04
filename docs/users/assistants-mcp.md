@@ -48,6 +48,7 @@ You can ask in plain words, for example:
 - "Which lights are on in the living room?"
 - "Turn off every light on the ground floor."
 - "Send my phone a notification saying the laundry is done."
+- "Say dinner is ready in the kitchen." (the `speak` tool, on the [sound satellites](sound.md#speak-in-a-room))
 - "Make a flow that turns the hall light on when the hall motion sensor sees movement, and off five minutes after the last movement."
 - "Show me the energy the house used today."
 - "Hold the bedroom at 19 degrees for the next two hours."

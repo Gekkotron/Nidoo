@@ -1,7 +1,7 @@
 ---
 title: Sound satellites
 sidebar_position: 20
-description: Play music from your phone in every room, in sync, on small ESP32-S3 satellites, with each room's volume and mute in Nidoo.
+description: Play music from your phone in every room, in sync, on small ESP32-S3 satellites, with each room's volume and mute in Nidoo, and have the house say sentences in a room.
 ---
 
 Sound satellites are small ESP32-S3 boards, one per room, running stock
@@ -71,19 +71,24 @@ neither `docker compose up -d --build hub` nor a whole-stack
 Update it yourself with the same command when you update ESPHome on the
 satellites: the two go together.
 
-It reads the broker from `NIDOO_SOUND_MQTT__HOST`, `NIDOO_SOUND_MQTT__USER`
-and `NIDOO_SOUND_MQTT__PASSWORD` in `.env` (default `localhost:1883`, no
-login). Use the same login as the hub; with the bundled broker it is
-`mqtt_user` and `mqtt_password` in `data/bundled.json`. Every setting is
-listed in `crates/nidoo-sound/README.md`.
-
-Set the login even if the service seems to work without it. A broker with
-access rules accepts a connection with no login and then drops its messages
-without an error: the service finds the satellites, but they never show up
-in Nidoo, so you cannot switch them on. The log
-says `broker_user=(none)` and warns at startup when no login is set. After
-changing `.env`, recreate the container so it reads the file again:
+With the Compose install there is nothing to set: the service reads the
+hub's broker (host, port, user and password) and the hub's web address from
+`data/hub.json`, the file the hub writes when its broker is set up, and the
+two share `data/` and the host network. The file is read at startup, so
+restart the service after changing the hub's broker:
 `docker compose up -d --force-recreate sound`.
+
+`NIDOO_SOUND_MQTT__HOST`, `NIDOO_SOUND_MQTT__USER`,
+`NIDOO_SOUND_MQTT__PASSWORD` and `NIDOO_SOUND_HUB_URL` in `.env` still
+override what `hub.json` says; set them when the hub takes its broker from
+`NIDOO_MQTT__*` variables (it then does not write them to `hub.json`) or runs
+on another machine. Every setting is listed in `crates/nidoo-sound/README.md`.
+
+A broker with access rules accepts a connection with no login and then drops
+its messages without an error: the service finds the satellites, but they
+never show up in Nidoo, so you cannot switch them on. The log names the
+broker user it uses (`broker_user=(none)` when there is none) and warns at
+startup when no login is set.
 
 If something else already listens on port 4953 (a Snapcast server from an
 older setup, for example), stop it first. With a firewall on the host, allow
@@ -105,9 +110,46 @@ the container (the satellites' settings stay in `data/sound/`).
    has the parts, the wiring and the commands.
 2. Within a few seconds it appears in **Settings → Sound** under its ESPHome
    name, marked "Waiting for approval", with **Allowed** off.
-3. Switch **Allowed** on there. If music is playing, the satellite joins in
-   sync. The same page has each satellite's **Mute** and **Volume**.
+3. Switch **Allowed** on there, or with **Allow** on its card on Home. If
+   music is playing, the satellite joins in sync. The same page has each
+   satellite's **Mute** and **Volume**; on Home, the satellite is one card
+   with its volume, mute and test button.
 4. Put the device in its room like any other device.
+
+## Speak in a room
+
+The house can say a sentence on the satellites: a reminder in the kitchen, an
+announcement in every room. The sentence is made by the hub's speech (set it
+up under **Speech settings**, from the gear on the Assistant page, see
+[Assistant](assistant.md#voice)); without it the satellites cannot speak.
+
+- **The test button.** Each satellite's card on Home has a small speech
+  bubble that says "Speaker test: <name>" on that satellite only.
+- **Settings → Sound.** Type a sentence in **Say something**, pick **All
+  rooms** or a room (only rooms that hold a satellite are listed) and press
+  **Send**. The page says how many satellites it was sent to, or why it could
+  not be said.
+- **A flow.** The **Speak** action (`speak` card) says its sentence in a room
+  or every room. Its text takes the same values as a notification
+  (`{weather_temperature}`), see [Flows](flows.md#values-in-a-notification).
+- **An assistant.** The MCP tool `speak` does the same: "say dinner is ready
+  in the kitchen".
+
+Only satellites whose **Allowed** and **Connected** are both on speak. A muted
+satellite counts but stays silent, as it does for music. When no satellite of
+the room can speak, the sentence is refused with "no satellite can speak in
+this room" rather than lost.
+
+If music is playing, it is turned down while the sentence plays and comes back
+after it. Sentences sent close together play one after the other, never on top
+of each other; up to four can wait, a fifth is dropped. A satellite that drops
+off in the middle of a sentence does not stop the others.
+
+Over the network, the hub publishes the sentence's address on the broker topic
+`nidoo-sound/speak` and `nidoo-sound` fetches the audio from the hub (its
+address comes from `data/hub.json`, or `NIDOO_SOUND_HUB_URL`). The route and
+the topic are in the [HTTP API](../reference/http-api.md#sound) and
+[MQTT topics](../reference/mqtt-topics.md) references.
 
 ## Known limits
 
