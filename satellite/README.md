@@ -52,7 +52,7 @@ without installing it).
 
 ```sh
 cd satellite
-cp secrets.example.yaml secrets.yaml   # then fill in Wi-Fi and an OTA password
+cp secrets.example.yaml secrets.yaml   # then fill in Wi-Fi, an OTA password and the voice_key
 uvx esphome==2026.10.2 run satellite.yaml --device /dev/cu.usbmodem*   # macOS; /dev/ttyACM0 on Linux
 ```
 
@@ -111,3 +111,17 @@ device.
 The satellites accept the Sendspin protocol's unpaired access, so any
 Sendspin server on your network can play on them. Keep them on a trusted
 network.
+
+## Speech input
+
+Say **"Hey Jarvis"** near a satellite, then a request in French: the user LED
+lights while it listens, and the house answers on that satellite (see
+[Talk to a satellite](../docs/users/talk-to-a-satellite.md)). The wake word
+runs on the board (`micro_wake_word`); the microphone goes to the hub over
+UDP only inside that window, signed with the shared `voice_key` from the
+hub's Assistant → Speech settings → Speech input. The board listens on UDP
+4961 and streams to the hub's port (4960 by default) at the address the hub
+sends it; no hub address is written in the firmware. The LED blinking twice
+after the wake word means the hub has not greeted this board yet: check the
+key, that the satellite is Allowed, and that the hub has the model ready.
+
