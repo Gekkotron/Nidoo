@@ -31,6 +31,8 @@ base64 = "0.23.1"
 rand = "0.10.3"
 mdns-sd = "0.21.7"
 bytes = "1.12.1"
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 
 [dev-dependencies]
 hex = "0.4.3"
+tempfile = "3.27.0"
