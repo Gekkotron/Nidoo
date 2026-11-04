@@ -33,8 +33,10 @@ phone ──TCP 4953, raw PCM──▶ nidoo-sound ──WebSocket (Sendspin)─
 The input is raw PCM: 16-bit little-endian, 48 kHz, stereo, sent to TCP port
 **4953** (the Oikos Cast Android app does this). One sender at a time: a new
 connection replaces the current one without a break. When the phone stops
-sending for 5 seconds, or closes the connection, the satellites go quiet;
-shorter gaps are filled with silence.
+sending for 5 seconds, or closes the connection, the satellites go quiet.
+The phone's audio arrives over Wi-Fi in bursts, so `nidoo-sound` gathers a
+quarter of a second of it before playing (`input_buffer_ms`): stalls up to
+that long play through without a click, longer ones are filled with silence.
 
 ## Ports
 

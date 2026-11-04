@@ -21,6 +21,7 @@ then environment variables (`__` nests a section). See
 | `listen_port` | `NIDOO_SOUND_LISTEN_PORT` | `8927` | players that connect themselves open `ws://<host>:<port>/sendspin`; `0` turns it off |
 | `data_dir` | `NIDOO_SOUND_DATA_DIR` | `./data` | holds `sound/identity.key` and `sound/players.json` |
 | `lead_ms` | `NIDOO_SOUND_LEAD_MS` | `500` | how far ahead audio is timestamped; raised to cover the players' `min_buffer_ms + output_delay_ms` |
+| `input_buffer_ms` | `NIDOO_SOUND_INPUT_BUFFER_MS` | `250` | phone audio gathered before playback starts, so Wi-Fi stalls up to about this long play through without gaps; adds this much delay |
 | `idle_stop_ms` | `NIDOO_SOUND_IDLE_STOP_MS` | `5000` | silence on a connected input that stops playback |
 | `discovery_prefix` | `NIDOO_SOUND_DISCOVERY_PREFIX` | `homeassistant` | MQTT discovery prefix |
 | `mqtt.host` | `NIDOO_SOUND_MQTT__HOST` | `localhost` | broker |

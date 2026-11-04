@@ -18,6 +18,11 @@ data_dir = "./data"
 # to cover what the satellites ask for (min_buffer_ms + output_delay_ms).
 lead_ms = 500
 
+# Phone audio gathered before playback starts (ms). The phone sends over
+# Wi-Fi in bursts; stalls up to about this long then play through without
+# clicks. Adds this much delay between the phone and the speakers.
+input_buffer_ms = 250
+
 # Connected but silent this long (ms) = the phone stopped: the satellites go idle.
 idle_stop_ms = 5000
 

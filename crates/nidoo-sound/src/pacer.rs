@@ -1,12 +1,14 @@
 //! Turns the phone's PCM byte stream into timestamped 20 ms chunks on the
 //! server's clock.
 //!
-//! The timeline starts `lead` ahead of the clock and steps 20 ms per chunk;
-//! a chunk is due `lead` before its timestamp. A chunk with no PCM buffered is
-//! filled with silence, so players never underrun on a Wi-Fi hiccup. When
-//! more than [`MAX_QUEUED_CHUNKS`] chunks of PCM pile up (the phone's clock
-//! running fast, or a burst after a gap), one frame is dropped per chunk until
-//! the queue is back under the limit.
+//! The phone's PCM arrives in Wi-Fi bursts (every ~50 ms, sometimes after a
+//! 150 ms stall), so the timeline starts an *input buffer* late: that much PCM
+//! piles up first and later stalls are ridden out. Then it steps 20 ms per
+//! chunk; a chunk is due `lead` before its timestamp. A chunk with no PCM
+//! buffered (a stall longer than the buffer) is filled with silence, so
+//! players never underrun. When more than twice the input buffer (at least
+//! [`MAX_QUEUED_CHUNKS`] chunks) piles up (the phone's clock running fast),
+//! one frame is dropped per chunk until the queue is back under the limit.
 
 use bytes::{Buf, Bytes, BytesMut};
 
@@ -29,6 +31,7 @@ pub struct Chunk {
 #[derive(Debug)]
 pub struct Pacer {
     lead_us: i64,
+    buffer_us: i64,
     /// Timestamp of the next chunk; `None` while stopped.
     next_ts: Option<i64>,
     queue: BytesMut,
@@ -40,15 +43,29 @@ impl Pacer {
     pub fn new(lead_us: i64) -> Self {
         Self {
             lead_us,
+            buffer_us: 0,
             next_ts: None,
             queue: BytesMut::new(),
             partial: Vec::new(),
         }
     }
 
-    /// Starts a new timeline: the first chunk plays at `now + lead`.
+    /// PCM to gather before the first chunk, in microseconds.
+    pub fn with_input_buffer(mut self, buffer_us: i64) -> Self {
+        self.buffer_us = buffer_us.max(0);
+        self
+    }
+
+    /// Starts a new timeline: the first chunk is due after the input buffer
+    /// and plays at `now + buffer + lead`.
     pub fn start(&mut self, now_us: i64) {
-        self.next_ts = Some(now_us + self.lead_us);
+        self.next_ts = Some(now_us + self.buffer_us + self.lead_us);
+    }
+
+    /// Queued PCM beyond which frames are dropped.
+    fn max_queued_bytes(&self) -> usize {
+        let buffer_chunks = (2 * self.buffer_us / CHUNK_US) as usize;
+        buffer_chunks.max(MAX_QUEUED_CHUNKS) * CHUNK_BYTES
     }
 
     pub fn stop(&mut self) {
@@ -84,7 +101,7 @@ impl Pacer {
             if ts - self.lead_us > now_us {
                 break;
             }
-            if self.queue.len() > MAX_QUEUED_CHUNKS * CHUNK_BYTES {
+            if self.queue.len() > self.max_queued_bytes() {
                 self.queue.advance(FRAME_BYTES);
             }
             let take = self.queue.len().min(CHUNK_BYTES);
@@ -204,5 +221,66 @@ mod tests {
         assert_eq!(p.queued_bytes(), 0);
         p.start(2_000_000);
         assert_eq!(p.due_chunks(2_000_000)[0].timestamp_us, 2_500_000);
+    }
+
+    /// Frame `i` carries `i + 1`: a zero is inserted silence, a jump a drop.
+    fn numbered(from: u32, frames: u32) -> Vec<u8> {
+        (from..from + frames)
+            .flat_map(|i| (i + 1).to_le_bytes())
+            .collect()
+    }
+
+    /// What the phone does over Wi-Fi: 50 ms bursts, one 170 ms stall, then
+    /// the late audio all at once. Polled every 5 ms for 3 s.
+    fn play_phone_pattern(p: &mut Pacer) -> Vec<u32> {
+        p.start(0);
+        let mut sent = 0u32;
+        let mut out = Vec::new();
+        for t in (0..3_000_000i64).step_by(5_000) {
+            let stalled = (1_000_000..1_170_000).contains(&t);
+            if t % 50_000 == 0 && !stalled || t == 1_170_000 {
+                let due = (t as u32 / 1_000 + 50) * 48; // frames produced so far
+                p.push(&numbered(sent, due - sent));
+                sent = due;
+            }
+            for c in p.due_chunks(t) {
+                out.extend(
+                    c.data
+                        .chunks(4)
+                        .map(|f| u32::from_le_bytes(f.try_into().unwrap())),
+                );
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn input_buffer_delays_the_first_chunk() {
+        let mut p = Pacer::new(500_000).with_input_buffer(240_000);
+        p.start(0);
+        p.push(&pcm(CHUNK_BYTES, 1));
+        assert!(p.due_chunks(239_000).is_empty());
+        let c = p.due_chunks(240_000);
+        assert_eq!(
+            c.iter().map(|c| c.timestamp_us).collect::<Vec<_>>(),
+            [740_000]
+        );
+    }
+
+    #[test]
+    fn input_buffer_rides_out_a_wifi_stall_without_silence_or_drops() {
+        let mut p = Pacer::new(500_000).with_input_buffer(250_000);
+        let frames = play_phone_pattern(&mut p);
+        assert!(frames.len() > 100_000);
+        let expected: Vec<u32> = (1..=frames.len() as u32).collect();
+        let first_bad = frames.iter().zip(&expected).position(|(a, b)| a != b);
+        assert_eq!(first_bad, None, "silence or a drop at frame {first_bad:?}");
+    }
+
+    #[test]
+    fn without_input_buffer_the_same_stall_inserts_silence() {
+        let mut p = Pacer::new(500_000);
+        let frames = play_phone_pattern(&mut p);
+        assert!(frames.contains(&0));
     }
 }

@@ -101,7 +101,8 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         clock.clone(),
         lead_us,
         sendspin_connector(identity.clone(), clock.clone()),
-    );
+    )
+    .with_input_buffer(i64::from(cfg.input_buffer_ms) * 1_000);
     if cfg.listen_port != 0 {
         let players = tokio::net::TcpListener::bind(("0.0.0.0", cfg.listen_port)).await?;
         tracing::info!(

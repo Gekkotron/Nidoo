@@ -192,6 +192,7 @@ pub struct Group {
     store: StateStore,
     clock: Arc<dyn Clock>,
     lead_us: i64,
+    input_buffer_us: i64,
     connect: Connector,
     instances: HashMap<String, Instance>,
     pacer: Pacer,
@@ -207,6 +208,7 @@ impl Group {
             store,
             clock,
             lead_us,
+            input_buffer_us: 0,
             connect,
             instances: HashMap::new(),
             pacer: Pacer::new(lead_us),
@@ -214,6 +216,12 @@ impl Group {
             to_group,
             from_players,
         }
+    }
+
+    /// Phone PCM to gather before each new timeline (see [`Pacer`]).
+    pub fn with_input_buffer(mut self, buffer_us: i64) -> Self {
+        self.input_buffer_us = buffer_us;
+        self
     }
 
     /// Where connections report to the group (players that connect to us
@@ -515,7 +523,7 @@ impl Group {
             InputEvent::Started => {
                 let lead = self.stream_lead();
                 tracing::info!(lead_ms = lead / 1_000, "music started");
-                self.pacer = Pacer::new(lead);
+                self.pacer = Pacer::new(lead).with_input_buffer(self.input_buffer_us);
                 self.pacer.start(self.clock.now_us());
                 self.playing = true;
                 let allowed: Vec<String> = self
@@ -708,6 +716,10 @@ mod tests {
 
     impl Harness {
         async fn start_with(prefs: &[(&str, u8, bool, bool)]) -> Harness {
+            Self::start_buffered(prefs, 0).await
+        }
+
+        async fn start_buffered(prefs: &[(&str, u8, bool, bool)], buffer_us: i64) -> Harness {
             let dir = tempfile::tempdir().unwrap();
             let mut store = StateStore::load(dir.path().join("players.json")).unwrap();
             for &(id, volume, muted, allowed) in prefs {
@@ -743,7 +755,8 @@ mod tests {
                         .unwrap();
                 })
             });
-            let group = Group::new(store, clock.clone(), LEAD, connect);
+            let group =
+                Group::new(store, clock.clone(), LEAD, connect).with_input_buffer(buffer_us);
             let to_group = group.players();
             let (discovery, d_rx) = mpsc::channel(8);
             let (input, i_rx) = mpsc::channel(64);
@@ -1136,5 +1149,20 @@ mod tests {
             .unwrap();
         assert_eq!(new.control_cmd().await, PlayerCmd::Volume(55));
         assert!(old.drain().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn input_buffer_delays_the_first_audio() {
+        let mut h = Harness::start_buffered(&[("A", 30, false, true)], 100_000).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.play().await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.clock.advance(60_000);
+        assert!(
+            a.drain().await.is_empty(),
+            "no audio before the buffer fills"
+        );
+        h.clock.advance(40_000);
+        assert_eq!(a.audio().await, 100_000 + LEAD);
     }
 }
