@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 
 use crate::clock::Clock;
 use crate::group::FromPlayer;
-use crate::player::{PlayerEvent, serve_player};
+use crate::player::{Liveness, PlayerEvent, serve_player};
 use crate::proto::noise::ServerIdentity;
 
 /// The WebSocket path players connect to (the spec's recommended one).
@@ -34,6 +34,7 @@ pub async fn accept_players(
     identity: Arc<ServerIdentity>,
     clock: Arc<dyn Clock>,
     to_group: mpsc::Sender<FromPlayer>,
+    liveness: Liveness,
 ) {
     let mut count = 0u64;
     loop {
@@ -49,7 +50,7 @@ pub async fn accept_players(
         let instance = format!("inbound-{count}");
         let (identity, clock, to_group) = (identity.clone(), clock.clone(), to_group.clone());
         tokio::spawn(async move {
-            if let Err(e) = serve_one(tcp, &instance, identity, clock, to_group).await {
+            if let Err(e) = serve_one(tcp, &instance, identity, clock, to_group, liveness).await {
                 tracing::info!(%instance, %peer, error = %format!("{e:#}"), "player connection ended");
             }
         });
@@ -62,6 +63,7 @@ async fn serve_one(
     identity: Arc<ServerIdentity>,
     clock: Arc<dyn Clock>,
     to_group: mpsc::Sender<FromPlayer>,
+    liveness: Liveness,
 ) -> anyhow::Result<()> {
     let ws = timeout(
         UPGRADE_TIMEOUT,
@@ -98,7 +100,7 @@ async fn serve_one(
             }
         })
     };
-    let result = serve_player(ws, identity, clock, ev_tx, cmd_rx).await;
+    let result = serve_player(ws, identity, clock, ev_tx, cmd_rx, liveness).await;
     let _ = forward.await;
     result
 }

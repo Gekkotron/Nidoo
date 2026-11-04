@@ -46,9 +46,31 @@ pub const SERVER_NAME: &str = "Nidoo";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Per expected message during the handshake (the spec suggests 30 s).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
-/// Players ask for the time every ~10 s; this much silence means the
-/// connection is dead (for example a board that rebooted: half-open TCP).
-const SILENCE_LIMIT: Duration = Duration::from_secs(35);
+/// How a connection is judged alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Liveness {
+    /// This long without any frame from the player ends the connection (a
+    /// board that rebooted leaves a half-open TCP connection).
+    pub silence: Duration,
+    /// Send a WebSocket ping this often; the pong counts as a frame.
+    pub ping_every: Option<Duration>,
+}
+
+impl Liveness {
+    /// Satellites ask for the time every ~10 s; no pings, so nothing new
+    /// reaches their firmware.
+    pub const SATELLITE: Liveness = Liveness {
+        silence: Duration::from_secs(35),
+        ping_every: None,
+    };
+    /// Players that connect to us: a browser tab in the background may send
+    /// nothing for a minute (throttled timers) but its network stack still
+    /// answers pings.
+    pub const INBOUND: Liveness = Liveness {
+        silence: Duration::from_secs(35),
+        ping_every: Some(Duration::from_secs(10)),
+    };
+}
 /// How often queued audio is re-checked against the player's buffer.
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -118,7 +140,7 @@ pub async fn run_player(
     .await
     .context("connect timed out")?
     .with_context(|| format!("connecting to {url}"))?;
-    serve_player(ws, identity, clock, events, cmds).await
+    serve_player(ws, identity, clock, events, cmds, Liveness::SATELLITE).await
 }
 
 /// Runs the protocol on an open WebSocket until the connection ends (the
@@ -130,9 +152,19 @@ pub async fn serve_player(
     clock: Arc<dyn Clock>,
     events: mpsc::Sender<PlayerEvent>,
     mut cmds: mpsc::Receiver<PlayerCmd>,
+    liveness: Liveness,
 ) -> anyhow::Result<()> {
     let mut connected_id = None;
-    let result = session(ws, &identity, clock, &events, &mut cmds, &mut connected_id).await;
+    let result = session(
+        ws,
+        &identity,
+        clock,
+        &events,
+        &mut cmds,
+        &mut connected_id,
+        liveness,
+    )
+    .await;
     if let Some(client_id) = connected_id {
         let _ = events.send(PlayerEvent::Gone { client_id }).await;
     }
@@ -146,6 +178,7 @@ async fn session(
     events: &mpsc::Sender<PlayerEvent>,
     cmds: &mut mpsc::Receiver<PlayerCmd>,
     connected_id: &mut Option<String>,
+    liveness: Liveness,
 ) -> anyhow::Result<()> {
     let (transport, client_id) = handshake(&mut ws, identity).await?;
     let mut conn = Conn {
@@ -153,6 +186,7 @@ async fn session(
         noise: transport,
         reassembler: Reassembler::default(),
         clock,
+        last_rx: Instant::now(),
     };
     conn.send(&ServerMsg::Hello(ServerHello {
         name: SERVER_NAME.into(),
@@ -184,13 +218,14 @@ async fn session(
     events.send(PlayerEvent::Connected(info)).await.ok();
     *connected_id = Some(client_id.clone());
 
-    let mut last_rx = Instant::now();
+    let ping_every = liveness.ping_every.unwrap_or(Duration::MAX);
+    let mut next_ping = Instant::now() + ping_every.min(Duration::from_secs(86_400));
     loop {
         let pumping = !s.outbox.is_empty();
+        let silent_until = conn.last_rx + liveness.silence;
         tokio::select! {
             msg = conn.recv() => {
                 let Some((msg, arrived)) = msg? else { return Ok(()) };
-                last_rx = Instant::now();
                 if !s.on_client_msg(&mut conn, events, &client_id, msg, arrived).await? {
                     return Ok(());
                 }
@@ -202,8 +237,15 @@ async fn session(
                 }
             }
             _ = tokio::time::sleep(PUMP_INTERVAL), if pumping => {}
-            _ = tokio::time::sleep_until(last_rx + SILENCE_LIMIT) => {
-                bail!("no message from the player for {SILENCE_LIMIT:?}");
+            _ = tokio::time::sleep_until(next_ping), if liveness.ping_every.is_some() => {
+                conn.ws.send(Message::Ping(Vec::new().into())).await?;
+                next_ping = Instant::now() + ping_every;
+            }
+            // Pongs are read inside `recv`, so look again before giving up.
+            _ = tokio::time::sleep_until(silent_until) => {
+                if conn.last_rx + liveness.silence <= Instant::now() {
+                    bail!("no message from the player for {:?}", liveness.silence);
+                }
             }
         }
         s.pump(&mut conn).await?;
@@ -294,6 +336,8 @@ struct Conn {
     noise: NoiseTransport,
     reassembler: Reassembler,
     clock: Arc<dyn Clock>,
+    /// When the player last sent any frame (a pong included).
+    last_rx: Instant,
 }
 
 impl Conn {
@@ -318,6 +362,7 @@ impl Conn {
                 return Ok(None);
             };
             let arrived = self.clock.now_us();
+            self.last_rx = Instant::now();
             match msg? {
                 Message::Binary(b) => {
                     let plain = self.noise.decrypt(&b).context("decrypting")?;
