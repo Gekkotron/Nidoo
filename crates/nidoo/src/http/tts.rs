@@ -168,7 +168,7 @@ async fn speech_file(
     let tts = tts(&hub)?;
     let id = file.strip_suffix(".wav").ok_or_else(not_found)?;
     let clip = tts.clip(id).ok_or_else(not_found)?;
-    let rate = tts.engine().sample_rate().unwrap_or(24_000);
+    let rate = clip.sample_rate();
     Ok((
         [
             (header::CONTENT_TYPE, "audio/wav"),

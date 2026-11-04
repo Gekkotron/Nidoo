@@ -117,6 +117,7 @@ fn the_engine_loads_and_speaks_with_phonon() {
     engine
         .speak(
             SENTENCES[1].into(),
+            Some("fr".into()),
             None,
             Box::new(move |item| tx.send(item).is_ok()),
         )
@@ -256,11 +257,7 @@ fn normalising_outside_the_builder_matches() {
         "rss: before {before} KB, one model {one} KB, two models {two} KB (second costs {} KB)",
         two.saturating_sub(one)
     );
-    eprintln!(
-        "samples: builder {} hub {}",
-        by_builder.len(),
-        by_hub.len()
-    );
+    eprintln!("samples: builder {} hub {}", by_builder.len(), by_hub.len());
     let again = speak(&fr, text);
     let max_diff = |a: &[f32], b: &[f32]| {
         a.iter()

@@ -24,10 +24,12 @@ pub trait Speaker {
     fn voices(&self) -> Vec<String>;
     /// Register a voice file under a name.
     fn add_voice(&mut self, name: &str, path: &Path) -> Result<(), String>;
-    /// Speak `text`, handing each audio chunk to `chunk`; `chunk` returning `false` stops early.
+    /// Speak `text` in `language` (a normalised code; `None` speaks the text as written),
+    /// handing each audio chunk to `chunk`; `chunk` returning `false` stops early.
     fn speak(
         &mut self,
         text: &str,
+        language: Option<&str>,
         voice: Option<&str>,
         chunk: &mut dyn FnMut(&[f32]) -> bool,
     ) -> Result<(), String>;
@@ -70,6 +72,7 @@ enum Msg {
     },
     Speak {
         text: String,
+        language: Option<String>,
         voice: Option<String>,
         sink: Sink,
     },
@@ -236,8 +239,14 @@ impl Engine {
         lock(&self.shared).sample_rate
     }
 
-    /// Queue a speech. The sink is called on the engine thread.
-    pub fn speak(&self, text: String, voice: Option<String>, sink: Sink) -> Result<(), TtsError> {
+    /// Queue a speech in `language`. The sink is called on the engine thread.
+    pub fn speak(
+        &self,
+        text: String,
+        language: Option<String>,
+        voice: Option<String>,
+        sink: Sink,
+    ) -> Result<(), TtsError> {
         match self.state() {
             EngineState::Ready { .. } => {}
             EngineState::NoModel => return Err(TtsError::Conflict("no model is active".into())),
@@ -258,7 +267,13 @@ impl Engine {
         if reserved.is_err() {
             return Err(TtsError::Busy);
         }
-        if self.tx.send(Msg::Speak { text, voice, sink }).is_err() {
+        let msg = Msg::Speak {
+            text,
+            language,
+            voice,
+            sink,
+        };
+        if self.tx.send(msg).is_err() {
             self.waiting.fetch_sub(1, Ordering::SeqCst);
             return Err(TtsError::Conflict(
                 "the speech thread is not running".into(),
@@ -378,6 +393,7 @@ fn run(
             }
             Msg::Speak {
                 text,
+                language,
                 voice,
                 mut sink,
             } => {
@@ -388,7 +404,7 @@ fn run(
                 };
                 let mut stopped = false;
                 let result = catch_unwind(AssertUnwindSafe(|| {
-                    sp.speak(&text, voice.as_deref(), &mut |c| {
+                    sp.speak(&text, language.as_deref(), voice.as_deref(), &mut |c| {
                         let go = sink(Some(Ok(c.to_vec())));
                         stopped |= !go;
                         go
@@ -415,7 +431,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
-    use crate::assist::tts::tone::{BlockingLoader, ToneLoader};
+    use crate::assist::tts::tone::{BlockingLoader, RecordingLoader, ToneLoader};
 
     fn wait_for(engine: &Engine, want: &EngineState) {
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -447,6 +463,52 @@ mod tests {
 
     fn tone_engine() -> Engine {
         start(Arc::new(ToneLoader))
+    }
+
+    #[test]
+    fn the_language_reaches_the_speaker() {
+        let dir = tempfile::tempdir().unwrap();
+        let loader = RecordingLoader::default();
+        let seen = loader.seen.clone();
+        let engine = start(Arc::new(loader));
+        engine.load("m", dir.path().into(), "model.q8.gguf".into());
+        wait_for(&engine, &ready("m"));
+        for language in [Some("en".to_string()), None] {
+            let (sink, rx) = channel_sink();
+            engine.speak("un".into(), language, None, sink).unwrap();
+            while rx.recv_timeout(Duration::from_secs(2)).unwrap().is_some() {}
+        }
+        assert_eq!(*seen.lock().unwrap(), [Some("en".to_string()), None]);
+    }
+
+    #[test]
+    fn two_engines_speak_independently() {
+        let good = tempfile::tempdir().unwrap();
+        let bad = tempfile::tempdir().unwrap();
+        std::fs::write(bad.path().join("fail"), "").unwrap();
+        let (a, b) = (tone_engine(), tone_engine());
+        a.load("a", good.path().into(), "model.q8.gguf".into());
+        b.load("b", bad.path().into(), "model.q8.gguf".into());
+        wait_for(&a, &ready("a"));
+        assert!(matches!(
+            {
+                wait_for(
+                    &b,
+                    &EngineState::Error {
+                        model: Some("b".into()),
+                        message: "broken model".into(),
+                    },
+                );
+                b.state()
+            },
+            EngineState::Error { .. }
+        ));
+        let (sink, rx) = channel_sink();
+        a.speak("un".into(), Some("fr".into()), None, sink).unwrap();
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Some(Ok(_))
+        ));
     }
 
     #[test]
@@ -508,7 +570,7 @@ mod tests {
         engine.load("m", dir.path().into(), "model.q8.gguf".into());
         wait_for(&engine, &ready("m"));
         let (sink, rx) = channel_sink();
-        engine.speak("un deux".into(), None, sink).unwrap();
+        engine.speak("un deux".into(), None, None, sink).unwrap();
         let mut chunks = 0;
         let mut samples = 0;
         loop {
@@ -529,7 +591,7 @@ mod tests {
     fn speak_before_ready_is_a_conflict() {
         let engine = tone_engine();
         let (sink, _rx) = channel_sink();
-        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        let err = engine.speak("un".into(), None, None, sink).unwrap_err();
         assert!(matches!(&err, TtsError::Conflict(m) if m == "no model is active"));
     }
 
@@ -541,14 +603,14 @@ mod tests {
         engine.load("m", dir.path().into(), "model.q8.gguf".into());
         wait_for(&engine, &ready("m"));
         let (sink, rx) = channel_sink();
-        engine.speak("un".into(), None, sink).unwrap();
+        engine.speak("un".into(), None, None, sink).unwrap();
         assert!(release.wait_started(1), "the first speech never started");
         for _ in 0..QUEUE_LEN {
             let (sink, _rx) = channel_sink();
-            engine.speak("un".into(), None, sink).unwrap();
+            engine.speak("un".into(), None, None, sink).unwrap();
         }
         let (sink, _rx) = channel_sink();
-        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        let err = engine.speak("un".into(), None, None, sink).unwrap_err();
         assert!(matches!(err, TtsError::Busy));
         release.release_all();
         // The first speech ends once released.
@@ -571,6 +633,7 @@ mod tests {
             .speak(
                 "un deux trois".into(),
                 None,
+                None,
                 Box::new(move |_| {
                     seen.fetch_add(1, Ordering::SeqCst);
                     false
@@ -579,7 +642,7 @@ mod tests {
             .unwrap();
         // Speeches run in order: once this one ends, the first is over.
         let (sink, rx) = channel_sink();
-        engine.speak("un".into(), None, sink).unwrap();
+        engine.speak("un".into(), None, None, sink).unwrap();
         while rx.recv_timeout(Duration::from_secs(2)).unwrap().is_some() {}
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -608,6 +671,7 @@ mod tests {
         fn speak(
             &mut self,
             _text: &str,
+            _language: Option<&str>,
             _voice: Option<&str>,
             _chunk: &mut dyn FnMut(&[f32]) -> bool,
         ) -> Result<(), String> {
@@ -645,7 +709,7 @@ mod tests {
         engine.load("m", dir.path().into(), "model.q8.gguf".into());
         wait_error(&engine);
         let (sink, _rx) = channel_sink();
-        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        let err = engine.speak("un".into(), None, None, sink).unwrap_err();
         assert!(matches!(err, TtsError::Conflict(_)));
     }
 
@@ -658,7 +722,7 @@ mod tests {
         engine.add_voice("v".into(), dir.path().join("v.safetensors"));
         wait_error(&engine);
         let (sink, _rx) = channel_sink();
-        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        let err = engine.speak("un".into(), None, None, sink).unwrap_err();
         assert!(matches!(err, TtsError::Conflict(_)));
     }
 
@@ -680,6 +744,7 @@ mod tests {
             .speak(
                 "un".into(),
                 None,
+                None,
                 Box::new(|item| {
                     if item.is_none() {
                         panic!("sink broke");
@@ -694,6 +759,7 @@ mod tests {
         engine
             .speak(
                 "deux".into(),
+                None,
                 None,
                 Box::new(move |_| {
                     let _keep = &flag;
@@ -713,7 +779,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("the queued sink was never dropped");
         let (sink, _rx) = channel_sink();
-        let err = engine.speak("un".into(), None, sink).unwrap_err();
+        let err = engine.speak("un".into(), None, None, sink).unwrap_err();
         assert!(matches!(err, TtsError::Conflict(_)));
         // Loading on a dead thread stays an error instead of hanging in Loading.
         engine.load("n", dir.path().into(), "model.q8.gguf".into());

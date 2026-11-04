@@ -28,6 +28,7 @@ impl SpeakerLoader for ToneLoader {
         Ok(Box::new(ToneSpeaker {
             voices: vec!["default".into()],
             gate: None,
+            seen: None,
         }))
     }
 }
@@ -35,6 +36,29 @@ impl SpeakerLoader for ToneLoader {
 struct ToneSpeaker {
     voices: Vec<String>,
     gate: Option<Arc<Gate>>,
+    /// Where each request's language is written, for [`RecordingLoader`].
+    seen: Option<Seen>,
+}
+
+/// The languages a [`RecordingLoader`]'s speakers were asked to speak, in order.
+pub type Seen = Arc<Mutex<Vec<Option<String>>>>;
+
+/// A loader like [`ToneLoader`] whose speakers write down each request's language.
+#[derive(Default)]
+pub struct RecordingLoader {
+    /// The languages asked for, in order.
+    pub seen: Seen,
+}
+
+impl SpeakerLoader for RecordingLoader {
+    fn load(&self, dir: &Path, weights: &str) -> Result<Box<dyn Speaker>, String> {
+        ToneLoader.load(dir, weights)?;
+        Ok(Box::new(ToneSpeaker {
+            voices: vec!["default".into()],
+            gate: None,
+            seen: Some(self.seen.clone()),
+        }))
+    }
 }
 
 impl Speaker for ToneSpeaker {
@@ -58,9 +82,15 @@ impl Speaker for ToneSpeaker {
     fn speak(
         &mut self,
         text: &str,
+        language: Option<&str>,
         _voice: Option<&str>,
         chunk: &mut dyn FnMut(&[f32]) -> bool,
     ) -> Result<(), String> {
+        if let Some(seen) = &self.seen {
+            seen.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(language.map(str::to_owned));
+        }
         if let Some(gate) = &self.gate {
             gate.wait_for_release();
         }
@@ -128,6 +158,7 @@ impl SpeakerLoader for BlockingLoader {
         Ok(Box::new(ToneSpeaker {
             voices: vec!["default".into()],
             gate: Some(self.gate.clone()),
+            seen: None,
         }))
     }
 }
