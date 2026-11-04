@@ -23,6 +23,7 @@ pub mod security;
 pub mod settings;
 pub mod setup;
 mod solar;
+mod speech_languages;
 pub mod states;
 mod system;
 mod weather;
@@ -36,6 +37,7 @@ pub use home::*;
 pub use network::*;
 pub use search::*;
 pub use solar::*;
+pub use speech_languages::*;
 pub use system::*;
 pub use weather::*;
 
