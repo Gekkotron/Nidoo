@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nidoo::assist::tts::tone::{BlockingLoader, Release, ToneLoader};
+use nidoo::assist::tts::tone::{BlockingLoader, RecordingLoader, Release, ToneLoader};
 use nidoo::assist::tts::{Tts, TtsConfig};
 use nidoo::config::Config;
 use nidoo::http::router;
@@ -44,14 +44,18 @@ impl Rig {
             .unwrap()
     }
 
-    async fn install_and_activate(&self) {
+    /// Uploads a model speaking French and English and makes it speak French; its id.
+    async fn install_and_activate(&self) -> String {
         let (s, v) = self
             .json(reqwest::Method::POST, "/tts/uploads", json!({}))
             .await;
         assert_eq!(s, StatusCode::OK);
         let id = v["id"].as_str().unwrap().to_owned();
         let files: [(&str, &[u8]); 3] = [
-            ("config.json", br#"{"languages":["fr"],"model_id":"M"}"#),
+            (
+                "config.json",
+                br#"{"languages":["fr","en"],"model_id":"M"}"#,
+            ),
             ("tokenizer.json", b"{}"),
             ("model.q8.gguf", b"weights"),
         ];
@@ -93,7 +97,7 @@ impl Rig {
                 .await
                 .unwrap();
             if st["languages"][0]["engine"]["state"] == "ready" {
-                return;
+                return m["id"].as_str().unwrap().to_owned();
             }
             assert!(Instant::now() < end, "never ready: {st}");
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -256,4 +260,64 @@ async fn the_text_is_not_in_the_url() {
     let (_, t) = r.post_speech(json!({"text": "bonjour"})).await;
     assert!(!t["url"].as_str().unwrap().contains("bonjour"));
     assert_eq!(t["id"].as_str().unwrap().len(), 32);
+}
+
+/// Fetches a clip to its end, so its speech has run.
+async fn hear(r: &Rig, body: Value) {
+    let (s, t) = r.post_speech(body).await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    r.get_url(t["url"].as_str().unwrap())
+        .await
+        .bytes()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn speech_uses_the_house_language_by_default() {
+    let loader = RecordingLoader::default();
+    let seen = loader.seen.clone();
+    let r = rig_with(Arc::new(loader), false).await;
+    let model = r.install_and_activate().await;
+    let (s, v) = r
+        .json(
+            reqwest::Method::PUT,
+            "/tts/languages/en",
+            json!({"model": model}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    hear(&r, json!({"text": "un"})).await;
+    hear(&r, json!({"text": "one", "language": "EN"})).await;
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [Some("fr".to_string()), Some("en".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn an_unconfigured_language_is_422() {
+    let r = ready_rig().await;
+    let (s, _) = r
+        .post_speech(json!({"text": "eins", "language": "de"}))
+        .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (s, _) = r.post_speech(json!({"text": "un", "language": "x!"})).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn a_language_without_a_model_is_409() {
+    let r = rig_with(Arc::new(ToneLoader), false).await;
+    let model = r.install_and_activate().await;
+    let resp = r
+        .client
+        .delete(r.url(&format!("/tts/models/{model}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let (s, v) = r.post_speech(json!({"text": "un"})).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"], "fr has no model");
 }

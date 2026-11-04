@@ -514,10 +514,23 @@ impl Tts {
         self.uploads.abort(id)
     }
 
-    /// The voices on offer to the house language, and the one it chose.
-    pub async fn voices(&self) -> VoicesView {
-        let house = self.languages().into_iter().next();
-        self.voices_of(house.as_ref()).await
+    /// The voices on offer to a language (the house language when none is named), and the
+    /// one it chose. With no language set up, only the default voice.
+    pub async fn voices(&self, language: Option<&str>) -> Result<VoicesView, TtsError> {
+        let entry = match language {
+            Some(raw) => Some(self.language(raw)?),
+            None => self.languages().into_iter().next(),
+        };
+        Ok(self.voices_of(entry.as_ref()).await)
+    }
+
+    /// The configured language `raw` names; unknown or not spoken here is refused.
+    fn language(&self, raw: &str) -> Result<LanguageEntry, TtsError> {
+        let code = languages::normalise_code(raw)?;
+        self.languages()
+            .into_iter()
+            .find(|l| l.code == code)
+            .ok_or_else(|| TtsError::Invalid(format!("this hub does not speak {code}")))
     }
 
     async fn voices_of(&self, entry: Option<&LanguageEntry>) -> VoicesView {
@@ -552,10 +565,10 @@ impl Tts {
         self.store.set_token(input)
     }
 
-    /// Starts speaking a text now in the house language; the returned address streams the
-    /// clip as it fills.
+    /// Starts speaking a text now; the returned address streams the clip as it fills.
     ///
-    /// A named voice is used without being chosen: a catalogue voice not yet on the disk is
+    /// The language is the one named (it must be set up) or the house language. A named voice
+    /// is used without being chosen: a catalogue voice of that language not yet on the disk is
     /// downloaded first, and an unknown one is refused. With no voice named, the language's
     /// voice speaks, or the default when it is not usable.
     pub async fn speak(&self, req: SpeechRequest) -> Result<SpeechTicket, TtsError> {
@@ -569,11 +582,15 @@ impl Tts {
                 speech::MAX_SPEECH_CHARS
             )));
         }
-        let entry = self
+        let house = self
             .languages()
             .into_iter()
             .next()
             .ok_or_else(|| TtsError::Conflict("no language is set up".into()))?;
+        let entry = match req.language.as_deref() {
+            Some(raw) => self.language(raw)?,
+            None => house,
+        };
         let model = entry
             .model
             .clone()
@@ -588,8 +605,13 @@ impl Tts {
             let _guard = self.voice_lock.lock().await;
             self.register_voice(&entry.code, &model, voice).await?;
         }
-        let wanted = req.voice.unwrap_or_else(|| entry.voice.clone());
-        let voice = engine.voices().contains(&wanted).then_some(wanted);
+        // A named voice was just registered: the engine takes messages in order, so it knows
+        // the voice by the time it speaks, even if `voices()` does not list it yet.
+        let voice = match req.voice {
+            Some(v) if v == DEFAULT_VOICE => None,
+            Some(v) => Some(v),
+            None => Some(entry.voice.clone()).filter(|v| engine.voices().contains(v)),
+        };
         let (id, clip) = self.clips.create(engine.sample_rate().unwrap_or(24_000));
         let sink = clip_sink(Arc::clone(&clip));
         if let Err(e) = engine.speak(text.to_owned(), Some(entry.code.clone()), voice, sink) {
