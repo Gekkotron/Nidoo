@@ -13,3 +13,4 @@ text: Nidoo.  # the brand mark, not translated
 text: (max-width: 719px), (hover: none) and (pointer: coarse)  # media query, not text
 text: run {}  # CSS class list
 text: alarm_control_panel  # MQTT component name shown as code, not translated
+text: voice_key: \"{key}\"  # a secrets.yaml line to paste into the satellite firmware, YAML not text

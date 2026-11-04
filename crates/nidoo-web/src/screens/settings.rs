@@ -151,7 +151,7 @@ fn copy_with_textarea(text: &str) -> bool {
 type CopyOutcome = Option<bool>;
 
 #[component]
-fn CopyButton(text: String) -> impl IntoView {
+pub(crate) fn CopyButton(text: String) -> impl IntoView {
     let lang = use_lang();
     let outcome = RwSignal::new(None::<bool>);
     let on_click = move |_| {

@@ -101,6 +101,14 @@
   color: var(--muted);
 }
 
+/* The satellite a spoken turn came from. */
+.assist__source {
+  margin: 0 0 2px;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
 .assist__reply {
   margin: 0;
   color: var(--ink);
@@ -658,4 +666,38 @@ label.assist-set__item {
 
 .assist-set__play svg {
   fill: currentcolor;
+}
+
+/* Speech input: the satellites' microphone settings. */
+.speech-in__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 14px;
+  margin: 12px 0;
+}
+
+.speech-in__fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.speech-in__fields input {
+  min-width: 0;
+}
+
+.speech-in__key {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.speech-in__key code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
 }

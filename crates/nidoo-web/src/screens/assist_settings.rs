@@ -404,6 +404,8 @@ pub fn AssistSettingsScreen() -> impl IntoView {
 
             <LanguagesCard status=status models=models reload=reload_cb />
 
+            <crate::screens::speech_input::SpeechInputSection />
+
             // ---- Installed models ----
             <section class="assist-set__card">
                 <h2>{move || t(T::ModelsHeading)}</h2>
