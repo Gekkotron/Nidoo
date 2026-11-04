@@ -1,0 +1,144 @@
+# Nidoo sound satellite: Seeed Studio XIAO ESP32S3 + INMP441 microphone + PCM5102A DAC.
+#
+# Plays the music streamed by nidoo-sound (a Sendspin-compatible server).
+# Per-board values come from substitutions (override with --substitution or a
+# per-board file under satellite/boards/) and from the git-ignored secrets.yaml.
+#
+# Pinned to ESPHome 2026.10.2: the Sendspin protocol version must match nidoo-sound.
+#   uvx esphome==2026.10.2 run satellite.yaml
+
+substitutions:
+  name: nidoo-satellite
+  friendly_name: Nidoo satellite
+  # INMP441 microphone (its own I2S bus)
+  mic_ws_pin: GPIO1
+  mic_sck_pin: GPIO2
+  mic_sd_pin: GPIO4
+  # PCM5102A DAC (its own I2S bus)
+  dac_bck_pin: GPIO7
+  dac_lrck_pin: GPIO8
+  dac_din_pin: GPIO9
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.10.2
+
+esp32:
+  variant: esp32s3
+  board: esp32-s3-devkitc-1
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      # Keep every out-of-order TCP segment (0 = no limit, ESP-IDF's own default when
+      # lwIP buffers live in PSRAM). `psram:` sets CONFIG_SPIRAM_IGNORE_NOTFOUND, which
+      # drops the limit to 4: one lost Wi-Fi segment then costs a whole-window resend
+      # and seconds of retransmit backoff, the music buffer runs dry and the board
+      # logs "Lost sync". Measured: 24 losses in 5 min with 4, 2 tiny ones with 0.
+      CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS: "0"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+
+# Uptime, free heap, largest free block and free PSRAM, logged once a minute
+# as a `health:` line: watch it in `esphome logs` during soak tests (a steady
+# decline means a leak, an uptime reset means the board rebooted).
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: debug
+    free:
+      id: heap_free
+      name: Free heap
+    block:
+      id: heap_block
+      name: Largest free block
+    psram:
+      id: psram_free
+      name: Free PSRAM
+  - platform: uptime
+    id: uptime_s
+    name: Uptime
+    update_interval: 60s
+
+interval:
+  - interval: 60s
+    then:
+      - logger.log:
+          level: INFO
+          format: "health: uptime %.0f s, free heap %.0f B, largest block %.0f B, free PSRAM %.0f B"
+          args:
+            - id(uptime_s).state
+            - id(heap_free).state
+            - id(heap_block).state
+            - id(psram_free).state
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+mdns:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# The ESPHome native API (api:) comes with project 2, when the hub talks to the satellites.
+
+i2s_audio:
+  - id: i2s_mic
+    i2s_lrclk_pin: ${mic_ws_pin}
+    i2s_bclk_pin: ${mic_sck_pin}
+  - id: i2s_dac
+    i2s_lrclk_pin: ${dac_lrck_pin}
+    i2s_bclk_pin: ${dac_bck_pin}
+
+# Wired now, unused until project 3 (speech in): proves playback and the
+# microphone can run together on one board.
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_mic
+    i2s_din_pin: ${mic_sd_pin}
+    adc_type: external
+    channel: left
+    bits_per_sample: 32bit
+    sample_rate: 16000
+
+speaker:
+  - platform: i2s_audio
+    id: dac
+    i2s_audio_id: i2s_dac
+    i2s_dout_pin: ${dac_din_pin}
+    dac_type: external
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    num_channels: 2
+
+sendspin:
+  id: sendspin_hub
+  task_stack_in_psram: true
+  # No pairing code: nidoo-sound connects with the protocol's unpaired (Sentinel) key.
+  unpaired_access: true
+
+media_source:
+  - platform: sendspin
+    id: sendspin_source
+    sample_rate: 48000
+    codecs: [pcm]
+
+media_player:
+  - platform: speaker_source
+    id: player
+    name: Player
+    media_pipeline:
+      speaker: dac
+      format: NONE
+      num_channels: 2
+      sources:
+        - sendspin_source
