@@ -6,6 +6,7 @@
 //! on every (re)connect and published to the MQTT link on every change.
 
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -66,7 +67,11 @@ pub enum Published {
         short_id: String,
         prefs: PlayerPrefs,
         connected: bool,
+        /// Its IPv4 address while connected.
+        address: Option<Ipv4Addr>,
     },
+    /// A sentence finished playing (`played`), or was dropped.
+    Spoken { id: String, played: bool },
 }
 
 /// From a connection task to the group.
@@ -83,6 +88,8 @@ pub enum FromPlayer {
     Accepted {
         instance: String,
         cmds: mpsc::Sender<PlayerCmd>,
+        /// Where the connection came from.
+        peer: Option<IpAddr>,
     },
     Event {
         instance: String,
@@ -227,6 +234,8 @@ struct Instance {
     task: Option<JoinHandle<()>>,
     advertised: bool,
     link: Option<Link>,
+    /// The player's IPv4 address: its URL's host, or the peer that connected to us.
+    address: Option<Ipv4Addr>,
 }
 
 impl Instance {
@@ -250,6 +259,8 @@ pub struct Group {
     mixer: SpeechMixer,
     /// Satellites whose music is held while someone talks to the house.
     holds: Holds,
+    /// Sentences to report as played once the clock reaches their last sample: (id, at).
+    reports: Vec<(String, i64)>,
     /// Without music: the next speech chunk's timestamp.
     speech_clock: Option<i64>,
     /// With music: end of the last music chunk sent.
@@ -272,6 +283,7 @@ impl Group {
             playing: false,
             mixer: SpeechMixer::new(),
             holds: Holds::default(),
+            reports: Vec::new(),
             speech_clock: None,
             music_sent_until: i64::MIN,
             to_group,
@@ -307,6 +319,7 @@ impl Group {
                 short_id: short_id(&prefs.client_id),
                 prefs,
                 connected: false,
+                address: None,
             };
             publish.send(msg).await.ok();
         }
@@ -318,10 +331,13 @@ impl Group {
                 Some(i) = input.recv() => self.on_input(i).await,
                 Some(c) = control.recv() => self.on_control(c, &publish).await,
                 Some(m) = self.from_players.recv() => self.on_player(m, &publish).await,
-                Some(s) = speech.recv() => self.on_speech(s),
+                Some(s) = speech.recv() => self.on_speech(s, &publish).await,
                 Some(h) = holds.recv() => self.holds.apply(h, self.clock.now_us()),
-                _ = tick.tick(), if self.playing || self.mixer.is_playing() || self.mixer.has_queued() => {
-                    self.on_tick().await
+                _ = tick.tick(), if self.playing
+                    || self.mixer.is_playing()
+                    || self.mixer.has_queued()
+                    || !self.reports.is_empty() => {
+                    self.on_tick(&publish).await
                 }
             }
         }
@@ -360,10 +376,20 @@ impl Group {
             return;
         };
         let connected = self.is_connected(client_id);
+        let address = self
+            .instances
+            .values()
+            .filter(|i| {
+                i.link
+                    .as_ref()
+                    .is_some_and(|l| l.connected && l.client_id.as_deref() == Some(client_id))
+            })
+            .find_map(|i| i.address);
         let msg = Published::Player {
             short_id: short_id(client_id),
             prefs,
             connected,
+            address,
         };
         publish.send(msg).await.ok();
     }
@@ -391,6 +417,7 @@ impl Group {
                 let old = self.instances.insert(
                     instance,
                     Instance {
+                        address: url.host_str().and_then(|h| h.parse().ok()),
                         url: Some(url),
                         task: Some(task),
                         advertised: true,
@@ -422,12 +449,22 @@ impl Group {
                     i.link = Some(Link::new(cmds));
                 }
             }
-            FromPlayer::Accepted { instance, cmds } => {
+            FromPlayer::Accepted {
+                instance,
+                cmds,
+                peer,
+            } => {
+                let address = match peer {
+                    Some(IpAddr::V4(ip)) => Some(ip),
+                    Some(IpAddr::V6(ip)) => ip.to_ipv4_mapped(),
+                    None => None,
+                };
                 let accepted = Instance {
                     url: None,
                     task: None,
                     advertised: false,
                     link: Some(Link::new(cmds)),
+                    address,
                 };
                 if let Some(old) = self.instances.insert(instance, accepted) {
                     old.stop();
@@ -643,7 +680,7 @@ impl Group {
 
     /// A sentence to say: kept for the satellites that are connected and
     /// allowed right now.
-    fn on_speech(&mut self, mut speech: Speech) {
+    async fn on_speech(&mut self, mut speech: Speech, publish: &mpsc::Sender<Published>) {
         speech.players.retain(|sid| {
             self.store
                 .all()
@@ -652,10 +689,20 @@ impl Group {
         });
         if speech.players.is_empty() {
             tracing::info!("no allowed, connected satellite for this sentence");
+            let id = speech.id;
+            publish
+                .send(Published::Spoken { id, played: false })
+                .await
+                .ok();
             return;
         }
+        let id = speech.id.clone();
         if !self.mixer.push(speech) {
             tracing::warn!("too many sentences waiting, this one is dropped");
+            publish
+                .send(Published::Spoken { id, played: false })
+                .await
+                .ok();
         }
     }
 
@@ -680,7 +727,7 @@ impl Group {
         self.speech_clock = Some(next);
     }
 
-    async fn on_tick(&mut self) {
+    async fn on_tick(&mut self, publish: &mpsc::Sender<Published>) {
         let now = self.clock.now_us();
         if !self.mixer.is_playing() && self.mixer.has_queued() {
             self.start_sentence(now).await;
@@ -738,6 +785,16 @@ impl Group {
             self.speech_clock = None;
             self.end_streams().await;
         }
+        // On the shared clock a sample's timestamp is when it plays: the sentence was heard.
+        let (played, waiting): (Vec<_>, Vec<_>) =
+            self.reports.drain(..).partition(|(_, at)| *at <= now);
+        self.reports = waiting;
+        for (id, _) in played {
+            publish
+                .send(Published::Spoken { id, played: true })
+                .await
+                .ok();
+        }
     }
 
     /// Starts the next sentence `lead` from now and opens a stream on its
@@ -751,6 +808,9 @@ impl Group {
         let Some(targets) = self.mixer.start_next(start).map(<[String]>::to_vec) else {
             return;
         };
+        if let (Some(id), Some(at)) = (self.mixer.current_id(), self.mixer.speech_end_us()) {
+            self.reports.push((id.to_owned(), at));
+        }
         tracing::info!(satellites = targets.len(), "speaking");
         for link in self.links_mut() {
             let target = link.short_id().is_some_and(|s| targets.contains(&s));
@@ -1024,6 +1084,7 @@ mod tests {
                 .send(FromPlayer::Accepted {
                     instance: instance.into(),
                     cmds: tx,
+                    peer: Some("192.0.2.20".parse().unwrap()),
                 })
                 .await
                 .unwrap();
@@ -1063,17 +1124,40 @@ mod tests {
         }
 
         async fn published_for(&mut self, short: &str) -> (PlayerPrefs, bool) {
+            let (prefs, connected, _) = self.published_with_address(short).await;
+            (prefs, connected)
+        }
+
+        async fn published_with_address(
+            &mut self,
+            short: &str,
+        ) -> (PlayerPrefs, bool, Option<std::net::Ipv4Addr>) {
             loop {
-                let Published::Player {
-                    short_id: s,
-                    prefs,
-                    connected,
-                } = tokio::time::timeout(WAIT, self.published.recv())
+                let msg = tokio::time::timeout(WAIT, self.published.recv())
                     .await
                     .unwrap()
                     .unwrap();
-                if s == short {
-                    return (prefs, connected);
+                if let Published::Player {
+                    short_id: s,
+                    prefs,
+                    connected,
+                    address,
+                } = msg
+                    && s == short
+                {
+                    return (prefs, connected, address);
+                }
+            }
+        }
+
+        /// The next "sentence played" report, if one comes within a short while.
+        async fn spoken(&mut self) -> Option<(String, bool)> {
+            loop {
+                match tokio::time::timeout(Duration::from_millis(200), self.published.recv()).await
+                {
+                    Ok(Some(Published::Spoken { id, played })) => return Some((id, played)),
+                    Ok(Some(_)) => continue,
+                    _ => return None,
                 }
             }
         }
@@ -1399,6 +1483,7 @@ mod tests {
     /// `frames` of a constant sample for these client ids.
     fn speech_for(ids: &[&str], value: i16, frames: usize) -> Speech {
         Speech {
+            id: "sentence".into(),
             players: ids.iter().map(|id| short_id(id)).collect(),
             pcm: bytes::Bytes::from(
                 std::iter::repeat_n(value.to_le_bytes(), frames * 2)
@@ -1774,5 +1859,70 @@ mod tests {
                 .iter()
                 .any(|(_, d)| has_sample(d, 257))
         );
+    }
+
+    // ---- reports ----
+
+    #[tokio::test]
+    async fn spoken_is_reported_when_the_last_sample_plays() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (_a, _) = h.ready_player("a", "A").await;
+        h.say(speech_for(&["A"], 8_000, 48_000)).await;
+        h.clock.advance(1_000_000);
+        assert_eq!(h.spoken().await, None, "1 s of speech after a 150 ms fade");
+        h.clock.advance(1_000_000 + LEAD);
+        assert_eq!(h.spoken().await, Some(("sentence".into(), true)));
+        h.clock.advance(1_000_000);
+        assert_eq!(h.spoken().await, None, "once");
+    }
+
+    #[tokio::test]
+    async fn spoken_is_reported_over_music_too() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (_a, _) = h.ready_player("a", "A").await;
+        h.play_long(200).await;
+        h.say(speech_for(&["A"], 8_000, 48_000)).await;
+        h.clock.advance(1_000_000);
+        assert_eq!(h.spoken().await, None);
+        h.clock.advance(1_000_000 + LEAD);
+        assert_eq!(h.spoken().await, Some(("sentence".into(), true)));
+    }
+
+    #[tokio::test]
+    async fn dropped_sentence_reports_not_played() {
+        let mut h = Harness::start_with(&[("A", 30, false, false)]).await;
+        let (_a, _) = h.ready_player("a", "A").await;
+        h.say(speech_for(&["A"], 8_000, CHUNK_FRAMES)).await;
+        assert_eq!(h.spoken().await, Some(("sentence".into(), false)));
+    }
+
+    #[tokio::test]
+    async fn connected_player_publishes_its_address() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let a = h.player("a").await;
+        a.connected("A").await;
+        let address = loop {
+            let (_, connected, address) = h.published_with_address(&short_id("A")).await;
+            if connected {
+                break address;
+            }
+            assert_eq!(address, None, "no address while not connected");
+        };
+        assert_eq!(address, Some("10.0.0.9".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn accepted_player_publishes_its_peer_address() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let a = h.accepted("in").await;
+        a.connected("A").await;
+        let address = loop {
+            let (_, connected, address) = h.published_with_address(&short_id("A")).await;
+            if connected {
+                break address;
+            }
+            assert_eq!(address, None, "no address while not connected");
+        };
+        assert_eq!(address, Some("192.0.2.20".parse().unwrap()));
     }
 }

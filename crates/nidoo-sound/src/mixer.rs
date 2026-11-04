@@ -67,6 +67,18 @@ impl SpeechMixer {
             .map_or(&[], |(s, _)| s.players.as_slice())
     }
 
+    /// The playing sentence's clip id.
+    pub fn current_id(&self) -> Option<&str> {
+        self.current.as_ref().map(|(s, _)| s.id.as_str())
+    }
+
+    /// When the playing sentence's last sample plays: after the first fade and the speech.
+    pub fn speech_end_us(&self) -> Option<i64> {
+        let (speech, start) = self.current.as_ref()?;
+        let frames = (FADE_FRAMES + speech.pcm.len() / FRAME_BYTES) as i64;
+        Some(start + (frames * 1_000_000 + 47_999) / 48_000)
+    }
+
     /// End of the playing sentence's window.
     pub fn end_us(&self) -> Option<i64> {
         let (speech, start) = self.current.as_ref()?;
@@ -184,6 +196,7 @@ mod tests {
     /// One chunk of speech at 8 000, for satellite "a".
     fn sentence() -> Speech {
         Speech {
+            id: "s".into(),
             players: vec!["a".into()],
             pcm: Bytes::from(constant(8_000, CHUNK_FRAMES)),
         }
@@ -248,6 +261,7 @@ mod tests {
     fn loud_mix_saturates() {
         let mut m = SpeechMixer::new();
         m.push(Speech {
+            id: "s".into(),
             players: vec!["a".into()],
             pcm: Bytes::from(constant(30_000, CHUNK_FRAMES)),
         });
@@ -304,5 +318,19 @@ mod tests {
             sample(&half, 0)
         );
         assert_eq!(fade_in(&chunk, FADE_FRAMES), Bytes::from(chunk.clone()));
+    }
+
+    #[test]
+    fn speech_end_is_after_the_first_fade_and_the_speech() {
+        let mut m = SpeechMixer::new();
+        m.push(Speech {
+            id: "s".into(),
+            players: vec!["a".into()],
+            pcm: Bytes::from(constant(1, 48_000)),
+        });
+        assert_eq!(m.speech_end_us(), None);
+        m.start_next(0);
+        assert_eq!(m.speech_end_us(), Some(1_150_000));
+        assert_eq!(m.current_id(), Some("s"));
     }
 }

@@ -71,6 +71,7 @@ async fn serve_one(
     )
     .await??;
 
+    let peer = ws.get_ref().get_ref().peer_addr().ok().map(|a| a.ip());
     let (cmds, cmd_rx) = mpsc::channel(256);
     let (ev_tx, mut ev_rx) = mpsc::channel(64);
     let forward = {
@@ -85,6 +86,7 @@ async fn serve_one(
                     let accepted = FromPlayer::Accepted {
                         instance: instance.clone(),
                         cmds,
+                        peer,
                     };
                     if to_group.send(accepted).await.is_err() {
                         break;

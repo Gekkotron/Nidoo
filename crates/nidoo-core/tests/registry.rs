@@ -397,6 +397,11 @@ fn sound_satellite_controls_fold_into_volume() {
             "connected",
             json!({ "device_class": "connectivity" }),
         ),
+        (
+            "sensor",
+            "address",
+            json!({ "entity_category": "diagnostic" }),
+        ),
     ] {
         feed(
             &mut registry,
@@ -408,6 +413,7 @@ fn sound_satellite_controls_fold_into_volume() {
         "nidoo_sound_x_mute",
         "nidoo_sound_x_allowed",
         "nidoo_sound_x_connected",
+        "nidoo_sound_x_address",
     ] {
         let folded = registry.entity(id).expect("satellite entity");
         assert_eq!(

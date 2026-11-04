@@ -38,7 +38,10 @@ pub(super) fn compute(entities: &BTreeMap<String, Entity>) -> BTreeMap<String, S
     }
     let number_of = single_per_device(entities, Kind::Number);
     for entity in entities.values() {
-        if !matches!(entity.kind, Kind::Switch | Kind::BinarySensor) {
+        if !matches!(
+            entity.kind,
+            Kind::Switch | Kind::BinarySensor | Kind::Sensor
+        ) {
             continue;
         }
         let Some(device_id) = entity.device_id.as_deref() else {
