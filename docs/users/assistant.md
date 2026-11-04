@@ -85,7 +85,7 @@ No internet on the hub, or a token you would rather not use? Under **Upload from
 
 **Speech** at the top shows the engine's state: No model, Loading, Ready or Error with a message. A broken or missing model never stops the hub or text Assist: speech just shows an error.
 
-**Voice** lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) in the languages the model speaks: 15 French voices, with gender, age and a short description. A catalog voice is downloaded the first time you choose it (about 256 KB). Offline, only the voices already on the disk are listed. If the chosen voice is not usable with the active model, speech falls back to Default and the screen says so.
+**Voice** lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) in the languages the model speaks: 15 French voices, with gender, age and a short description. A catalog voice is downloaded the first time you choose it (about 256 KB). Once the catalog list has been fetched it is kept on the disk, so the whole catalog stays listed offline (a voice not yet downloaded is marked unavailable offline); with no copy yet, no catalog voice is listed. If the chosen voice is not usable with the active model, speech falls back to Default and the screen says so.
 
 ### Testing
 

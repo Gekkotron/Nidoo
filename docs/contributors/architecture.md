@@ -85,7 +85,7 @@ The ingest path offers each changed state to a bounded channel with `try_send`, 
 | File | Role |
 | --- | --- |
 | `mod.rs` | The `Tts` service the HTTP routes call; `TtsError`; `limit_threads()`. |
-| `engine.rs`, `phonon.rs` | The engine thread and the `Synthesiser` trait (tests use `tone.rs`, a fake that emits a tone; CI never downloads a model). One model loaded at a time, the old one dropped before the new one loads; one request at a time from a bounded queue (four), a full queue is `Busy`. |
+| `engine.rs`, `phonon.rs` | The engine thread and the `Speaker` / `SpeakerLoader` traits (`phonon.rs` implements them over `ptts`; tests use `tone.rs`, a fake that emits a tone; CI never downloads a model). One model loaded at a time, the old one dropped before the new one loads; one request at a time from a bounded queue (four), a full queue is `Busy`. |
 | `store.rs`, `source.rs` | Models on disk under `<data dir>/assist/tts/` (`models/<id>/` with a `manifest.json`, `state.json`, the token). A folder without a valid manifest is deleted on boot; installs are renamed into place only once complete. |
 | `hf.rs`, `download.rs` | Hugging Face listing and the one background download job: streamed to disk, sizes and sha256 checked, free space checked first. The token goes only in the `Authorization` header. |
 | `upload.rs` | The offline path: one file per request, allowed names and size caps. |
