@@ -149,6 +149,28 @@ pub async fn fetch_speech(
     })
 }
 
+/// Fetches each speak request in turn and hands the sentence to the group;
+/// a clip that cannot be fetched is logged and skipped.
+pub async fn run_speech_fetcher(
+    hub_url: String,
+    mut requests: tokio::sync::mpsc::Receiver<SpeakRequest>,
+    to_group: tokio::sync::mpsc::Sender<Speech>,
+) {
+    let client = reqwest::Client::new();
+    while let Some(req) = requests.recv().await {
+        match fetch_speech(&client, &hub_url, &req).await {
+            Ok(speech) => {
+                if to_group.send(speech).await.is_err() {
+                    return;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(id = %req.id, error = format!("{error:#}"), "speech not played")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -107,6 +107,14 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     tokio::spawn(run_pcm_input(listener, idle, input_tx.clone()));
 
     let (control_tx, control_rx) = mpsc::channel(64);
+    let (speak_tx, speak_rx) = mpsc::channel(8);
+    let (speech_tx, speech_rx) = mpsc::channel(4);
+    tracing::info!(hub = %cfg.hub_base_url(), "speech clips come from the hub");
+    tokio::spawn(nidoo_sound::speech::run_speech_fetcher(
+        cfg.hub_base_url(),
+        speak_rx,
+        speech_tx,
+    ));
     let (publish_tx, publish_rx) = mpsc::channel(256);
     let lead_us = i64::from(cfg.lead_ms) * 1_000;
     let group = Group::new(
@@ -131,11 +139,18 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
             Liveness::INBOUND,
         ));
     }
-    let group = tokio::spawn(group.run(discovery, input_rx, control_rx, publish_tx));
+    let group = tokio::spawn(group.run(discovery, input_rx, control_rx, speech_rx, publish_tx));
     let mqtt = {
         let cfg = cfg.clone();
         tokio::spawn(async move {
-            run_mqtt(&cfg.mqtt, &cfg.discovery_prefix, publish_rx, control_tx).await
+            run_mqtt(
+                &cfg.mqtt,
+                &cfg.discovery_prefix,
+                publish_rx,
+                control_tx,
+                speak_tx,
+            )
+            .await
         })
     };
 

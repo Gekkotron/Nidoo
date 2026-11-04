@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -15,10 +16,12 @@ use tokio::task::JoinHandle;
 use crate::clock::Clock;
 use crate::discover::{Discovered, DiscoveryEvent};
 use crate::input::InputEvent;
-use crate::pacer::Pacer;
+use crate::mixer::SpeechMixer;
+use crate::pacer::{CHUNK_BYTES, CHUNK_US, Pacer};
 use crate::player::{PlayerCmd, PlayerEvent, run_player};
 use crate::proto::messages::PCM_48K_STEREO_16;
 use crate::proto::noise::ServerIdentity;
+use crate::speech::Speech;
 use crate::state::{PlayerPrefs, StateStore, short_id};
 
 /// How often the pacer is polled while playing.
@@ -147,7 +150,14 @@ struct Link {
     /// are stale and must not overwrite the saved prefs.
     expect_volume: Option<u8>,
     expect_mute: Option<bool>,
+    /// Earliest timestamp the next audio chunk may carry in this stream:
+    /// timestamps only go up, even when music and speech take turns.
+    /// `NO_TS` when the stream has sent nothing yet.
+    next_ts: AtomicI64,
 }
+
+/// `Link::next_ts` before the first chunk of a stream.
+const NO_TS: i64 = i64::MIN;
 
 impl Link {
     fn new(cmds: mpsc::Sender<PlayerCmd>) -> Self {
@@ -160,10 +170,39 @@ impl Link {
             output_delay_us: 0,
             expect_volume: None,
             expect_mute: None,
+            next_ts: AtomicI64::new(NO_TS),
+        }
+    }
+
+    /// This player's short id, once it said hello.
+    fn short_id(&self) -> Option<String> {
+        self.client_id.as_deref().map(short_id)
+    }
+
+    fn next_ts(&self) -> Option<i64> {
+        Some(self.next_ts.load(Ordering::Relaxed)).filter(|&t| t != NO_TS)
+    }
+
+    /// Queues one audio chunk unless it would go back in time in this stream.
+    fn audio(&self, timestamp_us: i64, data: bytes::Bytes) {
+        if self.next_ts().is_some_and(|next| timestamp_us < next) {
+            return;
+        }
+        self.next_ts
+            .store(timestamp_us + CHUNK_US, Ordering::Relaxed);
+        if self
+            .cmds
+            .try_send(PlayerCmd::Audio { timestamp_us, data })
+            .is_err()
+        {
+            tracing::debug!(client_id = ?self.client_id, "player queue full, chunk dropped");
         }
     }
 
     async fn send(&self, cmd: PlayerCmd) {
+        if matches!(cmd, PlayerCmd::StreamStart(_) | PlayerCmd::StreamEnd) {
+            self.next_ts.store(NO_TS, Ordering::Relaxed);
+        }
         if self.cmds.send(cmd).await.is_err() {
             tracing::debug!(client_id = ?self.client_id, "player connection gone");
         }
@@ -197,6 +236,12 @@ pub struct Group {
     instances: HashMap<String, Instance>,
     pacer: Pacer,
     playing: bool,
+    /// Sentences to say over (or without) the music.
+    mixer: SpeechMixer,
+    /// Without music: the next speech chunk's timestamp.
+    speech_clock: Option<i64>,
+    /// With music: end of the last music chunk sent.
+    music_sent_until: i64,
     to_group: mpsc::Sender<FromPlayer>,
     from_players: mpsc::Receiver<FromPlayer>,
 }
@@ -213,6 +258,9 @@ impl Group {
             instances: HashMap::new(),
             pacer: Pacer::new(lead_us),
             playing: false,
+            mixer: SpeechMixer::new(),
+            speech_clock: None,
+            music_sent_until: i64::MIN,
             to_group,
             from_players,
         }
@@ -235,6 +283,7 @@ impl Group {
         mut discovery: mpsc::Receiver<DiscoveryEvent>,
         mut input: mpsc::Receiver<InputEvent>,
         mut control: mpsc::Receiver<Control>,
+        mut speech: mpsc::Receiver<Speech>,
         publish: mpsc::Sender<Published>,
     ) -> anyhow::Result<()> {
         let to_group = self.to_group.clone();
@@ -255,7 +304,10 @@ impl Group {
                 Some(i) = input.recv() => self.on_input(i).await,
                 Some(c) = control.recv() => self.on_control(c, &publish).await,
                 Some(m) = self.from_players.recv() => self.on_player(m, &publish).await,
-                _ = tick.tick(), if self.playing => self.on_tick(),
+                Some(s) = speech.recv() => self.on_speech(s),
+                _ = tick.tick(), if self.playing || self.mixer.is_playing() || self.mixer.has_queued() => {
+                    self.on_tick().await
+                }
             }
         }
     }
@@ -526,6 +578,7 @@ impl Group {
                 self.pacer = Pacer::new(lead).with_input_buffer(self.input_buffer_us);
                 self.pacer.start(self.clock.now_us());
                 self.playing = true;
+                self.speech_clock = None;
                 let allowed: Vec<String> = self
                     .store
                     .all()
@@ -545,7 +598,11 @@ impl Group {
                 tracing::info!("music stopped");
                 self.pacer.stop();
                 self.playing = false;
-                self.end_streams().await;
+                if self.mixer.is_playing() {
+                    self.keep_speech_streams().await;
+                } else {
+                    self.end_streams().await;
+                }
             }
         }
     }
@@ -568,21 +625,122 @@ impl Group {
         self.lead_us.max(needed)
     }
 
-    fn on_tick(&mut self) {
-        let chunks = self.pacer.due_chunks(self.clock.now_us());
-        if chunks.is_empty() {
+    /// A sentence to say: kept for the satellites that are connected and
+    /// allowed right now.
+    fn on_speech(&mut self, mut speech: Speech) {
+        speech.players.retain(|sid| {
+            self.store
+                .all()
+                .find(|p| short_id(&p.client_id) == *sid)
+                .is_some_and(|p| p.allowed && self.is_connected(&p.client_id))
+        });
+        if speech.players.is_empty() {
+            tracing::info!("no allowed, connected satellite for this sentence");
             return;
         }
-        for link in self.links().filter(|l| l.streaming) {
-            for c in &chunks {
-                let cmd = PlayerCmd::Audio {
-                    timestamp_us: c.timestamp_us,
-                    data: c.data.clone(),
-                };
-                if link.cmds.try_send(cmd).is_err() {
-                    tracing::debug!(client_id = ?link.client_id, "player queue full, chunk dropped");
+        if !self.mixer.push(speech) {
+            tracing::warn!("too many sentences waiting, this one is dropped");
+        }
+    }
+
+    /// Music stopped mid-sentence: the sentence's satellites keep their
+    /// stream until it ends, from where the music left off; the others stop.
+    async fn keep_speech_streams(&mut self) {
+        let targets = self.mixer.targets().to_vec();
+        let mut next = self.clock.now_us() + self.stream_lead();
+        for link in self.links_mut() {
+            if !link.streaming {
+                continue;
+            }
+            if link.short_id().is_some_and(|s| targets.contains(&s)) {
+                if let Some(n) = link.next_ts() {
+                    next = next.max(n);
+                }
+            } else {
+                link.send(PlayerCmd::StreamEnd).await;
+                link.streaming = false;
+            }
+        }
+        self.speech_clock = Some(next);
+    }
+
+    async fn on_tick(&mut self) {
+        let now = self.clock.now_us();
+        if !self.mixer.is_playing() && self.mixer.has_queued() {
+            self.start_sentence(now).await;
+        }
+        let targets = self.mixer.targets().to_vec();
+        let is_target = |link: &Link| link.short_id().is_some_and(|s| targets.contains(&s));
+
+        let chunks = if self.playing {
+            self.pacer.due_chunks(now)
+        } else {
+            Vec::new()
+        };
+        if let Some(last) = chunks.last() {
+            // One mix per chunk, the same for every satellite of the sentence.
+            let mixed: Vec<Option<bytes::Bytes>> = chunks
+                .iter()
+                .map(|c| self.mixer.mix_chunk(c.timestamp_us, Some(&c.data)))
+                .collect();
+            for link in self.links().filter(|l| l.streaming) {
+                let target = is_target(link);
+                for (c, m) in chunks.iter().zip(&mixed) {
+                    let data = match m {
+                        Some(m) if target => m.clone(),
+                        _ => c.data.clone(),
+                    };
+                    link.audio(c.timestamp_us, data);
                 }
             }
+            self.music_sent_until = last.timestamp_us + CHUNK_US;
+        }
+
+        if !self.playing && self.mixer.is_playing() {
+            let lead = self.stream_lead();
+            let end = self.mixer.end_us().unwrap_or(i64::MIN);
+            let mut ts = self.speech_clock.unwrap_or(now + lead);
+            while ts - lead <= now && ts < end {
+                let data = self
+                    .mixer
+                    .mix_chunk(ts, None)
+                    .unwrap_or_else(|| bytes::Bytes::from(vec![0; CHUNK_BYTES]));
+                for link in self.links().filter(|l| l.streaming && is_target(l)) {
+                    link.audio(ts, data.clone());
+                }
+                ts += CHUNK_US;
+            }
+            self.speech_clock = Some(ts);
+        }
+
+        let sent_until = if self.playing {
+            self.music_sent_until
+        } else {
+            self.speech_clock.unwrap_or(i64::MIN)
+        };
+        if self.mixer.is_playing() && self.mixer.finish_if_done(sent_until) && !self.playing {
+            self.speech_clock = None;
+            self.end_streams().await;
+        }
+    }
+
+    /// Starts the next sentence `lead` from now and opens a stream on its
+    /// satellites that have none.
+    async fn start_sentence(&mut self, now: i64) {
+        let start = now + self.stream_lead();
+        let Some(targets) = self.mixer.start_next(start).map(<[String]>::to_vec) else {
+            return;
+        };
+        tracing::info!(satellites = targets.len(), "speaking");
+        for link in self.links_mut() {
+            let target = link.short_id().is_some_and(|s| targets.contains(&s));
+            if target && link.connected && !link.streaming {
+                link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16)).await;
+                link.streaming = true;
+            }
+        }
+        if !self.playing {
+            self.speech_clock = Some(start);
         }
     }
 }
@@ -706,6 +864,7 @@ mod tests {
         discovery: mpsc::Sender<DiscoveryEvent>,
         input: mpsc::Sender<InputEvent>,
         control: mpsc::Sender<Control>,
+        speech: mpsc::Sender<crate::speech::Speech>,
         published: mpsc::Receiver<Published>,
         links: mpsc::Receiver<Fake>,
         /// Where an inbound (client-initiated) connection reports.
@@ -762,11 +921,13 @@ mod tests {
             let (input, i_rx) = mpsc::channel(64);
             let (control, c_rx) = mpsc::channel(8);
             let (p_tx, published) = mpsc::channel(64);
-            tokio::spawn(group.run(d_rx, i_rx, c_rx, p_tx));
+            let (speech, s_rx) = mpsc::channel(8);
+            tokio::spawn(group.run(d_rx, i_rx, c_rx, s_rx, p_tx));
             Harness {
                 discovery,
                 input,
                 control,
+                speech,
                 published,
                 links,
                 to_group,
@@ -1164,5 +1325,205 @@ mod tests {
         );
         h.clock.advance(40_000);
         assert_eq!(a.audio().await, 100_000 + LEAD);
+    }
+
+    // ---- speech ----
+
+    use crate::pacer::CHUNK_FRAMES;
+    use crate::speech::Speech;
+
+    /// `frames` of a constant sample for these client ids.
+    fn speech_for(ids: &[&str], value: i16, frames: usize) -> Speech {
+        Speech {
+            players: ids.iter().map(|id| short_id(id)).collect(),
+            pcm: bytes::Bytes::from(
+                std::iter::repeat_n(value.to_le_bytes(), frames * 2)
+                    .flatten()
+                    .collect::<Vec<u8>>(),
+            ),
+        }
+    }
+
+    fn has_sample(data: &[u8], v: i16) -> bool {
+        data.as_chunks::<2>()
+            .0
+            .iter()
+            .any(|b| i16::from_le_bytes(*b) == v)
+    }
+
+    fn audio_of(cmds: &[PlayerCmd]) -> Vec<(i64, bytes::Bytes)> {
+        cmds.iter()
+            .filter_map(|c| match c {
+                PlayerCmd::Audio { timestamp_us, data } => Some((*timestamp_us, data.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    impl Harness {
+        /// Hands a sentence to the group and lets it pick it up at the current time.
+        async fn say(&self, speech: Speech) {
+            self.speech.send(speech).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn speech_with_music_reaches_only_its_targets() {
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("B", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        let (mut b, _) = h.ready_player("b", "B").await;
+        h.play().await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+        assert!(matches!(b.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.say(speech_for(&["A"], 8_000, CHUNK_FRAMES)).await;
+        h.clock.advance(1_000_000);
+        let got_a = audio_of(&a.drain().await);
+        let got_b = audio_of(&b.drain().await);
+        assert!(got_a.iter().any(|(_, d)| has_sample(d, 8_000)), "A says it");
+        // B keeps the shared music chunks, untouched: only the music's
+        // samples (0x0101 bytes, then silence), never speech or a ducked value.
+        assert!(!got_b.is_empty());
+        assert!(got_b.iter().all(|(_, d)| {
+            d.as_chunks::<2>()
+                .0
+                .iter()
+                .all(|b| matches!(i16::from_le_bytes(*b), 0 | 257))
+        }));
+    }
+
+    #[tokio::test]
+    async fn speech_without_music_starts_and_ends_a_stream() {
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("B", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        let (mut b, _) = h.ready_player("b", "B").await;
+        h.say(speech_for(&["A"], 8_000, CHUNK_FRAMES)).await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.clock.advance(1_000_000);
+        let cmds = a.drain().await;
+        assert!(audio_of(&cmds).iter().any(|(_, d)| has_sample(d, 8_000)));
+        assert_eq!(
+            cmds.last(),
+            Some(&PlayerCmd::StreamEnd),
+            "ends after the sentence"
+        );
+        assert!(b.drain().await.is_empty(), "B hears nothing");
+    }
+
+    #[tokio::test]
+    async fn speech_skips_players_not_allowed_or_offline() {
+        let mut h = Harness::start_with(&[("A", 30, false, false)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.say(speech_for(&["A", "Offline"], 8_000, CHUNK_FRAMES))
+            .await;
+        h.clock.advance(1_000_000);
+        let cmds = a.drain().await;
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, PlayerCmd::StreamStart(_) | PlayerCmd::Audio { .. })),
+            "{cmds:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn two_sentences_play_one_after_the_other() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.speech
+            .send(speech_for(&["A"], 8_000, CHUNK_FRAMES))
+            .await
+            .unwrap();
+        h.say(speech_for(&["A"], 4_000, CHUNK_FRAMES)).await;
+        let mut cmds = Vec::new();
+        for _ in 0..3 {
+            h.clock.advance(1_000_000);
+            cmds.extend(a.drain().await);
+        }
+        let audio = audio_of(&cmds);
+        let first_end = audio
+            .iter()
+            .filter(|(_, d)| has_sample(d, 8_000))
+            .map(|(t, _)| *t)
+            .max()
+            .expect("first sentence");
+        let second_start = audio
+            .iter()
+            .filter(|(_, d)| has_sample(d, 4_000))
+            .map(|(t, _)| *t)
+            .min()
+            .expect("second sentence");
+        assert!(second_start > first_end, "{second_start} after {first_end}");
+    }
+
+    #[tokio::test]
+    async fn music_stopping_mid_sentence_keeps_the_stream() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.play().await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+        // Half a second of speech: the window lasts 0.8 s.
+        h.say(speech_for(&["A"], 8_000, 25 * CHUNK_FRAMES)).await;
+        h.clock.advance(600_000);
+        a.drain().await;
+        h.input.send(InputEvent::Stopped).await.unwrap();
+        let mid = a.drain().await;
+        assert!(!mid.contains(&PlayerCmd::StreamEnd), "{mid:?}");
+        h.clock.advance(1_000_000);
+        let rest = a.drain().await;
+        assert!(audio_of(&rest).iter().any(|(_, d)| has_sample(d, 8_000)));
+        assert_eq!(rest.last(), Some(&PlayerCmd::StreamEnd));
+    }
+
+    #[tokio::test]
+    async fn music_starting_mid_sentence_never_overlaps() {
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.say(speech_for(&["A"], 8_000, 25 * CHUNK_FRAMES)).await;
+        let mut cmds = Vec::new();
+        h.clock.advance(300_000);
+        cmds.extend(a.drain().await);
+        h.play().await;
+        h.clock.advance(1_000_000);
+        cmds.extend(a.drain().await);
+        let starts = cmds
+            .iter()
+            .filter(|c| matches!(c, PlayerCmd::StreamStart(_)))
+            .count();
+        assert_eq!(starts, 1, "one stream: {cmds:?}");
+        let ts: Vec<i64> = audio_of(&cmds).iter().map(|(t, _)| *t).collect();
+        assert!(ts.len() > 10);
+        assert!(ts.windows(2).all(|w| w[1] > w[0]), "{ts:?}");
+    }
+
+    #[tokio::test]
+    async fn a_target_leaving_mid_sentence_does_not_stop_the_others() {
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("B", 30, false, true)]).await;
+        let (a, _) = h.ready_player("a", "A").await;
+        let (mut b, _) = h.ready_player("b", "B").await;
+        h.say(speech_for(&["A", "B"], 8_000, 25 * CHUNK_FRAMES))
+            .await;
+        h.clock.advance(200_000);
+        a.event(PlayerEvent::Gone {
+            client_id: "A".into(),
+        })
+        .await;
+        drop(a);
+        h.clock.advance(1_000_000);
+        let cmds = b.drain().await;
+        assert!(audio_of(&cmds).iter().any(|(_, d)| has_sample(d, 8_000)));
+        assert_eq!(cmds.last(), Some(&PlayerCmd::StreamEnd));
+    }
+
+    #[tokio::test]
+    async fn targets_of_one_sentence_get_identical_chunks() {
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("B", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        let (mut b, _) = h.ready_player("b", "B").await;
+        h.say(speech_for(&["A", "B"], 8_000, CHUNK_FRAMES)).await;
+        h.clock.advance(1_000_000);
+        let got_a = audio_of(&a.drain().await);
+        assert!(!got_a.is_empty());
+        assert_eq!(got_a, audio_of(&b.drain().await));
     }
 }
