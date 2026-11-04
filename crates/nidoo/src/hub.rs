@@ -321,6 +321,7 @@ pub struct Hub {
     /// per `Change::StateChanged` emitted by [`Self::ingest`].
     history: OnceLock<Arc<History>>,
     tts: OnceLock<Arc<crate::assist::tts::Tts>>,
+    stt: OnceLock<Arc<crate::assist::stt::Stt>>,
     /// The setup context, set once at startup in Run mode; the settings MCP tools use it.
     pub(crate) setup: OnceLock<Arc<crate::setup::SetupCtx>>,
 }
@@ -468,6 +469,7 @@ impl Hub {
             logged_ignored: Mutex::new(BTreeSet::new()),
             history: OnceLock::new(),
             tts: OnceLock::new(),
+            stt: OnceLock::new(),
             setup: OnceLock::new(),
         })
     }
@@ -490,6 +492,16 @@ impl Hub {
     /// The speech facade, when one is configured.
     pub fn tts(&self) -> Option<&Arc<crate::assist::tts::Tts>> {
         self.tts.get()
+    }
+
+    /// Hands the speech input facade to the hub; the second call is a no-op.
+    pub fn set_stt(&self, stt: Arc<crate::assist::stt::Stt>) {
+        let _ = self.stt.set(stt);
+    }
+
+    /// The speech input facade, when one is configured.
+    pub fn stt(&self) -> Option<&Arc<crate::assist::stt::Stt>> {
+        self.stt.get()
     }
 
     /// The recorder, when one is configured.

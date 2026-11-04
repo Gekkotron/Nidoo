@@ -159,6 +159,9 @@ async fn run() -> anyhow::Result<ExitCode> {
             hub.set_tts(nidoo::assist::tts::Tts::start(
                 nidoo::assist::tts::TtsConfig::for_data_dir(&data_dir),
             ));
+            hub.set_stt(nidoo::assist::stt::Stt::start(
+                data_dir.join("assist").join("stt"),
+            ));
             hub.set_setup(Arc::clone(&setup_ctx));
             if cfg.history.enabled() {
                 match History::start(&cfg.history, hub.zone()) {

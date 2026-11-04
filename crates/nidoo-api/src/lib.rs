@@ -18,6 +18,7 @@ mod setup;
 mod snapshot;
 mod solar;
 mod sound;
+mod stt;
 pub mod system;
 mod tts;
 mod views;
@@ -60,6 +61,7 @@ pub use solar::{
     SolarSpan, SolarToday, SolarView,
 };
 pub use sound::{SoundSpeakReply, SoundSpeakRequest};
+pub use stt::{STT_MODEL_ID, SttKey, SttSettings, SttStatus};
 pub use system::{
     CpuView, DiskView, MemView, NotifyInput, RestartView, ServiceState, ServiceView, StopKind,
     SystemService, SystemView,

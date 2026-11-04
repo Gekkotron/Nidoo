@@ -7,8 +7,10 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["tts"]
+default = ["tts", "stt"]
 tts = ["dep:ptts", "dep:xn"]
+# Speech input (the recognizer comes with the next step).
+stt = []
 
 [dependencies]
 ptts = { version = "=0.6.0", default-features = false, features = ["hf"], optional = true }
@@ -44,6 +46,8 @@ getrandom = "0.2"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha2 = "0.10"
 hmac = "0.12"
+tar = "0.4"
+bzip2 = "0.5"
 bytes = "1"
 sqlx.workspace = true
 thiserror.workspace = true
