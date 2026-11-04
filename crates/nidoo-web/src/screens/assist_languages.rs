@@ -18,6 +18,7 @@ use crate::components::toast::Toasts;
 use crate::i18n::{
     AssistSettingsText as T, language_name, test_sentence, use_assist_settings_text, use_lang,
 };
+use crate::icons;
 
 /// The localStorage key of the selected tab (a language code).
 const TAB_KEY: &str = "nidoo.assist.tts.tab";
@@ -506,11 +507,12 @@ pub fn LanguagesCard(
             }
 
             // ---- Model ----
+            <section class="assist-set__section">
+            <h3 class="assist-set__heading">{move || t(T::ModelLabel)}</h3>
             <div class="assist-set__row">
-                <label class="assist-set__row assist-set__grow">
-                    <span class="assist-set__muted">{move || t(T::ModelLabel)}</span>
                     <select
                         class="field assist-set__grow"
+                        aria-label=move || t(T::ModelLabel)
                         on:change=move |ev| choose_model(event_target_value(&ev))
                     >
                         {
@@ -551,7 +553,6 @@ pub fn LanguagesCard(
                             }
                         }
                     </select>
-                </label>
                 {
                     let current = current.clone();
                     move || {
@@ -577,9 +578,11 @@ pub fn LanguagesCard(
                     }
                 }
             </div>
+            </section>
 
             // ---- Try it ----
-            <h3>{move || t(T::TestHeading)}</h3>
+            <section class="assist-set__section">
+            <h3 class="assist-set__heading">{move || t(T::TestHeading)}</h3>
             <div class="assist-set__row">
                 <input
                     class="field assist-set__grow"
@@ -605,16 +608,18 @@ pub fn LanguagesCard(
                 />
                 <button
                     type="button"
-                    class="btn assist-set__btn"
+                    class="btn btn--with-icon assist-set__btn assist-set__play"
                     disabled=cannot_speak.clone()
                     on:click=move |_| play()
                 >
+                    <span class="btn__glyph" inner_html=icons::PLAY></span>
                     {move || if test_busy.get() { t(T::Speaking) } else { t(T::Play) }}
                 </button>
             </div>
+            // No native controls: Play and each voice's ▶ drive it, and the browser's grey
+            // player clashed with the card.
             <audio
                 node_ref=audio
-                controls=true
                 class="assist-set__audio"
                 on:playing=move |_| {
                     if let Some(start) = clicked_at.get_untracked() {
@@ -641,9 +646,11 @@ pub fn LanguagesCard(
                     })
             }}
             {move || test_error.get().map(|e| view! { <p class="assist-set__error">{e}</p> })}
+            </section>
 
             // ---- Voice ----
-            <h3>{move || t(T::VoiceHeading)}</h3>
+            <section class="assist-set__section">
+            <h3 class="assist-set__heading">{move || t(T::VoiceHeading)}</h3>
             {move || {
                 let no_model = current_model().is_none();
                 shown_voices()
@@ -655,16 +662,17 @@ pub fn LanguagesCard(
                         let cannot_speak = cannot_speak.clone();
                         view! {
                             {view.fell_back.then(|| view! {
-                                <p class="assist-set__warn">{move || t(T::VoiceFellBack)}</p>
+                                <p class="assist-set__note">{move || t(T::VoiceFellBack)}</p>
                             })}
                             {view.catalog_offline.then(|| view! {
                                 <p class="assist-set__muted">{move || t(T::VoiceCatalogOffline)}</p>
                             })}
                             {list.is_empty().then(|| view! { <p class="assist-set__muted">{move || t(T::VoiceEmpty)}</p> })}
-                            <ul class="assist-set__list">
+                            <ul class="assist-set__voices">
                                 {list
                                     .into_iter()
                                     .map(|v| {
+                                        let on = chosen == v.name;
                                         let name = v.name.clone();
                                         let detail = voice_detail(&v);
                                         let is_default = v.name == DEFAULT_VOICE;
@@ -684,12 +692,12 @@ pub fn LanguagesCard(
                                         let choose_voice = choose_voice.clone();
                                         let preview = preview.clone();
                                         view! {
-                                            <li class="assist-set__item assist-set__voice">
+                                            <li class=if on { "assist-set__voice assist-set__voice--on" } else { "assist-set__voice" }>
                                                 <label>
                                                     <input
                                                         type="radio"
                                                         name="assist-voice"
-                                                        prop:checked=chosen == v.name
+                                                        prop:checked=on
                                                         disabled=no_model
                                                         on:change=move |_| choose_voice(name.clone())
                                                     />
@@ -702,18 +710,17 @@ pub fn LanguagesCard(
                                                             }
                                                         }}
                                                     </span>
-                                                    {(!detail.is_empty()).then(|| view! { <span class="assist-set__muted">" " {detail}</span> })}
+                                                    {(!detail.is_empty()).then(|| view! { <span class="assist-set__muted assist-set__detail">{detail}</span> })}
                                                 </label>
                                                 <button
                                                     type="button"
-                                                    class="btn assist-set__btn assist-set__listen"
+                                                    class="btn btn--round assist-set__listen"
                                                     title=listen_label.clone()
                                                     aria-label=listen_label
                                                     disabled=cannot_speak.clone()
                                                     on:click=move |_| preview(heard.clone())
-                                                >
-                                                    {move || if this_one() { "…" } else { "▶" }}
-                                                </button>
+                                                    inner_html=move || if this_one() { "…" } else { icons::PLAY }
+                                                ></button>
                                             </li>
                                         }
                                     })
@@ -722,6 +729,7 @@ pub fn LanguagesCard(
                         }
                     })
             }}
+            </section>
 
             // ---- Remove ----
             <button
@@ -770,7 +778,7 @@ pub fn LanguagesCard(
                                     role="tab"
                                     class={
                                         let on = on.clone();
-                                        move || if on() { "assist-set__tab assist-set__tab--on" } else { "assist-set__tab" }
+                                        move || if on() { "chip chip--selected" } else { "chip" }
                                     }
                                     aria-selected=move || if on() { "true" } else { "false" }
                                     on:click=move |_| pick_tab(code.clone())
@@ -785,7 +793,7 @@ pub fn LanguagesCard(
                 <button
                     type="button"
                     role="tab"
-                    class=move || if adding.get() { "assist-set__tab assist-set__tab--on" } else { "assist-set__tab" }
+                    class=move || if adding.get() { "chip chip--selected" } else { "chip chip--add" }
                     aria-selected=move || if adding.get() { "true" } else { "false" }
                     on:click=move |_| open_add()
                 >
