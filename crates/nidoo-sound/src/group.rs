@@ -582,6 +582,7 @@ impl Group {
                 self.pacer.start(self.clock.now_us());
                 self.playing = true;
                 self.speech_clock = None;
+                self.music_sent_until = i64::MIN;
                 let allowed: Vec<String> = self
                     .store
                     .all()
@@ -731,9 +732,13 @@ impl Group {
     }
 
     /// Starts the next sentence `lead` from now and opens a stream on its
-    /// satellites that have none.
+    /// satellites that have none. With music, never before the music already sent: the music's
+    /// lead was set when it started and stays longer than ours once a slow player leaves.
     async fn start_sentence(&mut self, now: i64) {
-        let start = now + self.stream_lead();
+        let mut start = now + self.stream_lead();
+        if self.playing {
+            start = start.max(self.music_sent_until);
+        }
         let Some(targets) = self.mixer.start_next(start).map(<[String]>::to_vec) else {
             return;
         };
@@ -1545,6 +1550,47 @@ mod tests {
         let cmds = b.drain().await;
         assert!(audio_of(&cmds).iter().any(|(_, d)| has_sample(d, 8_000)));
         assert_eq!(cmds.last(), Some(&PlayerCmd::StreamEnd));
+    }
+
+    #[tokio::test]
+    async fn a_sentence_over_music_starts_after_the_music_already_sent() {
+        // The music started with a slow player's 1.5 s lead; once it leaves, ours is 0.5 s, but
+        // the music is already sent 1.5 s ahead: a sentence starting 0.5 s ahead would land on
+        // chunks gone out without it.
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("S", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        let (mut s, _) = h.ready_player("s", "S").await;
+        s.event(PlayerEvent::State {
+            client_id: "S".into(),
+            available: true,
+            volume: Some(30),
+            muted: Some(false),
+            supported_commands: vec![],
+            min_buffer_ms: Some(1_500),
+            output_delay_ms: Some(0),
+        })
+        .await;
+        s.drain().await;
+        h.play().await;
+        h.clock.advance(100_000);
+        s.event(PlayerEvent::Gone {
+            client_id: "S".into(),
+        })
+        .await;
+        drop(s);
+        a.drain().await;
+        // Half a second of speech: 25 chunks.
+        h.say(speech_for(&["A"], 8_000, 25 * CHUNK_FRAMES)).await;
+        let mut cmds = Vec::new();
+        for _ in 0..3 {
+            h.clock.advance(1_000_000);
+            cmds.extend(a.drain().await);
+        }
+        let spoken = audio_of(&cmds)
+            .iter()
+            .filter(|(_, d)| has_sample(d, 8_000))
+            .count();
+        assert!(spoken >= 25, "only {spoken} chunks carry the sentence");
     }
 
     #[tokio::test]
