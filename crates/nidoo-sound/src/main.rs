@@ -107,7 +107,8 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     tokio::spawn(run_pcm_input(listener, idle, input_tx.clone()));
 
     let (control_tx, control_rx) = mpsc::channel(64);
-    let (speak_tx, speak_rx) = mpsc::channel(8);
+    // Requests wait here while one clip is fetched: no more than the sentences the mixer queues.
+    let (speak_tx, speak_rx) = mpsc::channel(nidoo_sound::mixer::MAX_QUEUED);
     let (speech_tx, speech_rx) = mpsc::channel(4);
     tracing::info!(hub = %cfg.hub_base_url(), "speech clips come from the hub");
     tokio::spawn(nidoo_sound::speech::run_speech_fetcher(

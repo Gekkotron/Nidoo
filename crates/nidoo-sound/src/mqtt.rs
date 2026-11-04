@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::config::MqttSettings;
 use crate::group::{Control, Published};
-use crate::speech::{SPEAK_TOPIC, SpeakRequest, parse_speak};
+use crate::speech::{SPEAK_TOPIC, SpeakRequest, Waiting, parse_speak};
 use crate::state::{PlayerPrefs, short_id};
 
 /// Topic root for this service's own topics (the hub owns `nidoo/`).
@@ -187,7 +187,7 @@ pub async fn run_mqtt(
     discovery_prefix: &str,
     mut publish: mpsc::Receiver<Published>,
     control: mpsc::Sender<Control>,
-    speak: mpsc::Sender<SpeakRequest>,
+    speak: mpsc::Sender<Waiting>,
 ) -> anyhow::Result<()> {
     let mut options = MqttOptions::new(cfg.client_id.clone(), cfg.host.clone(), cfg.port);
     options.set_keep_alive(Duration::from_secs(30));
@@ -234,7 +234,7 @@ pub async fn run_mqtt(
                     }
                     Incoming::Speak(req) => {
                         tracing::info!(id = %req.id, players = req.players.len(), "speak");
-                        if speak.try_send(req).is_err() {
+                        if speak.try_send((tokio::time::Instant::now(), req)).is_err() {
                             tracing::warn!("speech queue full, sentence dropped");
                         }
                     }
