@@ -12,24 +12,17 @@ pub enum AssistSettingsText {
     /// The page title.
     Title,
     // Section headings.
-    SpeechHeading,
     TestHeading,
     VoiceHeading,
     ModelsHeading,
     AddHeading,
-    TokenHeading,
     // Speech status.
     StateNoModel,
     StateLoading,
     StateReady,
     StateError,
-    ActiveModel,
-    NoActiveModel,
     NotBuilt,
-    NoFrench,
-    ActiveNoFrench,
     // Test.
-    TestSentence,
     TestLabel,
     Play,
     Speaking,
@@ -45,14 +38,11 @@ pub enum AssistSettingsText {
     // Installed models.
     ModelsEmpty,
     Uploaded,
-    UseModel,
     /// The visible label of a model's radio.
-    ActiveLabel,
     Remove,
     RemoveQuestion,
     RemoveYes,
     Cancel,
-    SpeaksFrench,
     LicenceLabel,
     // Add a model.
     UrlLabel,
@@ -118,30 +108,17 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
         OpenSettings => ("Speech settings", "Réglages de la voix"),
         Back => ("Assistant", "Assistant"),
         Title => ("Speech settings", "Réglages de la voix"),
-        SpeechHeading => ("Speech", "Synthèse vocale"),
         TestHeading => ("Try it", "Essai"),
         VoiceHeading => ("Voice", "Voix"),
         ModelsHeading => ("Installed models", "Modèles installés"),
         AddHeading => ("Add a model", "Ajouter un modèle"),
-        TokenHeading => ("Hugging Face token", "Jeton Hugging Face"),
         StateNoModel => ("No model", "Aucun modèle"),
         StateLoading => ("Loading", "Chargement"),
         StateReady => ("Ready", "Prêt"),
         StateError => ("Error", "Erreur"),
-        ActiveModel => ("Active model", "Modèle actif"),
-        NoActiveModel => ("none", "aucun"),
         NotBuilt => (
             "This hub was built without speech.",
             "Ce hub a été compilé sans la voix.",
-        ),
-        NoFrench => ("does not speak French", "ne parle pas français"),
-        ActiveNoFrench => (
-            "The active model does not speak French: speech will sound wrong.",
-            "Le modèle actif ne parle pas français : la voix sonnera faux.",
-        ),
-        TestSentence => (
-            "Bonjour, je suis l'assistant de la maison.",
-            "Bonjour, je suis l'assistant de la maison.",
         ),
         TestLabel => ("Sentence to speak", "Phrase à prononcer"),
         Play => ("Play", "Lire"),
@@ -167,13 +144,10 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
             "Aucun modèle installé. Ajoutez-en un ci-dessous.",
         ),
         Uploaded => ("Uploaded", "Importé"),
-        UseModel => ("Use this model", "Utiliser ce modèle"),
-        ActiveLabel => ("Active", "Actif"),
         Remove => ("Remove", "Supprimer"),
         RemoveQuestion => ("Remove this model?", "Supprimer ce modèle ?"),
         RemoveYes => ("Yes, remove", "Oui, supprimer"),
         Cancel => ("Cancel", "Annuler"),
-        SpeaksFrench => ("speaks French", "parle français"),
         LicenceLabel => ("Licence", "Licence"),
         UrlLabel => (
             "Model page or owner/repo",
@@ -284,22 +258,15 @@ mod tests {
             OpenSettings
             | Back
             | Title
-            | SpeechHeading
             | TestHeading
             | VoiceHeading
             | ModelsHeading
             | AddHeading
-            | TokenHeading
             | StateNoModel
             | StateLoading
             | StateReady
             | StateError
-            | ActiveModel
-            | NoActiveModel
             | NotBuilt
-            | NoFrench
-            | ActiveNoFrench
-            | TestSentence
             | TestLabel
             | Play
             | Speaking
@@ -312,13 +279,10 @@ mod tests {
             | Listen
             | ModelsEmpty
             | Uploaded
-            | UseModel
-            | ActiveLabel
             | Remove
             | RemoveQuestion
             | RemoveYes
             | Cancel
-            | SpeaksFrench
             | LicenceLabel
             | UrlLabel
             | UrlPlaceholder
@@ -348,11 +312,6 @@ mod tests {
             | TokenCleared
             | Loading
             | CouldNotLoad
-            | UnitB
-            | UnitKb
-            | UnitMb
-            | UnitGb
-            | UnitMs
             | LanguagesHeading
             | AddLanguage
             | HouseLanguage
@@ -368,7 +327,12 @@ mod tests {
             | RemoveUsedQuestion
             | LanguagesUnknown
             | TokenFold
-            | TypeSentence => true,
+            | TypeSentence
+            | UnitB
+            | UnitKb
+            | UnitMb
+            | UnitGb
+            | UnitMs => true,
         }
     }
 
@@ -378,22 +342,15 @@ mod tests {
             OpenSettings,
             Back,
             Title,
-            SpeechHeading,
             TestHeading,
             VoiceHeading,
             ModelsHeading,
             AddHeading,
-            TokenHeading,
             StateNoModel,
             StateLoading,
             StateReady,
             StateError,
-            ActiveModel,
-            NoActiveModel,
             NotBuilt,
-            NoFrench,
-            ActiveNoFrench,
-            TestSentence,
             TestLabel,
             Play,
             Speaking,
@@ -406,13 +363,10 @@ mod tests {
             Listen,
             ModelsEmpty,
             Uploaded,
-            UseModel,
-            ActiveLabel,
             Remove,
             RemoveQuestion,
             RemoveYes,
             Cancel,
-            SpeaksFrench,
             LicenceLabel,
             UrlLabel,
             UrlPlaceholder,
@@ -458,6 +412,11 @@ mod tests {
             LanguagesUnknown,
             TokenFold,
             TypeSentence,
+            UnitB,
+            UnitKb,
+            UnitMb,
+            UnitGb,
+            UnitMs,
         ]
     };
 
@@ -465,19 +424,7 @@ mod tests {
     fn every_text_has_both_languages() {
         use AssistSettingsText::*;
         assert!(ALL.iter().all(|&k| listed(k)));
-        // The test sentence is French in both languages; the rest differ or is a shared word.
-        assert_table(
-            ALL,
-            assist_settings_text,
-            &[TestSentence, Back, LicenceLabel, UnitMs],
-        );
-    }
-
-    #[test]
-    fn the_test_sentence_is_the_pinned_one() {
-        assert_eq!(
-            assist_settings_text(Lang::En, AssistSettingsText::TestSentence),
-            "Bonjour, je suis l'assistant de la maison."
-        );
+        // The rest differ or is a shared word.
+        assert_table(ALL, assist_settings_text, &[Back, LicenceLabel, UnitMs]);
     }
 }
