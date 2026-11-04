@@ -103,6 +103,9 @@ impl Manifest {
 /// The chosen model and voice, kept as `state.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TtsState {
+    /// The languages the hub speaks, the house language first.
+    #[serde(default)]
+    pub languages: Vec<super::languages::LanguageEntry>,
     /// The model in use, when one is chosen.
     #[serde(default)]
     pub active: Option<String>,
@@ -118,6 +121,7 @@ fn default_voice() -> String {
 impl Default for TtsState {
     fn default() -> Self {
         Self {
+            languages: Vec::new(),
             active: None,
             voice: default_voice(),
         }
@@ -592,6 +596,7 @@ mod tests {
         let s = TtsState {
             active: Some("m".into()),
             voice: "v".into(),
+            ..TtsState::default()
         };
         store.write_state(&s).unwrap();
         assert_eq!(store.read_state(), s);

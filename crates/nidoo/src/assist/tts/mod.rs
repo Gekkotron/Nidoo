@@ -18,6 +18,7 @@ use voices::VoiceCatalog;
 pub mod download;
 pub mod engine;
 pub mod hf;
+pub mod languages;
 #[cfg(feature = "tts")]
 pub mod phonon;
 pub mod source;
