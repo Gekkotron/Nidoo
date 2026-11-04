@@ -1,5 +1,7 @@
 //! A small Hugging Face client: repository metadata, file listing and file fetches.
 
+use std::time::Duration;
+
 use nidoo_api::{RepoListing, WeightFile};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -49,6 +51,13 @@ struct Lfs {
     size: u64,
 }
 
+/// How long a connection to Hugging Face may take to open.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long Hugging Face may stay silent mid-answer; it restarts on every read, so a long
+/// weight stream is fine as long as bytes keep arriving.
+pub const READ_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Talks to one Hugging Face base address, with an optional token.
 #[derive(Clone)]
 pub struct HfClient {
@@ -63,7 +72,11 @@ impl HfClient {
         HfClient {
             base: base.trim_end_matches('/').to_string(),
             token: token.filter(|t| !t.is_empty()),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(READ_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
         }
     }
 

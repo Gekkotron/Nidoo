@@ -252,7 +252,13 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                 Ok(view) => {
                     voices.try_set(Some(view));
                 }
-                Err(e) => toast(e.error),
+                Err(e) => {
+                    toast(e.error);
+                    // Show the choice the hub really holds, not the one just clicked.
+                    if let Ok(real) = tts::get_voices().await {
+                        voices.try_set(Some(real));
+                    }
+                }
             }
         });
     };
@@ -647,7 +653,9 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                                                     prop:checked=m.active
                                                     on:change=move |_| activate(use_id.clone())
                                                 />
-                                                <span class="assist-set__active">{move || t(T::ActiveLabel)}</span>
+                                                {m.active.then(|| view! {
+                                                    <span class="assist-set__active">{move || t(T::ActiveLabel)}</span>
+                                                })}
                                                 <span class="assist-set__name">{name}</span>
                                                 <span class="assist-set__muted">" " {detail}</span>
                                                 {if french {

@@ -90,7 +90,10 @@ async fn a_live_hub_shows_its_state_voices_and_models() {
         200,
         r#"[{"id":"a--b--q8","repo":"a/b","revision":"0123456789abcdef","weights":"model.q8.gguf",
              "size":74553568,"licence":"cc-by-nc-4.0","languages":["en"],"french":false,
-             "source":"download","installed_at":1800000000,"active":true}]"#,
+             "source":"download","installed_at":1800000000,"active":true},
+            {"id":"c--d--q4k","repo":"c/d","revision":"fedcba9876543210","weights":"model.q4k.gguf",
+             "size":40000000,"licence":"cc-by-nc-4.0","languages":["fr"],"french":true,
+             "source":"download","installed_at":1800000001,"active":false}]"#,
     );
     stub.reply(
         "GET",
@@ -110,12 +113,12 @@ async fn a_live_hub_shows_its_state_voices_and_models() {
     assert!(text.contains("a/b"), "{text}");
     assert!(text.contains("74.6 MB"), "{text}");
     assert!(text.contains("0123456"), "{text}");
-    let active = m
-        .host
-        .query_selector(".assist-set__active")
-        .unwrap()
-        .unwrap();
-    assert_eq!(active.text_content().as_deref(), Some("Active"));
+    let labels = m.host.query_selector_all(".assist-set__active").unwrap();
+    assert_eq!(labels.length(), 1, "only the active model says Active");
+    assert_eq!(
+        labels.item(0).unwrap().text_content().as_deref(),
+        Some("Active")
+    );
     assert!(text.contains("does not speak French"), "{text}");
     assert!(text.contains("Default is used"), "{text}");
     assert!(text.contains("unavailable offline"), "{text}");
