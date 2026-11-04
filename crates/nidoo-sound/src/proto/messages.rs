@@ -123,6 +123,10 @@ pub struct PlayerSupport {
     pub supported_formats: Vec<AudioFormat>,
     /// Bytes of outstanding audio chunks (13-byte header + payload) the player holds.
     pub buffer_capacity: u32,
+    /// Commands the player accepts (sendspin-js lists them here; sendspin-cpp
+    /// 0.9.3 in `client/state`).
+    #[serde(default)]
+    pub supported_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -154,8 +158,9 @@ pub struct PlayerState {
     pub required_lead_time_ms: Option<u32>,
     #[serde(default)]
     pub min_buffer_ms: Option<u32>,
+    /// Absent in a delta state (only changed fields are sent): unchanged.
     #[serde(default)]
-    pub supported_commands: Vec<String>,
+    pub supported_commands: Option<Vec<String>>,
     #[serde(default)]
     pub format: Option<AudioFormat>,
 }
@@ -342,7 +347,7 @@ mod tests {
             (p.volume, p.muted, p.min_buffer_ms),
             (Some(30), Some(false), Some(150))
         );
-        assert_eq!(p.supported_commands, vec!["volume", "mute"]);
+        assert_eq!(p.supported_commands.unwrap(), vec!["volume", "mute"]);
     }
 
     #[test]

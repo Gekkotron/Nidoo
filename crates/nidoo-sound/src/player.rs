@@ -8,7 +8,10 @@
 //! - nothing role-specific (commands, `stream/start`, audio) is sent before
 //!   the player's first `client/state`; volume and mute wait, the latest wins;
 //! - `stream/start` only while the player reports `available: true`;
-//! - commands only when listed in the player's `supported_commands`;
+//! - commands only when listed in the player's `supported_commands` (from
+//!   `client/hello` or `client/state`);
+//! - a `client/state` field that is absent keeps its last value (states after
+//!   the first may carry only what changed);
 //! - audio never exceeds the player's `buffer_capacity` (13-byte header +
 //!   payload per chunk, released once the chunk has finished playing).
 
@@ -171,13 +174,13 @@ async fn session(
                     name: h.name.clone(),
                     supported_formats: support.supported_formats.clone(),
                     buffer_capacity: support.buffer_capacity,
-                    supported_commands: Vec::new(),
+                    supported_commands: support.supported_commands.clone(),
                 };
             }
             other => tracing::debug!(?other, "ignored before client/hello"),
         }
     };
-    let mut s = State::new(info.buffer_capacity as usize);
+    let mut s = State::new(info.buffer_capacity as usize, &info.supported_commands);
     events.send(PlayerEvent::Connected(info)).await.ok();
     *connected_id = Some(client_id.clone());
 
@@ -342,7 +345,14 @@ struct State {
     /// A `client/state` with a player object has arrived.
     ready: bool,
     available: bool,
+    /// Listed in `client/hello`.
+    hello_commands: Vec<String>,
+    /// Listed in the latest `client/state` that had the field.
+    state_commands: Vec<String>,
+    /// Both lists.
     supported_commands: Vec<String>,
+    min_buffer_ms: Option<u32>,
+    output_delay_ms: Option<u32>,
     output_delay_us: i64,
     pending_volume: Option<u8>,
     pending_mute: Option<bool>,
@@ -359,11 +369,15 @@ struct State {
 }
 
 impl State {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, hello_commands: &[String]) -> Self {
         Self {
             ready: false,
             available: false,
-            supported_commands: Vec::new(),
+            hello_commands: hello_commands.to_vec(),
+            state_commands: Vec::new(),
+            supported_commands: hello_commands.to_vec(),
+            min_buffer_ms: None,
+            output_delay_ms: None,
             output_delay_us: 0,
             pending_volume: None,
             pending_mute: None,
@@ -396,14 +410,24 @@ impl State {
             }
             ClientMsg::State(st) => {
                 self.available = st.available;
-                let (mut volume, mut muted, mut min_buffer_ms, mut output_delay_ms) =
-                    (None, None, None, None);
+                let (mut volume, mut muted) = (None, None);
                 if let Some(p) = st.player {
                     self.ready = true;
-                    self.supported_commands = p.supported_commands.clone();
-                    self.output_delay_us = i64::from(p.output_delay_ms.unwrap_or(0)) * 1_000;
+                    if let Some(commands) = p.supported_commands {
+                        self.state_commands = commands;
+                        let mut all = self.hello_commands.clone();
+                        all.extend(
+                            self.state_commands
+                                .iter()
+                                .filter(|c| !self.hello_commands.contains(c))
+                                .cloned(),
+                        );
+                        self.supported_commands = all;
+                    }
+                    self.min_buffer_ms = p.min_buffer_ms.or(self.min_buffer_ms);
+                    self.output_delay_ms = p.output_delay_ms.or(self.output_delay_ms);
+                    self.output_delay_us = i64::from(self.output_delay_ms.unwrap_or(0)) * 1_000;
                     (volume, muted) = (p.volume, p.muted);
-                    (min_buffer_ms, output_delay_ms) = (p.min_buffer_ms, p.output_delay_ms);
                 }
                 events
                     .send(PlayerEvent::State {
@@ -412,8 +436,8 @@ impl State {
                         volume,
                         muted,
                         supported_commands: self.supported_commands.clone(),
-                        min_buffer_ms,
-                        output_delay_ms,
+                        min_buffer_ms: self.min_buffer_ms,
+                        output_delay_ms: self.output_delay_ms,
                     })
                     .await
                     .ok();
