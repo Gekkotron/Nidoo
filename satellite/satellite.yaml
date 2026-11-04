@@ -1,6 +1,9 @@
 # Nidoo sound satellite: Seeed Studio XIAO ESP32S3 + INMP441 microphone + PCM5102A DAC.
 #
-# Plays the music streamed by nidoo-sound (a Sendspin-compatible server).
+# Plays the music streamed by nidoo-sound (a Sendspin-compatible server), and
+# listens after "Hey Jarvis": the microphone goes to the Nidoo hub, signed with
+# the shared voice_key, only inside that window (see nidoo_voice.h and
+# docs/reference/voice-protocol.md).
 # Per-board values come from substitutions (override with --substitution or a
 # per-board file under satellite/boards/) and from the git-ignored secrets.yaml.
 #
@@ -18,11 +21,27 @@ substitutions:
   dac_bck_pin: GPIO7
   dac_lrck_pin: GPIO8
   dac_din_pin: GPIO9
+  # The XIAO's user LED (lit while the satellite listens)
+  led_pin: GPIO21
+  # Speech input: this board's UDP port and the hub's shared key (Assistant →
+  # Speech settings → Speech input on the hub, pasted into secrets.yaml)
+  voice_board_port: "4961"
+  voice_key: !secret voice_key
 
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
   min_version: 2026.10.2
+  includes:
+    - nidoo_voice.h
+  on_boot:
+    priority: -100
+    then:
+      - lambda: nidoo_voice_setup("${voice_key}", ${voice_board_port});
+      # Start the microphone once and never stop it: restarting the I2S mic
+      # costs about a second of silence, the start of every command.
+      - microphone.capture: mic
+      - micro_wake_word.start:
 
 esp32:
   variant: esp32s3
@@ -78,6 +97,35 @@ interval:
             - id(heap_block).state
             - id(psram_free).state
 
+  # Speech input: the hub's messages, and the window's end.
+  - interval: 20ms
+    then:
+      - lambda: |-
+          int got = nidoo_voice_poll();
+          uint32_t now = millis();
+          bool timed_out = id(voice_open) && (int32_t) (now - id(voice_until)) >= 0;
+          if (id(voice_open) && (got == 2 || timed_out)) {
+            // The hub heard the end of the phrase (Stop), or the window ran out.
+            if (timed_out) nidoo_voice_end();
+            id(voice_open) = false;
+            id(led).turn_off().perform();
+            id(voice_unmute_pending) = true;
+            id(mww).start();
+          } else if (!id(voice_open) && got == 3) {
+            // The hub asks a question back: listen without the wake word. The
+            // reply has finished playing; the room's music is still held.
+            nidoo_voice_wake(1);
+            id(voice_until) = now + 6000;
+            id(voice_open) = true;
+            id(led).turn_on().perform();
+          }
+          // Give the speaker back no earlier than 1 s after the wake word: the
+          // music already sent ahead must not play over the command.
+          if (id(voice_unmute_pending) && (int32_t) (now - id(voice_opened_at) - 1000) >= 0) {
+            id(dac).set_mute_state(id(voice_was_muted));
+            id(voice_unmute_pending) = false;
+          }
+
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
@@ -98,8 +146,6 @@ i2s_audio:
     i2s_lrclk_pin: ${dac_lrck_pin}
     i2s_bclk_pin: ${dac_bck_pin}
 
-# Wired now, unused until project 3 (speech in): proves playback and the
-# microphone can run together on one board.
 microphone:
   - platform: i2s_audio
     id: mic
@@ -109,6 +155,10 @@ microphone:
     channel: left
     bits_per_sample: 32bit
     sample_rate: 16000
+    on_data:
+      - lambda: |-
+          // Audio leaves the board only inside a window.
+          if (id(voice_open)) nidoo_voice_audio(x);
 
 speaker:
   - platform: i2s_audio
@@ -142,3 +192,89 @@ media_player:
       num_channels: 2
       sources:
         - sendspin_source
+
+# ---- Speech input ----
+
+globals:
+  # A window is open: the microphone streams to the hub.
+  - id: voice_open
+    type: bool
+    initial_value: "false"
+  # When the window closes by itself (millis).
+  - id: voice_until
+    type: uint32_t
+    initial_value: "0"
+  # When the window opened, and whether the speaker was muted before.
+  - id: voice_opened_at
+    type: uint32_t
+    initial_value: "0"
+  - id: voice_was_muted
+    type: bool
+    initial_value: "false"
+  # The speaker is muted by the window and waits to be given back.
+  - id: voice_unmute_pending
+    type: bool
+    initial_value: "false"
+
+output:
+  - platform: gpio
+    id: led_out
+    pin:
+      number: ${led_pin}
+      inverted: true
+
+light:
+  - platform: binary
+    id: led
+    output: led_out
+    internal: true
+
+script:
+  # The hub never greeted this board (no hub, wrong key): say so, send nothing.
+  - id: voice_refused
+    mode: single
+    then:
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on: led
+            - delay: 150ms
+            - light.turn_off: led
+            - delay: 150ms
+      - micro_wake_word.start:
+
+micro_wake_word:
+  id: mww
+  microphone:
+    microphone: mic
+    channels: 0
+    # The INMP441 is quiet: without this most tries are missed.
+    gain_factor: 4
+  models:
+    - model: hey_jarvis
+      # The default 0.97 missed most tries in the spike.
+      probability_cutoff: 0.85
+  on_wake_word_detected:
+    - if:
+        condition:
+          lambda: return !id(voice_open) && nidoo_voice_ready();
+        then:
+          - lambda: |-
+              // Quiet at once, so the first words are clean; the hub then holds
+              // the room's music. The DAC speaker itself, never the media
+              // player: its state goes to nidoo-sound as the satellite's Mute.
+              id(voice_was_muted) = id(dac).get_mute_state();
+              id(dac).set_mute_state(true);
+              id(voice_unmute_pending) = false;
+              nidoo_voice_wake(0);
+              id(voice_opened_at) = millis();
+              id(voice_until) = millis() + 8000;
+              id(voice_open) = true;
+          - light.turn_on: led
+          # micro_wake_word stops itself after a detection and lets go of the
+          # microphone: take it back for the window.
+          - delay: 100ms
+          - microphone.capture: mic
+        else:
+          - script.execute: voice_refused
+
