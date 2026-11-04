@@ -35,6 +35,13 @@ pub enum AssistantText {
     /// The button that empties the conversation on this page.
     Clear,
     ClearHint,
+    /// The header switch that reads replies aloud, and its two states.
+    Speak,
+    SpeakOn,
+    SpeakOff,
+    /// The ▶ on a reply.
+    Listen,
+    SpeakFailed,
 }
 
 /// A fixed word or sentence of the Assistant page.
@@ -84,6 +91,20 @@ pub fn assistant_text(lang: Lang, k: AssistantText) -> &'static str {
             "Empty this conversation. The hub keeps it, and ↑ still recalls your sentences.",
             "Vider cette conversation. Le hub la garde, et ↑ rappelle toujours vos phrases.",
         ),
+        Speak => ("Read replies aloud", "Lire les réponses à voix haute"),
+        SpeakOn => (
+            "Replies are read aloud. Click to stop.",
+            "Les réponses sont lues à voix haute. Cliquer pour arrêter.",
+        ),
+        SpeakOff => (
+            "Replies are not read aloud. Click to hear them.",
+            "Les réponses ne sont pas lues. Cliquer pour les entendre.",
+        ),
+        Listen => ("Listen", "Écouter"),
+        SpeakFailed => (
+            "The reply could not be read aloud:",
+            "La réponse n'a pas pu être lue :",
+        ),
     };
     match lang {
         Lang::En => en,
@@ -125,6 +146,11 @@ mod tests {
                 Failed,
                 Clear,
                 ClearHint,
+                Speak,
+                SpeakOn,
+                SpeakOff,
+                Listen,
+                SpeakFailed,
             ],
             assistant_text,
             &[Title, Simulation, Actions],

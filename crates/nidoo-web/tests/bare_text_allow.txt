@@ -8,6 +8,7 @@ text: ArrowLeft  # KeyboardEvent.key value, not shown
 text: ArrowUp  # KeyboardEvent.key value, not shown
 text: ArrowRight  # KeyboardEvent.key value, not shown
 text: ArrowDown  # KeyboardEvent.key value, not shown
+text: AbortError  # DOMException name of a play() cut short by a newer clip, not shown
 text: Nidoo.  # the brand mark, not translated
 text: (max-width: 719px), (hover: none) and (pointer: coarse)  # media query, not text
 text: run {}  # CSS class list
