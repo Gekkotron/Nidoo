@@ -3,13 +3,14 @@
 use std::path::Path;
 
 use ptts::checkpoint::{Checkpoint, ResolveOptions};
-use ptts::preprocess::Lang;
+use ptts::preprocess::{Lang, Normalize};
 use ptts::synth::{DeviceKind, Quant, SpeechOptions, Synth};
 
 use super::engine::{Speaker, SpeakerLoader};
 use super::store::quant_of;
 
-/// Loads a Phonon model from a folder, on the CPU, speaking French.
+/// Loads a Phonon model from a folder, on the CPU. Text is normalised per request, in the
+/// request's language, so one loaded model serves every language it speaks.
 pub struct PhononLoader;
 
 impl SpeakerLoader for PhononLoader {
@@ -29,7 +30,7 @@ impl SpeakerLoader for PhononLoader {
         )
         .map_err(|e| e.to_string())?;
         let mut synth = checkpoint
-            .builder(Lang::Fr)
+            .builder(Normalize::OFF)
             .device(DeviceKind::Cpu)
             .build()
             .map_err(|e| e.to_string())?;
@@ -68,16 +69,25 @@ impl Speaker for PhononSpeaker {
     fn speak(
         &mut self,
         text: &str,
+        language: Option<&str>,
         voice: Option<&str>,
         chunk: &mut dyn FnMut(&[f32]) -> bool,
     ) -> Result<(), String> {
+        // `pt-br` normalises as `pt`; a language ptts does not know speaks the text as written.
+        let lang = language
+            .and_then(|l| l.split('-').next())
+            .and_then(|l| l.parse::<Lang>().ok());
+        let text = match lang {
+            Some(l) => Normalize::for_lang(l).apply(text),
+            None => std::borrow::Cow::Borrowed(text),
+        };
         let options = match voice {
             Some(v) => SpeechOptions::default().voice(v),
             None => SpeechOptions::default(),
         };
         let stream = self
             .synth
-            .stream_with(text, &options)
+            .stream_with(&text, &options)
             .map_err(|e| e.to_string())?;
         for piece in stream {
             let samples = piece.map_err(|e| e.to_string())?;

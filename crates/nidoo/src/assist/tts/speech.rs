@@ -56,15 +56,22 @@ pub struct Clip {
     state: Mutex<ClipState>,
     notify: Notify,
     created: tokio::time::Instant,
+    sample_rate: u32,
 }
 
 impl Clip {
-    fn new() -> Clip {
+    fn new(sample_rate: u32) -> Clip {
         Clip {
             state: Mutex::new(ClipState::default()),
             notify: Notify::new(),
             created: tokio::time::Instant::now(),
+            sample_rate,
         }
+    }
+
+    /// Samples per second of the engine that makes it.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ClipState> {
@@ -166,12 +173,13 @@ impl Clips {
         self.map.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// A new empty clip under a fresh unguessable id; clips past their life are dropped.
-    pub fn create(&self) -> (String, Arc<Clip>) {
+    /// A new empty clip under a fresh unguessable id, at the speaking engine's sample rate;
+    /// clips past their life are dropped.
+    pub fn create(&self, sample_rate: u32) -> (String, Arc<Clip>) {
         let mut raw = [0u8; 16];
         getrandom::getrandom(&mut raw).expect("the system has a random source");
         let id: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-        let clip = Arc::new(Clip::new());
+        let clip = Arc::new(Clip::new(sample_rate));
         let mut map = self.lock();
         map.retain(|_, c| !c.expired());
         map.insert(id.clone(), Arc::clone(&clip));
@@ -192,6 +200,12 @@ impl Clips {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_clip_keeps_its_rate() {
+        let clips = Clips::default();
+        assert_eq!(clips.create(16_000).1.sample_rate(), 16_000);
+    }
 
     #[test]
     fn header_with_unknown_length() {

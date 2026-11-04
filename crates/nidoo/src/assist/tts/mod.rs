@@ -462,9 +462,14 @@ impl Tts {
         }
         let wanted = req.voice.unwrap_or_else(|| self.chosen_voice());
         let voice = self.engine.voices().contains(&wanted).then_some(wanted);
-        let (id, clip) = self.clips.create();
+        let (id, clip) = self
+            .clips
+            .create(self.engine.sample_rate().unwrap_or(24_000));
         let sink = clip_sink(Arc::clone(&clip));
-        if let Err(e) = self.engine.speak(text.to_owned(), voice, sink) {
+        if let Err(e) = self
+            .engine
+            .speak(text.to_owned(), Some("fr".to_owned()), voice, sink)
+        {
             self.clips.remove(&id);
             return Err(e);
         }
@@ -489,7 +494,7 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_request_ends_its_clip() {
         let clips = speech::Clips::default();
-        let (_id, clip) = clips.create();
+        let (_id, clip) = clips.create(24_000);
         let sink = clip_sink(Arc::clone(&clip));
         // The engine thread died with the request still queued.
         drop(sink);
@@ -506,7 +511,7 @@ mod tests {
     #[tokio::test]
     async fn a_finished_clip_is_not_failed_by_its_sink_dropping() {
         let clips = speech::Clips::default();
-        let (_id, clip) = clips.create();
+        let (_id, clip) = clips.create(24_000);
         let mut sink = clip_sink(Arc::clone(&clip));
         assert!(sink(Some(Ok(vec![0.0; 10]))));
         assert!(sink(None));
