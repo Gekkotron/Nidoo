@@ -86,6 +86,23 @@ pub enum AssistSettingsText {
     // Loading the page.
     Loading,
     CouldNotLoad,
+    // Languages.
+    LanguagesHeading,
+    AddLanguage,
+    HouseLanguage,
+    MakeHouse,
+    ModelLabel,
+    NoModel,
+    RemoveLanguage,
+    RemoveLanguageQuestion,
+    NoLanguages,
+    NoOtherLanguage,
+    WhichModel,
+    UsedBy,
+    RemoveUsedQuestion,
+    LanguagesUnknown,
+    TokenFold,
+    TypeSentence,
     // Units.
     UnitB,
     UnitKb,
@@ -206,6 +223,37 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
         TokenSaved => ("Token saved", "Jeton enregistré"),
         TokenCleared => ("Token cleared", "Jeton effacé"),
         Loading => ("Loading…", "Chargement…"),
+        LanguagesHeading => ("Languages", "Langues"),
+        AddLanguage => ("+ Add", "+ Ajouter"),
+        HouseLanguage => (
+            "House language: speaks when no language is asked",
+            "Langue de la maison : parle quand aucune langue n'est demandée",
+        ),
+        MakeHouse => ("Make house language", "Choisir comme langue de la maison"),
+        ModelLabel => ("Model", "Modèle"),
+        NoModel => ("No model", "Aucun modèle"),
+        RemoveLanguage => ("Remove language", "Retirer la langue"),
+        RemoveLanguageQuestion => ("Remove this language?", "Retirer cette langue ?"),
+        NoLanguages => (
+            "No language yet. Add a model, then a language.",
+            "Aucune langue. Ajoutez un modèle, puis une langue.",
+        ),
+        NoOtherLanguage => (
+            "Installed models speak no other language.",
+            "Les modèles installés ne parlent aucune autre langue.",
+        ),
+        WhichModel => ("Which model?", "Quel modèle ?"),
+        UsedBy => ("Used by", "Utilisé par"),
+        RemoveUsedQuestion => (
+            "Remove it? These languages will have no model:",
+            "Le supprimer ? Ces langues n'auront plus de modèle :",
+        ),
+        LanguagesUnknown => ("languages unknown", "langues inconnues"),
+        TokenFold => (
+            "Hugging Face token: only needed for gated repositories",
+            "Jeton Hugging Face : seulement pour les dépôts protégés",
+        ),
+        TypeSentence => ("Type a sentence", "Tapez une phrase"),
         UnitB => ("B", "o"),
         UnitKb => ("KB", "Ko"),
         UnitMb => ("MB", "Mo"),
@@ -233,20 +281,94 @@ mod tests {
     const fn listed(k: AssistSettingsText) -> bool {
         use AssistSettingsText::*;
         match k {
-            OpenSettings | Back | Title | SpeechHeading | TestHeading | VoiceHeading
-            | ModelsHeading | AddHeading | TokenHeading | StateNoModel | StateLoading
-            | StateReady | StateError | ActiveModel | NoActiveModel | NotBuilt | NoFrench
-            | ActiveNoFrench | TestSentence | TestLabel | Play | Speaking | FirstSound
-            | PlayFailed | VoiceDefault | VoiceFellBack | VoiceCatalogOffline | VoiceEmpty
-            | Listen | ModelsEmpty | Uploaded | UseModel | ActiveLabel | Remove
-            | RemoveQuestion | RemoveYes | Cancel | SpeaksFrench | LicenceLabel | UrlLabel
-            | UrlPlaceholder | ListFiles | Listing | WeightsLabel | NeedsToken | Download
-            | Downloading | DownloadFailed | DownloadCancelled | DownloadDone | OpenRepo
-            | GatedNote | UploadHeading | UploadHint | UploadChoose | Uploading | UploadNothing
-            | UploadDone | TokenLabel | TokenSet | TokenNotSet | Save | Clear | TokenSaved
-            | TokenCleared | Loading | CouldNotLoad | UnitB | UnitKb | UnitMb | UnitGb | UnitMs => {
-                true
-            }
+            OpenSettings
+            | Back
+            | Title
+            | SpeechHeading
+            | TestHeading
+            | VoiceHeading
+            | ModelsHeading
+            | AddHeading
+            | TokenHeading
+            | StateNoModel
+            | StateLoading
+            | StateReady
+            | StateError
+            | ActiveModel
+            | NoActiveModel
+            | NotBuilt
+            | NoFrench
+            | ActiveNoFrench
+            | TestSentence
+            | TestLabel
+            | Play
+            | Speaking
+            | FirstSound
+            | PlayFailed
+            | VoiceDefault
+            | VoiceFellBack
+            | VoiceCatalogOffline
+            | VoiceEmpty
+            | Listen
+            | ModelsEmpty
+            | Uploaded
+            | UseModel
+            | ActiveLabel
+            | Remove
+            | RemoveQuestion
+            | RemoveYes
+            | Cancel
+            | SpeaksFrench
+            | LicenceLabel
+            | UrlLabel
+            | UrlPlaceholder
+            | ListFiles
+            | Listing
+            | WeightsLabel
+            | NeedsToken
+            | Download
+            | Downloading
+            | DownloadFailed
+            | DownloadCancelled
+            | DownloadDone
+            | OpenRepo
+            | GatedNote
+            | UploadHeading
+            | UploadHint
+            | UploadChoose
+            | Uploading
+            | UploadNothing
+            | UploadDone
+            | TokenLabel
+            | TokenSet
+            | TokenNotSet
+            | Save
+            | Clear
+            | TokenSaved
+            | TokenCleared
+            | Loading
+            | CouldNotLoad
+            | UnitB
+            | UnitKb
+            | UnitMb
+            | UnitGb
+            | UnitMs
+            | LanguagesHeading
+            | AddLanguage
+            | HouseLanguage
+            | MakeHouse
+            | ModelLabel
+            | NoModel
+            | RemoveLanguage
+            | RemoveLanguageQuestion
+            | NoLanguages
+            | NoOtherLanguage
+            | WhichModel
+            | UsedBy
+            | RemoveUsedQuestion
+            | LanguagesUnknown
+            | TokenFold
+            | TypeSentence => true,
         }
     }
 
@@ -320,6 +442,22 @@ mod tests {
             TokenCleared,
             Loading,
             CouldNotLoad,
+            LanguagesHeading,
+            AddLanguage,
+            HouseLanguage,
+            MakeHouse,
+            ModelLabel,
+            NoModel,
+            RemoveLanguage,
+            RemoveLanguageQuestion,
+            NoLanguages,
+            NoOtherLanguage,
+            WhichModel,
+            UsedBy,
+            RemoveUsedQuestion,
+            LanguagesUnknown,
+            TokenFold,
+            TypeSentence,
         ]
     };
 
