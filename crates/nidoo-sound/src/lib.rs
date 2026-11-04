@@ -8,6 +8,7 @@ pub mod clock;
 pub mod config;
 pub mod discover;
 pub mod group;
+pub mod hold;
 pub mod input;
 pub mod listen;
 pub mod mixer;

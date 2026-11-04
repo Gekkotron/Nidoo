@@ -62,6 +62,12 @@ Speech: the hub publishes `nidoo-sound/speak` (not retained) as
 turned down by 15 dB with a 150 ms fade while the sentence plays. One sentence
 at a time; up to four wait, a fifth is dropped with a warning.
 
+Hold: while someone talks to a satellite, the hub publishes `nidoo-sound/hold`
+(not retained) as `{"id", "players": ["<sid>", …], "for_ms"}`. Those players get
+silence instead of music (speech is still mixed in) until `for_ms` runs out (at
+most 60 s) or a `for_ms: 0` releases that `id`; the music then fades back in over
+150 ms. Holds are never saved, so a restart brings the music back at once.
+
 ## Protocol and known deviations
 
 It speaks the Sendspin protocol **1.0.0-rc1** as implemented by ESPHome

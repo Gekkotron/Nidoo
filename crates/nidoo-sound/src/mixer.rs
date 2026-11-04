@@ -125,6 +125,19 @@ impl SpeechMixer {
     }
 }
 
+/// `chunk` with the music coming back: frame `i` at gain `min(1, (from_frame + i) / FADE_FRAMES)`.
+pub fn fade_in(chunk: &[u8], from_frame: usize) -> Bytes {
+    let mut out = Vec::with_capacity(chunk.len());
+    for (i, frame) in chunk.as_chunks::<FRAME_BYTES>().0.iter().enumerate() {
+        let gain = ((from_frame + i) as f32 / FADE_FRAMES as f32).min(1.0);
+        for sample in frame.as_chunks::<2>().0 {
+            let v = f32::from(i16::from_le_bytes([sample[0], sample[1]])) * gain;
+            out.extend_from_slice(&(v.round() as i16).to_le_bytes());
+        }
+    }
+    Bytes::from(out)
+}
+
 /// Fade in, the speech, fade out.
 fn window_frames(speech: &Speech) -> usize {
     2 * FADE_FRAMES + speech.pcm.len() / FRAME_BYTES
@@ -273,5 +286,23 @@ mod tests {
         assert_eq!(m.end_us(), None);
         assert_eq!(m.mix_chunk(START, None), None);
         assert_eq!(FRAME_BYTES, 4);
+    }
+
+    #[test]
+    fn fade_in_ramps_from_silence() {
+        let chunk: Vec<u8> = std::iter::repeat_n(10_000i16.to_le_bytes(), CHUNK_FRAMES * 2)
+            .flatten()
+            .collect();
+        let sample = |b: &[u8], frame: usize| i16::from_le_bytes([b[frame * 4], b[frame * 4 + 1]]);
+        let start = fade_in(&chunk, 0);
+        assert_eq!(sample(&start, 0), 0);
+        assert!(sample(&start, CHUNK_FRAMES - 1) < 10_000);
+        let half = fade_in(&chunk, FADE_FRAMES / 2);
+        assert!(
+            (sample(&half, 0) - 5_000).abs() <= 1,
+            "{}",
+            sample(&half, 0)
+        );
+        assert_eq!(fade_in(&chunk, FADE_FRAMES), Bytes::from(chunk.clone()));
     }
 }
