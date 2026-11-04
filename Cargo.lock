@@ -2793,6 +2793,7 @@ dependencies = [
  "futures-util",
  "hex",
  "mdns-sd",
+ "nidoo-core",
  "rand 0.10.3",
  "rumqttc",
  "serde",

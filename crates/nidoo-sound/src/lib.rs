@@ -5,9 +5,11 @@
 //! to Nidoo through MQTT discovery.
 
 pub mod clock;
+pub mod config;
 pub mod discover;
 pub mod group;
 pub mod input;
+pub mod mqtt;
 pub mod pacer;
 pub mod player;
 pub mod proto;
