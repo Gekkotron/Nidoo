@@ -131,3 +131,67 @@ fn the_engine_loads_and_speaks_with_phonon() {
     }
     assert!(samples > 0, "no audio produced");
 }
+
+#[tokio::test]
+#[ignore = "needs a Phonon model folder in NIDOO_TTS_MODEL_DIR"]
+async fn the_speech_address_serves_a_real_wav() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use nidoo::assist::tts::phonon::PhononLoader;
+    use nidoo::assist::tts::{Tts, TtsConfig};
+    use nidoo::config::Config;
+    use nidoo::http::router;
+    use nidoo::hub::Hub;
+    use nidoo_api::EngineState;
+
+    let Ok(dir) = std::env::var("NIDOO_TTS_MODEL_DIR") else {
+        eprintln!("NIDOO_TTS_MODEL_DIR is not set: skipping");
+        return;
+    };
+    let weights = std::env::var("NIDOO_TTS_WEIGHTS").unwrap_or_else(|_| "model.q8.gguf".into());
+    let root = tempfile::tempdir().unwrap();
+    let tts = Tts::start(TtsConfig {
+        root: root.path().join("tts"),
+        hf_base: "http://127.0.0.1:1".into(),
+        loader: Arc::new(PhononLoader),
+    });
+    tts.engine().load("real", dir.into(), weights);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !matches!(tts.engine().state(), EngineState::Ready { .. }) {
+        assert!(Instant::now() < deadline, "{:?}", tts.engine().state());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let hub = Hub::new(&Config::default(), tx);
+    hub.set_tts(tts);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(listener, router(hub, nidoo::setup::SetupCtx::inert())).into_future());
+    let client = reqwest::Client::new();
+    let ticket: serde_json::Value = client
+        .post(format!("http://{addr}/api/v1/assist/speech"))
+        .json(&serde_json::json!({"text": SENTENCES_EN}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let url = ticket["url"].as_str().unwrap();
+    let resp = client
+        .get(format!("http://{addr}{url}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.headers()["content-type"], "audio/wav");
+    let body = resp.bytes().await.unwrap();
+    println!("header: {:02x?}", &body[..44]);
+    let seconds = (body.len() - 44) as f32 / 2.0 / 24_000.0;
+    println!("{} bytes, {seconds:.2} s of audio", body.len());
+    assert!(seconds > 0.5);
+    let out = std::env::var("NIDOO_TTS_WAV_OUT").unwrap_or_else(|_| "speech.wav".into());
+    std::fs::write(out, &body).unwrap();
+}
+
+const SENTENCES_EN: &str = "The living room light is on.";

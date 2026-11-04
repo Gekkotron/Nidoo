@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use nidoo_api::{
     DEFAULT_VOICE, DownloadRequest, DownloadView, EngineState, ModelView, RepoListing, Secret,
-    TtsStatus, UploadSession, VoicesView,
+    SpeechRequest, SpeechTicket, TtsStatus, UploadSession, VoicesView,
 };
 
 use engine::{Engine, SpeakerLoader};
@@ -21,6 +21,7 @@ pub mod hf;
 #[cfg(feature = "tts")]
 pub mod phonon;
 pub mod source;
+pub mod speech;
 pub mod store;
 pub mod tone;
 pub mod upload;
@@ -124,6 +125,7 @@ pub struct Tts {
     state_lock: Mutex<()>,
     /// One voice choice at a time (two fetches of a voice share one `.part` file).
     voice_lock: tokio::sync::Mutex<()>,
+    clips: speech::Clips,
 }
 
 impl Tts {
@@ -139,6 +141,7 @@ impl Tts {
             hf_base: cfg.hf_base,
             state_lock: Mutex::new(()),
             voice_lock: tokio::sync::Mutex::new(()),
+            clips: speech::Clips::default(),
             store,
         });
         if let Some(id) = tts.store.read_state().active {
@@ -381,5 +384,48 @@ impl Tts {
     /// Keeps, clears or replaces the Hugging Face token.
     pub fn set_token(&self, input: Secret) -> Result<(), TtsError> {
         self.store.set_token(input)
+    }
+
+    /// Starts speaking a text now; the returned address streams the clip as it fills.
+    pub fn speak(&self, req: SpeechRequest) -> Result<SpeechTicket, TtsError> {
+        let text = req.text.trim();
+        if text.is_empty() {
+            return Err(TtsError::Invalid("the text is empty".into()));
+        }
+        if text.chars().count() > speech::MAX_SPEECH_CHARS {
+            return Err(TtsError::Invalid(format!(
+                "the text is longer than {} characters",
+                speech::MAX_SPEECH_CHARS
+            )));
+        }
+        let wanted = req.voice.unwrap_or_else(|| self.chosen_voice());
+        let voice = self.engine.voices().contains(&wanted).then_some(wanted);
+        let (id, clip) = self.clips.create();
+        let sink_clip = Arc::clone(&clip);
+        let sink: engine::Sink = Box::new(move |item| {
+            match item {
+                Some(Ok(samples)) => {
+                    let mut pcm = Vec::new();
+                    speech::to_pcm16(&samples, &mut pcm);
+                    sink_clip.push(&pcm);
+                    // Nobody can fetch an expired clip nobody is reading: stop early.
+                    return !(sink_clip.expired() && Arc::strong_count(&sink_clip) == 1);
+                }
+                Some(Err(message)) => sink_clip.finish(Some(message)),
+                None => sink_clip.finish(None),
+            }
+            true
+        });
+        if let Err(e) = self.engine.speak(text.to_owned(), voice, sink) {
+            self.clips.remove(&id);
+            return Err(e);
+        }
+        let url = format!("/api/v1/assist/speech/{id}.wav");
+        Ok(SpeechTicket { id, url })
+    }
+
+    /// A clip that can still be fetched.
+    pub fn clip(&self, id: &str) -> Option<Arc<speech::Clip>> {
+        self.clips.get(id)
     }
 }

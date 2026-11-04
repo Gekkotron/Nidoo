@@ -7,11 +7,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Path, State};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use nidoo_api::{
     ActiveRequest, DownloadRequest, DownloadView, InspectRequest, ModelView, RepoListing,
-    TokenInput, TtsStatus, UploadSession, VoiceRequest, VoicesView,
+    SpeechRequest, SpeechTicket, TokenInput, TtsStatus, UploadSession, VoiceRequest, VoicesView,
 };
 
 use super::api::HttpError;
@@ -43,6 +44,8 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/assist/tts/voices", get(voices))
         .route("/assist/tts/voice", put(set_voice))
         .route("/assist/tts/token", put(set_token))
+        .route("/assist/speech", post(speak))
+        .route("/assist/speech/{file}", get(speech_file))
 }
 
 fn tts(hub: &Hub) -> Result<Arc<Tts>, HttpError> {
@@ -147,4 +150,31 @@ async fn set_token(State(hub): HubState, body: Json_<TokenInput>) -> Result<Stat
     let Json(req) = body?;
     tts(&hub)?.set_token(req.token)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn speak(
+    State(hub): HubState,
+    body: Json_<SpeechRequest>,
+) -> Result<(StatusCode, Json<SpeechTicket>), HttpError> {
+    let Json(req) = body?;
+    Ok((StatusCode::CREATED, Json(tts(&hub)?.speak(req)?)))
+}
+
+async fn speech_file(
+    State(hub): HubState,
+    Path(file): Path<String>,
+) -> Result<Response, HttpError> {
+    let not_found = || HttpError::new(StatusCode::NOT_FOUND, "no such speech");
+    let tts = tts(&hub)?;
+    let id = file.strip_suffix(".wav").ok_or_else(not_found)?;
+    let clip = tts.clip(id).ok_or_else(not_found)?;
+    let rate = tts.engine().sample_rate().unwrap_or(24_000);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "audio/wav"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        clip.body(rate),
+    )
+        .into_response())
 }
