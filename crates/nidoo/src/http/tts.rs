@@ -11,8 +11,9 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use nidoo_api::{
-    ActiveRequest, DownloadRequest, DownloadView, InspectRequest, ModelView, RepoListing,
-    SpeechRequest, SpeechTicket, TokenInput, TtsStatus, UploadSession, VoiceRequest, VoicesView,
+    AvailableLanguage, DownloadRequest, DownloadView, HouseRequest, InspectRequest,
+    LanguageRequest, ModelView, RepoListing, SpeechRequest, SpeechTicket, TokenInput, TtsStatus,
+    UploadSession, VoicesView,
 };
 
 use super::api::HttpError;
@@ -27,7 +28,12 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/assist/tts/status", get(status))
         .route("/assist/tts/models", get(models))
         .route("/assist/tts/models/{id}", delete(remove_model))
-        .route("/assist/tts/active", put(set_active))
+        .route("/assist/tts/languages/available", get(available_languages))
+        .route("/assist/tts/languages/house", put(set_house))
+        .route(
+            "/assist/tts/languages/{code}",
+            put(set_language).delete(remove_language),
+        )
         .route("/assist/tts/inspect", post(inspect))
         .route("/assist/tts/downloads", post(start_download))
         .route(
@@ -42,7 +48,6 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/assist/tts/uploads/{id}/finish", post(finish_upload))
         .route("/assist/tts/uploads/{id}", delete(abort_upload))
         .route("/assist/tts/voices", get(voices))
-        .route("/assist/tts/voice", put(set_voice))
         .route("/assist/tts/token", put(set_token))
         .route("/assist/speech", post(speak))
         .route("/assist/speech/{file}", get(speech_file))
@@ -70,12 +75,34 @@ async fn remove_model(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn set_active(
+async fn available_languages(
     State(hub): HubState,
-    body: Json_<ActiveRequest>,
+) -> Result<Json<Vec<AvailableLanguage>>, HttpError> {
+    Ok(Json(tts(&hub)?.available_languages()))
+}
+
+async fn set_house(
+    State(hub): HubState,
+    body: Json_<HouseRequest>,
 ) -> Result<Json<TtsStatus>, HttpError> {
     let Json(req) = body?;
-    Ok(Json(tts(&hub)?.set_active(req.model)?))
+    Ok(Json(tts(&hub)?.set_house(&req.code)?))
+}
+
+async fn set_language(
+    State(hub): HubState,
+    Path(code): Path<String>,
+    body: Json_<LanguageRequest>,
+) -> Result<Json<TtsStatus>, HttpError> {
+    let Json(req) = body?;
+    Ok(Json(tts(&hub)?.set_language(&code, req).await?))
+}
+
+async fn remove_language(
+    State(hub): HubState,
+    Path(code): Path<String>,
+) -> Result<Json<TtsStatus>, HttpError> {
+    Ok(Json(tts(&hub)?.remove_language(&code)?))
 }
 
 async fn inspect(
@@ -136,14 +163,6 @@ async fn abort_upload(
 
 async fn voices(State(hub): HubState) -> Result<Json<VoicesView>, HttpError> {
     Ok(Json(tts(&hub)?.voices().await))
-}
-
-async fn set_voice(
-    State(hub): HubState,
-    body: Json_<VoiceRequest>,
-) -> Result<Json<VoicesView>, HttpError> {
-    let Json(req) = body?;
-    Ok(Json(tts(&hub)?.set_voice(&req.voice).await?))
 }
 
 async fn set_token(State(hub): HubState, body: Json_<TokenInput>) -> Result<StatusCode, HttpError> {

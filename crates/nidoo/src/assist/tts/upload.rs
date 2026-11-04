@@ -210,7 +210,7 @@ impl Uploads {
             installed_at: chrono::Utc::now().timestamp(),
         };
         let manifest = session.staging.finish(&self.store, manifest)?;
-        Ok(manifest.view(false))
+        Ok(manifest.view(Vec::new()))
     }
 
     /// Drops a session and its folder.

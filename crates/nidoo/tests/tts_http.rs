@@ -23,6 +23,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 const REPO: &str = "gradium/phonon-test";
+const BILINGUAL: &str = "gradium/phonon-bilingual";
 
 const VOICES_JSONL: &str = concat!(
     "{\"filename\":\"voices/AAA.safetensors\",\"name\":\"Noemie\",\"voice_id\":\"AAA\",\"language\":\"fr\"}\n",
@@ -36,6 +37,7 @@ fn voice_catalog() -> FakeRepo {
         vec![
             ("voices.jsonl", VOICES_JSONL.as_bytes()),
             ("voices/AAA.safetensors", b"voicebytes"),
+            ("voices/BBB.safetensors", b"voicebytes"),
         ],
     )
 }
@@ -49,6 +51,21 @@ fn repo() -> FakeRepo {
             (
                 "config.json",
                 b"{\"languages\":[\"fr\"],\"model_id\":\"Phonon Test\"}",
+            ),
+            ("tokenizer.json", b"{}"),
+        ],
+    )
+}
+
+fn repo_bilingual() -> FakeRepo {
+    FakeRepo::new(
+        BILINGUAL,
+        "b111",
+        vec![
+            ("model.q8.gguf", b"0123456789abcdef"),
+            (
+                "config.json",
+                b"{\"languages\":[\"fr\",\"en\"],\"model_id\":\"Phonon Two\"}",
             ),
             ("tokenizer.json", b"{}"),
         ],
@@ -87,11 +104,17 @@ impl Rig {
         (r.status(), r.json().await.unwrap_or(Value::Null))
     }
 
+    /// Waits until the house language's engine reaches `engine_state`.
     async fn status_until(&self, engine_state: &str) -> Value {
+        self.language_until(0, engine_state).await
+    }
+
+    /// Waits until the language at `index` reaches `engine_state`.
+    async fn language_until(&self, index: usize, engine_state: &str) -> Value {
         let end = Instant::now() + Duration::from_secs(5);
         loop {
             let (_, s) = self.get("/status").await;
-            if s["engine"]["state"] == engine_state {
+            if s["languages"][index]["engine"]["state"] == engine_state {
                 return s;
             }
             assert!(Instant::now() < end, "never reached {engine_state}: {s}");
@@ -99,16 +122,39 @@ impl Rig {
         }
     }
 
+    /// Speaks French with `model` (adds or changes the `fr` language).
+    async fn activate(&self, model: &str) -> (StatusCode, Value) {
+        self.set_language("fr", json!({"model": model})).await
+    }
+
+    async fn set_language(&self, code: &str, body: Value) -> (StatusCode, Value) {
+        self.send(reqwest::Method::PUT, &format!("/languages/{code}"), body)
+            .await
+    }
+
+    async fn delete(&self, path: &str) -> StatusCode {
+        self.client
+            .delete(self.url(path))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
     async fn install(&self) -> String {
+        self.install_repo(REPO).await
+    }
+
+    async fn install_repo(&self, repo: &str) -> String {
         let (s, v) = self
-            .send(reqwest::Method::POST, "/inspect", json!({"url": REPO}))
+            .send(reqwest::Method::POST, "/inspect", json!({"url": repo}))
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let (s, v) = self
             .send(
                 reqwest::Method::POST,
                 "/downloads",
-                json!({"repo": REPO, "revision": v["revision"], "weights": "model.q8.gguf"}),
+                json!({"repo": repo, "revision": v["revision"], "weights": "model.q8.gguf"}),
             )
             .await;
         assert_eq!(s, StatusCode::ACCEPTED, "{v}");
@@ -133,7 +179,7 @@ async fn start_tts(root: std::path::PathBuf, base: &str) -> Arc<Tts> {
 }
 
 async fn rig_with(with_tts: bool, prepare: impl FnOnce(&std::path::Path)) -> Rig {
-    let (base, _log) = serve(vec![repo(), voice_catalog()]).await;
+    let (base, _log) = serve(vec![repo(), repo_bilingual(), voice_catalog()]).await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tts");
     prepare(&root);
@@ -164,9 +210,8 @@ async fn status_with_nothing_installed() {
     let r = rig().await;
     let (s, v) = r.get("/status").await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v["engine"]["state"], "no_model");
+    assert_eq!(v["languages"], json!([]));
     assert_eq!(v["token_set"], false);
-    assert_eq!(v["voice"], "default");
 }
 
 #[tokio::test]
@@ -176,29 +221,32 @@ async fn download_then_activate_then_ready() {
     let (_, models) = r.get("/models").await;
     assert_eq!(models.as_array().unwrap().len(), 1);
     assert_eq!(models[0]["id"], id);
-    assert_eq!(models[0]["french"], true);
-    let (s, _) = r
-        .send(reqwest::Method::PUT, "/active", json!({"model": id}))
-        .await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(models[0]["languages"], json!(["fr"]));
+    let (s, v) = r.activate(&id).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
     let st = r.status_until("ready").await;
-    assert_eq!(st["active"], id);
+    assert_eq!(st["languages"][0]["model"], id);
+    let (_, models) = r.get("/models").await;
+    assert_eq!(models[0]["used_by"], json!(["fr"]));
 }
 
 #[tokio::test]
 async fn state_survives_a_restart() {
     let r = rig().await;
     let id = r.install().await;
-    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
-        .await;
+    r.activate(&id).await;
     r.status_until("ready").await;
     let again = start_tts(r.root(), &r.base).await;
     let end = Instant::now() + Duration::from_secs(5);
     loop {
         let st = again.status();
-        if matches!(&st.engine, nidoo_api::EngineState::Ready { model } if *model == id) {
-            assert_eq!(st.active.as_deref(), Some(id.as_str()));
-            assert_eq!(st.voice, "default");
+        let first = st.languages.first();
+        if first.is_some_and(
+            |l| matches!(&l.engine, nidoo_api::EngineState::Ready { model } if *model == id),
+        ) {
+            let first = first.unwrap();
+            assert_eq!(first.code, "fr");
+            assert_eq!(first.voice, "default");
             break;
         }
         assert!(Instant::now() < end, "not ready: {st:?}");
@@ -207,11 +255,10 @@ async fn state_survives_a_restart() {
 }
 
 #[tokio::test]
-async fn remove_active_unloads() {
+async fn removing_a_used_model_leaves_languages_without_one() {
     let r = rig().await;
     let id = r.install().await;
-    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
-        .await;
+    r.activate(&id).await;
     r.status_until("ready").await;
     let resp = r
         .client
@@ -221,8 +268,9 @@ async fn remove_active_unloads() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     let (_, st) = r.get("/status").await;
-    assert_eq!(st["engine"]["state"], "no_model");
-    assert!(st["active"].is_null());
+    assert_eq!(st["languages"][0]["code"], "fr");
+    assert!(st["languages"][0]["model"].is_null());
+    assert_eq!(st["languages"][0]["engine"]["state"], "no_model");
     let (_, models) = r.get("/models").await;
     assert!(models.as_array().unwrap().is_empty());
 }
@@ -230,9 +278,7 @@ async fn remove_active_unloads() {
 #[tokio::test]
 async fn activate_unknown_is_404() {
     let r = rig().await;
-    let (s, _) = r
-        .send(reqwest::Method::PUT, "/active", json!({"model": "nope"}))
-        .await;
+    let (s, _) = r.activate("nope").await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
@@ -405,22 +451,21 @@ async fn hub_without_tts_answers_409() {
 #[tokio::test]
 async fn set_voice_rules() {
     let r = rig().await;
-    let (s, _) = r
-        .send(reqwest::Method::PUT, "/voice", json!({"voice": "someone"}))
-        .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let id = r.install().await;
     let (s, v) = r
-        .send(reqwest::Method::PUT, "/voice", json!({"voice": "default"}))
+        .set_language("fr", json!({"model": id, "voice": "default"}))
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let id = r.install().await;
-    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
-        .await;
     r.status_until("ready").await;
     let (s, _) = r
-        .send(reqwest::Method::PUT, "/voice", json!({"voice": "nobody"}))
+        .set_language("fr", json!({"model": id, "voice": "nobody"}))
         .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, st) = r.get("/status").await;
+    assert_eq!(
+        st["languages"][0]["voice"], "default",
+        "a refused voice changes nothing"
+    );
 }
 
 #[tokio::test]
@@ -443,7 +488,7 @@ async fn boot_with_a_broken_active_model_still_serves() {
     })
     .await;
     let st = r.status_until("error").await;
-    assert_eq!(st["active"], "broken");
+    assert_eq!(st["languages"][0]["model"], "broken");
     let resp = r
         .client
         .post(format!("http://{}/api/v1/assist", r.addr))
@@ -463,7 +508,7 @@ async fn a_build_without_speech_still_answers() {
         hf_base: base,
         loader: Arc::new(NoSpeechLoader),
     });
-    assert_eq!(tts.status().voice, "default");
+    assert!(tts.status().languages.is_empty());
 }
 
 async fn open_upload(r: &Rig) -> (StatusCode, Value) {
@@ -550,8 +595,7 @@ async fn aborting_an_upload_removes_its_files_and_ends_the_session() {
 async fn a_catalog_voice_can_be_chosen_end_to_end() {
     let r = rig().await;
     let id = r.install().await;
-    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
-        .await;
+    r.activate(&id).await;
     r.status_until("ready").await;
     let (_, before) = r.get("/voices").await;
     let noemie = before["voices"]
@@ -570,7 +614,7 @@ async fn a_catalog_voice_can_be_chosen_end_to_end() {
         "a voice in another language is not offered"
     );
     let (s, v) = r
-        .send(reqwest::Method::PUT, "/voice", json!({"voice": "Noemie"}))
+        .set_language("fr", json!({"model": id, "voice": "Noemie"}))
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let (_, voices) = r.get("/voices").await;
@@ -584,7 +628,7 @@ async fn a_catalog_voice_can_be_chosen_end_to_end() {
         .unwrap();
     assert_eq!(chosen["on_disk"], true);
     let (_, status) = r.get("/status").await;
-    assert_eq!(status["voice"], "Noemie");
+    assert_eq!(status["languages"][0]["voice"], "Noemie");
     assert!(r.root().join("voices/AAA.safetensors").is_file());
 }
 
@@ -592,8 +636,7 @@ async fn a_catalog_voice_can_be_chosen_end_to_end() {
 async fn a_catalog_voice_can_be_heard_without_choosing_it() {
     let r = rig().await;
     let id = r.install().await;
-    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
-        .await;
+    r.activate(&id).await;
     r.status_until("ready").await;
     let speech = format!("http://{}/api/v1/assist/speech", r.addr);
     let post = |body: Value| {
@@ -616,4 +659,171 @@ async fn a_catalog_voice_can_be_heard_without_choosing_it() {
     );
     let (s, _) = post(json!({"text": "Bonjour", "voice": "nobody"})).await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn languages_start_empty_and_speech_is_409() {
+    let r = rig().await;
+    let (_, st) = r.get("/status").await;
+    assert_eq!(st["languages"], json!([]));
+    let resp = r
+        .client
+        .post(format!("http://{}/api/v1/assist/speech", r.addr))
+        .json(&json!({"text": "Bonjour"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn add_two_languages_on_one_model_loads_one_engine() {
+    let r = rig().await;
+    let id = r.install_repo(BILINGUAL).await;
+    for code in ["fr", "en"] {
+        let (s, v) = r.set_language(code, json!({"model": id})).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+    }
+    r.language_until(0, "ready").await;
+    let st = r.language_until(1, "ready").await;
+    assert_eq!(st["languages"][0]["model"], id);
+    assert_eq!(st["languages"][1]["model"], id);
+    let (_, models) = r.get("/models").await;
+    assert_eq!(models[0]["used_by"], json!(["fr", "en"]));
+}
+
+#[tokio::test]
+async fn switching_one_of_two_shared_languages_keeps_the_engine() {
+    let r = rig().await;
+    let both = r.install_repo(BILINGUAL).await;
+    let fr_only = r.install().await;
+    r.set_language("fr", json!({"model": both})).await;
+    r.set_language("en", json!({"model": both, "voice": "Bob"}))
+        .await;
+    r.language_until(1, "ready").await;
+    let (s, v) = r.set_language("en", json!({"model": fr_only})).await;
+    // The French-only model does not speak English.
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    let (s, v) = r.set_language("fr", json!({"model": fr_only})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let st = r.language_until(0, "ready").await;
+    assert_eq!(st["languages"][0]["model"], fr_only);
+    assert_eq!(st["languages"][1]["model"], both);
+    assert_eq!(st["languages"][1]["engine"]["state"], "ready");
+    assert_eq!(st["languages"][1]["voice"], "Bob");
+}
+
+#[tokio::test]
+async fn a_model_that_does_not_speak_the_code_is_422() {
+    let r = rig().await;
+    let id = r.install().await;
+    let (s, _) = r.set_language("de", json!({"model": id})).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (s, _) = r.set_language("français", json!({"model": id})).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    let (s, v) = r.set_language("FR", json!({"model": id})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["languages"][0]["code"], "fr");
+}
+
+#[tokio::test]
+async fn house_moves_first_and_survives_restart() {
+    let r = rig().await;
+    let id = r.install_repo(BILINGUAL).await;
+    r.set_language("fr", json!({"model": id})).await;
+    r.set_language("en", json!({"model": id})).await;
+    let (s, v) = r
+        .send(
+            reqwest::Method::PUT,
+            "/languages/house",
+            json!({"code": "en"}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["languages"][0]["code"], "en");
+    let (s, _) = r
+        .send(
+            reqwest::Method::PUT,
+            "/languages/house",
+            json!({"code": "de"}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let again = start_tts(r.root(), &r.base).await;
+    let codes: Vec<_> = again
+        .status()
+        .languages
+        .into_iter()
+        .map(|l| l.code)
+        .collect();
+    assert_eq!(codes, ["en", "fr"]);
+}
+
+#[tokio::test]
+async fn removing_a_language_unloads_its_model_when_unused() {
+    let r = rig().await;
+    let id = r.install_repo(BILINGUAL).await;
+    r.set_language("fr", json!({"model": id})).await;
+    r.set_language("en", json!({"model": id})).await;
+    r.language_until(1, "ready").await;
+    assert_eq!(r.delete("/languages/fr").await, StatusCode::OK);
+    let (_, st) = r.get("/status").await;
+    assert_eq!(
+        st["languages"][0]["code"], "en",
+        "the next one is the house language"
+    );
+    assert_eq!(st["languages"][0]["engine"]["state"], "ready");
+    assert_eq!(r.delete("/languages/en").await, StatusCode::OK);
+    assert_eq!(r.delete("/languages/en").await, StatusCode::NOT_FOUND);
+    let (_, models) = r.get("/models").await;
+    assert_eq!(models[0]["used_by"], json!([]));
+}
+
+#[tokio::test]
+async fn old_state_boots_as_one_language_with_its_voice() {
+    // A hub from before languages: one active model and a chosen catalog voice.
+    let r = rig().await;
+    let id = r.install().await;
+    std::fs::write(
+        r.root().join("state.json"),
+        json!({"active": id, "voice": "Noemie"}).to_string(),
+    )
+    .unwrap();
+    let again = start_tts(r.root(), &r.base).await;
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        let st = again.status();
+        assert_eq!(st.languages.len(), 1, "{st:?}");
+        assert_eq!(st.languages[0].code, "fr");
+        assert_eq!(st.languages[0].voice, "Noemie");
+        if r.root().join("voices/AAA.safetensors").is_file() {
+            break;
+        }
+        assert!(Instant::now() < end, "the chosen voice was never fetched");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let saved = std::fs::read_to_string(r.root().join("state.json")).unwrap();
+    assert!(
+        !saved.contains("\"active\""),
+        "saved in the new shape: {saved}"
+    );
+}
+
+#[tokio::test]
+async fn available_lists_codes_not_yet_used() {
+    let r = rig().await;
+    let fr_only = r.install().await;
+    let both = r.install_repo(BILINGUAL).await;
+    let (_, v) = r.get("/languages/available").await;
+    let mut fr_models: Vec<String> = serde_json::from_value(v[1]["models"].clone()).unwrap();
+    fr_models.sort();
+    let mut want = vec![fr_only.clone(), both.clone()];
+    want.sort();
+    assert_eq!(v[0]["code"], "en");
+    assert_eq!(v[0]["models"], json!([both]));
+    assert_eq!(v[1]["code"], "fr");
+    assert_eq!(fr_models, want);
+    r.set_language("fr", json!({"model": fr_only})).await;
+    let (_, v) = r.get("/languages/available").await;
+    assert_eq!(v, json!([{"code": "en", "models": [both]}]));
 }

@@ -63,9 +63,10 @@ pub use system::{
     SystemService, SystemView,
 };
 pub use tts::{
-    ActiveRequest, DEFAULT_VOICE, DownloadRequest, DownloadView, EngineState, InspectRequest,
-    JobState, ModelSource, ModelView, RepoListing, SpeechRequest, SpeechTicket, TokenInput,
-    TtsStatus, UploadSession, VoiceRequest, VoiceSource, VoiceView, VoicesView, WeightFile,
+    AvailableLanguage, DEFAULT_VOICE, DownloadRequest, DownloadView, EngineState, HouseRequest,
+    InspectRequest, JobState, LanguageRequest, LanguageView, ModelSource, ModelView, RepoListing,
+    SpeechRequest, SpeechTicket, TokenInput, TtsStatus, UploadSession, VoiceSource, VoiceView,
+    VoicesView, WeightFile,
 };
 pub use views::{
     AreaView, BridgeView, DeviceView, EntityView, IgnoredView, UpdateView, mask_secret,
