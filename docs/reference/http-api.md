@@ -357,8 +357,7 @@ Talking to a [satellite](../users/sound.md): the recognition model, its settings
 | `POST /api/v1/assist/stt/download` | Fetches the pinned Parakeet archive (about 490 MB, about 670 MB once unpacked) and the Silero VAD from the sherpa-onnx release, checking every file's size and SHA-256; returns the job (`202`). `409` while a download runs or once the model is installed. A refusal for disk space or a file that does not match shows as a `failed` job with the reason in `error`. |
 | `DELETE /api/v1/assist/stt/download` | Cancels the download and deletes its temporary files (`204`); `404` when none runs. |
 | `DELETE /api/v1/assist/stt/model` | Removes the model files (`204`); `409` while a download runs. |
-| `GET /api/v1/assist/stt/key` | `{key}`: the satellites' shared key, 64 hex characters (`voice_key` in each board's `secrets.yaml`); `404` before one is made. |
-| `POST /api/v1/assist/stt/key` | Makes a new key and returns it; satellites with the old key are no longer heard. |
+| `POST /api/v1/assist/stt/key` | Makes a new key and returns it as `{key}`, 64 hex characters (`voice_key` in each board's `secrets.yaml`); satellites with the old key are no longer heard. This is the only time the key is returned: there is no route to read it back, since anyone on the network can call the API. |
 
 ## Sound
 

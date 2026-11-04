@@ -7,11 +7,11 @@ use axum::Router;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
-use axum::routing::{delete, get, put};
+use axum::routing::{delete, get, post, put};
 use nidoo_api::{DownloadView, SttKey, SttSettings, SttStatus};
 
 use super::api::HttpError;
-use crate::assist::stt::{Stt, SttError};
+use crate::assist::stt::Stt;
 use crate::hub::Hub;
 
 type HubState = State<Arc<Hub>>;
@@ -25,7 +25,9 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
             delete(cancel_download).post(start_download),
         )
         .route("/assist/stt/model", delete(remove_model))
-        .route("/assist/stt/key", get(key).post(new_key))
+        // No GET: the key is shown once, when it is made. Anyone on the network can call
+        // this API, and a key read back would let any device greet the boards.
+        .route("/assist/stt/key", post(new_key))
 }
 
 fn stt(hub: &Hub) -> Result<Arc<Stt>, HttpError> {
@@ -64,13 +66,6 @@ async fn cancel_download(State(hub): HubState) -> Result<StatusCode, HttpError> 
 async fn remove_model(State(hub): HubState) -> Result<StatusCode, HttpError> {
     stt(&hub)?.remove_model()?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-async fn key(State(hub): HubState) -> Result<Json<SttKey>, HttpError> {
-    let key = stt(&hub)?
-        .key()
-        .ok_or_else(|| SttError::NotFound("no key yet".into()))?;
-    Ok(Json(SttKey { key: key.to_hex() }))
 }
 
 async fn new_key(State(hub): HubState) -> Result<Json<SttKey>, HttpError> {

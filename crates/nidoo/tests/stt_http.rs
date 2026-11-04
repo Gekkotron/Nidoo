@@ -80,19 +80,20 @@ async fn put_settings_422() {
 }
 
 #[tokio::test]
-async fn key_404_then_created() {
+async fn the_key_is_shown_only_when_made() {
+    // Anyone on the network can call the API: a key that could be read back would let any
+    // device greet the boards and open their microphones.
     let r = rig(true).await;
-    let (s, _) = r.get("/key").await;
-    assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, v) = r.send(r.client.post(r.url("/key"))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let key = v["key"].as_str().unwrap().to_owned();
     assert_eq!(key.len(), 64);
     let (s, v) = r.get("/key").await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(v["key"], key.as_str());
+    assert_ne!(s, StatusCode::OK, "{v}");
+    assert!(!v.to_string().contains(&key));
     let (_, status) = r.get("/status").await;
     assert_eq!(status["hasKey"], true);
+    assert!(!status.to_string().contains(&key));
 }
 
 #[tokio::test]

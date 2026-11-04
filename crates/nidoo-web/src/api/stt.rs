@@ -36,11 +36,6 @@ pub async fn remove_model() -> Result<(), ApiError> {
     Ok(())
 }
 
-pub async fn get_key() -> Result<SttKey, ApiError> {
-    let response = check(Request::get(&format!("{BASE}/key")).build(), None).await?;
-    read_json(response).await
-}
-
 /// A new key; the old one stops working.
 pub async fn new_key() -> Result<SttKey, ApiError> {
     let response = check(Request::post(&format!("{BASE}/key")).build(), None).await?;
