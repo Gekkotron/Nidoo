@@ -45,6 +45,24 @@ fn slug(text: &str) -> String {
     if out.is_empty() { "model".into() } else { out }
 }
 
+/// Ends a session when dropped while armed.
+struct EndOnDrop<'a> {
+    uploads: &'a Uploads,
+    id: &'a str,
+    armed: bool,
+}
+
+impl Drop for EndOnDrop<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut guard = self.uploads.lock();
+            if guard.as_ref().is_some_and(|s| s.id == self.id) {
+                *guard = None;
+            }
+        }
+    }
+}
+
 impl Uploads {
     /// No session open.
     pub fn new(store: Arc<ModelStore>) -> Uploads {
@@ -61,8 +79,9 @@ impl Uploads {
     /// Opens a session; a second one while one is open is a conflict.
     pub fn open(&self) -> Result<UploadSession, TtsError> {
         let mut guard = self.lock();
-        if guard.is_some() {
-            return Err(TtsError::Conflict("an upload is already open".into()));
+        // A session nobody is writing to is abandoned (a reload, a closed tab): replace it.
+        if guard.as_ref().is_some_and(|s| !s.pending.is_empty()) {
+            return Err(TtsError::Conflict("an upload is in progress".into()));
         }
         let mut raw = [0u8; 16];
         getrandom::getrandom(&mut raw).map_err(|e| TtsError::Io(format!("random: {e}")))?;
@@ -108,7 +127,14 @@ impl Uploads {
             s.pending.insert(name.to_owned());
             s.staging.dir.join(name)
         };
+        // If this future is dropped (the client went away), the guard ends the session.
+        let mut cleanup = EndOnDrop {
+            uploads: self,
+            id,
+            armed: true,
+        };
         let result = Self::write(&path, body, cap).await;
+        cleanup.armed = false;
         let mut guard = self.lock();
         match result {
             Ok(size) => {

@@ -290,9 +290,6 @@ async fn upload_round_trip() {
     assert_eq!(s, StatusCode::OK);
     let id = v["id"].as_str().unwrap().to_owned();
     assert_eq!(id.len(), 32);
-    // A second open session is refused.
-    let (s, _) = r.send(reqwest::Method::POST, "/uploads", json!({})).await;
-    assert_eq!(s, StatusCode::CONFLICT);
     for (name, body) in model_files() {
         assert_eq!(put_file(&r, &id, name, body).await, StatusCode::NO_CONTENT);
     }
@@ -450,4 +447,56 @@ async fn a_build_without_speech_still_answers() {
         loader: Arc::new(NoSpeechLoader),
     });
     assert_eq!(tts.status().voice, "default");
+}
+
+async fn open_upload(r: &Rig) -> (StatusCode, Value) {
+    r.send(reqwest::Method::POST, "/uploads", json!({})).await
+}
+
+#[tokio::test]
+async fn a_disconnect_mid_body_frees_the_next_upload() {
+    use tokio::io::AsyncWriteExt;
+    let r = rig().await;
+    let (_, v) = open_upload(&r).await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    let mut sock = tokio::net::TcpStream::connect(r.addr).await.unwrap();
+    let head = format!(
+        "PUT /api/v1/assist/tts/uploads/{id}/files/model.q8.gguf HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n"
+    );
+    sock.write_all(head.as_bytes()).await.unwrap();
+    sock.write_all(&[0u8; 1000]).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // While the write runs, a second open is refused.
+    assert_eq!(open_upload(&r).await.0, StatusCode::CONFLICT);
+    drop(sock);
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        let (s, v) = open_upload(&r).await;
+        if s == StatusCode::OK {
+            assert_ne!(v["id"], id.as_str());
+            break;
+        }
+        assert!(Instant::now() < end, "still blocked: {s}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(staging_dirs(&r), 1);
+}
+
+#[tokio::test]
+async fn an_abandoned_upload_is_replaced_by_the_next() {
+    let r = rig().await;
+    let (_, v) = open_upload(&r).await;
+    let old = v["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        put_file(&r, &old, "tokenizer.json", b"{}".to_vec()).await,
+        StatusCode::NO_CONTENT
+    );
+    let (s, v) = open_upload(&r).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_ne!(v["id"], old.as_str());
+    assert_eq!(staging_dirs(&r), 1);
+    assert_eq!(
+        put_file(&r, &old, "config.json", b"{}".to_vec()).await,
+        StatusCode::NOT_FOUND
+    );
 }
