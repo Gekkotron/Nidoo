@@ -1920,6 +1920,7 @@ fn bridge_filters(hub: &Hub) -> Vec<String> {
             !f.starts_with("nidoo/alarm/")
                 && f != "nidoo/push/responses"
                 && f != nidoo::system::services::RETAINED_TOPIC
+                && f != nidoo::sound::SPOKEN_TOPIC
         })
         .collect()
 }
