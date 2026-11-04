@@ -10,6 +10,7 @@ pub mod discover;
 pub mod group;
 pub mod input;
 pub mod listen;
+pub mod mixer;
 pub mod mqtt;
 pub mod pacer;
 pub mod player;
