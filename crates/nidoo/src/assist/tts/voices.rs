@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use futures_util::StreamExt;
+use nidoo_api::search::fold;
 use nidoo_api::{DEFAULT_VOICE, VoiceSource, VoiceView, VoicesView};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
@@ -223,7 +224,9 @@ pub fn view(
         })
         .filter(|v| !model_voices.contains(&v.name))
         .collect();
-    extra.sort_by(|a, b| a.name.cmp(&b.name));
+    // Alphabetical as a reader expects: accents and case folded (Élise between Eve and Félix),
+    // the exact name only breaking ties.
+    extra.sort_by_cached_key(|v| (fold(&v.name), v.name.clone()));
     voices.extend(extra.into_iter().map(|v| VoiceView {
         name: v.name.clone(),
         language: v.language.clone(),
@@ -279,6 +282,20 @@ mod tests {
         assert!(!v.fell_back);
         assert_eq!(v.voices[0].source, VoiceSource::Model);
         assert!(v.voices[0].on_disk);
+    }
+
+    #[test]
+    fn view_sorts_accented_names_with_their_letter() {
+        let cat = [
+            cv("Zoe", "fr"),
+            cv("Élise", "fr"),
+            cv("eve", "fr"),
+            cv("Félix", "fr"),
+            cv("Ambre", "fr"),
+        ];
+        let v = view(&[], &["fr".to_string()], &cat, |_| false, "default", false);
+        let names: Vec<_> = v.voices.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(names, ["Ambre", "Élise", "eve", "Félix", "Zoe"]);
     }
 
     #[test]

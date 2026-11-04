@@ -213,35 +213,68 @@ pub fn AssistSettingsScreen() -> impl IntoView {
     let first_sound = RwSignal::new(None::<u64>);
     let clicked_at = RwSignal::new(None::<f64>);
     let audio = NodeRef::<leptos::html::Audio>::new();
+    // The voice a ▶ is speaking with, while it asks the hub and starts playing.
+    let previewing = RwSignal::new(None::<String>);
+    // Speaks `req` through the player above and times the first sound; the error to show.
+    let speak_and_play = move |req: SpeechRequest| async move {
+        let start = js_sys::Date::now();
+        let ticket = tts::speak(&req).await.map_err(|e| e.error)?;
+        let Some(el) = audio.get_untracked() else {
+            return Ok(());
+        };
+        clicked_at.try_set(Some(start));
+        el.set_src(&ticket.url);
+        let played = match el.play() {
+            Ok(promise) => JsFuture::from(promise).await.is_ok(),
+            Err(_) => false,
+        };
+        if played {
+            Ok(())
+        } else {
+            Err(t(T::PlayFailed).to_owned())
+        }
+    };
+    let speaking = move || test_busy.get() || previewing.with(Option::is_some);
     let play = move || {
         let text = test_text.get_untracked().trim().to_owned();
-        if text.is_empty() || test_busy.get_untracked() {
+        if text.is_empty() || speaking() {
             return;
         }
         test_busy.set(true);
         test_error.set(None);
         first_sound.set(None);
-        let start = js_sys::Date::now();
         spawn_local(async move {
-            match tts::speak(&SpeechRequest { text, voice: None }).await {
-                Ok(ticket) => {
-                    if let Some(el) = audio.get_untracked() {
-                        clicked_at.try_set(Some(start));
-                        el.set_src(&ticket.url);
-                        let played = match el.play() {
-                            Ok(promise) => JsFuture::from(promise).await.is_ok(),
-                            Err(_) => false,
-                        };
-                        if !played {
-                            test_error.try_set(Some(t(T::PlayFailed).to_owned()));
-                        }
-                    }
-                }
-                Err(e) => {
-                    test_error.try_set(Some(e.error));
-                }
+            if let Err(e) = speak_and_play(SpeechRequest { text, voice: None }).await {
+                test_error.try_set(Some(e));
             }
             test_busy.try_set(false);
+        });
+    };
+    // ▶ on a voice: the test sentence (or the pinned one when the field is empty) in that
+    // voice, without choosing it.
+    let preview = move |voice: String| {
+        if speaking() {
+            return;
+        }
+        let typed = test_text.get_untracked().trim().to_owned();
+        let text = if typed.is_empty() {
+            t(T::TestSentence).to_owned()
+        } else {
+            typed
+        };
+        previewing.set(Some(voice.clone()));
+        test_error.set(None);
+        first_sound.set(None);
+        spawn_local(async move {
+            if let Err(e) = speak_and_play(SpeechRequest {
+                text,
+                voice: Some(voice),
+            })
+            .await
+            {
+                toast(e);
+            }
+            previewing.try_set(None);
         });
     };
 
@@ -521,7 +554,7 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                     <button
                         type="button"
                         class="btn assist-set__btn"
-                        disabled=move || test_busy.get()
+                        disabled=speaking
                         on:click=move |_| play()
                     >
                         {move || if test_busy.get() { t(T::Speaking) } else { t(T::Play) }}
@@ -589,8 +622,20 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                                             let detail = voice_detail(&v);
                                             let is_default = v.name == DEFAULT_VOICE;
                                             let label = v.name.clone();
+                                            let heard = v.name.clone();
+                                            let this_one = {
+                                                let name = v.name.clone();
+                                                move || previewing.with(|p| p.as_deref() == Some(name.as_str()))
+                                            };
+                                            let listen_label = {
+                                                let label = label.clone();
+                                                move || {
+                                                    let shown = if is_default { t(T::VoiceDefault) } else { label.as_str() };
+                                                    format!("{} {shown}", t(T::Listen))
+                                                }
+                                            };
                                             view! {
-                                                <li class="assist-set__item">
+                                                <li class="assist-set__item assist-set__voice">
                                                     <label>
                                                         <input
                                                             type="radio"
@@ -609,6 +654,16 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                                                         </span>
                                                         {(!detail.is_empty()).then(|| view! { <span class="assist-set__muted">" " {detail}</span> })}
                                                     </label>
+                                                    <button
+                                                        type="button"
+                                                        class="btn assist-set__btn assist-set__listen"
+                                                        title=listen_label.clone()
+                                                        aria-label=listen_label
+                                                        disabled=speaking
+                                                        on:click=move |_| preview(heard.clone())
+                                                    >
+                                                        {move || if this_one() { "…" } else { "▶" }}
+                                                    </button>
                                                 </li>
                                             }
                                         })

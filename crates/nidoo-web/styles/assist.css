@@ -317,6 +317,22 @@
   margin-right: 8px;
 }
 
+.assist-set__voice {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assist-set__voice label {
+  flex: 1;
+  min-width: 0;
+}
+
+.assist-set__listen {
+  min-width: 2.5em;
+}
+
 label.assist-set__item {
   flex-direction: row;
   flex-wrap: wrap;

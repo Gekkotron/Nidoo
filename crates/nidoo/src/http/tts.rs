@@ -157,7 +157,7 @@ async fn speak(
     body: Json_<SpeechRequest>,
 ) -> Result<(StatusCode, Json<SpeechTicket>), HttpError> {
     let Json(req) = body?;
-    Ok((StatusCode::CREATED, Json(tts(&hub)?.speak(req)?)))
+    Ok((StatusCode::CREATED, Json(tts(&hub)?.speak(req).await?)))
 }
 
 async fn speech_file(
