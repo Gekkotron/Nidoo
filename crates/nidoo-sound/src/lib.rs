@@ -6,6 +6,7 @@
 
 pub mod clock;
 pub mod discover;
+pub mod group;
 pub mod input;
 pub mod pacer;
 pub mod player;
