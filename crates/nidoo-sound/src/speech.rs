@@ -15,8 +15,20 @@ pub const SPEAK_TOPIC: &str = "nidoo-sound/speak";
 
 /// Stream rate every player gets.
 const STREAM_RATE: u32 = 48_000;
-/// How long the hub may take to hand over a clip.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a clip may take to come from the hub.
+#[derive(Debug, Clone, Copy)]
+pub struct FetchLimits {
+    /// The longest wait for the next piece of the clip (the hub speaks it as it sends it).
+    pub stall: Duration,
+    /// The longest the whole clip may take: the hub keeps a clip 60 s.
+    pub total: Duration,
+}
+
+/// The limits [`fetch_speech`] uses.
+pub const FETCH_LIMITS: FetchLimits = FetchLimits {
+    stall: Duration::from_secs(10),
+    total: Duration::from_secs(60),
+};
 /// Longest clip we play, in seconds of audio.
 const MAX_CLIP_SECONDS: usize = 60;
 
@@ -130,18 +142,39 @@ pub async fn fetch_speech(
     hub_url: &str,
     req: &SpeakRequest,
 ) -> anyhow::Result<Speech> {
+    fetch_speech_with(client, hub_url, req, FETCH_LIMITS).await
+}
+
+/// [`fetch_speech`] with the given limits.
+pub async fn fetch_speech_with(
+    client: &reqwest::Client,
+    hub_url: &str,
+    req: &SpeakRequest,
+    limits: FetchLimits,
+) -> anyhow::Result<Speech> {
     let url = format!("{}{}", hub_url.trim_end_matches('/'), req.url);
-    // The clip streams while the hub speaks it: read it to the end.
-    let body = client
-        .get(&url)
-        .timeout(FETCH_TIMEOUT)
-        .send()
+    // The clip streams while the hub speaks it: read it to the end, as long as it keeps coming.
+    let read = async {
+        let mut response = tokio::time::timeout(limits.stall, client.get(&url).send())
+            .await
+            .map_err(|_| anyhow::anyhow!("no answer within {:?}", limits.stall))?
+            .and_then(reqwest::Response::error_for_status)?;
+        let mut body = Vec::new();
+        loop {
+            let piece = tokio::time::timeout(limits.stall, response.chunk())
+                .await
+                .map_err(|_| anyhow::anyhow!("no data for {:?}", limits.stall))??;
+            match piece {
+                Some(piece) => body.extend_from_slice(&piece),
+                None => return anyhow::Ok(body),
+            }
+        }
+    };
+    let body = tokio::time::timeout(limits.total, read)
         .await
-        .and_then(reqwest::Response::error_for_status)
-        .with_context(|| format!("fetching {url}"))?
-        .bytes()
-        .await
-        .with_context(|| format!("reading {url}"))?;
+        .map_err(|_| anyhow::anyhow!("longer than {:?}", limits.total))
+        .and_then(|r| r)
+        .with_context(|| format!("fetching {url}"))?;
     let pcm = wav_to_stream_pcm(&body).with_context(|| format!("decoding {url}"))?;
     Ok(Speech {
         players: req.players.clone(),
@@ -298,5 +331,96 @@ mod tests {
             .unwrap();
         assert_eq!(speech.players, ["p1"]);
         assert_eq!(frames(&speech.pcm), [(9, 10)]);
+    }
+
+    /// A hub that sends the clip's header, then `pieces` pieces of it `gap` apart.
+    async fn slow_hub(pieces: usize, gap: Duration) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let samples: Vec<i16> = (0..2 * pieces as i16).collect();
+        let body = wav_with_size(48_000, 2, &samples, u32::MAX);
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await.unwrap();
+            let head = "HTTP/1.1 200 OK\r\ncontent-type: audio/wav\r\nconnection: close\r\n\r\n";
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(&body[..44]).await.unwrap();
+            for piece in body[44..].chunks(4) {
+                tokio::time::sleep(gap).await;
+                if sock.write_all(piece).await.is_err() {
+                    return;
+                }
+            }
+        });
+        addr
+    }
+
+    fn clip_request() -> SpeakRequest {
+        SpeakRequest {
+            id: "a".into(),
+            url: "/api/v1/assist/speech/a.wav".into(),
+            players: vec!["p1".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn a_clip_that_keeps_coming_is_read_past_the_stall_limit() {
+        // Six pieces 100 ms apart: 600 ms in all, never 300 ms without data.
+        let addr = slow_hub(6, Duration::from_millis(100)).await;
+        let limits = FetchLimits {
+            stall: Duration::from_millis(300),
+            total: Duration::from_secs(5),
+        };
+        let speech = fetch_speech_with(
+            &reqwest::Client::new(),
+            &format!("http://{addr}"),
+            &clip_request(),
+            limits,
+        )
+        .await
+        .unwrap();
+        assert_eq!(frames(&speech.pcm).len(), 6);
+    }
+
+    #[tokio::test]
+    async fn a_stalled_clip_fails_at_the_stall_limit() {
+        let addr = slow_hub(2, Duration::from_secs(2)).await;
+        let limits = FetchLimits {
+            stall: Duration::from_millis(200),
+            total: Duration::from_secs(5),
+        };
+        let started = std::time::Instant::now();
+        let got = fetch_speech_with(
+            &reqwest::Client::new(),
+            &format!("http://{addr}"),
+            &clip_request(),
+            limits,
+        )
+        .await;
+        assert!(got.is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_clip_slower_than_the_total_limit_fails() {
+        let addr = slow_hub(20, Duration::from_millis(100)).await;
+        let limits = FetchLimits {
+            stall: Duration::from_millis(300),
+            total: Duration::from_millis(500),
+        };
+        let got = fetch_speech_with(
+            &reqwest::Client::new(),
+            &format!("http://{addr}"),
+            &clip_request(),
+            limits,
+        )
+        .await;
+        assert!(got.is_err());
     }
 }
