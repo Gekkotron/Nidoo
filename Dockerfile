@@ -9,7 +9,10 @@
 #   base     — toolchain + system deps + cargo-chef + trunk (rarely rebuilt)
 #   planner  — emits recipe.json from the current Cargo.toml/Cargo.lock
 #   builder  — cooks deps (cached layer), then compiles web + hub
-#   runtime  — ships only the binary on debian:bookworm-slim
+#   sound-builder — compiles nidoo-sound alone (own cooked deps)
+#   sound    — the nidoo-sound image: `docker build --target sound`
+#   runtime  — ships only the hub binary on debian:bookworm-slim (the
+#              default target: keep it the last stage)
 
 ARG RUST_IMAGE=rust:1-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
@@ -73,6 +76,36 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --release -p nidoo
+
+# ---------- sound-builder ----------
+# nidoo-sound, the Sendspin-compatible sound service, has its own build so a
+# hub rebuild never touches the sound image (and the other way round).
+FROM base AS sound-builder
+COPY --from=planner /src/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo chef cook --release -p nidoo-sound --recipe-path recipe.json
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo build --release -p nidoo-sound
+
+# ---------- sound ----------
+FROM ${RUNTIME_IMAGE} AS sound
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        tzdata \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=sound-builder /src/target/release/nidoo-sound /usr/local/bin/nidoo-sound
+
+# ./data is /data from here (sound/identity.key, sound/players.json).
+WORKDIR /
+EXPOSE 4953
+ENTRYPOINT ["/usr/local/bin/nidoo-sound"]
+CMD ["run"]
 
 # ---------- runtime ----------
 FROM ${RUNTIME_IMAGE} AS runtime

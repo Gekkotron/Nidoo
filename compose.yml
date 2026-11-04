@@ -8,6 +8,12 @@
 #   timescaledb  the history database, on port 5432.
 #   hub          Nidoo itself, on port 8081.
 #
+# Optional, only when named: `docker compose up -d --build sound` starts
+# nidoo-sound, music for the sound satellites (PCM in on port 4953, see
+# docs/users/sound.md). Its own image and the `sound` profile keep it out of
+# a whole-stack `up --build` (tools/update.sh), so updating the hub never
+# restarts the music.
+#
 # Already have a broker and a database? Start only the hub and point it at
 # them from the setup wizard: `docker compose up -d hub`.
 #
@@ -83,4 +89,24 @@ services:
       # hub.json, settings-cache.json and the history live here. The push
       # key is stored in the database once uploaded in the wizard;
       # data/secrets/ exists only on upgraded installs.
+      - ./data:/data
+
+  sound:
+    build:
+      <<: *nidoo-build
+      target: sound
+    image: nidoo-sound:local
+    container_name: nidoo-sound
+    # Started only when named (`docker compose up -d sound`, which turns the
+    # profile on) or with `--profile sound`.
+    profiles: ["sound"]
+    restart: unless-stopped
+    network_mode: host
+    # Optional, git-ignored: NIDOO_SOUND_* overrides (broker login, ports).
+    env_file:
+      - path: .env
+        required: false
+    command: ["run"]
+    volumes:
+      # sound/identity.key and sound/players.json live here.
       - ./data:/data
