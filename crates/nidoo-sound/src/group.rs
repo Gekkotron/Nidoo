@@ -370,6 +370,7 @@ impl Group {
     ) {
         match event {
             PlayerEvent::Connected(info) => {
+                self.close_older(instance, &info.client_id).await;
                 let prefs = self.store.observe(&info.client_id, &info.name).clone();
                 let playing = self.playing;
                 let Some(link) = self
@@ -446,6 +447,23 @@ impl Group {
                 }
                 self.publish(publish, &client_id).await;
             }
+        }
+    }
+
+    /// A player that connects again (a browser after a network hiccup) may
+    /// leave its older connection open: close it, the new one wins.
+    async fn close_older(&mut self, instance: &str, client_id: &str) {
+        for (name, i) in &mut self.instances {
+            let Some(link) = i.link.as_mut() else {
+                continue;
+            };
+            if name == instance || !link.connected || link.client_id.as_deref() != Some(client_id) {
+                continue;
+            }
+            tracing::info!(old = %name, new = %instance, %client_id, "player connected again, closing its older connection");
+            link.connected = false;
+            link.streaming = false;
+            link.send(PlayerCmd::Close).await;
         }
     }
 
@@ -1093,5 +1111,30 @@ mod tests {
             PlayerCmd::Activate { .. }
         ));
         while !h.published_for(&short_id("A")).await.1 {}
+    }
+
+    #[tokio::test]
+    async fn reconnecting_player_closes_its_older_connection() {
+        let mut h = Harness::start_with(&[("A", 40, false, true)]).await;
+        let mut old = h.accepted("browser-1").await;
+        old.connected("A").await;
+        old.drain().await;
+        // The same player opens a second connection without closing the first.
+        let mut new = h.accepted("browser-2").await;
+        new.connected("A").await;
+        assert!(
+            old.drain().await.contains(&PlayerCmd::Close),
+            "the older connection must be closed"
+        );
+        new.drain().await;
+        h.control
+            .send(Control::SetVolume {
+                short_id: short_id("A"),
+                volume: 55,
+            })
+            .await
+            .unwrap();
+        assert_eq!(new.control_cmd().await, PlayerCmd::Volume(55));
+        assert!(old.drain().await.is_empty());
     }
 }
