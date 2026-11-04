@@ -151,16 +151,42 @@ async fn the_speech_address_serves_a_real_wav() {
         return;
     };
     let weights = std::env::var("NIDOO_TTS_WEIGHTS").unwrap_or_else(|_| "model.q8.gguf".into());
+    // Install the model folder as `real` (files linked, not copied) speaking French.
     let root = tempfile::tempdir().unwrap();
+    let tts_root = root.path().join("tts");
+    let model_dir = tts_root.join("models").join("real");
+    std::fs::create_dir_all(&model_dir).unwrap();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        std::os::unix::fs::symlink(&path, model_dir.join(path.file_name().unwrap())).unwrap();
+    }
+    std::fs::write(
+        model_dir.join("manifest.json"),
+        serde_json::json!({
+            "id": "real", "repo": null, "revision": null, "weights": weights,
+            "files": [], "licence": null, "languages": ["fr"], "source": "upload",
+            "installed_at": 1
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        tts_root.join("state.json"),
+        r#"{"languages":[{"code":"fr","model":"real","voice":"default"}]}"#,
+    )
+    .unwrap();
     let tts = Tts::start(TtsConfig {
-        root: root.path().join("tts"),
+        root: tts_root,
         hf_base: "http://127.0.0.1:1".into(),
         loader: Arc::new(PhononLoader),
     });
-    tts.engine().load("real", dir.into(), weights);
     let deadline = Instant::now() + Duration::from_secs(60);
-    while !matches!(tts.engine().state(), EngineState::Ready { .. }) {
-        assert!(Instant::now() < deadline, "{:?}", tts.engine().state());
+    loop {
+        let state = tts.status().languages[0].engine.clone();
+        if matches!(state, EngineState::Ready { .. }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{state:?}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let (tx, _rx) = tokio::sync::mpsc::channel(8);

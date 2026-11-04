@@ -76,7 +76,7 @@ impl Rig {
         let (s, _) = self
             .json(
                 reqwest::Method::PUT,
-                "/tts/active",
+                "/tts/languages/fr",
                 json!({"model": m["id"]}),
             )
             .await;
@@ -92,7 +92,7 @@ impl Rig {
                 .json()
                 .await
                 .unwrap();
-            if st["engine"]["state"] == "ready" {
+            if st["languages"][0]["engine"]["state"] == "ready" {
                 return;
             }
             assert!(Instant::now() < end, "never ready: {st}");

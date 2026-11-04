@@ -82,8 +82,8 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// The settings-screen view of this model.
-    pub fn view(&self, active: bool) -> ModelView {
+    /// The settings-screen view of this model; `used_by` lists the languages speaking with it.
+    pub fn view(&self, used_by: Vec<String>) -> ModelView {
         ModelView {
             id: self.id.clone(),
             repo: self.repo.clone(),
@@ -92,10 +92,9 @@ impl Manifest {
             size: self.files.iter().map(|f| f.size).sum(),
             licence: self.licence.clone(),
             languages: self.languages.clone(),
-            french: self.languages.iter().any(|l| l == "fr"),
             source: self.source.clone(),
             installed_at: self.installed_at,
-            active,
+            used_by,
         }
     }
 }
@@ -106,11 +105,11 @@ pub struct TtsState {
     /// The languages the hub speaks, the house language first.
     #[serde(default)]
     pub languages: Vec<super::languages::LanguageEntry>,
-    /// The model in use, when one is chosen.
-    #[serde(default)]
+    /// The single active model of hubs before languages; read once, never written.
+    #[serde(default, skip_serializing)]
     pub active: Option<String>,
-    /// The voice in use.
-    #[serde(default = "default_voice")]
+    /// The single voice of hubs before languages; read once, never written.
+    #[serde(default = "default_voice", skip_serializing)]
     pub voice: String,
 }
 
@@ -541,7 +540,7 @@ mod tests {
         });
         let done = st.finish(&store, m).unwrap();
         assert_eq!(done.languages, vec!["fr"]);
-        assert!(done.view(false).french);
+        assert!(done.view(vec![]).used_by.is_empty());
         assert_eq!(store.get("m").unwrap().languages, vec!["fr"]);
         assert!(store.dir("m").join("manifest.json").exists());
     }
@@ -594,12 +593,22 @@ mod tests {
         assert_eq!(d.active, None);
         assert_eq!(d.voice, "default");
         let s = TtsState {
-            active: Some("m".into()),
-            voice: "v".into(),
+            languages: vec![super::super::languages::LanguageEntry {
+                code: "fr".into(),
+                model: Some("m".into()),
+                voice: "v".into(),
+            }],
             ..TtsState::default()
         };
         store.write_state(&s).unwrap();
         assert_eq!(store.read_state(), s);
+        // The single-model fields of older hubs are read, never written back.
+        std::fs::write(t.path().join("state.json"), r#"{"active":"m","voice":"v"}"#).unwrap();
+        let old = store.read_state();
+        assert_eq!(old.active.as_deref(), Some("m"));
+        store.write_state(&old).unwrap();
+        let saved = std::fs::read_to_string(t.path().join("state.json")).unwrap();
+        assert!(!saved.contains("active"), "{saved}");
     }
 
     #[test]
