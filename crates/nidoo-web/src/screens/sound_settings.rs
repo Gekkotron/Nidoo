@@ -4,15 +4,18 @@
 use std::collections::BTreeMap;
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use leptos_router::components::A;
-use nidoo_api::EntityView;
-use nidoo_core::model::{Availability, Command, EntityState, SOUND_DEVICE_PREFIX, StateValue};
+use nidoo_api::{AreaView, EntityView, MAX_SPEECH_CHARS, SoundSpeakRequest};
+use nidoo_core::model::{
+    Availability, Command, EntityState, SOUND_DEVICE_PREFIX, StateValue, UNASSIGNED_AREA,
+};
 
 use crate::cards::Sender;
 use crate::components::card_frame::sheet_path;
 use crate::format::{area_name, room_name};
 use crate::house::House;
-use crate::i18n::{Lang, SoundText, sound_text, use_lang, use_sound_text};
+use crate::i18n::{Lang, SoundText, said_on, sound_text, use_lang, use_sound_text};
 use crate::screens::alarm_settings::SwitchRow;
 
 /// One speaker satellite, gathered from its entities.
@@ -118,6 +121,16 @@ fn gather<'a>(entities: impl Iterator<Item = &'a EntityView>) -> Vec<Satellite> 
     let mut list: Vec<Satellite> = found.into_values().collect();
     list.sort_by_cached_key(|s| (s.name.to_lowercase(), s.device_id.clone()));
     list
+}
+
+/// `(id, name)` of the rooms that hold at least one of `satellites`, in the order of `areas`;
+/// the catch-all area is left out (the hub refuses it as a room to speak in).
+pub fn satellite_rooms(satellites: &[Satellite], areas: &[AreaView]) -> Vec<(String, String)> {
+    areas
+        .iter()
+        .filter(|a| a.id != UNASSIGNED_AREA && satellites.iter().any(|s| s.area == a.id))
+        .map(|a| (a.id.clone(), a.name.clone()))
+        .collect()
 }
 
 /// The Settings list's status for this page: how many satellites wait for approval.
@@ -267,6 +280,103 @@ fn SatelliteRow(satellite: Satellite) -> impl IntoView {
     }
 }
 
+/// The request the Say box sends: `room` empty means every room.
+pub fn speak_request(text: &str, room: &str) -> SoundSpeakRequest {
+    SoundSpeakRequest {
+        text: text.trim().to_owned(),
+        room: (!room.is_empty()).then(|| room.to_owned()),
+        ..Default::default()
+    }
+}
+
+/// "Say something": a sentence, the room (every room first) and Send. Send waits for a text
+/// and is off while a sentence is on its way; the outcome reads under it.
+#[component]
+fn SayBox(satellites: Memo<Vec<Satellite>>) -> impl IntoView {
+    let house = expect_context::<House>();
+    let t = use_sound_text();
+    let lang = use_lang();
+    let text = RwSignal::new(String::new());
+    let room = RwSignal::new(String::new());
+    let sending = RwSignal::new(false);
+    let outcome = RwSignal::new(None::<Result<usize, String>>);
+    let rooms =
+        move || satellites.with(|found| house.areas.with(|areas| satellite_rooms(found, areas)));
+    let send = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if sending.get_untracked() || text.with_untracked(|t| t.trim().is_empty()) {
+            return;
+        }
+        let req = speak_request(&text.get_untracked(), &room.get_untracked());
+        sending.set(true);
+        outcome.set(None);
+        spawn_local(async move {
+            let result = crate::api::tts::sound_speak(&req).await;
+            sending.set(false);
+            match result {
+                Ok(reply) => {
+                    text.set(String::new());
+                    outcome.set(Some(Ok(reply.players)));
+                }
+                Err(err) => outcome.set(Some(Err(err.error))),
+            }
+        });
+    };
+    view! {
+        <section class="sheet__panel alarm-section say-box">
+            <h2 class="sheet__heading">{move || t(SoundText::SaySomething)}</h2>
+            <form class="say-box__form" on:submit=send>
+                <input
+                    class="field say-box__text"
+                    type="text"
+                    maxlength=MAX_SPEECH_CHARS.to_string()
+                    placeholder=move || t(SoundText::SayPlaceholder)
+                    aria-label=move || t(SoundText::SaySomething)
+                    prop:value=move || text.get()
+                    on:input=move |ev| text.set(event_target_value(&ev))
+                />
+                <select
+                    class="select say-box__room"
+                    aria-label=move || t(SoundText::Room)
+                    on:change=move |ev| room.set(event_target_value(&ev))
+                >
+                    <option value="" selected=move || room.get().is_empty()>
+                        {move || t(SoundText::AllRooms)}
+                    </option>
+                    {move || {
+                        rooms()
+                            .into_iter()
+                            .map(|(id, name)| {
+                                let chosen = id.clone();
+                                view! {
+                                    <option value=id selected=move || room.get() == chosen>
+                                        {name}
+                                    </option>
+                                }
+                            })
+                            .collect_view()
+                    }}
+                </select>
+                <button
+                    type="submit"
+                    class="btn btn--primary say-box__send"
+                    disabled=move || sending.get() || text.with(|t| t.trim().is_empty())
+                >
+                    {move || t(SoundText::Send)}
+                </button>
+            </form>
+            {move || match outcome.get() {
+                Some(Ok(n)) => {
+                    view! { <p class="settings__hint say-box__done" role="status">{said_on(lang(), n)}</p> }
+                        .into_any()
+                }
+                Some(Err(e)) => view! { <p class="say-box__error" role="alert">{e}</p> }.into_any(),
+                None => ().into_any(),
+            }}
+        </section>
+    }
+}
+
 /// The Settings → Sound page.
 #[component]
 pub fn SoundSettingsPage() -> impl IntoView {
@@ -280,6 +390,9 @@ pub fn SoundSettingsPage() -> impl IntoView {
                 <p class="settings__hint network-hint" role="status">
                     {move || t(SoundText::ServiceOffline)}
                 </p>
+            </Show>
+            <Show when=move || list.with(|l| !l.is_empty())>
+                <SayBox satellites=list />
             </Show>
             <section class="sheet__panel alarm-section">
                 <Show
@@ -392,6 +505,55 @@ mod tests {
         assert!(!b.is_allowed());
         assert!(b.volume.is_some() && b.mute.is_some() && b.connected.is_some());
         assert_eq!(satellite_of(&all, "nidoo_sound_zzz"), None);
+    }
+
+    #[test]
+    fn satellite_rooms_lists_rooms_holding_one_in_area_order() {
+        let mut all = full("nidoo_sound_aaa", "A", true);
+        let mut office = full("nidoo_sound_bbb", "B", true);
+        for e in &mut office {
+            e.area = "office".into();
+        }
+        all.extend(office);
+        let mut loose = full("nidoo_sound_ccc", "C", true);
+        for e in &mut loose {
+            e.area = UNASSIGNED_AREA.into();
+        }
+        all.extend(loose);
+        let found = satellites(&map(all));
+        let area = |id: &str, name: &str| AreaView {
+            id: id.into(),
+            name: name.into(),
+            icon: None,
+            order: None,
+            entity_count: 0,
+            primary_count: 0,
+            group_names: Default::default(),
+            group_favorites: Default::default(),
+        };
+        let areas = vec![
+            area("office", "Office"),
+            area("bath", "Bath"),
+            area("kitchen", "Kitchen"),
+            area(UNASSIGNED_AREA, "Unassigned"),
+        ];
+        assert_eq!(
+            satellite_rooms(&found, &areas),
+            [
+                ("office".to_owned(), "Office".to_owned()),
+                ("kitchen".to_owned(), "Kitchen".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn speak_request_sends_null_for_every_room() {
+        let all = serde_json::to_value(speak_request(" Hello ", "")).unwrap();
+        assert_eq!(all["text"], "Hello");
+        assert_eq!(all["room"], serde_json::Value::Null);
+        let one = serde_json::to_value(speak_request("Hello", "kitchen")).unwrap();
+        assert_eq!(one["room"], "kitchen");
+        assert_eq!(one["satellite"], serde_json::Value::Null);
     }
 
     #[test]

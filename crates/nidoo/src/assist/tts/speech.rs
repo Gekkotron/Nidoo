@@ -9,7 +9,7 @@ use bytes::Bytes;
 use tokio::sync::Notify;
 
 /// The longest text one speech may hold, in characters.
-pub const MAX_SPEECH_CHARS: usize = 500;
+pub use nidoo_api::MAX_SPEECH_CHARS;
 /// How long a clip can be fetched, in seconds.
 pub const CLIP_TTL_S: u64 = 60;
 

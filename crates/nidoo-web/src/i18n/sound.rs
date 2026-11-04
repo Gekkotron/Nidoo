@@ -17,6 +17,11 @@ pub enum SoundText {
     Waiting,
     Allow,
     TestSpeaker,
+    SaySomething,
+    SayPlaceholder,
+    Room,
+    AllRooms,
+    Send,
 }
 
 /// A fixed word or sentence of the sound page.
@@ -44,6 +49,14 @@ pub fn sound_text(lang: Lang, k: SoundText) -> &'static str {
         Waiting => ("waiting", "en attente"),
         Allow => ("Allow", "Autoriser"),
         TestSpeaker => ("Say a test sentence", "Dire une phrase de test"),
+        SaySomething => ("Say something", "Dire quelque chose"),
+        SayPlaceholder => (
+            "A sentence for the speakers",
+            "Une phrase pour les haut-parleurs",
+        ),
+        Room => ("Room", "Pièce"),
+        AllRooms => ("All rooms", "Toutes les pièces"),
+        Send => ("Send", "Envoyer"),
     };
     match lang {
         Lang::En => en,
@@ -56,6 +69,15 @@ pub fn speaker_test(lang: Lang, name: &str) -> String {
     match lang {
         Lang::En => format!("Speaker test: {name}"),
         Lang::Fr => format!("Test du haut-parleur\u{a0}: {name}"),
+    }
+}
+
+/// "Said on 2 satellites" / "Dit sur 2 satellites", after a sentence was sent.
+pub fn said_on(lang: Lang, n: usize) -> String {
+    let s = if n == 1 { "" } else { "s" };
+    match lang {
+        Lang::En => format!("Said on {n} satellite{s}"),
+        Lang::Fr => format!("Dit sur {n} satellite{s}"),
     }
 }
 
@@ -85,8 +107,20 @@ mod tests {
             Waiting,
             Allow,
             TestSpeaker,
+            SaySomething,
+            SayPlaceholder,
+            Room,
+            AllRooms,
+            Send,
         ];
         crate::i18n::assert_table(&all, sound_text, &[Volume]);
+    }
+
+    #[test]
+    fn said_on_counts_satellites() {
+        assert_eq!(said_on(Lang::En, 1), "Said on 1 satellite");
+        assert_eq!(said_on(Lang::En, 3), "Said on 3 satellites");
+        assert_eq!(said_on(Lang::Fr, 2), "Dit sur 2 satellites");
     }
 
     #[test]

@@ -3,9 +3,9 @@
 use nidoo_core::flow::TriggerSignalParams;
 use nidoo_core::flow::{
     CommandParams, DelayParams, FlowEnableParams, IfParams, LimitParams, MathParams, Node,
-    NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SunWhich, SwitchParams, SwitchRule,
-    TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
-    TriggerSilentParams, TriggerStateParams,
+    NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SpeakParams, SunWhich, SwitchParams,
+    SwitchRule, TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams,
+    TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
 };
 use nidoo_core::model::Command;
 use serde_json::Value;
@@ -219,6 +219,16 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             }),
             Some(FlowText::Notify),
             FlowText::NotifySub,
+        ),
+        (
+            Group::Then,
+            NodeKind::Speak(SpeakParams {
+                // A default written into the stored flow: the language active now.
+                text: flow_text(ctx.lang, FlowText::DefaultSpeakText).into(),
+                room: None,
+            }),
+            Some(FlowText::Speak),
+            FlowText::SpeakSub,
         ),
         (
             Group::Flow,
@@ -514,6 +524,7 @@ mod tests {
                 (Group::And, "Math"),
                 (Group::And, "Time of day"),
                 (Group::Then, "Notify"),
+                (Group::Then, "Speak"),
                 (Group::Wait, "Wait"),
                 (Group::Wait, "Limit"),
                 (Group::Flow, "Disable this flow"),
@@ -535,6 +546,7 @@ mod tests {
                 Some("Compute a number from your devices"),
                 Some("Inside or outside two times"),
                 Some("A push to your phone"),
+                Some("Said out loud on the speakers"),
                 Some("A fixed or random delay"),
                 Some("Lets only so many runs through"),
                 Some("Stops it from running again"),
@@ -547,7 +559,11 @@ mod tests {
         ));
         assert!(matches!(&got[8].kind, NodeKind::Math(p) if p.name.is_empty()));
         assert!(matches!(&got[10].kind, NodeKind::Notify(p) if p.title == "Notification"));
-        assert!(matches!(&got[11].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+        assert!(matches!(
+            &got[11].kind,
+            NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
+        ));
+        assert!(matches!(&got[12].kind, NodeKind::Delay(p) if p.for_ == "5m"));
         assert!(matches!(
             &got[7].kind,
             NodeKind::Switch(p) if p.otherwise && p.entity.is_none()

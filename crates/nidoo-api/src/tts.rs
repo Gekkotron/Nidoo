@@ -8,6 +8,9 @@ use crate::setup::Secret;
 /// The voice a speech request uses when it names none.
 pub const DEFAULT_VOICE: &str = "default";
 
+/// The longest text one speech may hold, in characters; the hub refuses a longer one.
+pub const MAX_SPEECH_CHARS: usize = 500;
+
 /// Where the speech engine stands.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
