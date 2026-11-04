@@ -649,3 +649,20 @@
   margin: 4px 0 0;
   color: var(--danger);
 }
+
+/* Settings → Sound: say a sentence on the satellites */
+.say-box__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.say-box__text {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.say-box__error {
+  margin: 8px 0 0;
+  color: var(--danger);
+}

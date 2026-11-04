@@ -520,6 +520,78 @@ fn severity_word(lang: Lang, severity: &str) -> String {
     flow_text(lang, word).to_owned()
 }
 
+/// A `speak` card: the sentence (with placeholders, as a notification title) and the room whose
+/// satellites say it: every room, or one of the rooms that hold a satellite.
+fn speak_fields(form: Form, id: String, p: nidoo_core::flow::SpeakParams) -> impl IntoView {
+    let t = use_flow_text();
+    let house = expect_context::<House>();
+    let text_id = id.clone();
+    let text_write = Callback::new(move |value: Option<String>| {
+        form.update(&text_id, |n| {
+            if let NodeKind::Speak(ref mut f) = n.kind {
+                f.text = value.unwrap_or_default();
+            }
+        });
+    });
+    let on_room = move |ev: web_sys::Event| {
+        let value = event_target_value(&ev);
+        form.update(&id, |n| {
+            if let NodeKind::Speak(ref mut f) = n.kind {
+                f.room = (!value.is_empty()).then_some(value);
+            }
+        });
+    };
+    let results = Signal::from(result_names(form.editor.draft));
+    let chosen = p.room.clone().unwrap_or_default();
+    let rooms = move || {
+        let mut rooms = house.entities.with(|m| {
+            let found = crate::screens::sound_settings::satellites(m);
+            house
+                .areas
+                .with(|areas| crate::screens::sound_settings::satellite_rooms(&found, areas))
+        });
+        // A room chosen earlier stays listed even once its satellites are gone.
+        if !chosen.is_empty() && !rooms.iter().any(|(id, _)| *id == chosen) {
+            let name = house.areas.with(|areas| {
+                areas
+                    .iter()
+                    .find(|a| a.id == chosen)
+                    .map_or_else(|| chosen.clone(), |a| a.name.clone())
+            });
+            rooms.push((chosen.clone(), name));
+        }
+        rooms
+    };
+    let current = p.room.clone().unwrap_or_default();
+    view! {
+        <TemplateField
+            label=word(FlowText::SpeakTextLabel)
+            results=results
+            initial=p.text
+            placeholder=word(FlowText::SpeakTextExample)
+            optional=false
+            write=text_write
+        />
+        <label class="node-editor__field">
+            <span class="node-editor__label">{move || t(FlowText::SpeakRoomLabel)}</span>
+            <select class="field speak-room" on:change=on_room>
+                <option value="" selected=current.is_empty()>
+                    {move || t(FlowText::SpeakAllRooms)}
+                </option>
+                {move || {
+                    rooms()
+                        .into_iter()
+                        .map(|(id, name)| {
+                            let selected = id == current;
+                            view! { <option value=id selected=selected>{name}</option> }
+                        })
+                        .collect_view()
+                }}
+            </select>
+        </label>
+    }
+}
+
 fn notify_fields(form: Form, id: String, p: nidoo_core::flow::NotifyParams) -> impl IntoView {
     let t = use_flow_text();
     let lang = use_lang();
@@ -1371,8 +1443,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
         NodeKind::TriggerManual(p) => manual_fields(form, id, p.value).into_any(),
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
         NodeKind::Notify(p) => notify_fields(form, id, p).into_any(),
-        // The form arrives with the Speak entry of the action picker.
-        NodeKind::Speak(_) => ().into_any(),
+        NodeKind::Speak(p) => speak_fields(form, id, p).into_any(),
         NodeKind::Switch(p) => switch_fields(form, id, p).into_any(),
         NodeKind::TimeBetween(p) => time_fields(form, id, p).into_any(),
         NodeKind::Delay(p) => {

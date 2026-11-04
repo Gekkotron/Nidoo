@@ -2701,3 +2701,62 @@ async fn a_set_average_stays_visible_when_the_field_has_no_history() {
     assert_eq!(average_boxes(&host), 0, "{}", host.inner_html());
     settle_history().await;
 }
+
+// ---- Speak ---------------------------------------------------------------------------------
+
+#[wasm_bindgen_test]
+async fn speak_card_edits_its_text_and_room() {
+    use nidoo_core::model::{Kind, StateValue};
+    let view = line_view(
+        r#"[
+          { "id": "power", "type": "trigger.state", "params": { "entity": "sensor.power" } },
+          { "id": "say", "type": "speak", "params": { "text": "Hello" } }
+        ]"#,
+    );
+    let (host, _mounted, house) = editing(view).await;
+    // One satellite, in the kitchen: the only room the card offers besides every room.
+    let mut volume = nidoo_api::EntityView {
+        id: "nidoo_sound_x_volume".into(),
+        device_id: Some("nidoo_sound_x".into()),
+        name: "Volume".into(),
+        kind: Kind::Number,
+        protocol_kind: Kind::Number,
+        component: Kind::Number.component().to_string(),
+        area: "kitchen".into(),
+        ..table_lamp()
+    };
+    volume.state.value = StateValue::Number(40.0);
+    house.entities.update(|m| {
+        m.insert(volume.id.clone(), volume);
+    });
+    house.areas.update(|areas| {
+        areas.push(nidoo_api::AreaView {
+            id: "kitchen".into(),
+            name: "Kitchen".into(),
+            icon: None,
+            order: None,
+            entity_count: 1,
+            primary_count: 1,
+            group_names: Default::default(),
+            group_favorites: Default::default(),
+        });
+    });
+    tick().await;
+    assert!(text(&host, "[data-node=say]").contains("Speak"));
+    select_card(&host, "say").await;
+    let select: web_sys::HtmlSelectElement =
+        element(&host, ".flow-drawer select.speak-room").unchecked_into();
+    let options = select.query_selector_all("option").unwrap();
+    let labels: Vec<String> = (0..options.length())
+        .filter_map(|i| options.item(i))
+        .map(|o| o.text_content().unwrap_or_default())
+        .collect();
+    assert_eq!(labels, ["All rooms", "Kitchen"]);
+    select.set_value("kitchen");
+    change(&select);
+    tick().await;
+    let node = saved_node(&host, "say").await;
+    assert_eq!(node["params"]["text"], "Hello", "{node}");
+    assert_eq!(node["params"]["room"], "kitchen", "{node}");
+    settle_history().await;
+}

@@ -410,3 +410,85 @@ async fn settings_list_has_a_sound_entry() {
     assert_eq!(entry.len(), 1);
     assert!(entry[0].contains("Sound"), "{entry:?}");
 }
+
+const SPEAK: &str = "/api/v1/sound/speak";
+
+fn type_into(input: &web_sys::HtmlInputElement, text: &str) {
+    input.set_value(text);
+    input
+        .dispatch_event(&web_sys::Event::new("input").unwrap())
+        .unwrap();
+}
+
+fn spoken(stub: &FetchStub) -> Vec<Value> {
+    stub.requests()
+        .into_iter()
+        .filter(|r| r.method == "POST" && r.url == SPEAK)
+        .map(|r| serde_json::from_str(&r.body).unwrap())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+async fn the_say_box_sends_to_every_room_then_to_one() {
+    let stub = FetchStub::install();
+    stub.reply("POST", SPEAK, 202, r#"{"players":2}"#);
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    let input: web_sys::HtmlInputElement =
+        all(&m.host, ".say-box__text").remove(0).unchecked_into();
+    let send = all(&m.host, ".say-box__send").remove(0);
+    assert!(send.has_attribute("disabled"), "Send waits for a text");
+    // Only the rooms holding a satellite: Kitchen (the other one is unassigned).
+    assert_eq!(
+        texts(&m.host, ".say-box__room option"),
+        ["All rooms", "Kitchen"]
+    );
+
+    type_into(&input, "Dinner is ready");
+    settle().await;
+    assert!(!send.has_attribute("disabled"));
+    send.click();
+    settle().await;
+    assert_eq!(texts(&m.host, ".say-box__done"), ["Said on 2 satellites"]);
+    assert_eq!(input.value(), "", "the box clears once sent");
+
+    let select: web_sys::HtmlSelectElement =
+        all(&m.host, ".say-box__room").remove(0).unchecked_into();
+    select.set_value("kitchen");
+    select
+        .dispatch_event(&web_sys::Event::new("change").unwrap())
+        .unwrap();
+    type_into(&input, "Hello");
+    settle().await;
+    send.click();
+    settle().await;
+    let sent = spoken(&stub);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[0]["text"], "Dinner is ready");
+    assert_eq!(sent[0]["room"], Value::Null);
+    assert_eq!(sent[1]["room"], "kitchen");
+}
+
+#[wasm_bindgen_test]
+async fn the_say_box_shows_why_it_failed() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        SPEAK,
+        409,
+        r#"{"error":"no satellite can speak in this room"}"#,
+    );
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    let input: web_sys::HtmlInputElement =
+        all(&m.host, ".say-box__text").remove(0).unchecked_into();
+    type_into(&input, "Hello");
+    settle().await;
+    all(&m.host, ".say-box__send").remove(0).click();
+    settle().await;
+    assert_eq!(
+        texts(&m.host, ".say-box__error"),
+        ["no satellite can speak in this room"]
+    );
+    assert_eq!(input.value(), "Hello", "the text stays to try again");
+}
