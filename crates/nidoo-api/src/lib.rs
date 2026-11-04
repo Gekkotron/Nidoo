@@ -17,6 +17,7 @@ pub mod search;
 mod setup;
 mod snapshot;
 mod solar;
+mod sound;
 pub mod system;
 mod tts;
 mod views;
@@ -58,6 +59,7 @@ pub use solar::{
     SolarDay, SolarForecastDay, SolarHistory, SolarNow, SolarPeak, SolarPeriod, SolarSite,
     SolarSpan, SolarToday, SolarView,
 };
+pub use sound::{SoundSpeakReply, SoundSpeakRequest};
 pub use system::{
     CpuView, DiskView, MemView, NotifyInput, RestartView, ServiceState, ServiceView, StopKind,
     SystemService, SystemView,

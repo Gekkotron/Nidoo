@@ -24,6 +24,7 @@ pub mod outage;
 pub mod pictures;
 pub mod setup;
 pub mod solar;
+pub mod sound;
 pub mod system;
 pub mod virtual_entities;
 pub mod weather;
