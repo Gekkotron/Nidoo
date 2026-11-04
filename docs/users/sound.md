@@ -155,6 +155,12 @@ address comes from `data/hub.json`, or `NIDOO_SOUND_HUB_URL`). The route and
 the topic are in the [HTTP API](../reference/http-api.md#sound) and
 [MQTT topics](../reference/mqtt-topics.md) references.
 
+## Talk to a satellite
+
+A satellite also listens: say "Hey Jarvis" and a request near it, and the
+house answers on it while the room's music is held. See
+[Talk to a satellite](talk-to-a-satellite.md).
+
 ## Known limits
 
 - Audio travels as uncompressed PCM (about 1.5 Mbit/s per satellite), fine on

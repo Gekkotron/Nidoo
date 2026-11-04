@@ -29,7 +29,7 @@ the house asks something back they just answer, without the wake word again.
   to find the end of the phrase.
 - Owner's voice, 3/3: wake word detected (0.91–0.93), « Allume la lumière du
   salon. » transcribed exactly, the assistant acted.
-- The hub's mini PC (AMD Ryzen 7 5825U, 16 GB, hub running): **~0.1 s** to transcribe a
+- A small home server (an 8-core laptop-class CPU, 16 GB, hub running): **~0.1 s** to transcribe a
   1.5 s command with 4 threads (RTF 0.07); 2 threads 0.12 s; 8 threads is
   slower than 4 (contends with the hub). Model load 1.9 s.
 - Always listening without a wake word was unusable: every household
