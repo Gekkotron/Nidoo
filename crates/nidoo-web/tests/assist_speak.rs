@@ -32,7 +32,11 @@ fn speaking_hub() -> FetchStub {
         "GET",
         STATUS,
         200,
-        r#"{"engine":{"state":"ready","model":"a--b--q8"},"active":"a--b--q8","voice":"zoe",
+        r#"{"languages":[
+              {"code":"en","model":"c--d--q8","voice":"default",
+               "engine":{"state":"ready","model":"c--d--q8"}},
+              {"code":"fr","model":"a--b--q8","voice":"zoe",
+               "engine":{"state":"ready","model":"a--b--q8"}}],
             "token_set":false,"download":null,"speech_built":true}"#,
     );
     stub.reply(
@@ -72,7 +76,7 @@ async fn a_new_reply_is_spoken() {
     settle().await;
     assert_eq!(
         spoken(&stub),
-        vec![json!({ "text": "Salon allumé.", "voice": null })]
+        vec![json!({ "text": "Salon allumé.", "language": "fr", "voice": null })]
     );
 }
 
@@ -105,7 +109,7 @@ async fn play_speaks_that_reply_even_with_speech_off() {
     settle().await;
     assert_eq!(
         spoken(&stub),
-        vec![json!({ "text": "Salon allumé.", "voice": null })]
+        vec![json!({ "text": "Salon allumé.", "language": "fr", "voice": null })]
     );
 }
 
@@ -119,7 +123,8 @@ async fn no_speech_model_means_no_switch_and_no_play() {
         "GET",
         STATUS,
         200,
-        r#"{"engine":{"state":"no_model"},"active":null,"voice":"zoe",
+        r#"{"languages":[{"code":"fr","model":null,"voice":"zoe",
+               "engine":{"state":"no_model"}}],
             "token_set":false,"download":null,"speech_built":true}"#,
     );
     stub.reply(
@@ -154,4 +159,34 @@ async fn the_header_tools_sit_together_after_the_hint() {
             head.outer_html()
         );
     }
+}
+
+#[wasm_bindgen_test]
+async fn a_hub_without_french_does_not_read_replies() {
+    // Replies are French: a hub that speaks only English offers no switch.
+    let _ = storage().remove_item(SPEAK_KEY);
+    let _ = storage().remove_item("nidoo.assist.cleared");
+    let stub = FetchStub::install();
+    stub.reply("GET", TURNS, 200, r#"{"turns":[],"kept":true}"#);
+    stub.reply(
+        "GET",
+        STATUS,
+        200,
+        r#"{"languages":[{"code":"en","model":"c--d--q8","voice":"default",
+               "engine":{"state":"ready","model":"c--d--q8"}}],
+            "token_set":false,"download":null,"speech_built":true}"#,
+    );
+    stub.reply(
+        "POST",
+        "/api/v1/assist",
+        200,
+        &turn("t1", "acted", "Salon allumé.", Value::Null).to_string(),
+    );
+    let m = mount();
+    wait_for(&m.host, ".assist__input").await;
+    send(&m.host, "allume le salon");
+    wait_for(&m.host, ".assist__reply").await;
+    settle().await;
+    assert!(find(&m.host, ".assist__speak").is_none());
+    assert!(spoken(&stub).is_empty());
 }
