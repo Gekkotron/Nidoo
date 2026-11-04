@@ -81,6 +81,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/ambiances/{id}/apply", post(apply_ambiance))
         .route("/assist", post(assist))
         .merge(super::tts::routes())
+        .merge(super::sound::routes())
         .route("/assist/turns", get(assist_turns))
         .route("/assist/turns/{id}/wrong", post(assist_wrong))
         .route("/weather", get(weather))

@@ -346,6 +346,14 @@ Engine state is `{state: "no_model"}`, `{state: "loading", model}`, `{state: "re
 
 Speech management errors use the [common statuses](#errors) and also: `413` for an upload file over its cap, and `502` when Hugging Face cannot be reached while listing a repository. Download refusals (not enough disk space, a file over its size cap, a token the account has not accepted the terms for, a wrong token) are not HTTP errors: the `POST` answers `202` and the job then shows as `failed` with the reason in `error`.
 
+## Sound
+
+The speaker satellites of the `nidoo-sound` service (see [Sound](../users/sound.md)).
+
+| Route | Behaviour |
+| --- | --- |
+| `POST /api/v1/sound/speak` | `{text, room?, satellite?, language?, voice?}`; says the sentence on the satellites of one room (`room`, an area id or name), on one satellite (`satellite`, its short id: the device id without `nidoo_sound_`), or on every satellite when both are left out. Returns `{players}` (`202`), the number of satellites it was sent to. Only satellites whose Allowed and Connected are both on are counted; a muted one is counted and stays silent. The speech is made as for `POST /api/v1/assist/speech`, then sent on `nidoo-sound/speak`. `422` when `room` and `satellite` are both set, for an unknown room, and for a text the speech refuses; `409` when speech is not set up, has no language ready, or no satellite can speak there. |
+
 ## Errors
 
 Errors are `{"error": "…"}` with one of these statuses:
