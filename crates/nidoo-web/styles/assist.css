@@ -492,8 +492,95 @@ label.assist-set__item {
   cursor: default;
 }
 
-.assist-set__active {
-  margin-right: 6px;
+.assist-set__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--chip-border);
+}
+
+.assist-set__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-nav) var(--radius-nav) 0 0;
+  background: transparent;
   color: var(--muted);
-  font-size: 0.85em;
+  font: inherit;
+  cursor: pointer;
+}
+
+.assist-set__tab:hover {
+  color: var(--ink);
+}
+
+.assist-set__tab--on {
+  border-color: var(--chip-border);
+  border-bottom-color: var(--card-bg);
+  background: var(--card-bg);
+  color: var(--ink);
+}
+
+.assist-set__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.assist-set__dot--ready {
+  background: var(--connected);
+}
+
+.assist-set__dot--loading {
+  background: var(--warning);
+}
+
+.assist-set__dot--error {
+  background: var(--danger);
+}
+
+/* The selected tab's content. */
+.assist-set__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.assist-set__start {
+  align-self: flex-start;
+}
+
+/* The quiet "Remove language" at the bottom of a tab. */
+.assist-set__link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.assist-set__link:hover {
+  color: var(--danger);
+}
+
+.assist-set__token {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assist-set__token summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.assist-set__token[open] > summary {
+  margin-bottom: 8px;
 }

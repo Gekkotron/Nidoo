@@ -1,6 +1,7 @@
 pub mod alarm_settings;
 pub mod alert_detail;
 pub mod alerts;
+pub mod assist_languages;
 pub mod assist_settings;
 pub mod assistant;
 pub mod climate;

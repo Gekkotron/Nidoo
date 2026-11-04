@@ -1,5 +1,5 @@
-//! `/assistant/settings`: the speech engine, a test sentence, the voice, the installed models,
-//! adding a model and the Hugging Face token.
+//! `/assistant/settings`: the languages the hub speaks (tabs, in `assist_languages`), the
+//! installed models, and adding a model with the Hugging Face token folded in.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,17 +7,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use nidoo_api::{
-    DEFAULT_VOICE, DownloadRequest, EngineState, JobState, ModelView, RepoListing, SpeechRequest,
-    TtsStatus, VoiceView, VoicesView, WeightFile,
+    DEFAULT_VOICE, DownloadRequest, EngineState, JobState, ModelView, RepoListing, TtsStatus,
+    VoiceView, VoicesView, WeightFile,
 };
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::JsFuture;
 
+use super::assist_languages::LanguagesCard;
 use crate::api::tts;
 use crate::components::confirm::ConfirmBar;
 use crate::components::toast::Toasts;
 use crate::i18n::{
-    AssistSettingsText as T, Lang, assist_settings_text, use_assist_settings_text, use_lang,
+    AssistSettingsText as T, Lang, assist_settings_text, language_name, use_assist_settings_text,
+    use_lang,
 };
 
 /// How often the status is fetched while a download runs or a model loads.
@@ -90,7 +91,10 @@ fn relative_path(file: &web_sys::File) -> String {
 
 /// Whether the status is worth fetching again soon: a download runs or a model loads.
 pub fn needs_polling(status: &TtsStatus) -> bool {
-    matches!(status.engine, EngineState::Loading { .. })
+    status
+        .languages
+        .iter()
+        .any(|l| matches!(l.engine, EngineState::Loading { .. }))
         || status
             .download
             .as_ref()
@@ -98,7 +102,7 @@ pub fn needs_polling(status: &TtsStatus) -> bool {
 }
 
 /// The facts of a voice on one line: gender, age, description, the empty ones left out.
-fn voice_detail(v: &VoiceView) -> String {
+pub(crate) fn voice_detail(v: &VoiceView) -> String {
     [&v.gender, &v.age, &v.description]
         .into_iter()
         .flatten()
@@ -109,14 +113,14 @@ fn voice_detail(v: &VoiceView) -> String {
 }
 
 /// The voices with Default first, the rest in the hub's order.
-fn voices_in_order(view: &VoicesView) -> Vec<VoiceView> {
+pub(crate) fn voices_in_order(view: &VoicesView) -> Vec<VoiceView> {
     let mut list = view.voices.clone();
     list.sort_by_key(|v| v.name != DEFAULT_VOICE);
     list
 }
 
 /// The model's name: its repository, or "Uploaded".
-fn model_name(m: &ModelView, lang: Lang) -> String {
+pub(crate) fn model_name(m: &ModelView, lang: Lang) -> String {
     m.repo
         .clone()
         .unwrap_or_else(|| assist_settings_text(lang, T::Uploaded).to_owned())
@@ -134,7 +138,16 @@ fn model_detail(m: &ModelView, lang: Lang) -> String {
     parts.join(" · ")
 }
 
-/// The settings screen of the speech engine.
+/// Language codes as names in the UI language, comma-separated.
+fn language_names(codes: &[String], lang: Lang) -> String {
+    codes
+        .iter()
+        .map(|c| language_name(c, lang))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The speech settings screen.
 #[component]
 pub fn AssistSettingsScreen() -> impl IntoView {
     let lang = use_lang();
@@ -148,7 +161,6 @@ pub fn AssistSettingsScreen() -> impl IntoView {
 
     let status = RwSignal::new(None::<TtsStatus>);
     let models = RwSignal::new(Vec::<ModelView>::new());
-    let voices = RwSignal::new(None::<VoicesView>);
     let loaded = RwSignal::new(false);
     let load_failed = RwSignal::new(false);
 
@@ -167,16 +179,14 @@ pub fn AssistSettingsScreen() -> impl IntoView {
             if let Ok(list) = tts::get_models().await {
                 models.try_set(list);
             }
-            if let Ok(view) = tts::get_voices().await {
-                voices.try_set(Some(view));
-            }
             loaded.try_set(true);
         });
     };
     reload();
+    let reload_cb = Callback::new(move |()| reload());
 
     // The status again every second while a download runs or a model loads; when that ends,
-    // the lists too (a model was installed, a voice may have changed).
+    // the lists too (a model was installed).
     let stop = Arc::new(AtomicBool::new(false));
     {
         let stop = stop.clone();
@@ -206,112 +216,8 @@ pub fn AssistSettingsScreen() -> impl IntoView {
     }
     on_cleanup(move || stop.store(true, Ordering::Relaxed));
 
-    // ---- Test ----
-    let test_text = RwSignal::new(t(T::TestSentence).to_owned());
-    let test_busy = RwSignal::new(false);
-    let test_error = RwSignal::new(None::<String>);
-    let first_sound = RwSignal::new(None::<u64>);
-    let clicked_at = RwSignal::new(None::<f64>);
-    let audio = NodeRef::<leptos::html::Audio>::new();
-    // The voice a ▶ is speaking with, while it asks the hub and starts playing.
-    let previewing = RwSignal::new(None::<String>);
-    // Speaks `req` through the player above and times the first sound; the error to show.
-    let speak_and_play = move |req: SpeechRequest| async move {
-        let start = js_sys::Date::now();
-        let ticket = tts::speak(&req).await.map_err(|e| e.error)?;
-        let Some(el) = audio.get_untracked() else {
-            return Ok(());
-        };
-        clicked_at.try_set(Some(start));
-        el.set_src(&ticket.url);
-        let played = match el.play() {
-            Ok(promise) => JsFuture::from(promise).await.is_ok(),
-            Err(_) => false,
-        };
-        if played {
-            Ok(())
-        } else {
-            Err(t(T::PlayFailed).to_owned())
-        }
-    };
-    let speaking = move || test_busy.get() || previewing.with(Option::is_some);
-    let play = move || {
-        let text = test_text.get_untracked().trim().to_owned();
-        if text.is_empty() || speaking() {
-            return;
-        }
-        test_busy.set(true);
-        test_error.set(None);
-        first_sound.set(None);
-        spawn_local(async move {
-            if let Err(e) = speak_and_play(SpeechRequest { text, voice: None }).await {
-                test_error.try_set(Some(e));
-            }
-            test_busy.try_set(false);
-        });
-    };
-    // ▶ on a voice: the test sentence (or the pinned one when the field is empty) in that
-    // voice, without choosing it.
-    let preview = move |voice: String| {
-        if speaking() {
-            return;
-        }
-        let typed = test_text.get_untracked().trim().to_owned();
-        let text = if typed.is_empty() {
-            t(T::TestSentence).to_owned()
-        } else {
-            typed
-        };
-        previewing.set(Some(voice.clone()));
-        test_error.set(None);
-        first_sound.set(None);
-        spawn_local(async move {
-            if let Err(e) = speak_and_play(SpeechRequest {
-                text,
-                voice: Some(voice),
-            })
-            .await
-            {
-                toast(e);
-            }
-            previewing.try_set(None);
-        });
-    };
-
-    // ---- Voice ----
-    let choose_voice = move |name: String| {
-        spawn_local(async move {
-            match tts::set_voice(&name).await {
-                Ok(view) => {
-                    voices.try_set(Some(view));
-                }
-                Err(e) => {
-                    toast(e.error);
-                    // Show the choice the hub really holds, not the one just clicked.
-                    if let Ok(real) = tts::get_voices().await {
-                        voices.try_set(Some(real));
-                    }
-                }
-            }
-        });
-    };
-
     // ---- Models ----
     let removing = RwSignal::new(None::<String>);
-    let activate = move |id: String| {
-        spawn_local(async move {
-            match tts::set_active(Some(&id)).await {
-                Ok(s) => {
-                    status.try_set(Some(s));
-                    reload();
-                }
-                Err(e) => {
-                    toast(e.error);
-                    reload();
-                }
-            }
-        });
-    };
     let remove = move |id: String| {
         removing.set(None);
         spawn_local(async move {
@@ -479,8 +385,6 @@ pub fn AssistSettingsScreen() -> impl IntoView {
     };
 
     let token_set = move || status.with(|s| s.as_ref().is_some_and(|s| s.token_set));
-    let active_without_french =
-        move || models.with(|list| list.iter().any(|m| m.active && !m.french));
 
     view! {
         <div class="assist-set">
@@ -491,188 +395,14 @@ pub fn AssistSettingsScreen() -> impl IntoView {
             </a>
             <h1 class="assist-set__title">{move || t(T::Title)}</h1>
 
-            // ---- Speech ----
-            <section class="assist-set__card">
-                <h2>{move || t(T::SpeechHeading)}</h2>
-                <Show when=move || load_failed.get()>
-                    <p class="assist-set__error">{move || t(T::CouldNotLoad)}</p>
-                </Show>
-                <Show when=move || !loaded.get()>
-                    <p class="assist-set__muted">{move || t(T::Loading)}</p>
-                </Show>
-                {move || {
-                    status
-                        .get()
-                        .map(|s| {
-                            let (label, class, detail) = match &s.engine {
-                                EngineState::NoModel => (T::StateNoModel, "", None),
-                                EngineState::Loading { .. } => (T::StateLoading, "", None),
-                                EngineState::Ready { .. } => {
-                                    (T::StateReady, "assist-set__state--ready", None)
-                                }
-                                EngineState::Error { message, .. } => {
-                                    (T::StateError, "assist-set__state--error", Some(message.clone()))
-                                }
-                            };
-                            view! {
-                                <p>
-                                    <span class=format!("assist-set__state {class}")>{move || t(label)}</span>
-                                    {detail.map(|d| view! { <span class="assist-set__muted">" " {d}</span> })}
-                                </p>
-                                <p>
-                                    <span class="assist-set__muted">{move || t(T::ActiveModel)} ": "</span>
-                                    {s.active.clone().unwrap_or_else(|| t(T::NoActiveModel).to_owned())}
-                                </p>
-                                <Show when=move || !s.speech_built>
-                                    <p class="assist-set__error">{move || t(T::NotBuilt)}</p>
-                                </Show>
-                            }
-                        })
-                }}
-                <Show when=active_without_french>
-                    <p class="assist-set__warn">{move || t(T::ActiveNoFrench)}</p>
-                </Show>
-            </section>
+            <Show when=move || load_failed.get()>
+                <p class="assist-set__error">{move || t(T::CouldNotLoad)}</p>
+            </Show>
+            <Show when=move || !loaded.get()>
+                <p class="assist-set__muted">{move || t(T::Loading)}</p>
+            </Show>
 
-            // ---- Test ----
-            <section class="assist-set__card">
-                <h2>{move || t(T::TestHeading)}</h2>
-                <div class="assist-set__row">
-                    <input
-                        class="field assist-set__grow"
-                        type="text"
-                        aria-label=move || t(T::TestLabel)
-                        prop:value=move || test_text.get()
-                        on:input=move |ev| test_text.set(event_target_value(&ev))
-                        on:keydown=move |ev: web_sys::KeyboardEvent| {
-                            if ev.key() == "Enter" && !ev.is_composing() {
-                                ev.prevent_default();
-                                play();
-                            }
-                        }
-                    />
-                    <button
-                        type="button"
-                        class="btn assist-set__btn"
-                        disabled=speaking
-                        on:click=move |_| play()
-                    >
-                        {move || if test_busy.get() { t(T::Speaking) } else { t(T::Play) }}
-                    </button>
-                </div>
-                <audio
-                    node_ref=audio
-                    controls=true
-                    class="assist-set__audio"
-                    on:playing=move |_| {
-                        if let Some(start) = clicked_at.get_untracked() {
-                            clicked_at.set(None);
-                            first_sound.set(Some((js_sys::Date::now() - start).max(0.0) as u64));
-                        }
-                    }
-                    on:error=move |_| {
-                        if clicked_at.get_untracked().is_some() {
-                            clicked_at.set(None);
-                            test_error.set(Some(t(T::PlayFailed).to_owned()));
-                        }
-                    }
-                ></audio>
-                {move || {
-                    first_sound
-                        .get()
-                        .map(|ms| {
-                            view! {
-                                <p class="assist-set__muted">
-                                    {move || t(T::FirstSound)} ": " {ms} " " {move || t(T::UnitMs)}
-                                </p>
-                            }
-                        })
-                }}
-                {move || test_error.get().map(|e| view! { <p class="assist-set__error">{e}</p> })}
-            </section>
-
-            // ---- Voice ----
-            <section class="assist-set__card">
-                <h2>{move || t(T::VoiceHeading)}</h2>
-                {move || {
-                    voices
-                        .get()
-                        .map(|view| {
-                            let list = voices_in_order(&view);
-                            let chosen = view.chosen.clone();
-                            view! {
-                                <Show when={
-                                    let fell = view.fell_back;
-                                    move || fell
-                                }>
-                                    <p class="assist-set__warn">{move || t(T::VoiceFellBack)}</p>
-                                </Show>
-                                <Show when={
-                                    let offline = view.catalog_offline;
-                                    move || offline
-                                }>
-                                    <p class="assist-set__muted">{move || t(T::VoiceCatalogOffline)}</p>
-                                </Show>
-                                {list.is_empty().then(|| view! { <p class="assist-set__muted">{move || t(T::VoiceEmpty)}</p> })}
-                                <ul class="assist-set__list">
-                                    {list
-                                        .into_iter()
-                                        .map(|v| {
-                                            let name = v.name.clone();
-                                            let detail = voice_detail(&v);
-                                            let is_default = v.name == DEFAULT_VOICE;
-                                            let label = v.name.clone();
-                                            let heard = v.name.clone();
-                                            let this_one = {
-                                                let name = v.name.clone();
-                                                move || previewing.with(|p| p.as_deref() == Some(name.as_str()))
-                                            };
-                                            let listen_label = {
-                                                let label = label.clone();
-                                                move || {
-                                                    let shown = if is_default { t(T::VoiceDefault) } else { label.as_str() };
-                                                    format!("{} {shown}", t(T::Listen))
-                                                }
-                                            };
-                                            view! {
-                                                <li class="assist-set__item assist-set__voice">
-                                                    <label>
-                                                        <input
-                                                            type="radio"
-                                                            name="assist-voice"
-                                                            prop:checked=chosen == v.name
-                                                            on:change=move |_| choose_voice(name.clone())
-                                                        />
-                                                        <span class="assist-set__name">
-                                                            {move || {
-                                                                if is_default {
-                                                                    t(T::VoiceDefault).to_owned()
-                                                                } else {
-                                                                    label.clone()
-                                                                }
-                                                            }}
-                                                        </span>
-                                                        {(!detail.is_empty()).then(|| view! { <span class="assist-set__muted">" " {detail}</span> })}
-                                                    </label>
-                                                    <button
-                                                        type="button"
-                                                        class="btn assist-set__btn assist-set__listen"
-                                                        title=listen_label.clone()
-                                                        aria-label=listen_label
-                                                        disabled=speaking
-                                                        on:click=move |_| preview(heard.clone())
-                                                    >
-                                                        {move || if this_one() { "…" } else { "▶" }}
-                                                    </button>
-                                                </li>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </ul>
-                            }
-                        })
-                }}
-            </section>
+            <LanguagesCard status=status models=models reload=reload_cb />
 
             // ---- Installed models ----
             <section class="assist-set__card">
@@ -687,7 +417,6 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                             .into_iter()
                             .map(|m| {
                                 let id = m.id.clone();
-                                let use_id = m.id.clone();
                                 let ask_id = m.id.clone();
                                 let asking = {
                                     let id = m.id.clone();
@@ -696,31 +425,24 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                                 let yes_id = m.id.clone();
                                 let name = model_name(&m, lang());
                                 let detail = model_detail(&m, lang());
-                                let french = m.french;
+                                let speaks = if m.languages.is_empty() {
+                                    t(T::LanguagesUnknown).to_owned()
+                                } else {
+                                    language_names(&m.languages, lang())
+                                };
+                                let used_by = (!m.used_by.is_empty())
+                                    .then(|| language_names(&m.used_by, lang()));
+                                let question = used_by.clone();
                                 view! {
                                     <li class="assist-set__item" data-model=id>
                                         <div class="assist-set__row">
-                                            <label class="assist-set__grow">
-                                                <input
-                                                    type="radio"
-                                                    name="assist-model"
-                                                    aria-label=move || t(T::UseModel)
-                                                    prop:checked=m.active
-                                                    on:change=move |_| activate(use_id.clone())
-                                                />
-                                                {m.active.then(|| view! {
-                                                    <span class="assist-set__active">{move || t(T::ActiveLabel)}</span>
-                                                })}
+                                            <div class="assist-set__grow">
                                                 <span class="assist-set__name">{name}</span>
-                                                <span class="assist-set__muted">" " {detail}</span>
-                                                {if french {
-                                                    view! { <span class="assist-set__muted">" · " {move || t(T::SpeaksFrench)}</span> }
-                                                        .into_any()
-                                                } else {
-                                                    view! { <span class="assist-set__warn">" · " {move || t(T::NoFrench)}</span> }
-                                                        .into_any()
-                                                }}
-                                            </label>
+                                                <span class="assist-set__muted">" " {detail} " · " {speaks}</span>
+                                                {used_by.map(|names| view! {
+                                                    <p class="assist-set__muted">{move || t(T::UsedBy)} ": " {names}</p>
+                                                })}
+                                            </div>
                                             <button
                                                 type="button"
                                                 class="btn assist-set__btn"
@@ -731,7 +453,12 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                                         </div>
                                         <Show when=asking>
                                             <ConfirmBar
-                                                question=Signal::derive(move || t(T::RemoveQuestion).to_owned())
+                                                question=Signal::derive({
+                                                    let question = question.clone();
+                                                    move || match &question {
+                                                    Some(names) => format!("{} {names}", t(T::RemoveUsedQuestion)),
+                                                    None => t(T::RemoveQuestion).to_owned(),
+                                                }})
                                                 yes=Signal::derive(move || t(T::RemoveYes).to_owned())
                                                 on_yes=Callback::new({
                                                     let yes_id = yes_id.clone();
@@ -911,41 +638,41 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                         })
                 }}
                 {move || upload_error.get().map(|e| view! { <p class="assist-set__error">{e}</p> })}
-            </section>
 
-            // ---- Token ----
-            <section class="assist-set__card">
-                <h2>{move || t(T::TokenHeading)}</h2>
-                <p class="assist-set__muted">{move || t(T::GatedNote)}</p>
-                <p>
-                    {move || if token_set() { t(T::TokenSet) } else { t(T::TokenNotSet) }}
-                </p>
-                <div class="assist-set__row">
-                    <input
-                        class="field assist-set__grow"
-                        type="password"
-                        autocomplete="off"
-                        aria-label=move || t(T::TokenLabel)
-                        prop:value=move || token.get()
-                        on:input=move |ev| token.set(event_target_value(&ev))
-                    />
-                    <button
-                        type="button"
-                        class="btn assist-set__btn"
-                        disabled=move || token.with(|v| v.trim().is_empty())
-                        on:click=move |_| save_token()
-                    >
-                        {move || t(T::Save)}
-                    </button>
-                    <button
-                        type="button"
-                        class="btn assist-set__btn"
-                        disabled=move || !token_set()
-                        on:click=move |_| clear_token()
-                    >
-                        {move || t(T::Clear)}
-                    </button>
-                </div>
+                <details class="assist-set__token">
+                    <summary>
+                        {move || t(T::TokenFold)}
+                        " · "
+                        {move || if token_set() { t(T::TokenSet) } else { t(T::TokenNotSet) }}
+                    </summary>
+                    <p class="assist-set__muted">{move || t(T::GatedNote)}</p>
+                    <div class="assist-set__row">
+                        <input
+                            class="field assist-set__grow"
+                            type="password"
+                            autocomplete="off"
+                            aria-label=move || t(T::TokenLabel)
+                            prop:value=move || token.get()
+                            on:input=move |ev| token.set(event_target_value(&ev))
+                        />
+                        <button
+                            type="button"
+                            class="btn assist-set__btn"
+                            disabled=move || token.with(|v| v.trim().is_empty())
+                            on:click=move |_| save_token()
+                        >
+                            {move || t(T::Save)}
+                        </button>
+                        <button
+                            type="button"
+                            class="btn assist-set__btn"
+                            disabled=move || !token_set()
+                            on:click=move |_| clear_token()
+                        >
+                            {move || t(T::Clear)}
+                        </button>
+                    </div>
+                </details>
             </section>
         </div>
     }
@@ -994,18 +721,23 @@ mod tests {
 
     #[test]
     fn the_page_polls_only_while_something_is_moving() {
+        let language = |engine| nidoo_api::LanguageView {
+            code: "fr".into(),
+            model: Some("m".into()),
+            voice: DEFAULT_VOICE.into(),
+            engine,
+        };
         let mut s = TtsStatus {
-            engine: EngineState::NoModel,
-            active: None,
-            voice: "default".into(),
+            languages: vec![language(EngineState::NoModel)],
             token_set: false,
             download: None,
             speech_built: true,
         };
         assert!(!needs_polling(&s));
-        s.engine = EngineState::Loading { model: "m".into() };
+        s.languages
+            .push(language(EngineState::Loading { model: "m".into() }));
         assert!(needs_polling(&s));
-        s.engine = EngineState::Ready { model: "m".into() };
+        s.languages[1] = language(EngineState::Ready { model: "m".into() });
         assert!(!needs_polling(&s));
         let mut d = DownloadView {
             model: "m".into(),
