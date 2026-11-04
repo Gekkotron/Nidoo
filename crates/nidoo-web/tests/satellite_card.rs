@@ -212,6 +212,31 @@ async fn a_failed_test_shows_the_reason() {
 }
 
 #[wasm_bindgen_test]
+async fn a_second_failure_keeps_its_reason_for_its_own_five_seconds() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        SPEAK,
+        409,
+        r#"{"error":"this satellite cannot speak now"}"#,
+    );
+    let m = mount(satellite(true, true));
+    tick().await;
+    let speak = find(&m.host, ".satellite__speak").expect("test button");
+    speak.click();
+    settle().await;
+    gloo_timers::future::TimeoutFuture::new(3_000).await;
+    speak.click();
+    settle().await;
+    // The first failure's 5 s are over, the second's are not.
+    gloo_timers::future::TimeoutFuture::new(2_500).await;
+    assert!(
+        find(&m.host, ".satellite__error").is_some(),
+        "the first timer cleared the second failure"
+    );
+}
+
+#[wasm_bindgen_test]
 async fn a_disconnected_satellite_shows_offline() {
     let m = mount(satellite(true, false));
     tick().await;

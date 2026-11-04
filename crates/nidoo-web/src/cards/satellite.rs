@@ -54,12 +54,14 @@ pub fn SatelliteCard(entity: EntityView) -> impl IntoView {
         move |_| house.entities.with(|m| satellite_of(m, &device))
     });
     let error = RwSignal::new(None::<String>);
+    // Counts the failures shown: a timer clears only the message it put up, not a newer one.
+    let shown = StoredValue::new(0u32);
     let on_click = open_entity(&entity.id);
     move || {
         let Some(sat) = satellite.get() else {
             return ().into_any();
         };
-        view! { <SatelliteFace entity=entity.clone() sat=sat sid=sid.clone() error=error on_click=on_click /> }
+        view! { <SatelliteFace entity=entity.clone() sat=sat sid=sid.clone() error=error shown=shown on_click=on_click /> }
             .into_any()
     }
 }
@@ -70,6 +72,7 @@ fn SatelliteFace(
     sat: Satellite,
     sid: String,
     error: RwSignal<Option<String>>,
+    shown: StoredValue<u32>,
     on_click: Callback<()>,
 ) -> impl IntoView {
     let sender = Sender::from_context();
@@ -146,9 +149,17 @@ fn SatelliteFace(
             };
             spawn_local(async move {
                 if let Err(err) = crate::api::tts::sound_speak(&req).await {
-                    error.set(Some(err.error));
+                    let Some(mine) = shown.try_update_value(|n| {
+                        *n = n.wrapping_add(1);
+                        *n
+                    }) else {
+                        return;
+                    };
+                    error.try_set(Some(err.error));
                     TimeoutFuture::new(ERROR_MS).await;
-                    error.set(None);
+                    if shown.try_get_value() == Some(mine) {
+                        error.try_set(None);
+                    }
                 }
             });
         };
