@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use nidoo_sound::clock::{Clock, MonotonicClock};
-use nidoo_sound::config::SoundConfig;
+use nidoo_sound::config::{self, SoundConfig};
 use nidoo_sound::discover::{self, DiscoveryEvent};
 use nidoo_sound::group::{Group, sendspin_connector};
 use nidoo_sound::input::{InputEvent, run_pcm_input};
@@ -86,8 +86,21 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         server_id = %identity.server_id,
         input_port = cfg.input_port,
         broker = %format!("{}:{}", cfg.mqtt.host, cfg.mqtt.port),
+        broker_user = cfg.mqtt.user.as_deref().unwrap_or("(none)"),
+        login_from = if cfg.broker_from_hub { "hub.json" } else { "settings" },
         "nidoo-sound started"
     );
+    if cfg.mqtt.user.is_none() {
+        // A broker with access rules accepts an anonymous login and then
+        // drops its messages without an error: the satellites never show up
+        // in Nidoo.
+        tracing::warn!(
+            hub_file = %cfg.data_dir.join(config::HUB_FILE).display(),
+            "no broker login: if the satellites do not show up in Nidoo, check that the \
+             hub's settings file is in the data folder, or set NIDOO_SOUND_MQTT__USER and \
+             NIDOO_SOUND_MQTT__PASSWORD"
+        );
+    }
     let discovery = discover::browse()?;
     let (input_tx, input_rx) = mpsc::channel(256);
     let idle = Duration::from_millis(u64::from(cfg.idle_stop_ms));

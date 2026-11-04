@@ -75,7 +75,7 @@ pub fn discovery_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(Strin
             with(
                 base("Allowed", "allowed"),
                 json!({"command_topic": command("allowed"), "payload_on": "ON", "payload_off": "OFF",
-                       "entity_category": "config", "icon": "mdi:speaker-play"}),
+                       "icon": "mdi:speaker-play"}),
             ),
         ),
         (
@@ -304,7 +304,10 @@ mod tests {
                 (
                     Kind::Switch,
                     format!("nidoo_sound_{sid}_allowed"),
-                    EntityCategory::Config
+                    // Primary, not Config: the web UI's search and room
+                    // pages leave Config entities out, and a new satellite
+                    // plays nothing until this is switched on.
+                    EntityCategory::Primary
                 ),
                 (
                     Kind::BinarySensor,
