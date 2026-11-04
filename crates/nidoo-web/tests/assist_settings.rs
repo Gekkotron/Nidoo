@@ -1,5 +1,5 @@
 #![cfg(target_arch = "wasm32")]
-//! The speech settings screen: its three cards render with no hub, the language tabs follow the
+//! The speech settings screen: its cards render with no hub, the language tabs follow the
 //! status order, ▶ speaks in the tab's language, and each state of a live hub shows.
 
 use leptos::prelude::*;
@@ -107,13 +107,18 @@ fn two_languages(stub: &FetchStub) {
 }
 
 #[wasm_bindgen_test]
-async fn the_three_cards_render_even_when_the_hub_does_not_answer() {
+async fn the_cards_render_even_when_the_hub_does_not_answer() {
     let _stub = FetchStub::install();
     let m = mount();
     settle().await;
     assert_eq!(
         texts(&m.host, ".assist-set__card > h2"),
-        ["Languages", "Installed models", "Add a model"]
+        [
+            "Languages",
+            "Speech input",
+            "Installed models",
+            "Add a model"
+        ]
     );
     let text = m.host.text_content().unwrap_or_default();
     assert!(
