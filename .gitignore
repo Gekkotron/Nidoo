@@ -12,3 +12,9 @@ secrets/*
 *.key
 
 /data/
+
+# Sound satellites and nidoo-sound (per-install values)
+satellite/secrets.yaml
+satellite/.esphome/
+satellite/boards/
+nidoo-sound.toml
