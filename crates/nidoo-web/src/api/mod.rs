@@ -9,5 +9,6 @@ pub mod history;
 pub mod home;
 pub mod series_cache;
 pub mod setup;
+pub mod tts;
 
 pub use core::*;

@@ -33,6 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy -p nidoo --no-default-features --all-targets -- -D warnings
       # nidoo-core and nidoo-api are shared with the web UI and must keep
       # building for the browser.
       - run: cargo check -p nidoo-core --target wasm32-unknown-unknown

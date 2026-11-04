@@ -49,6 +49,52 @@ The panel next to the conversation, **How it understood**, shows the selected tu
 
 With the history database, turns are kept 90 days. Without it, the hub keeps the last 100 turns in memory and the page says history is not kept.
 
+## Voice
+
+The hub can turn text into French speech, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Speech settings** (« Réglages de la voix » in French). For now this is a capability, not a habit: **Assist does not speak its replies yet**. Who speaks when is decided once satellites (microphone and speaker boards) exist.
+
+The engine is [Phonon](https://huggingface.co/gradium) by Gradium. The hub never ships the model files: you download them yourself, under their licence.
+
+### Licence and token
+
+The French models, `gradium/phonon-40m-fr` and `gradium/phonon-40m-multilingual`, are **gated** on Hugging Face and licensed **CC BY-NC 4.0**: non-commercial use only. To use them:
+
+1. On the model's page on huggingface.co, accept the terms.
+2. In your Hugging Face account, open **Settings, Access Tokens** and create a token with the **Read** role.
+3. Paste it in **Hugging Face token** at the bottom of the settings screen and save. The field is masked and write-only: the hub never shows the token again. **Clear** removes it. Changing it does not restart the hub, and clearing it keeps the models you already installed.
+
+The token is sent only to huggingface.co.
+
+### Adding a model
+
+Under **Add a model**, paste the model page address (`https://huggingface.co/owner/repo`, `hf://owner/repo` or `owner/repo`) and press **List files**. The hub shows the weight files the repository offers, with their sizes:
+
+| File | Size (40m models) | Notes |
+| --- | --- | --- |
+| `model.q8.gguf` | about 75 MB | The default pick. |
+| `model.q4k.gguf` | about 60 MB | Smaller. |
+| `model.safetensors` | about 122 MB | Full precision. |
+
+Choose one and press **Download**. It runs in the background with a progress bar and a **Cancel** button; the model appears in the list only when every file is complete and checked. One download runs at a time. If the repository is gated and no token is saved, or the account has not accepted the terms, the screen says so and links to the model page. A restart of the hub drops an unfinished download.
+
+No internet on the hub, or a token you would rather not use? Under **Upload from this computer**, press **Choose a folder** and pick the model's folder (the same files, from a download made elsewhere). The hub keeps the files once the weight file and the required small files are all there; it does not load the model at that point, so a model that cannot load shows as an Error when you make it active, and you can remove it.
+
+### Choosing the model and the voice
+
+**Installed models** lists each model with its weight file, size, short commit, licence and whether it speaks French. Select **Active** (« Actif ») on one to use it; only the active model is loaded in memory, and switching unloads the previous one first. **Remove** deletes a model (after a confirmation); removing the active one leaves none active. A model that does not speak French can be installed, and the screen warns you.
+
+**Speech** at the top shows the engine's state: No model, Loading, Ready or Error with a message. A broken or missing model never stops the hub or text Assist: speech just shows an error.
+
+**Voice** lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) in the languages the model speaks: 15 French voices, with gender, age and a short description. A catalog voice is downloaded the first time you choose it (about 256 KB). Once the catalog list has been fetched it is kept on the disk, so the whole catalog stays listed offline (a voice not yet downloaded is marked unavailable offline); with no copy yet, no catalog voice is listed. If the chosen voice is not usable with the active model, speech falls back to Default and the screen says so.
+
+### Testing
+
+**Try it** (« Essai ») has a sentence field and a **Play** button. It plays the speech in your browser and shows the time to first sound. On the hub's processor the first sound should come in about a second; the engine uses half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
+
+### The speech address
+
+For other clients, such as the future satellites, speech is two HTTP calls: a `POST` with the text, then a `GET` of the address it returns. The audio is a streamed WAV (24 kHz, 16-bit, mono) that starts playing while the hub is still producing it. The address is valid for 60 seconds. See the [HTTP API](../reference/http-api.md#speech).
+
 ## Not yet
 
-Speech (microphone, spoken replies), English sentences, shutters, brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.
+Speech in (the microphone), spoken Assist replies, English sentences, shutters, brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.

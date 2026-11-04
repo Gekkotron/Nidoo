@@ -18,6 +18,7 @@ mod setup;
 mod snapshot;
 mod solar;
 pub mod system;
+mod tts;
 mod views;
 mod virtual_entities;
 mod weather;
@@ -60,6 +61,11 @@ pub use solar::{
 pub use system::{
     CpuView, DiskView, MemView, NotifyInput, RestartView, ServiceState, ServiceView, StopKind,
     SystemService, SystemView,
+};
+pub use tts::{
+    ActiveRequest, DEFAULT_VOICE, DownloadRequest, DownloadView, EngineState, InspectRequest,
+    JobState, ModelSource, ModelView, RepoListing, SpeechRequest, SpeechTicket, TokenInput,
+    TtsStatus, UploadSession, VoiceRequest, VoiceSource, VoiceView, VoicesView, WeightFile,
 };
 pub use views::{
     AreaView, BridgeView, DeviceView, EntityView, IgnoredView, UpdateView, mask_secret,

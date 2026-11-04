@@ -80,6 +80,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/ambiances/{id}", put(put_ambiance).delete(delete_ambiance))
         .route("/ambiances/{id}/apply", post(apply_ambiance))
         .route("/assist", post(assist))
+        .merge(super::tts::routes())
         .route("/assist/turns", get(assist_turns))
         .route("/assist/turns/{id}/wrong", post(assist_wrong))
         .route("/weather", get(weather))
@@ -229,6 +230,35 @@ impl From<HubError> for HttpError {
             }
             HubError::Patch(_) => StatusCode::BAD_REQUEST,
             HubError::Publish(_) => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        Self {
+            status,
+            error: err.to_string(),
+        }
+    }
+}
+
+impl HttpError {
+    pub(super) fn new(status: StatusCode, error: impl Into<String>) -> Self {
+        Self {
+            status,
+            error: error.into(),
+        }
+    }
+}
+
+impl From<crate::assist::tts::TtsError> for HttpError {
+    fn from(err: crate::assist::tts::TtsError) -> Self {
+        use crate::assist::tts::TtsError as E;
+        let status = match &err {
+            E::NotFound(_) => StatusCode::NOT_FOUND,
+            E::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            E::Conflict(_) => StatusCode::CONFLICT,
+            E::Busy => StatusCode::SERVICE_UNAVAILABLE,
+            E::Upstream(_) | E::Denied => StatusCode::BAD_GATEWAY,
+            E::NoSpace { .. } => StatusCode::INSUFFICIENT_STORAGE,
+            E::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            E::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
             status,

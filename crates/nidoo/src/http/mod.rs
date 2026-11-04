@@ -3,6 +3,7 @@
 
 mod api;
 mod static_ui;
+mod tts;
 mod ws;
 
 use std::sync::Arc;

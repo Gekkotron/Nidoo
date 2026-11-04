@@ -127,8 +127,16 @@ async fn run_setup(ctx: Arc<SetupCtx>, stop: Arc<Stop>) -> anyhow::Result<ExitCo
     Ok(ExitCode::SUCCESS)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<ExitCode> {
+fn main() -> anyhow::Result<ExitCode> {
+    // Sets an environment variable: runs before any other thread exists.
+    nidoo::assist::tts::limit_threads();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse_args();
     match cli {
         Cli::Run { data_dir } => {
@@ -148,6 +156,9 @@ async fn main() -> anyhow::Result<ExitCode> {
 
             let (publish_tx, publish_rx) = mpsc::channel(PUBLISH_QUEUE);
             let hub = Hub::new(&cfg, publish_tx);
+            hub.set_tts(nidoo::assist::tts::Tts::start(
+                nidoo::assist::tts::TtsConfig::for_data_dir(&data_dir),
+            ));
             hub.set_setup(Arc::clone(&setup_ctx));
             if cfg.history.enabled() {
                 match History::start(&cfg.history, hub.zone()) {

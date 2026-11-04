@@ -78,6 +78,22 @@ The flow store keeps the decoded definitions read from `<automation_prefix>/#` a
 
 The ingest path offers each changed state to a bounded channel with `try_send`, so a slow database never blocks the house. The writer task batches rows into TimescaleDB, retrying with backoff while the database is down and dropping the oldest pending rows past the `history_buffer_rows` setting (advanced section). A rollup task keeps an hourly table for the chart queries behind `/api/v1/history/*`. Secret entities are never offered to it.
 
+### Speech
+
+`crates/nidoo/src/assist/tts/` holds the text-to-speech engine, behind the cargo feature `tts` of the `nidoo` crate, on by default. Without it the hub builds, the routes answer, and status says the hub was built without speech. `ptts` (Phonon, pinned exactly, never its `hub` feature, which reads `HF_TOKEN` and downloads on its own) and `xn` are dependencies of the `nidoo` crate only: `nidoo-assist`, `nidoo-api` and `nidoo-web` stay pure and keep building for wasm.
+
+| File | Role |
+| --- | --- |
+| `mod.rs` | The `Tts` service the HTTP routes call; `TtsError`; `limit_threads()`. |
+| `engine.rs`, `phonon.rs` | The engine thread and the `Speaker` / `SpeakerLoader` traits (`phonon.rs` implements them over `ptts`; tests use `tone.rs`, a fake that emits a tone; CI never downloads a model). One model loaded at a time, the old one dropped before the new one loads; one request at a time from a bounded queue (four), a full queue is `Busy`. |
+| `store.rs`, `source.rs` | Models on disk under `<data dir>/assist/tts/` (`models/<id>/` with a `manifest.json`, `state.json`, the token). A folder without a valid manifest is deleted on boot; installs are renamed into place only once complete. |
+| `hf.rs`, `download.rs` | Hugging Face listing and the one background download job: streamed to disk, sizes and sha256 checked, free space checked first. The token goes only in the `Authorization` header. |
+| `upload.rs` | The offline path: one file per request, allowed names and size caps. |
+| `voices.rs` | The catalog list and on-demand voice files, cached on disk. |
+| `speech.rs` | Speech ids (in memory, 60 s) and the WAV stream. |
+
+Synthesis runs on its own thread, never on the async runtime. `limit_threads()` is called first in `main`, before any thread exists because it sets an environment variable, and limits the engine to half of the cores unless `RAYON_NUM_THREADS` is set. The HTTP side is `crates/nidoo/src/http/tts.rs`, the wire types `crates/nidoo-api/src/tts.rs`. Design: `docs/superpowers/specs/2026-11-03-assist-tts-design.md`.
+
 ### Climate engine
 
 With the climate engine on, the hub holds the retained documents under the climate `prefix` and runs an evaluation loop. Per zone, `nidoo-climate` decides from a priority tree (safety, override, holiday, away, schedule); the hub commands the devices through the normal command path, tells a hand change on a device from the engine's own echo, and raises safety alerts through push. A learner reads history, proposes a schedule, and nothing applies until it is approved. See [Climate](../users/climate.md).
