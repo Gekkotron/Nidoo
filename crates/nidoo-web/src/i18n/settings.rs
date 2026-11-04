@@ -16,6 +16,7 @@ pub enum SettingsText {
     HintPush,
     HintAlarm,
     HintNetworkPresence,
+    HintSound,
     HintSystem,
     HintAppearance,
     HintZigbee,
@@ -93,6 +94,7 @@ impl SettingsText {
         SettingsText::HintPush,
         SettingsText::HintAlarm,
         SettingsText::HintNetworkPresence,
+        SettingsText::HintSound,
         SettingsText::HintSystem,
         SettingsText::HintAppearance,
         SettingsText::HintZigbee,
@@ -190,6 +192,10 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
         T::HintNetworkPresence => (
             "Who is home, by pinging devices",
             "Qui est là, en envoyant un ping aux appareils",
+        ),
+        T::HintSound => (
+            "Speaker satellites: approve, mute, volume",
+            "Satellites audio : approbation, sourdine, volume",
         ),
         T::HintSystem => (
             "Uptime, load, storage and services",
@@ -381,7 +387,7 @@ mod tests {
     #[test]
     fn all_lists_every_variant() {
         // The match in `settings_text` is exhaustive, so a new variant only needs listing here.
-        assert_eq!(SettingsText::ALL.len(), 73);
+        assert_eq!(SettingsText::ALL.len(), 74);
     }
 
     #[test]

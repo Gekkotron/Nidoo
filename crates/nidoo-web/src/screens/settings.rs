@@ -23,6 +23,7 @@ use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
 use crate::screens::network_settings::{NetworkSettingsPage, watched_label};
+use crate::screens::sound_settings::{self, SoundSettingsPage};
 use crate::screens::system_settings::{self, SystemSettingsPage};
 use crate::setup::connection::{DatabaseForm, MqttForm};
 use crate::setup::services::basic::WeatherForm;
@@ -290,6 +291,7 @@ pub enum SettingsPage {
     Push,
     Alarm,
     NetworkPresence,
+    Sound,
     System,
     Appearance,
     Zigbee2mqtt,
@@ -301,7 +303,7 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 15] = [
+    pub const ALL: [SettingsPage; 16] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
@@ -310,6 +312,7 @@ impl SettingsPage {
         SettingsPage::Push,
         SettingsPage::Alarm,
         SettingsPage::NetworkPresence,
+        SettingsPage::Sound,
         SettingsPage::System,
         SettingsPage::Appearance,
         SettingsPage::Zigbee2mqtt,
@@ -329,6 +332,7 @@ impl SettingsPage {
             SettingsPage::Push => "push-notifications",
             SettingsPage::Alarm => "alarm",
             SettingsPage::NetworkPresence => "network-presence",
+            SettingsPage::Sound => "sound",
             SettingsPage::System => "system",
             SettingsPage::Appearance => "appearance",
             SettingsPage::Zigbee2mqtt => "zigbee2mqtt",
@@ -354,6 +358,7 @@ impl SettingsPage {
             SettingsPage::Push => Key::PushNotifications,
             SettingsPage::Alarm => Key::Alarm,
             SettingsPage::NetworkPresence => Key::NetworkPresence,
+            SettingsPage::Sound => Key::Sound,
             SettingsPage::System => Key::System,
             SettingsPage::Appearance => Key::Appearance,
             SettingsPage::Zigbee2mqtt => Key::Zigbee2mqtt,
@@ -380,6 +385,7 @@ impl SettingsPage {
                 SettingsPage::Push => T::HintPush,
                 SettingsPage::Alarm => T::HintAlarm,
                 SettingsPage::NetworkPresence => T::HintNetworkPresence,
+                SettingsPage::Sound => T::HintSound,
                 SettingsPage::System => T::HintSystem,
                 SettingsPage::Appearance => T::HintAppearance,
                 SettingsPage::Zigbee2mqtt => T::HintZigbee,
@@ -407,6 +413,7 @@ impl SettingsPage {
             SettingsPage::Push => (icons::BELL, "rose"),
             SettingsPage::Alarm => (icons::SHIELD, "mint"),
             SettingsPage::NetworkPresence => (icons::WIFI, "cyan"),
+            SettingsPage::Sound => (icons::SPEAKER, "rose"),
             SettingsPage::System => (icons::PULSE, "mint"),
             SettingsPage::Appearance => (icons::SUN_MOON, "violet"),
             SettingsPage::Zigbee2mqtt => (icons::MESH, "amber"),
@@ -427,7 +434,8 @@ impl SettingsPage {
             | SettingsPage::Cameras
             | SettingsPage::Push
             | SettingsPage::Alarm
-            | SettingsPage::NetworkPresence => T::GroupHouse,
+            | SettingsPage::NetworkPresence
+            | SettingsPage::Sound => T::GroupHouse,
             SettingsPage::System
             | SettingsPage::Appearance
             | SettingsPage::Zigbee2mqtt
@@ -534,6 +542,9 @@ pub fn SettingsScreen() -> impl IntoView {
         SettingsPage::NetworkPresence => watches
             .with(|w| w.as_ref().map(|w| watched_label(w, lang())))
             .unwrap_or_default(),
+        SettingsPage::Sound => house
+            .entities
+            .with(|e| sound_settings::status_label(&sound_settings::satellites(e), lang())),
         SettingsPage::System => system
             .with(|s| {
                 s.as_ref().map(|s| {
@@ -675,6 +686,7 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::NetworkPresence) => {
                     view! { <NetworkSettingsPage /> }.into_any()
                 }
+                Some(SettingsPage::Sound) => view! { <SoundSettingsPage /> }.into_any(),
                 Some(SettingsPage::System) => view! { <SystemSettingsPage /> }.into_any(),
                 Some(SettingsPage::Appearance) => view! { <AppearancePage /> }.into_any(),
                 Some(SettingsPage::Zigbee2mqtt) => view! { <ZigbeePage /> }.into_any(),
