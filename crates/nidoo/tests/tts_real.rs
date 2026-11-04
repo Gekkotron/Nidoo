@@ -195,3 +195,90 @@ async fn the_speech_address_serves_a_real_wav() {
 }
 
 const SENTENCES_EN: &str = "The living room light is on.";
+
+/// The resident memory of this process, in KB (`ps`), or 0 when it cannot be read.
+fn rss_kb() -> u64 {
+    std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// One loaded model serves several languages only if the hub can normalise the text itself:
+/// a model built with `Normalize::OFF`, fed text the hub normalised as French, must speak
+/// exactly as a model built for French. Also prints what a second loaded model costs.
+#[test]
+#[ignore = "needs a Phonon model folder in NIDOO_TTS_MODEL_DIR"]
+fn normalising_outside_the_builder_matches() {
+    use ptts::preprocess::Normalize;
+    let Ok(dir) = std::env::var("NIDOO_TTS_MODEL_DIR") else {
+        eprintln!("NIDOO_TTS_MODEL_DIR is not set: skipping");
+        return;
+    };
+    let text = "Il fait 19,5 degrés le 3 novembre.";
+    let checkpoint = Checkpoint::resolve(
+        &dir,
+        ResolveOptions {
+            quant: Quant::Q80,
+            weights: Some("model.q8.gguf"),
+        },
+    )
+    .unwrap();
+    let before = rss_kb();
+    let fr = checkpoint
+        .builder(Lang::Fr)
+        .device(DeviceKind::Cpu)
+        .build()
+        .unwrap();
+    let one = rss_kb();
+    let off = checkpoint
+        .builder(Normalize::OFF)
+        .device(DeviceKind::Cpu)
+        .build()
+        .unwrap();
+    let two = rss_kb();
+    let speak = |synth: &ptts::synth::Synth, text: &str| -> Vec<f32> {
+        let opts = SpeechOptions::default().seed(42);
+        synth
+            .stream_with(text, &opts)
+            .unwrap()
+            .flat_map(|piece| piece.unwrap())
+            .collect()
+    };
+    let by_builder = speak(&fr, text);
+    let normalised = Normalize::for_lang(Lang::Fr).apply(text).into_owned();
+    let by_hub = speak(&off, &normalised);
+    eprintln!("normalised text: {normalised:?}");
+    eprintln!(
+        "rss: before {before} KB, one model {one} KB, two models {two} KB (second costs {} KB)",
+        two.saturating_sub(one)
+    );
+    eprintln!(
+        "samples: builder {} hub {}",
+        by_builder.len(),
+        by_hub.len()
+    );
+    let again = speak(&fr, text);
+    let max_diff = |a: &[f32], b: &[f32]| {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0f32, f32::max)
+    };
+    let peak = by_builder.iter().fold(0f32, |m, x| m.max(x.abs()));
+    eprintln!(
+        "peak {peak}; max diff builder vs builder again {}; builder vs hub {}",
+        max_diff(&by_builder, &again),
+        max_diff(&by_builder, &by_hub)
+    );
+    assert_eq!(by_builder.len(), by_hub.len(), "same speech length");
+    // Bit-exact only when the model itself is: compare against its own run-to-run noise.
+    let noise = max_diff(&by_builder, &again);
+    assert!(
+        max_diff(&by_builder, &by_hub) <= noise.max(peak * 1e-4),
+        "the hub-normalised speech differs from the model's own"
+    );
+}
