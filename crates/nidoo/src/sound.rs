@@ -34,7 +34,11 @@ pub enum SpeakError {
     #[error("unknown room `{0}`")]
     UnknownRoom(String),
     #[error("no satellite can speak in this room")]
+    NoSatelliteInRoom,
+    #[error("no satellite can speak in the house")]
     NoSatellite,
+    #[error("this satellite cannot speak now")]
+    SatelliteCannotSpeak,
     #[error("speech is not set up on this hub")]
     NotSetUp,
     #[error(transparent)]
@@ -88,7 +92,11 @@ pub fn speaking_satellites(
     players.sort();
     players.dedup();
     if players.is_empty() {
-        return Err(SpeakError::NoSatellite);
+        return Err(match target {
+            SpeakTarget::All => SpeakError::NoSatellite,
+            SpeakTarget::Room(_) => SpeakError::NoSatelliteInRoom,
+            SpeakTarget::Satellite(_) => SpeakError::SatelliteCannotSpeak,
+        });
     }
     Ok(players)
 }
@@ -245,8 +253,12 @@ mod tests {
         assert_eq!(got, ids(&["b"]));
         let refused = speaking_satellites(&reg, &SpeakTarget::Satellite("refused".into()));
         assert!(
-            matches!(refused, Err(SpeakError::NoSatellite)),
+            matches!(refused, Err(SpeakError::SatelliteCannotSpeak)),
             "{refused:?}"
+        );
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            "this satellite cannot speak now"
         );
     }
 
@@ -274,8 +286,12 @@ mod tests {
         let mut reg = house();
         feed(&mut reg, "nidoo-sound/b/connected", "OFF");
         let got = speaking_satellites(&reg, &SpeakTarget::Room("Kitchen".into()));
-        assert!(matches!(got, Err(SpeakError::NoSatellite)), "{got:?}");
+        assert!(matches!(got, Err(SpeakError::NoSatelliteInRoom)), "{got:?}");
         let empty = speaking_satellites(&registry(), &SpeakTarget::All);
         assert!(matches!(empty, Err(SpeakError::NoSatellite)), "{empty:?}");
+        assert_eq!(
+            empty.unwrap_err().to_string(),
+            "no satellite can speak in the house"
+        );
     }
 }

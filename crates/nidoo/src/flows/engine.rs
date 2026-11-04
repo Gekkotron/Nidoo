@@ -1212,7 +1212,6 @@ fn step(node: &str, outcome: StepOutcome, detail: String, ports: Option<Vec<Stri
     }
 }
 
-/// Runs one node: its outcome, the detail to record and the output port to follow.
 /// `text` with its placeholders filled: `{entity_id}` is the entity's value (a math result of
 /// this run wins over an entity of the same name) and `{trigger}` the value that started the
 /// run, with the unit and words of its entity. `validate` refused a text that does not parse, so
@@ -1264,6 +1263,7 @@ fn speech_lang(hub: &Hub) -> Lang {
     }
 }
 
+/// Runs one node: its outcome, the detail to record and the output port to follow.
 async fn run_node(
     hub: &Hub,
     now: &Now,

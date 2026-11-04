@@ -209,7 +209,7 @@ async fn speak_route_no_satellite_is_409() {
     let r = rig(true).await;
     let (s, v) = r.speak(json!({"text": "hello", "satellite": "zzz"})).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
-    assert_eq!(v["error"], "no satellite can speak in this room");
+    assert_eq!(v["error"], "this satellite cannot speak now");
 }
 
 #[tokio::test]
