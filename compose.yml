@@ -9,10 +9,10 @@
 #   hub          Nidoo itself, on port 8081.
 #
 # Optional, only when named: `docker compose up -d --build sound` starts
-# nidoo-sound, music for the sound satellites (PCM in on port 4953, see
-# docs/users/sound.md). Its own image and the `sound` profile keep it out of
-# a whole-stack `up --build` (tools/update.sh), so updating the hub never
-# restarts the music.
+# nidoo-sound, music for the sound satellites (PCM in on port 4953, players
+# on 8927, see docs/users/sound.md). Its own image and the `sound` profile
+# keep it out of a whole-stack `up --build` (tools/update.sh), so updating the
+# hub never restarts the music.
 #
 # Already have a broker and a database? Start only the hub and point it at
 # them from the setup wizard: `docker compose up -d hub`.

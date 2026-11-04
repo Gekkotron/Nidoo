@@ -9,6 +9,7 @@ use nidoo_sound::config::SoundConfig;
 use nidoo_sound::discover::{self, DiscoveryEvent};
 use nidoo_sound::group::{Group, sendspin_connector};
 use nidoo_sound::input::{InputEvent, run_pcm_input};
+use nidoo_sound::listen::accept_players;
 use nidoo_sound::mqtt::run_mqtt;
 use nidoo_sound::player::{PlayerCmd, PlayerEvent, run_player};
 use nidoo_sound::proto::messages::PCM_48K_STEREO_16;
@@ -99,8 +100,17 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         store,
         clock.clone(),
         lead_us,
-        sendspin_connector(identity, clock),
+        sendspin_connector(identity.clone(), clock.clone()),
     );
+    if cfg.listen_port != 0 {
+        let players = tokio::net::TcpListener::bind(("0.0.0.0", cfg.listen_port)).await?;
+        tracing::info!(
+            listen_port = cfg.listen_port,
+            path = nidoo_sound::listen::PATH,
+            "players can connect"
+        );
+        tokio::spawn(accept_players(players, identity, clock, group.players()));
+    }
     let group = tokio::spawn(group.run(discovery, input_rx, control_rx, publish_tx));
     let mqtt = {
         let cfg = cfg.clone();

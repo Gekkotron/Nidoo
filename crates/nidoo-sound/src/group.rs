@@ -70,6 +70,13 @@ pub enum FromPlayer {
         instance: String,
         cmds: mpsc::Sender<PlayerCmd>,
     },
+    /// A player that connected to us (client-initiated) and finished its
+    /// handshake; it is forgotten once `Gone`. Its events follow under the
+    /// same `instance`, which must not be an mDNS instance name.
+    Accepted {
+        instance: String,
+        cmds: mpsc::Sender<PlayerCmd>,
+    },
     Event {
         instance: String,
         event: PlayerEvent,
@@ -163,12 +170,22 @@ impl Link {
     }
 }
 
-/// An advertised (or recently advertised) player.
+/// An advertised (or recently advertised) player, or one that connected to us.
 struct Instance {
-    url: url::Url,
-    task: JoinHandle<()>,
+    /// Where we connect to it; `None` when it connected to us.
+    url: Option<url::Url>,
+    /// Our reconnect loop; `None` when it connected to us.
+    task: Option<JoinHandle<()>>,
     advertised: bool,
     link: Option<Link>,
+}
+
+impl Instance {
+    fn stop(&self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
+    }
 }
 
 pub struct Group {
@@ -179,10 +196,13 @@ pub struct Group {
     instances: HashMap<String, Instance>,
     pacer: Pacer,
     playing: bool,
+    to_group: mpsc::Sender<FromPlayer>,
+    from_players: mpsc::Receiver<FromPlayer>,
 }
 
 impl Group {
     pub fn new(store: StateStore, clock: Arc<dyn Clock>, lead_us: i64, connect: Connector) -> Self {
+        let (to_group, from_players) = mpsc::channel(1024);
         Self {
             store,
             clock,
@@ -191,7 +211,15 @@ impl Group {
             instances: HashMap::new(),
             pacer: Pacer::new(lead_us),
             playing: false,
+            to_group,
+            from_players,
         }
+    }
+
+    /// Where connections report to the group (players that connect to us
+    /// send [`FromPlayer::Accepted`] here first).
+    pub fn players(&self) -> mpsc::Sender<FromPlayer> {
+        self.to_group.clone()
     }
 
     pub async fn run(
@@ -201,7 +229,7 @@ impl Group {
         mut control: mpsc::Receiver<Control>,
         publish: mpsc::Sender<Published>,
     ) -> anyhow::Result<()> {
-        let (to_group, mut from_players) = mpsc::channel(1024);
+        let to_group = self.to_group.clone();
         let known: Vec<PlayerPrefs> = self.store.all().cloned().collect();
         for prefs in known {
             let msg = Published::Player {
@@ -218,7 +246,7 @@ impl Group {
                 Some(d) = discovery.recv() => self.on_discovery(d, &to_group, &publish).await,
                 Some(i) = input.recv() => self.on_input(i).await,
                 Some(c) = control.recv() => self.on_control(c, &publish).await,
-                Some(m) = from_players.recv() => self.on_player(m, &publish).await,
+                Some(m) = self.from_players.recv() => self.on_player(m, &publish).await,
                 _ = tick.tick(), if self.playing => self.on_tick(),
             }
         }
@@ -275,10 +303,11 @@ impl Group {
             DiscoveryEvent::Up(d) => {
                 if let Some(i) = self.instances.get_mut(&d.instance) {
                     i.advertised = true;
-                    if i.url == d.url && !i.task.is_finished() {
+                    let running = i.task.as_ref().is_some_and(|t| !t.is_finished());
+                    if i.url.as_ref() == Some(&d.url) && running {
                         return;
                     }
-                    i.task.abort();
+                    i.stop();
                 }
                 tracing::info!(instance = %d.instance, url = %d.url, "satellite found");
                 let instance = d.instance.clone();
@@ -287,8 +316,8 @@ impl Group {
                 let old = self.instances.insert(
                     instance,
                     Instance {
-                        url,
-                        task,
+                        url: Some(url),
+                        task: Some(task),
                         advertised: true,
                         link: None,
                     },
@@ -304,7 +333,7 @@ impl Group {
                 i.advertised = false;
                 // A live connection is kept; the reconnect loop stops with it.
                 if !i.link.as_ref().is_some_and(|l| l.connected) {
-                    i.task.abort();
+                    i.stop();
                     self.instances.remove(&instance);
                 }
             }
@@ -316,6 +345,17 @@ impl Group {
             FromPlayer::Link { instance, cmds } => {
                 if let Some(i) = self.instances.get_mut(&instance) {
                     i.link = Some(Link::new(cmds));
+                }
+            }
+            FromPlayer::Accepted { instance, cmds } => {
+                let accepted = Instance {
+                    url: None,
+                    task: None,
+                    advertised: false,
+                    link: Some(Link::new(cmds)),
+                };
+                if let Some(old) = self.instances.insert(instance, accepted) {
+                    old.stop();
                 }
             }
             FromPlayer::Event { instance, event } => self.on_event(&instance, event, publish).await,
@@ -401,7 +441,7 @@ impl Group {
                 };
                 i.link = None;
                 if !i.advertised {
-                    i.task.abort();
+                    i.stop();
                     self.instances.remove(instance);
                 }
                 self.publish(publish, &client_id).await;
@@ -642,6 +682,8 @@ mod tests {
         control: mpsc::Sender<Control>,
         published: mpsc::Receiver<Published>,
         links: mpsc::Receiver<Fake>,
+        /// Where an inbound (client-initiated) connection reports.
+        to_group: mpsc::Sender<FromPlayer>,
         clock: Arc<FakeClock>,
         _dir: tempfile::TempDir,
     }
@@ -684,6 +726,7 @@ mod tests {
                 })
             });
             let group = Group::new(store, clock.clone(), LEAD, connect);
+            let to_group = group.players();
             let (discovery, d_rx) = mpsc::channel(8);
             let (input, i_rx) = mpsc::channel(64);
             let (control, c_rx) = mpsc::channel(8);
@@ -695,6 +738,7 @@ mod tests {
                 control,
                 published,
                 links,
+                to_group,
                 clock,
                 _dir: dir,
             }
@@ -718,6 +762,23 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap()
+        }
+
+        /// A player that connected to us and finished its handshake.
+        async fn accepted(&mut self, instance: &str) -> Fake {
+            let (tx, cmds) = mpsc::channel(4096);
+            self.to_group
+                .send(FromPlayer::Accepted {
+                    instance: instance.into(),
+                    cmds: tx,
+                })
+                .await
+                .unwrap();
+            Fake {
+                instance: instance.into(),
+                cmds,
+                to_group: self.to_group.clone(),
+            }
         }
 
         /// Discovered, connected, first state reported: returns after Activate.
@@ -986,5 +1047,51 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn accepted_player_is_served_like_a_discovered_one() {
+        let mut h = Harness::start_with(&[("A", 40, true, true)]).await;
+        let mut p = h.accepted("browser-1").await;
+        p.connected("A").await;
+        assert_eq!(
+            p.control_cmd().await,
+            PlayerCmd::Activate { playback: true }
+        );
+        assert_eq!(p.control_cmd().await, PlayerCmd::Volume(40));
+        assert_eq!(p.control_cmd().await, PlayerCmd::Mute(true));
+        p.state("A", 40, true).await;
+        // The saved prefs are first published as offline at start.
+        while !h.published_for(&short_id("A")).await.1 {}
+        h.play().await;
+        assert!(matches!(p.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.clock.advance(60_000);
+        p.audio().await;
+    }
+
+    #[tokio::test]
+    async fn accepted_player_is_forgotten_when_gone() {
+        let mut h = Harness::start().await;
+        let mut p = h.accepted("browser-1").await;
+        p.connected("A").await;
+        p.drain().await;
+        p.event(PlayerEvent::Gone {
+            client_id: "A".into(),
+        })
+        .await;
+        loop {
+            let (_, connected) = h.published_for(&short_id("A")).await;
+            if !connected {
+                break;
+            }
+        }
+        // The reload of a browser tab: a new connection under a new name.
+        let mut again = h.accepted("browser-2").await;
+        again.connected("A").await;
+        assert!(matches!(
+            again.control_cmd().await,
+            PlayerCmd::Activate { .. }
+        ));
+        while !h.published_for(&short_id("A")).await.1 {}
     }
 }

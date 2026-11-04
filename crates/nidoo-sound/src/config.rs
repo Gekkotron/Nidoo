@@ -18,6 +18,9 @@ pub struct SoundConfig {
     pub mqtt: MqttSettings,
     /// TCP port of the raw PCM music input (s16le, 48 kHz, stereo).
     pub input_port: u16,
+    /// TCP port where players that connect to us (e.g. a browser player)
+    /// open `ws://<host>:<port>/sendspin`; 0 turns this endpoint off.
+    pub listen_port: u16,
     /// Holds `sound/identity.key` and `sound/players.json`.
     pub data_dir: PathBuf,
     /// How far ahead of playback chunks are timestamped (raised to cover the
@@ -33,6 +36,7 @@ impl Default for SoundConfig {
         Self {
             mqtt: MqttSettings::default(),
             input_port: 4953,
+            listen_port: crate::listen::DEFAULT_PORT,
             data_dir: PathBuf::from("./data"),
             lead_ms: 500,
             idle_stop_ms: 5000,
@@ -93,6 +97,7 @@ mod tests {
         figment::Jail::expect_with(|_jail| {
             let c = SoundConfig::load(None).unwrap();
             assert_eq!(c.input_port, 4953);
+            assert_eq!(c.listen_port, 8927);
             assert_eq!(c.data_dir, PathBuf::from("./data"));
             assert_eq!((c.lead_ms, c.idle_stop_ms), (500, 5000));
             assert_eq!(c.discovery_prefix, "homeassistant");
@@ -124,6 +129,15 @@ mod tests {
             assert_eq!(c.mqtt.host, "broker");
             assert_eq!(c.mqtt.user.as_deref(), Some("hub"));
             assert_eq!(c.mqtt.port, 1883);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn listen_port_zero_turns_the_endpoint_off() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("NIDOO_SOUND_LISTEN_PORT", 0);
+            assert_eq!(SoundConfig::load(None).unwrap().listen_port, 0);
             Ok(())
         });
     }

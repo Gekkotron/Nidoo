@@ -1,7 +1,8 @@
 //! One connection to one Sendspin player: we connect to the WebSocket it
-//! advertises, run the handshake (cleartext init, Noise KKpsk2 with the
-//! Sentinel PSK), then answer its clock requests and forward commands, the
-//! stream lifecycle and audio chunks from the group.
+//! advertises ([`run_player`]) or it connected to us ([`serve_player`]); either
+//! way we run the handshake (cleartext init, Noise KKpsk2 with the Sentinel
+//! PSK, the server being the Noise initiator), then answer its clock requests
+//! and forward commands, the stream lifecycle and audio chunks from the group.
 //!
 //! Rules this module enforces for the group:
 //! - nothing role-specific (commands, `stream/start`, audio) is sent before
@@ -94,27 +95,41 @@ pub enum PlayerCmd {
     Close,
 }
 
-type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+/// An open WebSocket to a player, whichever side opened it.
+pub type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Runs one player connection until it ends. Sends [`PlayerEvent::Gone`] on
-/// every exit after [`PlayerEvent::Connected`].
+/// Connects to an advertised player and runs the connection until it ends.
+/// Sends [`PlayerEvent::Gone`] on every exit after [`PlayerEvent::Connected`].
 pub async fn run_player(
     url: url::Url,
+    identity: Arc<ServerIdentity>,
+    clock: Arc<dyn Clock>,
+    events: mpsc::Sender<PlayerEvent>,
+    cmds: mpsc::Receiver<PlayerCmd>,
+) -> anyhow::Result<()> {
+    // No Origin header: tungstenite only sends what the URL implies.
+    let (ws, _) = timeout(
+        CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async(url.as_str()),
+    )
+    .await
+    .context("connect timed out")?
+    .with_context(|| format!("connecting to {url}"))?;
+    serve_player(ws, identity, clock, events, cmds).await
+}
+
+/// Runs the protocol on an open WebSocket until the connection ends (the
+/// player may have opened it). Sends [`PlayerEvent::Gone`] on every exit after
+/// [`PlayerEvent::Connected`].
+pub async fn serve_player(
+    ws: Ws,
     identity: Arc<ServerIdentity>,
     clock: Arc<dyn Clock>,
     events: mpsc::Sender<PlayerEvent>,
     mut cmds: mpsc::Receiver<PlayerCmd>,
 ) -> anyhow::Result<()> {
     let mut connected_id = None;
-    let result = session(
-        &url,
-        &identity,
-        clock,
-        &events,
-        &mut cmds,
-        &mut connected_id,
-    )
-    .await;
+    let result = session(ws, &identity, clock, &events, &mut cmds, &mut connected_id).await;
     if let Some(client_id) = connected_id {
         let _ = events.send(PlayerEvent::Gone { client_id }).await;
     }
@@ -122,22 +137,13 @@ pub async fn run_player(
 }
 
 async fn session(
-    url: &url::Url,
+    mut ws: Ws,
     identity: &ServerIdentity,
     clock: Arc<dyn Clock>,
     events: &mpsc::Sender<PlayerEvent>,
     cmds: &mut mpsc::Receiver<PlayerCmd>,
     connected_id: &mut Option<String>,
 ) -> anyhow::Result<()> {
-    // No Origin header: tungstenite only sends what the URL implies.
-    let (mut ws, _) = timeout(
-        CONNECT_TIMEOUT,
-        tokio_tungstenite::connect_async(url.as_str()),
-    )
-    .await
-    .context("connect timed out")?
-    .with_context(|| format!("connecting to {url}"))?;
-
     let (transport, client_id) = handshake(&mut ws, identity).await?;
     let mut conn = Conn {
         ws,

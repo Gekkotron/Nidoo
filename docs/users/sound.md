@@ -42,11 +42,17 @@ shorter gaps are filled with silence.
 |---|---|---|
 | 4953/TCP | phone → `nidoo-sound` | music in |
 | 8928/TCP | `nidoo-sound` → satellite | Sendspin WebSocket (the server connects to each satellite) |
+| 8927/TCP | player → `nidoo-sound` | Sendspin WebSocket at `/sendspin`, for players that connect themselves |
 | 5353/UDP | both | mDNS: satellites advertise `_sendspin._tcp` |
 | 1883/TCP | `nidoo-sound` → broker | MQTT, same broker as the hub |
 
 `nidoo-sound` and the satellites must be on the same LAN (mDNS does not cross
 routers).
+
+A Sendspin player that connects to the server itself instead of advertising
+(a web player, for example) opens `ws://<host>:8927/sendspin`. It shows up in
+Nidoo like a satellite, with **Allowed** off, and reconnects on its own when
+`nidoo-sound` restarts. Set `listen_port = 0` to turn this endpoint off.
 
 ## Start it
 
@@ -71,7 +77,8 @@ listed in `crates/nidoo-sound/README.md`.
 
 If something else already listens on port 4953 (a Snapcast server from an
 older setup, for example), stop it first. With a firewall on the host, allow
-4953/TCP in from the phones and 5353/UDP (mDNS).
+4953/TCP in from the phones, 8927/TCP in from players that connect themselves
+and 5353/UDP (mDNS).
 
 Check that it runs and found the satellites:
 
