@@ -1,14 +1,14 @@
 //! Saying a sentence on the speaker satellites published by the `nidoo-sound` service.
 //!
 //! The hub turns "room X", "every room" or "this satellite" into the short ids of the
-//! satellites that can speak (Allowed and Connected both on), has the sentence synthesised by
+//! satellites that can speak (Allowed and Connected both on, the service not offline), has the sentence synthesised by
 //! [`Tts::speak`](crate::assist::tts::Tts::speak), then asks `nidoo-sound` to play the clip on
 //! those satellites with one message on [`SPEAK_TOPIC`]. A muted satellite counts as able: it
 //! stays silent, as it does for music.
 
 use nidoo_api::SpeechRequest;
 use nidoo_core::command::Publish;
-use nidoo_core::model::{SOUND_DEVICE_PREFIX, StateValue, UNASSIGNED_AREA};
+use nidoo_core::model::{Availability, SOUND_DEVICE_PREFIX, StateValue, UNASSIGNED_AREA};
 use nidoo_core::registry::Registry;
 
 use crate::assist::tts::TtsError;
@@ -62,9 +62,11 @@ pub fn speaking_satellites(
         }
         SpeakTarget::All | SpeakTarget::Satellite(_) => None,
     };
+    // An offline entity (the sound service is down: its last will) keeps its retained ON.
     let is_on = |id: &str| {
-        reg.state(id)
-            .is_some_and(|state| state.value == StateValue::OnOff(true))
+        reg.state(id).is_some_and(|state| {
+            state.value == StateValue::OnOff(true) && state.availability != Availability::Offline
+        })
     };
     let mut players: Vec<String> = reg
         .entities()
@@ -169,6 +171,7 @@ mod tests {
                 "state_topic": format!("nidoo-sound/{sid}/{object}"),
                 "payload_on": "ON",
                 "payload_off": "OFF",
+                "availability_topic": "nidoo-sound/status",
                 "device": { "identifiers": [device], "name": sid },
             });
             if component != "binary_sensor" {
@@ -201,6 +204,7 @@ mod tests {
             "nidoo/ui/_areas",
             r#"{"areas":[{"id":"sejour","name":"Séjour","order":0},{"id":"kitchen","name":"Kitchen","order":1}]}"#,
         );
+        feed(&mut reg, "nidoo-sound/status", "online");
         satellite(&mut reg, "a", "sejour", true, true, false);
         satellite(&mut reg, "muted", "sejour", true, true, true);
         satellite(&mut reg, "b", "kitchen", true, true, false);
@@ -253,6 +257,16 @@ mod tests {
             matches!(got, Err(SpeakError::UnknownRoom(ref r)) if r == "attic"),
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn speaking_satellites_none_while_the_sound_service_is_down() {
+        // The service's last will marks every satellite entity offline; their retained
+        // Allowed and Connected still read ON.
+        let mut reg = house();
+        feed(&mut reg, "nidoo-sound/status", "offline");
+        let got = speaking_satellites(&reg, &SpeakTarget::All);
+        assert!(matches!(got, Err(SpeakError::NoSatellite)), "{got:?}");
     }
 
     #[test]
