@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// A sentence to say on the satellites of one room, of the whole house, or on one satellite.
 /// `room` and `satellite` both left out means every room; both set is refused.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct SoundSpeakRequest {
     /// The text to say.
     pub text: String,

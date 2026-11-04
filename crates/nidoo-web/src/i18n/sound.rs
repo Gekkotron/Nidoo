@@ -15,6 +15,8 @@ pub enum SoundText {
     Connected,
     Disconnected,
     Waiting,
+    Allow,
+    TestSpeaker,
 }
 
 /// A fixed word or sentence of the sound page.
@@ -40,10 +42,20 @@ pub fn sound_text(lang: Lang, k: SoundText) -> &'static str {
         Connected => ("Connected", "Connecté"),
         Disconnected => ("Offline", "Hors ligne"),
         Waiting => ("waiting", "en attente"),
+        Allow => ("Allow", "Autoriser"),
+        TestSpeaker => ("Say a test sentence", "Dire une phrase de test"),
     };
     match lang {
         Lang::En => en,
         Lang::Fr => fr,
+    }
+}
+
+/// The sentence the test button says on a satellite: "Speaker test: Kitchen speaker".
+pub fn speaker_test(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::En => format!("Speaker test: {name}"),
+        Lang::Fr => format!("Test du haut-parleur\u{a0}: {name}"),
     }
 }
 
@@ -71,7 +83,18 @@ mod tests {
             Connected,
             Disconnected,
             Waiting,
+            Allow,
+            TestSpeaker,
         ];
         crate::i18n::assert_table(&all, sound_text, &[Volume]);
+    }
+
+    #[test]
+    fn speaker_test_names_the_satellite() {
+        assert_eq!(speaker_test(Lang::En, "Desk"), "Speaker test: Desk");
+        assert_eq!(
+            speaker_test(Lang::Fr, "Bureau"),
+            "Test du haut-parleur\u{a0}: Bureau"
+        );
     }
 }

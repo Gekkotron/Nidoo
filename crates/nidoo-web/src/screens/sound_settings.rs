@@ -65,8 +65,22 @@ impl Satellite {
 
 /// The satellites among `entities`, sorted by name.
 pub fn satellites(entities: &BTreeMap<String, EntityView>) -> Vec<Satellite> {
+    gather(entities.values())
+}
+
+/// The satellite of device `device_id`, when `entities` holds any of its entities.
+pub fn satellite_of(entities: &BTreeMap<String, EntityView>, device_id: &str) -> Option<Satellite> {
+    gather(
+        entities
+            .values()
+            .filter(|e| e.device_id.as_deref() == Some(device_id)),
+    )
+    .pop()
+}
+
+fn gather<'a>(entities: impl Iterator<Item = &'a EntityView>) -> Vec<Satellite> {
     let mut found: BTreeMap<String, Satellite> = BTreeMap::new();
-    for e in entities.values() {
+    for e in entities {
         let Some(device_id) = e
             .device_id
             .as_deref()
@@ -366,6 +380,18 @@ mod tests {
         let found = satellites(&map(all));
         assert!(!found[0].service_online());
         assert!(!found[0].is_connected());
+    }
+
+    #[test]
+    fn satellite_of_picks_one_device() {
+        let mut all = full("nidoo_sound_aaa", "A", true);
+        all.extend(full("nidoo_sound_bbb", "B", false));
+        let all = map(all);
+        let b = satellite_of(&all, "nidoo_sound_bbb").expect("b");
+        assert_eq!(b.name, "B");
+        assert!(!b.is_allowed());
+        assert!(b.volume.is_some() && b.mute.is_some() && b.connected.is_some());
+        assert_eq!(satellite_of(&all, "nidoo_sound_zzz"), None);
     }
 
     #[test]

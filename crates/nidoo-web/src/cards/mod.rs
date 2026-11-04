@@ -12,6 +12,7 @@ pub mod group;
 pub mod light;
 pub mod lock;
 pub mod number;
+pub mod satellite;
 pub mod select;
 pub mod sensor;
 pub mod siren;

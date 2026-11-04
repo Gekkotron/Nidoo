@@ -2,7 +2,7 @@
 
 use leptos::prelude::*;
 use nidoo_api::{EntityView, Span};
-use nidoo_core::model::{Kind, SwitchType};
+use nidoo_core::model::{Kind, SOUND_DEVICE_PREFIX, SwitchType};
 use nidoo_core::types::Placement as TypePlacement;
 use std::collections::HashSet;
 
@@ -23,6 +23,7 @@ use crate::cards::group::{
 use crate::cards::light::LightCard;
 use crate::cards::lock::LockCard;
 use crate::cards::number::NumberCard;
+use crate::cards::satellite::SatelliteCard;
 use crate::cards::select::SelectCard;
 use crate::cards::sensor::{SensorCard, companion};
 use crate::cards::siren::SirenCard;
@@ -86,6 +87,14 @@ pub fn card_for(entity: EntityView) -> AnyView {
         Kind::Climate => view! { <ClimateCard entity=entity /> }.into_any(),
         Kind::Sensor => view! { <SensorCard entity=entity /> }.into_any(),
         Kind::BinarySensor => view! { <BinarySensorCard entity=entity /> }.into_any(),
+        Kind::Number
+            if entity
+                .device_id
+                .as_deref()
+                .is_some_and(|d| d.starts_with(SOUND_DEVICE_PREFIX)) =>
+        {
+            view! { <SatelliteCard entity=entity /> }.into_any()
+        }
         Kind::Number => view! { <NumberCard entity=entity /> }.into_any(),
         Kind::Select => view! { <SelectCard entity=entity /> }.into_any(),
         Kind::Button => view! { <ButtonCard entity=entity /> }.into_any(),

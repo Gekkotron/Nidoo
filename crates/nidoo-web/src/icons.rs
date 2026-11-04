@@ -160,6 +160,9 @@ pub const GEAR: &str = svg!(
 pub const SPEAKER: &str = svg!(
     r#"<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>"#
 );
+/// A speech bubble: the satellite card's "say a test sentence" button.
+pub const SPEECH_BUBBLE: &str =
+    svg!(r#"<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>"#);
 pub const SPEAKER_OFF: &str =
     svg!(r#"<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m16 9 6 6"/><path d="m22 9-6 6"/>"#);
 pub const MOON: &str = svg!(r#"<path d="M20 14A9 9 0 1 1 10 4a7 7 0 0 0 10 10"/>"#);
