@@ -1,0 +1,36 @@
+[package]
+name = "nidoo-sound"
+description = "A Sendspin-compatible server that plays one PCM input on every satellite, in sync"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nidoo-sound"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rumqttc.workspace = true
+figment.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+url.workspace = true
+snow = "0.10.0"
+sha2 = "0.11.1"
+base64 = "0.23.1"
+rand = "0.10.3"
+mdns-sd = "0.21.7"
+bytes = "1.12.1"
+
+[dev-dependencies]
+hex = "0.4.3"
