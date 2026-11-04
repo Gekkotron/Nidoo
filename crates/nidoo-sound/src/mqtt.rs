@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 
 use crate::config::MqttSettings;
 use crate::group::{Control, Published};
+use crate::speech::{SPEAK_TOPIC, SpeakRequest, parse_speak};
 use crate::state::{PlayerPrefs, short_id};
 
 /// Topic root for this service's own topics (the hub owns `nidoo/`).
@@ -156,11 +157,37 @@ pub fn parse_command(topic: &str, payload: &[u8]) -> Option<Control> {
 /// Keeps the broker in step with the group: discovery + state on every
 /// change, everything again on every (re)connect and when Home Assistant
 /// discovery restarts (`<prefix>/status` = `online`).
+/// What a message from the broker asks for.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Incoming {
+    /// Home Assistant (or the hub) came online: announce discovery again.
+    HaOnline,
+    Control(Control),
+    Speak(SpeakRequest),
+    Ignored,
+}
+
+/// Sorts one incoming message.
+pub fn route(topic: &str, payload: &[u8], ha_status: &str) -> Incoming {
+    if topic == ha_status {
+        return if payload == b"online" {
+            Incoming::HaOnline
+        } else {
+            Incoming::Ignored
+        };
+    }
+    if topic == SPEAK_TOPIC {
+        return parse_speak(payload).map_or(Incoming::Ignored, Incoming::Speak);
+    }
+    parse_command(topic, payload).map_or(Incoming::Ignored, Incoming::Control)
+}
+
 pub async fn run_mqtt(
     cfg: &MqttSettings,
     discovery_prefix: &str,
     mut publish: mpsc::Receiver<Published>,
     control: mpsc::Sender<Control>,
+    speak: mpsc::Sender<SpeakRequest>,
 ) -> anyhow::Result<()> {
     let mut options = MqttOptions::new(cfg.client_id.clone(), cfg.host.clone(), cfg.port);
     options.set_keep_alive(Duration::from_secs(30));
@@ -186,28 +213,33 @@ pub async fn run_mqtt(
                     client.publish(STATUS_TOPIC, QoS::AtLeastOnce, true, "online").await?;
                     client.subscribe(format!("{TOPIC_ROOT}/+/+/set"), QoS::AtLeastOnce).await?;
                     client.subscribe(ha_status.clone(), QoS::AtLeastOnce).await?;
+                    client.subscribe(SPEAK_TOPIC, QoS::AtLeastOnce).await?;
                     announced.clear();
                     for (prefs, connected) in known.values() {
                         send(&client, discovery_prefix, prefs, *connected, &mut announced).await?;
                     }
                 }
-                Ok(Event::Incoming(Packet::Publish(p))) => {
-                    if p.topic == ha_status {
-                        if p.payload.as_ref() == b"online" {
-                            announced.clear();
-                            for (prefs, connected) in known.values() {
-                                send(&client, discovery_prefix, prefs, *connected, &mut announced).await?;
-                            }
+                Ok(Event::Incoming(Packet::Publish(p))) => match route(&p.topic, &p.payload, &ha_status) {
+                    Incoming::HaOnline => {
+                        announced.clear();
+                        for (prefs, connected) in known.values() {
+                            send(&client, discovery_prefix, prefs, *connected, &mut announced).await?;
                         }
-                    } else if let Some(c) = parse_command(&p.topic, &p.payload) {
+                    }
+                    Incoming::Control(c) => {
                         tracing::debug!(?c, "command from Nidoo");
                         if control.send(c).await.is_err() {
                             return Ok(());
                         }
-                    } else {
-                        tracing::debug!(topic = %p.topic, "ignored message");
                     }
-                }
+                    Incoming::Speak(req) => {
+                        tracing::info!(id = %req.id, players = req.players.len(), "speak");
+                        if speak.try_send(req).is_err() {
+                            tracing::warn!("speech queue full, sentence dropped");
+                        }
+                    }
+                    Incoming::Ignored => tracing::debug!(topic = %p.topic, "ignored message"),
+                },
                 Ok(_) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, "broker connection lost; retrying");
@@ -427,5 +459,28 @@ mod tests {
             parse_command("elsewhere/0123456789ab/mute/set", b"ON"),
             None
         );
+    }
+
+    #[test]
+    fn incoming_messages_are_routed() {
+        use crate::speech::{SPEAK_TOPIC, SpeakRequest};
+        let ha = "homeassistant/status";
+        let speak = br#"{"id":"c","url":"/api/v1/assist/speech/c.wav","players":["abc"]}"#;
+        assert_eq!(
+            route(SPEAK_TOPIC, speak, ha),
+            Incoming::Speak(SpeakRequest {
+                id: "c".into(),
+                url: "/api/v1/assist/speech/c.wav".into(),
+                players: vec!["abc".into()],
+            })
+        );
+        assert_eq!(route(SPEAK_TOPIC, b"{}", ha), Incoming::Ignored);
+        assert_eq!(route(ha, b"online", ha), Incoming::HaOnline);
+        assert_eq!(route(ha, b"offline", ha), Incoming::Ignored);
+        assert!(matches!(
+            route("nidoo-sound/abc/mute/set", b"ON", ha),
+            Incoming::Control(Control::SetMute { muted: true, .. })
+        ));
+        assert_eq!(route("elsewhere", b"x", ha), Incoming::Ignored);
     }
 }
