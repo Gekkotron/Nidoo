@@ -987,6 +987,8 @@ mod tests {
             (p, playback)
         }
 
+        /// Starts the music and lets the group pick it up at the current time, before a test
+        /// moves the clock (the group's loop may otherwise take a tick first).
         async fn play(&self) {
             self.input.send(InputEvent::Started).await.unwrap();
             self.input
@@ -996,6 +998,7 @@ mod tests {
                 ])))
                 .await
                 .unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
         }
 
         async fn published_for(&mut self, short: &str) -> (PlayerPrefs, bool) {
