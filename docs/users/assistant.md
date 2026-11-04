@@ -51,7 +51,7 @@ With the history database, turns are kept 90 days. Without it, the hub keeps the
 
 ## Voice
 
-The hub can turn text into French speech, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Speech settings** (« Réglages de la voix » in French). For now this is a capability, not a habit: **Assist does not speak its replies yet**. Who speaks when is decided once satellites (microphone and speaker boards) exist.
+The hub can turn text into speech, in each language you set up, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Speech settings** (« Réglages de la voix » in French). For now this is a capability, not a habit: **Assist does not speak its replies yet**. Who speaks when is decided once satellites (microphone and speaker boards) exist.
 
 The engine is [Phonon](https://huggingface.co/gradium) by Gradium. The hub never ships the model files: you download them yourself, under their licence.
 
@@ -61,7 +61,7 @@ The French models, `gradium/phonon-40m-fr` and `gradium/phonon-40m-multilingual`
 
 1. On the model's page on huggingface.co, accept the terms.
 2. In your Hugging Face account, open **Settings, Access Tokens** and create a token with the **Read** role.
-3. Paste it in **Hugging Face token** at the bottom of the settings screen and save. The field is masked and write-only: the hub never shows the token again. **Clear** removes it. Changing it does not restart the hub, and clearing it keeps the models you already installed.
+3. Under **Add a model**, open **Hugging Face token: only needed for gated repositories** (it also says whether a token is set), paste the token and save. The field is masked and write-only: the hub never shows the token again. **Clear** removes it. Changing it does not restart the hub, and clearing it keeps the models you already installed.
 
 The token is sent only to huggingface.co.
 
@@ -77,23 +77,32 @@ Under **Add a model**, paste the model page address (`https://huggingface.co/own
 
 Choose one and press **Download**. It runs in the background with a progress bar and a **Cancel** button; the model appears in the list only when every file is complete and checked. One download runs at a time. If the repository is gated and no token is saved, or the account has not accepted the terms, the screen says so and links to the model page. A restart of the hub drops an unfinished download.
 
-No internet on the hub, or a token you would rather not use? Under **Upload from this computer**, press **Choose a folder** and pick the model's folder (the same files, from a download made elsewhere). The hub keeps the files once the weight file and the required small files are all there; it does not load the model at that point, so a model that cannot load shows as an Error when you make it active, and you can remove it.
+No internet on the hub, or a token you would rather not use? Under **Upload from this computer**, press **Choose a folder** and pick the model's folder (the same files, from a download made elsewhere). The hub keeps the files once the weight file and the required small files are all there; it does not load the model at that point, so a model that cannot load shows as an Error once a language uses it, and you can remove it.
 
-### Choosing the model and the voice
+### Languages, models and voices
 
-**Installed models** lists each model with its weight file, size, short commit, licence and whether it speaks French. Select **Active** (« Actif ») on one to use it; only the active model is loaded in memory, and switching unloads the previous one first. **Remove** deletes a model (after a confirmation); removing the active one leaves none active. A model that does not speak French can be installed, and the screen warns you.
+**Languages** (« Langues ») has one tab per language the hub speaks, named in the screen's language (French, English…), each with a dot for its model's state: green Ready, amber Loading, red Error, grey No model. The first tab is the **house language**: the one speech uses when a request names no language. Any other tab has a **Make house language** button that moves it first. The screen remembers the tab you were on, per browser.
 
-**Speech** at the top shows the engine's state: No model, Loading, Ready or Error with a message. A broken or missing model never stops the hub or text Assist: speech just shows an error.
+**+ Add** lists the languages the installed models speak that are not set up yet. Pick one: if a single model speaks it, it is added with that model; if several do, the screen asks which one. When no installed model speaks another language, it says so. So the first step is always to install a model, then to add its language.
 
-**Voice** lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) in the languages the model speaks: 15 French voices, with gender, age and a short description, in alphabetical order (an accented first letter sorts with its plain letter, so Élise comes before Eve). A catalog voice is downloaded the first time you choose it or listen to it (about 256 KB). The **▶** button on each voice speaks the **Try it** sentence (or the default one when the field is empty) in that voice without choosing it, through the player of the **Try it** section. Once the catalog list has been fetched it is kept on the disk, so the whole catalog stays listed offline (a voice not yet downloaded is marked unavailable offline); with no copy yet, no catalog voice is listed. If the chosen voice is not usable with the active model, speech falls back to Default and the screen says so.
+Each language has its own model. One multilingual model can serve several languages, or each language can have its own model. Every model a language uses stays loaded in memory (about 125 MB for a 40m `q8` model), so switching from one language to another costs nothing; a model no language uses is unloaded.
+
+In a language's tab:
+
+- **Model** (« Modèle ») chooses among the installed models that speak this language (a model whose files list no languages is offered everywhere, marked "languages unknown"), with its state: No model, Loading, Ready or Error with a message. Changing the model resets the voice to Default. A broken or missing model never stops the hub or text Assist: speech in that language just shows an error.
+- **Try it** (« Essai ») has the sentence field and **Play**. It starts with a sentence in that language (for French, "Bonjour, je suis l'assistant de la maison."); for a language without one, the field starts empty and **Play** waits until you type something. What you type is kept per language until you leave the page. It plays the speech in your browser and shows the time to first sound.
+- **Voice** (« Voix ») lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) voices in this language, such as 15 French voices, with gender, age and a short description, in alphabetical order (an accented first letter sorts with its plain letter, so Élise comes before Eve). Choose one for this language; a catalog voice is downloaded the first time you choose it or listen to it (about 256 KB). The **▶** button on each voice speaks the tab's sentence in that voice without choosing it. Once the catalog list has been fetched it is kept on the disk, so the whole catalog stays listed offline (a voice not yet downloaded is marked unavailable offline); with no copy yet, no catalog voice is listed. If the chosen voice is not usable with the language's model, speech falls back to Default and the screen says so.
+- **Remove language** at the bottom stops speaking it, after a confirmation.
+
+**Installed models** lists each model with its weight file, size, short commit, licence, the languages it speaks and **Used by**: the languages that speak with it. **Remove** deletes a model after a confirmation; when languages use it, the confirmation names them, and they stay in the list with no model until you choose another one.
 
 ### Testing
 
-**Try it** (« Essai ») has a sentence field and a **Play** button. It plays the speech in your browser and shows the time to first sound. On the hub's processor the first sound should come in about a second; the engine uses half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
+On the hub's processor the first sound should come in about a second. Each loaded model's engine uses half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
 
 ### The speech address
 
-For other clients, such as the future satellites, speech is two HTTP calls: a `POST` with the text, then a `GET` of the address it returns. The audio is a streamed WAV (24 kHz, 16-bit, mono) that starts playing while the hub is still producing it. The address is valid for 60 seconds. See the [HTTP API](../reference/http-api.md#speech).
+For other clients, such as the future satellites, speech is two HTTP calls: a `POST` with the text (and, if you want, its language; the house language otherwise), then a `GET` of the address it returns. The audio is a streamed WAV (24 kHz, 16-bit, mono) that starts playing while the hub is still producing it. The address is valid for 60 seconds. See the [HTTP API](../reference/http-api.md#speech).
 
 ## Not yet
 
