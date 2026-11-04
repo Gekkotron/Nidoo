@@ -26,6 +26,9 @@ use crate::state::{PlayerPrefs, StateStore, short_id};
 
 /// How often the pacer is polled while playing.
 const TICK: Duration = Duration::from_millis(5);
+/// How long after a sentence's last sample its stream ends, when no music plays: room for
+/// the satellite's output stage.
+const SPEECH_END_MARGIN_US: i64 = 100_000;
 /// Pause between connection attempts to an advertised player.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
@@ -713,12 +716,15 @@ impl Group {
             self.speech_clock = Some(ts);
         }
 
-        let sent_until = if self.playing {
+        // With music the sentence is done once mixed into the chunks sent: the music stream goes
+        // on. Without music its stream ends with it, so wait until the satellites have played it
+        // (a stream end drops what they hold), not just until its last chunk went out `lead` ahead.
+        let done_at = if self.playing {
             self.music_sent_until
         } else {
-            self.speech_clock.unwrap_or(i64::MIN)
+            now - SPEECH_END_MARGIN_US
         };
-        if self.mixer.is_playing() && self.mixer.finish_if_done(sent_until) && !self.playing {
+        if self.mixer.is_playing() && self.mixer.finish_if_done(done_at) && !self.playing {
             self.speech_clock = None;
             self.end_streams().await;
         }
@@ -1479,6 +1485,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_sentence_without_music_ends_its_stream_only_once_played() {
+        // Window: two 150 ms fades + 500 ms of speech = 800 ms, from now + lead (500 ms): it
+        // plays until 1.3 s. Every chunk is sent by 0.8 s (lead ahead), but ending the stream
+        // then would make the satellite drop the half second it has not played yet.
+        let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.say(speech_for(&["A"], 8_000, 25 * CHUNK_FRAMES)).await;
+        h.clock.advance(1_000_000);
+        let sent = a.drain().await;
+        assert!(audio_of(&sent).iter().any(|(_, d)| has_sample(d, 8_000)));
+        assert!(
+            !sent.contains(&PlayerCmd::StreamEnd),
+            "the stream ended before the sentence played: {:?}",
+            sent.iter()
+                .filter(|c| !matches!(c, PlayerCmd::Audio { .. }))
+                .collect::<Vec<_>>()
+        );
+        h.clock.advance(600_000);
+        assert_eq!(a.drain().await.last(), Some(&PlayerCmd::StreamEnd));
+    }
+
+    #[tokio::test]
     async fn music_starting_mid_sentence_never_overlaps() {
         let mut h = Harness::start_with(&[("A", 30, false, true)]).await;
         let (mut a, _) = h.ready_player("a", "A").await;
@@ -1512,7 +1540,8 @@ mod tests {
         })
         .await;
         drop(a);
-        h.clock.advance(1_000_000);
+        // Past the sentence's end (1.3 s) and the end margin.
+        h.clock.advance(1_300_000);
         let cmds = b.drain().await;
         assert!(audio_of(&cmds).iter().any(|(_, d)| has_sample(d, 8_000)));
         assert_eq!(cmds.last(), Some(&PlayerCmd::StreamEnd));
