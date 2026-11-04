@@ -1,5 +1,10 @@
-//! Configuration: defaults ← TOML file ← `NIDOO_SOUND_*` environment
-//! variables (`__` nests, e.g. `NIDOO_SOUND_MQTT__HOST`).
+//! Configuration: defaults ← the hub's broker (`<data_dir>/hub.json`) ← TOML
+//! file ← `NIDOO_SOUND_*` environment variables (`__` nests, e.g.
+//! `NIDOO_SOUND_MQTT__HOST`).
+//!
+//! With the Docker Compose install the service shares the hub's `data/` folder
+//! and the host network, so the broker address and login the hub saved in
+//! `hub.json` work here as they are: no `.env` needed.
 
 use std::path::{Path, PathBuf};
 
@@ -11,6 +16,8 @@ use serde::{Deserialize, Serialize};
 /// Read when no `--config` is given (optional).
 pub const DEFAULT_CONFIG_FILE: &str = "nidoo-sound.toml";
 pub const ENV_PREFIX: &str = "NIDOO_SOUND_";
+/// The hub's own settings file (`crates/nidoo/src/setup/hub_file.rs`).
+pub const HUB_FILE: &str = "hub.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -32,6 +39,9 @@ pub struct SoundConfig {
     /// Silence on a connected input after which playback stops.
     pub idle_stop_ms: u32,
     pub discovery_prefix: String,
+    /// The broker login came from the hub's `hub.json` (for the startup log).
+    #[serde(skip)]
+    pub broker_from_hub: bool,
 }
 
 impl Default for SoundConfig {
@@ -45,25 +55,66 @@ impl Default for SoundConfig {
             input_buffer_ms: 250,
             idle_stop_ms: 5000,
             discovery_prefix: "homeassistant".into(),
+            broker_from_hub: false,
         }
     }
 }
 
 impl SoundConfig {
-    /// Loads `path` (must exist) or the optional `nidoo-sound.toml`, then the environment.
+    /// Loads `path` (must exist) or the optional `nidoo-sound.toml`, then the
+    /// environment, over the hub's broker from `<data_dir>/hub.json` when the
+    /// file has one.
     pub fn load(path: Option<&Path>) -> anyhow::Result<Self> {
-        let mut figment = Figment::from(Serialized::defaults(SoundConfig::default()));
-        figment = match path {
-            Some(p) => {
-                anyhow::ensure!(p.exists(), "config file {} not found", p.display());
-                figment.merge(Toml::file_exact(p))
-            }
-            None => figment.merge(Toml::file(DEFAULT_CONFIG_FILE)),
+        if let Some(p) = path {
+            anyhow::ensure!(p.exists(), "config file {} not found", p.display());
+        }
+        let own = |base: Figment| -> anyhow::Result<SoundConfig> {
+            let file = match path {
+                Some(p) => Toml::file_exact(p),
+                None => Toml::file(DEFAULT_CONFIG_FILE),
+            };
+            base.merge(file)
+                .merge(Env::prefixed(ENV_PREFIX).split("__"))
+                .extract()
+                .context("reading the configuration")
         };
-        figment
-            .merge(Env::prefixed(ENV_PREFIX).split("__"))
-            .extract()
-            .context("reading the configuration")
+        let defaults = || Figment::from(Serialized::defaults(SoundConfig::default()));
+        // data_dir itself may come from the file or the environment.
+        let first = own(defaults())?;
+        let Some(hub) = hub_broker(&first.data_dir.join(HUB_FILE)) else {
+            return Ok(first);
+        };
+        let mut config = own(defaults().merge(Serialized::default("mqtt", &hub)))?;
+        config.broker_from_hub =
+            config.mqtt.user == hub.user && config.mqtt.password == hub.password;
+        Ok(config)
+    }
+}
+
+/// The broker part of the hub's `hub.json`. Its client id is left out on
+/// purpose: two clients with one id would keep kicking each other off.
+#[derive(Debug, Serialize, Deserialize)]
+struct HubBroker {
+    host: String,
+    port: u16,
+    user: Option<String>,
+    password: Option<String>,
+}
+
+/// The hub's broker, or `None` when the file is missing, unreadable or has
+/// none yet (a hub still in its setup wizard).
+fn hub_broker(path: &Path) -> Option<HubBroker> {
+    #[derive(Deserialize)]
+    struct HubFile {
+        mqtt: Option<HubBroker>,
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<HubFile>(&text) {
+        Ok(file) => file.mqtt,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "ignoring the hub's settings file");
+            None
+        }
     }
 }
 
@@ -143,6 +194,72 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env("NIDOO_SOUND_LISTEN_PORT", 0);
             assert_eq!(SoundConfig::load(None).unwrap().listen_port, 0);
+            Ok(())
+        });
+    }
+
+    const HUB_JSON: &str = r#"{"mqtt":{"host":"hub-broker","port":1884,"user":"hub","password":"secret","client_id":"nidoo","send_ha_birth":false,"ha_status_topic":"homeassistant/status"},"database_url":"postgres://x","finished":true}"#;
+
+    #[test]
+    fn the_hub_login_is_used_without_any_setting() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("data")?;
+            jail.create_file("data/hub.json", HUB_JSON)?;
+            let c = SoundConfig::load(None).unwrap();
+            assert_eq!((c.mqtt.host.as_str(), c.mqtt.port), ("hub-broker", 1884));
+            assert_eq!(c.mqtt.user.as_deref(), Some("hub"));
+            assert_eq!(c.mqtt.password.as_deref(), Some("secret"));
+            // Our own client id: two clients with one id kick each other off.
+            assert_eq!(c.mqtt.client_id, MqttSettings::default().client_id);
+            assert!(c.broker_from_hub);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn env_beats_the_hub_login() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("data")?;
+            jail.create_file("data/hub.json", HUB_JSON)?;
+            jail.set_env("NIDOO_SOUND_MQTT__USER", "sound");
+            jail.set_env("NIDOO_SOUND_MQTT__PASSWORD", "other");
+            let c = SoundConfig::load(None).unwrap();
+            assert_eq!(c.mqtt.user.as_deref(), Some("sound"));
+            assert_eq!(c.mqtt.password.as_deref(), Some("other"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn the_hub_file_is_read_from_the_data_dir() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("elsewhere")?;
+            jail.create_file("elsewhere/hub.json", HUB_JSON)?;
+            jail.set_env("NIDOO_SOUND_DATA_DIR", "elsewhere");
+            assert_eq!(
+                SoundConfig::load(None).unwrap().mqtt.user.as_deref(),
+                Some("hub")
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_hub_file_without_a_broker_or_unreadable_is_ignored() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("data")?;
+            jail.create_file("data/hub.json", r#"{"finished":false}"#)?;
+            let c = SoundConfig::load(None).unwrap();
+            assert_eq!(
+                (c.mqtt.clone(), c.broker_from_hub),
+                (MqttSettings::default(), false)
+            );
+            jail.create_file("data/hub.json", "{\"mqtt\":")?;
+            let c = SoundConfig::load(None).unwrap();
+            assert_eq!(
+                (c.mqtt, c.broker_from_hub),
+                (MqttSettings::default(), false)
+            );
             Ok(())
         });
     }

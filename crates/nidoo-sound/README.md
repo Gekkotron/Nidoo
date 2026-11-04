@@ -11,9 +11,17 @@ nidoo-sound run [--config nidoo-sound.toml]
 
 ## Configuration
 
-Defaults, then the TOML file (`nidoo-sound.toml` if present, or `--config`),
-then environment variables (`__` nests a section). See
-`nidoo-sound.example.toml`.
+Defaults, then the hub's broker, then the TOML file (`nidoo-sound.toml` if
+present, or `--config`), then environment variables (`__` nests a section).
+See `nidoo-sound.example.toml`.
+
+The hub's broker is the `mqtt` section of `<data_dir>/hub.json`, the file the
+hub writes when its broker is set up: host, port, user and password (not the
+client id). With the Docker Compose install both services share `data/` and
+the host network, so nothing needs setting. The file is read at startup:
+restart the service after changing the hub's broker. A hub that takes its
+broker from `NIDOO_MQTT__*` variables instead does not write them there; set
+the same values as `NIDOO_SOUND_MQTT__*`.
 
 | Key | Environment | Default | Meaning |
 |---|---|---|---|
@@ -24,10 +32,10 @@ then environment variables (`__` nests a section). See
 | `input_buffer_ms` | `NIDOO_SOUND_INPUT_BUFFER_MS` | `250` | phone audio gathered before playback starts, so Wi-Fi stalls up to about this long play through without gaps; adds this much delay |
 | `idle_stop_ms` | `NIDOO_SOUND_IDLE_STOP_MS` | `5000` | silence on a connected input that stops playback |
 | `discovery_prefix` | `NIDOO_SOUND_DISCOVERY_PREFIX` | `homeassistant` | MQTT discovery prefix |
-| `mqtt.host` | `NIDOO_SOUND_MQTT__HOST` | `localhost` | broker |
-| `mqtt.port` | `NIDOO_SOUND_MQTT__PORT` | `1883` | |
-| `mqtt.user` | `NIDOO_SOUND_MQTT__USER` | none | same login as the hub |
-| `mqtt.password` | `NIDOO_SOUND_MQTT__PASSWORD` | none | |
+| `mqtt.host` | `NIDOO_SOUND_MQTT__HOST` | the hub's, else `localhost` | broker |
+| `mqtt.port` | `NIDOO_SOUND_MQTT__PORT` | the hub's, else `1883` | |
+| `mqtt.user` | `NIDOO_SOUND_MQTT__USER` | the hub's, else none | |
+| `mqtt.password` | `NIDOO_SOUND_MQTT__PASSWORD` | the hub's, else none | |
 | `mqtt.client_id` | `NIDOO_SOUND_MQTT__CLIENT_ID` | `nidoo-sound` | |
 
 `sound/identity.key` is the server's Sendspin identity (a Curve25519 key):
@@ -42,7 +50,7 @@ Per satellite (`<sid>` = first 12 hex characters of SHA-256 of its Sendspin
 |---|---|---|---|
 | Volume (number, 0–100) | `homeassistant/number/nidoo_sound_<sid>/volume/config` | `nidoo-sound/<sid>/volume` | `nidoo-sound/<sid>/volume/set` |
 | Mute (switch) | `…/switch/nidoo_sound_<sid>/mute/config` | `nidoo-sound/<sid>/mute` | `…/mute/set` (`ON`/`OFF`) |
-| Allowed (switch, config) | `…/switch/nidoo_sound_<sid>/allowed/config` | `nidoo-sound/<sid>/allowed` | `…/allowed/set` |
+| Allowed (switch) | `…/switch/nidoo_sound_<sid>/allowed/config` | `nidoo-sound/<sid>/allowed` | `…/allowed/set` |
 | Connected (binary sensor, diagnostic) | `…/binary_sensor/nidoo_sound_<sid>/connected/config` | `nidoo-sound/<sid>/connected` | |
 
 Availability: `nidoo-sound/status` (`online`, last will `offline`).

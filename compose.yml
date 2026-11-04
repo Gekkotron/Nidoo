@@ -102,7 +102,9 @@ services:
     profiles: ["sound"]
     restart: unless-stopped
     network_mode: host
-    # Optional, git-ignored: NIDOO_SOUND_* overrides (broker login, ports).
+    # The broker and its login come from the hub's data/hub.json (mounted
+    # below). Optional, git-ignored: NIDOO_SOUND_* overrides, e.g. its own
+    # broker login.
     env_file:
       - path: .env
         required: false
