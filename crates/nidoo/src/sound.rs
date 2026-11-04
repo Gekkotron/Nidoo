@@ -16,6 +16,22 @@ use crate::hub::{Hub, HubError};
 
 /// The topic `nidoo-sound` reads sentences from; not retained (a sentence is said once).
 pub const SPEAK_TOPIC: &str = "nidoo-sound/speak";
+/// Holds the music of some satellites while someone talks to the house; not retained.
+pub const HOLD_TOPIC: &str = "nidoo-sound/hold";
+/// `nidoo-sound` reports a sentence finished playing (or was dropped); not retained.
+pub const SPOKEN_TOPIC: &str = "nidoo-sound/spoken";
+
+/// A [`SPOKEN_TOPIC`] report.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct Spoken {
+    pub id: String,
+    pub played: bool,
+}
+
+/// The report in a [`SPOKEN_TOPIC`] payload.
+pub fn parse_spoken(payload: &[u8]) -> Option<Spoken> {
+    serde_json::from_slice(payload).ok()
+}
 
 /// Where a sentence is said.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +117,59 @@ pub fn speaking_satellites(
     Ok(players)
 }
 
+/// The room of satellite `sid`: its Volume's area, `None` when it has none.
+pub fn room_of(reg: &Registry, sid: &str) -> Option<String> {
+    reg.entity(&format!("{SOUND_DEVICE_PREFIX}{sid}_volume"))
+        .map(|e| e.area.clone())
+        .filter(|area| area != UNASSIGNED_AREA)
+}
+
+/// The satellites whose music is held while `sid` listens: every Allowed one of its room
+/// (muted or offline ones too, harmlessly), or `sid` alone when it has no room.
+pub fn room_satellites(reg: &Registry, sid: &str) -> Vec<String> {
+    let Some(room) = room_of(reg, sid) else {
+        return vec![sid.to_owned()];
+    };
+    let allowed = |device: &str| {
+        reg.state(&format!("{device}_allowed"))
+            .is_some_and(|s| s.value == StateValue::OnOff(true))
+    };
+    let mut players: Vec<String> = reg
+        .entities()
+        .filter_map(|entity| {
+            let device = entity.device_id.as_deref()?;
+            let other = device.strip_prefix(SOUND_DEVICE_PREFIX)?;
+            (entity.unique_id == format!("{device}_volume")
+                && entity.area == room
+                && allowed(device))
+            .then(|| other.to_owned())
+        })
+        .collect();
+    if !players.iter().any(|p| p == sid) {
+        players.push(sid.to_owned());
+    }
+    players.sort();
+    players.dedup();
+    players
+}
+
+/// The satellites the hub greets for speech input: able to speak (Allowed, Connected, the
+/// service up) and with a known IPv4 address.
+pub fn voice_satellites(reg: &Registry) -> Vec<(String, std::net::Ipv4Addr)> {
+    speaking_satellites(reg, &SpeakTarget::All)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|sid| {
+            let state = reg.state(&format!("{SOUND_DEVICE_PREFIX}{sid}_address"))?;
+            let StateValue::Text(text) = &state.value else {
+                return None;
+            };
+            let ip = text.parse().ok()?;
+            Some((sid, ip))
+        })
+        .collect()
+}
+
 impl Hub {
     /// Says `text` on the satellites of `target`; the number of satellites it was sent to.
     pub async fn speak_in(
@@ -110,6 +179,19 @@ impl Hub {
         language: Option<String>,
         voice: Option<String>,
     ) -> Result<usize, SpeakError> {
+        let (_, players) = self.speak_clip(target, text, language, voice).await?;
+        Ok(players.len())
+    }
+
+    /// [`Hub::speak_in`], returning the clip id (which `nidoo-sound` reports once played)
+    /// and the satellites.
+    pub async fn speak_clip(
+        &self,
+        target: SpeakTarget,
+        text: &str,
+        language: Option<String>,
+        voice: Option<String>,
+    ) -> Result<(String, Vec<String>), SpeakError> {
         let players = speaking_satellites(&self.read(), &target)?;
         let tts = self.tts().cloned().ok_or(SpeakError::NotSetUp)?;
         let ticket = tts
@@ -131,7 +213,7 @@ impl Hub {
             retain: false,
         })
         .map_err(SpeakError::Publish)?;
-        Ok(players.len())
+        Ok((ticket.id, players))
     }
 }
 
@@ -293,5 +375,64 @@ mod tests {
             empty.unwrap_err().to_string(),
             "no satellite can speak in the house"
         );
+    }
+
+    fn with_address(reg: &mut Registry, sid: &str, address: &str) {
+        let device = format!("{SOUND_DEVICE_PREFIX}{sid}");
+        let config = json!({
+            "name": "address",
+            "unique_id": format!("{device}_address"),
+            "state_topic": format!("nidoo-sound/{sid}/address"),
+            "availability_topic": "nidoo-sound/status",
+            "entity_category": "diagnostic",
+            "device": { "identifiers": [device], "name": sid },
+        });
+        feed(
+            reg,
+            &format!("nidoo/sensor/{device}/address/config"),
+            &config.to_string(),
+        );
+        feed(reg, &format!("nidoo-sound/{sid}/address"), address);
+    }
+
+    #[test]
+    fn room_satellites_take_every_allowed_one_of_the_room() {
+        let mut reg = house();
+        // Muted and disconnected ones are held too: the hold is harmless and they may
+        // come back mid-exchange.
+        assert_eq!(room_satellites(&reg, "a"), ids(&["a", "gone", "muted"]));
+        assert_eq!(
+            room_satellites(&reg, "b"),
+            ids(&["b"]),
+            "refused is not allowed"
+        );
+        satellite(&mut reg, "lonely", UNASSIGNED_AREA, true, true, false);
+        assert_eq!(room_satellites(&reg, "lonely"), ids(&["lonely"]));
+        assert_eq!(room_of(&reg, "lonely"), None);
+        assert_eq!(room_of(&reg, "a").as_deref(), Some("sejour"));
+    }
+
+    #[test]
+    fn voice_satellites_need_an_address() {
+        let mut reg = house();
+        with_address(&mut reg, "a", "192.0.2.10");
+        with_address(&mut reg, "b", "");
+        with_address(&mut reg, "refused", "192.0.2.11");
+        assert_eq!(
+            voice_satellites(&reg),
+            vec![("a".to_owned(), "192.0.2.10".parse().unwrap())]
+        );
+    }
+
+    #[test]
+    fn parse_spoken_reads_the_sound_report() {
+        assert_eq!(
+            parse_spoken(br#"{"id":"c","played":true}"#),
+            Some(Spoken {
+                id: "c".into(),
+                played: true
+            })
+        );
+        assert_eq!(parse_spoken(b"nope"), None);
     }
 }

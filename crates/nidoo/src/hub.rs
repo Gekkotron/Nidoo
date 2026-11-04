@@ -322,6 +322,8 @@ pub struct Hub {
     history: OnceLock<Arc<History>>,
     tts: OnceLock<Arc<crate::assist::tts::Tts>>,
     stt: OnceLock<Arc<crate::assist::stt::Stt>>,
+    /// `nidoo-sound`'s "sentence played" reports, for the voice service.
+    spoken: broadcast::Sender<crate::sound::Spoken>,
     /// The setup context, set once at startup in Run mode; the settings MCP tools use it.
     pub(crate) setup: OnceLock<Arc<crate::setup::SetupCtx>>,
 }
@@ -470,6 +472,7 @@ impl Hub {
             history: OnceLock::new(),
             tts: OnceLock::new(),
             stt: OnceLock::new(),
+            spoken: broadcast::channel(64).0,
             setup: OnceLock::new(),
         })
     }
@@ -502,6 +505,11 @@ impl Hub {
     /// The speech input facade, when one is configured.
     pub fn stt(&self) -> Option<&Arc<crate::assist::stt::Stt>> {
         self.stt.get()
+    }
+
+    /// `nidoo-sound`'s reports that a sentence finished playing.
+    pub fn subscribe_spoken(&self) -> broadcast::Receiver<crate::sound::Spoken> {
+        self.spoken.subscribe()
     }
 
     /// The recorder, when one is configured.
@@ -767,6 +775,13 @@ impl Hub {
     /// event: a non-retained message on the command topic of a button some flow watches
     /// broadcasts [`WsEvent::ButtonPressed`]. A retained one is a replay, never a press.
     pub fn ingest_message(&self, topic: &str, payload: &[u8], retain: bool) -> Vec<Change> {
+        // A report for the voice service, never a device.
+        if topic == crate::sound::SPOKEN_TOPIC {
+            if let Some(spoken) = crate::sound::parse_spoken(payload) {
+                let _ = self.spoken.send(spoken);
+            }
+            return Vec::new();
+        }
         // The broker's own figure, not a device.
         if self.ingest_system_retained(topic, payload) {
             return Vec::new();
@@ -1109,6 +1124,7 @@ impl Hub {
             .chain(std::iter::once(
                 crate::system::services::RETAINED_TOPIC.to_owned(),
             ))
+            .chain(std::iter::once(crate::sound::SPOKEN_TOPIC.to_owned()))
             .collect()
     }
 

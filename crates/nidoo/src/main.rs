@@ -159,9 +159,16 @@ async fn run() -> anyhow::Result<ExitCode> {
             hub.set_tts(nidoo::assist::tts::Tts::start(
                 nidoo::assist::tts::TtsConfig::for_data_dir(&data_dir),
             ));
-            hub.set_stt(nidoo::assist::stt::Stt::start(
-                data_dir.join("assist").join("stt"),
-            ));
+            let stt = nidoo::assist::stt::Stt::start(data_dir.join("assist").join("stt"));
+            hub.set_stt(Arc::clone(&stt));
+            {
+                let hub = Arc::clone(&hub);
+                tokio::spawn(async move {
+                    if let Err(e) = nidoo::assist::stt::service::run_voice(hub, stt).await {
+                        tracing::warn!("speech input is off: {e}");
+                    }
+                });
+            }
             hub.set_setup(Arc::clone(&setup_ctx));
             if cfg.history.enabled() {
                 match History::start(&cfg.history, hub.zone()) {

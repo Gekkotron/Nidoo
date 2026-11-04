@@ -249,6 +249,10 @@ pub(crate) fn reason_fr(english: &str) -> &'static str {
 impl Hub {
     /// Answers one request from the assistant page: plans it, executes it unless simulated,
     /// and logs the turn.
+    ///
+    /// A turn from a `satellite:` client (speech input) may come from anyone in earshot, or
+    /// from a TV: a future security-sensitive intent (alarm, locks, garage or entrance doors,
+    /// covers that open the house) must refuse it unless that intent is enabled for voice.
     pub async fn assist(self: &Arc<Self>, req: AssistRequest) -> Result<AssistTurn, HubError> {
         self.assist_at(req, clock::now()).await
     }

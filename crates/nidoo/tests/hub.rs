@@ -2231,3 +2231,27 @@ async fn extra_filters_include_retained_topic() {
             .contains(&nidoo::system::services::RETAINED_TOPIC.to_owned())
     );
 }
+
+#[test]
+fn spoken_message_reaches_subscribers() {
+    let (hub, _rx) = hub();
+    assert!(
+        hub.extra_filters()
+            .contains(&nidoo::sound::SPOKEN_TOPIC.to_owned())
+    );
+    let mut spoken = hub.subscribe_spoken();
+    let changes = hub.ingest_message(
+        nidoo::sound::SPOKEN_TOPIC,
+        br#"{"id":"clip","played":true}"#,
+        false,
+    );
+    assert!(changes.is_empty());
+    assert_eq!(
+        spoken.try_recv().unwrap(),
+        nidoo::sound::Spoken {
+            id: "clip".into(),
+            played: true
+        }
+    );
+    assert!(hub.snapshot().entities.is_empty(), "not a device");
+}

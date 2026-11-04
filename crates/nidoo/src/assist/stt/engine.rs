@@ -13,7 +13,7 @@ pub trait Transcriber: Send + Sync {
 }
 
 /// Finds phrases in a stream of samples, one detector per exchange.
-pub trait Vad: Send {
+pub trait Vad: Send + Sync {
     fn accept(&mut self, samples: &[f32]);
     /// The next finished phrase (speech followed by enough silence), if any.
     fn pop_segment(&mut self) -> Option<Vec<f32>>;

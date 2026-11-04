@@ -15,6 +15,7 @@ pub mod engine;
 pub mod guard;
 pub mod models;
 pub mod packet;
+pub mod service;
 pub mod session;
 #[cfg(feature = "stt")]
 pub mod sherpa;
