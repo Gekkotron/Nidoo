@@ -5,10 +5,15 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use nidoo_sound::clock::{Clock, MonotonicClock};
+use nidoo_sound::config::SoundConfig;
 use nidoo_sound::discover::{self, DiscoveryEvent};
+use nidoo_sound::group::{Group, sendspin_connector};
+use nidoo_sound::input::{InputEvent, run_pcm_input};
+use nidoo_sound::mqtt::run_mqtt;
 use nidoo_sound::player::{PlayerCmd, PlayerEvent, run_player};
 use nidoo_sound::proto::messages::PCM_48K_STEREO_16;
 use nidoo_sound::proto::noise::ServerIdentity;
+use nidoo_sound::state::StateStore;
 use nidoo_sound::tone;
 use tokio::sync::mpsc;
 
@@ -23,7 +28,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run the sound service.
-    Run,
+    Run {
+        /// Configuration file (default: `nidoo-sound.toml` if present).
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Hardware check: play a 440 Hz tone on every player found, then change
     /// its volume, mute and unmute it, and end the stream.
     #[command(hide = true)]
@@ -51,7 +60,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let rt = tokio::runtime::Runtime::new()?;
     match cli.command {
-        Command::Run => anyhow::bail!("`run` is not implemented yet"),
+        Command::Run { config } => rt.block_on(run(config)),
         Command::Tone {
             seconds,
             volume,
@@ -59,6 +68,71 @@ fn main() -> anyhow::Result<()> {
             data_dir,
         } => rt.block_on(tone_check(seconds, volume, lead_ms, data_dir)),
     }
+}
+
+async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
+    let cfg = SoundConfig::load(config.as_deref())?;
+    let sound_dir = cfg.data_dir.join("sound");
+    let identity = Arc::new(ServerIdentity::load_or_create(
+        &sound_dir.join("identity.key"),
+    )?);
+    let store = StateStore::load(sound_dir.join("players.json"))?;
+    let clock: Arc<dyn Clock> = Arc::new(MonotonicClock::new());
+    let shutdown = shutdown_listener()?;
+
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", cfg.input_port)).await?;
+    tracing::info!(
+        server_id = %identity.server_id,
+        input_port = cfg.input_port,
+        broker = %format!("{}:{}", cfg.mqtt.host, cfg.mqtt.port),
+        "nidoo-sound started"
+    );
+    let discovery = discover::browse()?;
+    let (input_tx, input_rx) = mpsc::channel(256);
+    let idle = Duration::from_millis(u64::from(cfg.idle_stop_ms));
+    tokio::spawn(run_pcm_input(listener, idle, input_tx.clone()));
+
+    let (control_tx, control_rx) = mpsc::channel(64);
+    let (publish_tx, publish_rx) = mpsc::channel(256);
+    let lead_us = i64::from(cfg.lead_ms) * 1_000;
+    let group = Group::new(
+        store,
+        clock.clone(),
+        lead_us,
+        sendspin_connector(identity, clock),
+    );
+    let group = tokio::spawn(group.run(discovery, input_rx, control_rx, publish_tx));
+    let mqtt = {
+        let cfg = cfg.clone();
+        tokio::spawn(async move {
+            run_mqtt(&cfg.mqtt, &cfg.discovery_prefix, publish_rx, control_tx).await
+        })
+    };
+
+    tokio::select! {
+        _ = shutdown => tracing::info!("shutting down"),
+        r = mqtt => anyhow::bail!("MQTT link ended: {r:?}"),
+    }
+    // End every stream, give the connections a moment to send it, then stop
+    // the group: the MQTT link sees its channel close, publishes `offline`
+    // and disconnects.
+    input_tx.send(InputEvent::Stopped).await.ok();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    group.abort();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    Ok(())
+}
+
+/// Resolves on Ctrl-C or SIGTERM (`docker stop`).
+fn shutdown_listener() -> std::io::Result<impl std::future::Future<Output = ()>> {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut ctrl_c = Box::pin(tokio::signal::ctrl_c());
+    Ok(async move {
+        tokio::select! {
+            _ = &mut ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    })
 }
 
 async fn tone_check(
