@@ -115,6 +115,13 @@ fn mount(entities: Vec<EntityView>) -> Mounted {
     Mounted { host, pending }
 }
 
+/// Lets a click's request reach the fetch stub, which reads the body before it records it.
+async fn settle() {
+    tick().await;
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    tick().await;
+}
+
 fn find(host: &web_sys::Element, selector: &str) -> Option<web_sys::HtmlElement> {
     host.query_selector(selector)
         .unwrap()
@@ -166,9 +173,7 @@ async fn the_test_button_says_a_sentence_on_that_satellite() {
     find(&m.host, ".satellite__speak")
         .expect("test button")
         .click();
-    for _ in 0..5 {
-        tick().await;
-    }
+    settle().await;
     let sent: Vec<Value> = stub
         .requests()
         .into_iter()
@@ -194,9 +199,7 @@ async fn a_failed_test_shows_the_reason() {
     find(&m.host, ".satellite__speak")
         .expect("test button")
         .click();
-    for _ in 0..5 {
-        tick().await;
-    }
+    settle().await;
     let error = find(&m.host, ".satellite__error").expect("an error line");
     assert!(
         error
