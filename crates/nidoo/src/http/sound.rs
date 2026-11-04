@@ -24,9 +24,10 @@ impl From<SpeakError> for HttpError {
             SpeakError::UnknownRoom(_) => {
                 HttpError::new(StatusCode::UNPROCESSABLE_ENTITY, err.to_string())
             }
-            SpeakError::NoSatellite | SpeakError::NotSetUp => {
-                HttpError::new(StatusCode::CONFLICT, err.to_string())
-            }
+            SpeakError::NoSatellite
+            | SpeakError::NoSatelliteInRoom
+            | SpeakError::SatelliteCannotSpeak
+            | SpeakError::NotSetUp => HttpError::new(StatusCode::CONFLICT, err.to_string()),
             SpeakError::Tts(err) => err.into(),
             SpeakError::Publish(err) => err.into(),
         }

@@ -137,14 +137,17 @@ up under **Speech settings**, from the gear on the Assistant page, see
 
 Only satellites whose **Allowed** and **Connected** are both on speak, and only
 while `nidoo-sound` runs. A muted
-satellite counts but stays silent, as it does for music. When no satellite of
-the room can speak, the sentence is refused with "no satellite can speak in
-this room" rather than lost.
+satellite counts but stays silent, as it does for music. When no satellite can
+speak where the sentence was sent, it is refused rather than lost: "no
+satellite can speak in this room", "no satellite can speak in the house", or,
+for one satellite, "this satellite cannot speak now".
 
 If music is playing, it is turned down while the sentence plays and comes back
 after it. Sentences sent close together play one after the other, never on top
-of each other; up to four can wait, a fifth is dropped. A satellite that drops
-off in the middle of a sentence does not stop the others.
+of each other; up to four can wait, a fifth is dropped, and so is one still
+waiting 45 seconds after it was sent (the hub keeps its audio only a minute).
+A satellite that drops off in the middle of a sentence does not stop the
+others.
 
 Over the network, the hub publishes the sentence's address on the broker topic
 `nidoo-sound/speak` and `nidoo-sound` fetches the audio from the hub (its
