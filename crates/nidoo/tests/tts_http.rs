@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 
 use common::fake_hf::{FakeRepo, serve};
 use futures_util::stream;
-use nidoo::assist::tts::engine::NoSpeechLoader;
+use nidoo::assist::tts::engine::{NoSpeechLoader, SpeakerLoader};
 use nidoo::assist::tts::store::MAX_WEIGHTS_BYTES;
-use nidoo::assist::tts::tone::ToneLoader;
+use nidoo::assist::tts::tone::{RecordingLoader, ToneLoader};
 use nidoo::assist::tts::voices::{VOICE_CATALOG_REPO, VOICE_CATALOG_REV};
 use nidoo::assist::tts::{Tts, TtsConfig};
 use nidoo::config::Config;
@@ -171,14 +171,30 @@ impl Rig {
 }
 
 async fn start_tts(root: std::path::PathBuf, base: &str) -> Arc<Tts> {
+    start_tts_with(root, base, Arc::new(ToneLoader))
+}
+
+fn start_tts_with(
+    root: std::path::PathBuf,
+    base: &str,
+    loader: Arc<dyn SpeakerLoader>,
+) -> Arc<Tts> {
     Tts::start(TtsConfig {
         root,
         hf_base: base.to_owned(),
-        loader: Arc::new(ToneLoader),
+        loader,
     })
 }
 
 async fn rig_with(with_tts: bool, prepare: impl FnOnce(&std::path::Path)) -> Rig {
+    rig_full(with_tts, prepare, Arc::new(ToneLoader)).await
+}
+
+async fn rig_full(
+    with_tts: bool,
+    prepare: impl FnOnce(&std::path::Path),
+    loader: Arc<dyn SpeakerLoader>,
+) -> Rig {
     let (base, _log) = serve(vec![repo(), repo_bilingual(), voice_catalog()]).await;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("tts");
@@ -188,7 +204,7 @@ async fn rig_with(with_tts: bool, prepare: impl FnOnce(&std::path::Path)) -> Rig
     cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
     let hub = Hub::new(&cfg, tx);
     if with_tts {
-        hub.set_tts(start_tts(root, &base).await);
+        hub.set_tts(start_tts_with(root, &base, loader));
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -826,4 +842,82 @@ async fn available_lists_codes_not_yet_used() {
     r.set_language("fr", json!({"model": fr_only})).await;
     let (_, v) = r.get("/languages/available").await;
     assert_eq!(v, json!([{"code": "en", "models": [both]}]));
+}
+
+impl Rig {
+    async fn speak(&self, body: Value) -> (StatusCode, Value) {
+        let resp = self
+            .client
+            .post(format!("http://{}/api/v1/assist/speech", self.addr))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        (resp.status(), resp.json().await.unwrap_or(Value::Null))
+    }
+}
+
+fn names(voices: &Value) -> Vec<String> {
+    voices["voices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_voice_of_another_language_is_refused() {
+    let r = rig().await;
+    let id = r.install().await;
+    r.activate(&id).await;
+    r.status_until("ready").await;
+    let (s, _) = r.speak(json!({"text": "Bonjour", "voice": "Bob"})).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!r.root().join("voices/BBB.safetensors").exists());
+}
+
+#[tokio::test]
+async fn voices_follow_the_requested_language() {
+    let r = rig().await;
+    let id = r.install_repo(BILINGUAL).await;
+    r.set_language("fr", json!({"model": id})).await;
+    r.set_language("en", json!({"model": id})).await;
+    r.language_until(1, "ready").await;
+    let (s, en) = r.get("/voices?language=en").await;
+    assert_eq!(s, StatusCode::OK, "{en}");
+    assert!(names(&en).contains(&"Bob".to_string()), "{en}");
+    assert!(!names(&en).contains(&"Noemie".to_string()), "{en}");
+    let (_, house) = r.get("/voices").await;
+    assert!(names(&house).contains(&"Noemie".to_string()), "{house}");
+    assert!(!names(&house).contains(&"Bob".to_string()), "{house}");
+    let (s, _) = r.get("/voices?language=de").await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn a_named_catalog_voice_speaks_on_its_first_use() {
+    // Registering a voice is a message to the engine thread: the speech asking for it must
+    // still get it, even when the thread has not taken the voice in yet.
+    let loader = RecordingLoader {
+        add_voice_delay: Duration::from_millis(200),
+        ..RecordingLoader::default()
+    };
+    let voices = loader.voices.clone();
+    let r = rig_full(true, |_| {}, Arc::new(loader)).await;
+    let id = r.install().await;
+    r.activate(&id).await;
+    r.status_until("ready").await;
+    let (s, t) = r.speak(json!({"text": "Bonjour", "voice": "Noemie"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let url = t["url"].as_str().unwrap();
+    r.client
+        .get(format!("http://{}{url}", r.addr))
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(*voices.lock().unwrap(), [Some("Noemie".to_string())]);
 }

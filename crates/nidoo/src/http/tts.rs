@@ -6,14 +6,14 @@ use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use nidoo_api::{
     AvailableLanguage, DownloadRequest, DownloadView, HouseRequest, InspectRequest,
     LanguageRequest, ModelView, RepoListing, SpeechRequest, SpeechTicket, TokenInput, TtsStatus,
-    UploadSession, VoicesView,
+    UploadSession, VoicesQuery, VoicesView,
 };
 
 use super::api::HttpError;
@@ -161,8 +161,11 @@ async fn abort_upload(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn voices(State(hub): HubState) -> Result<Json<VoicesView>, HttpError> {
-    Ok(Json(tts(&hub)?.voices().await))
+async fn voices(
+    State(hub): HubState,
+    Query(q): Query<VoicesQuery>,
+) -> Result<Json<VoicesView>, HttpError> {
+    Ok(Json(tts(&hub)?.voices(q.language.as_deref()).await?))
 }
 
 async fn set_token(State(hub): HubState, body: Json_<TokenInput>) -> Result<StatusCode, HttpError> {

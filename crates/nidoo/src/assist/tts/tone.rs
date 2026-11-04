@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use super::engine::{Speaker, SpeakerLoader};
 
@@ -28,7 +29,7 @@ impl SpeakerLoader for ToneLoader {
         Ok(Box::new(ToneSpeaker {
             voices: vec!["default".into()],
             gate: None,
-            seen: None,
+            record: None,
         }))
     }
 }
@@ -36,18 +37,29 @@ impl SpeakerLoader for ToneLoader {
 struct ToneSpeaker {
     voices: Vec<String>,
     gate: Option<Arc<Gate>>,
-    /// Where each request's language is written, for [`RecordingLoader`].
-    seen: Option<Seen>,
+    /// What a [`RecordingLoader`] writes down.
+    record: Option<Record>,
+}
+
+#[derive(Clone)]
+struct Record {
+    languages: Seen,
+    voices: Seen,
+    add_voice_delay: Duration,
 }
 
 /// The languages a [`RecordingLoader`]'s speakers were asked to speak, in order.
 pub type Seen = Arc<Mutex<Vec<Option<String>>>>;
 
-/// A loader like [`ToneLoader`] whose speakers write down each request's language.
+/// A loader like [`ToneLoader`] whose speakers write down each request's language and voice.
 #[derive(Default)]
 pub struct RecordingLoader {
     /// The languages asked for, in order.
     pub seen: Seen,
+    /// The voices asked for, in order.
+    pub voices: Seen,
+    /// How long registering a voice takes on the engine thread.
+    pub add_voice_delay: Duration,
 }
 
 impl SpeakerLoader for RecordingLoader {
@@ -56,7 +68,11 @@ impl SpeakerLoader for RecordingLoader {
         Ok(Box::new(ToneSpeaker {
             voices: vec!["default".into()],
             gate: None,
-            seen: Some(self.seen.clone()),
+            record: Some(Record {
+                languages: self.seen.clone(),
+                voices: self.voices.clone(),
+                add_voice_delay: self.add_voice_delay,
+            }),
         }))
     }
 }
@@ -75,6 +91,9 @@ impl Speaker for ToneSpeaker {
     }
 
     fn add_voice(&mut self, name: &str, _path: &Path) -> Result<(), String> {
+        if let Some(record) = &self.record {
+            std::thread::sleep(record.add_voice_delay);
+        }
         self.voices.push(name.to_string());
         Ok(())
     }
@@ -83,13 +102,20 @@ impl Speaker for ToneSpeaker {
         &mut self,
         text: &str,
         language: Option<&str>,
-        _voice: Option<&str>,
+        voice: Option<&str>,
         chunk: &mut dyn FnMut(&[f32]) -> bool,
     ) -> Result<(), String> {
-        if let Some(seen) = &self.seen {
-            seen.lock()
+        if let Some(record) = &self.record {
+            record
+                .languages
+                .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push(language.map(str::to_owned));
+            record
+                .voices
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(voice.map(str::to_owned));
         }
         if let Some(gate) = &self.gate {
             gate.wait_for_release();
@@ -158,7 +184,7 @@ impl SpeakerLoader for BlockingLoader {
         Ok(Box::new(ToneSpeaker {
             voices: vec!["default".into()],
             gate: Some(self.gate.clone()),
-            seen: None,
+            record: None,
         }))
     }
 }

@@ -258,9 +258,20 @@ pub struct UploadSession {
 pub struct SpeechRequest {
     /// The text to speak.
     pub text: String,
-    /// The voice to use; the chosen voice when left out.
+    /// The language code to speak in; the house language when left out.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// The voice to use; the language's chosen voice when left out.
     #[serde(default)]
     pub voice: Option<String>,
+}
+
+/// The language a voice list is asked for (`?language=`); the house language when left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct VoicesQuery {
+    /// The language code.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 /// Where a speech clip can be fetched.

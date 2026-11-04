@@ -66,7 +66,7 @@ pub use tts::{
     AvailableLanguage, DEFAULT_VOICE, DownloadRequest, DownloadView, EngineState, HouseRequest,
     InspectRequest, JobState, LanguageRequest, LanguageView, ModelSource, ModelView, RepoListing,
     SpeechRequest, SpeechTicket, TokenInput, TtsStatus, UploadSession, VoiceSource, VoiceView,
-    VoicesView, WeightFile,
+    VoicesQuery, VoicesView, WeightFile,
 };
 pub use views::{
     AreaView, BridgeView, DeviceView, EntityView, IgnoredView, UpdateView, mask_secret,
