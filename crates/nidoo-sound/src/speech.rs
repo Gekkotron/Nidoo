@@ -12,6 +12,11 @@ use serde::Deserialize;
 
 /// Where the hub asks us to speak (not retained).
 pub const SPEAK_TOPIC: &str = "nidoo-sound/speak";
+/// Where the hub serves its clips; a speak message naming anything else is ignored.
+pub const SPEECH_PATH: &str = "/api/v1/assist/speech/";
+/// A request that waited longer than this is dropped unfetched: the hub keeps a clip 60 s from
+/// when it made it, and the fetch itself needs some of that time.
+pub const MAX_WAIT: Duration = Duration::from_secs(45);
 
 /// Stream rate every player gets.
 const STREAM_RATE: u32 = 48_000;
@@ -40,6 +45,9 @@ pub struct SpeakRequest {
     pub players: Vec<String>,
 }
 
+/// A speak request and when it came in, waiting for the fetcher.
+pub type Waiting = (tokio::time::Instant, SpeakRequest);
+
 /// A sentence ready to play: stream-format audio for these satellites.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Speech {
@@ -47,11 +55,23 @@ pub struct Speech {
     pub pcm: Bytes,
 }
 
-/// The request in a `nidoo-sound/speak` payload; `None` for bad JSON or no satellite.
+/// The request in a `nidoo-sound/speak` payload; `None` for bad JSON, no satellite, or a clip
+/// address that is not one of the hub's clips.
 pub fn parse_speak(payload: &[u8]) -> Option<SpeakRequest> {
     serde_json::from_slice::<SpeakRequest>(payload)
         .ok()
-        .filter(|r| !r.players.is_empty())
+        .filter(|r| !r.players.is_empty() && is_clip_path(&r.url))
+}
+
+/// `/api/v1/assist/speech/<file>`, the file name a plain one (no `/`, query or `..`).
+fn is_clip_path(url: &str) -> bool {
+    url.strip_prefix(SPEECH_PATH).is_some_and(|file| {
+        !file.is_empty()
+            && !file.starts_with('.')
+            && file
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    })
 }
 
 /// A RIFF/WAVE clip (PCM, 16-bit, mono or stereo, any rate) as stream audio.
@@ -183,14 +203,19 @@ pub async fn fetch_speech_with(
 }
 
 /// Fetches each speak request in turn and hands the sentence to the group;
-/// a clip that cannot be fetched is logged and skipped.
+/// a clip that cannot be fetched, or waited past [`MAX_WAIT`], is logged and skipped.
 pub async fn run_speech_fetcher(
     hub_url: String,
-    mut requests: tokio::sync::mpsc::Receiver<SpeakRequest>,
+    mut requests: tokio::sync::mpsc::Receiver<Waiting>,
     to_group: tokio::sync::mpsc::Sender<Speech>,
 ) {
     let client = reqwest::Client::new();
-    while let Some(req) = requests.recv().await {
+    while let Some((received, req)) = requests.recv().await {
+        let waited = received.elapsed();
+        if waited > MAX_WAIT {
+            tracing::warn!(id = %req.id, waited_s = waited.as_secs(), "speech waited too long, dropped");
+            continue;
+        }
         match fetch_speech(&client, &hub_url, &req).await {
             Ok(speech) => {
                 if to_group.send(speech).await.is_err() {
@@ -265,6 +290,41 @@ mod tests {
         );
         assert_eq!(parse_speak(br#"{"id":"a","url":"/x","players":[]}"#), None);
         assert_eq!(parse_speak(b"nope"), None);
+    }
+
+    #[test]
+    fn parse_speak_takes_only_the_hubs_clips() {
+        let with_url = |url: &str| {
+            parse_speak(format!(r#"{{"id":"a","url":"{url}","players":["p"]}}"#).as_bytes())
+        };
+        assert!(with_url("/api/v1/assist/speech/0f3c-9a_b.wav").is_some());
+        for url in [
+            "/x",
+            "/api/v1/settings",
+            "/api/v1/assist/speech/",
+            "/api/v1/assist/speech/../settings",
+            "/api/v1/assist/speech/a/b.wav",
+            "/api/v1/assist/speech/a.wav?x=1",
+            "http://elsewhere/api/v1/assist/speech/a.wav",
+            "/api/v1/assist/speech/..",
+        ] {
+            assert_eq!(with_url(url), None, "{url}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_that_waited_too_long_is_not_fetched() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (requests, rx) = tokio::sync::mpsc::channel(4);
+        let (to_group, mut spoken) = tokio::sync::mpsc::channel(4);
+        let old = tokio::time::Instant::now() - MAX_WAIT - Duration::from_secs(1);
+        requests.send((old, clip_request())).await.unwrap();
+        drop(requests);
+        run_speech_fetcher(format!("http://{addr}"), rx, to_group).await;
+        assert!(spoken.recv().await.is_none());
+        let asked = tokio::time::timeout(Duration::from_millis(100), listener.accept()).await;
+        assert!(asked.is_err(), "the hub was asked for the clip");
     }
 
     #[test]
