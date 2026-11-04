@@ -164,8 +164,8 @@ fn instructions() -> String {
          leaving it name the port `true` or `false`; `missing` is `fail` (the default), `true` \
          or `false` and picks that port when the value is unknown; `average` (`15m`, at most `24h`) compares the mean of the entity's readings over that window, the newest included, instead of its current value; `value` must be a number), `switch` (1 to 10 ordered `rules` of `op` `eq`, `ne`, `gt`, `lt`, `gte`, `lte` or `between` (`value` to `to`, both included) on `entity` or the triggering value, with optional `average` as for `if`; edges leaving it name the port `\"1\"` to `\"n\"` (the rule's position) or `\"otherwise\"`; `otherwise: true` adds that port, `all: true` takes every matching rule), `time.between` (`from` included, `to` excluded, `HH:MM` in the house local time; ports `in` and `out`), `delay` (`for`: `5m`, `1h30m`; \
          with `up_to` it waits a random time between the two), \
-         `command` (the same JSON as `send_command`) and `notify` (a phone push: `title`, optional `body`, `channel`, `severity`, `entity_id`, \
-         `image_url`, `silent`, `id`, `lang`). Its `title` and `body` take placeholders filled at \
+         `command` (the same JSON as `send_command`), `notify` (a phone push: `title`, optional `body`, `channel`, `severity`, `entity_id`, \
+         `image_url`, `silent`, `id`, `lang`) and `speak` (says `text` on the speaker satellites of `room`, an area id or name, or of every room without one). The `title` and `body` of `notify` and the `text` of `speak` take placeholders filled at \
          run time: `{{entity_id}}` is the entity's value with its unit (`{{weather_temperature}}` \
          → `10.1 °C`), `{{trigger}}` the value that started the run, `:N` rounds to N decimals \
          (`{{weather_temperature:0}}`), and `+ - * /` with spaces around them plus parentheses do \
@@ -220,7 +220,8 @@ fn instructions() -> String {
          `[history] url` is set in the hub's config. `send_notification` sends a phone push (`title` \
          required; `channel` alarm, security, camera, energy, climate, system or misc; `severity` \
          info, warning or critical; the same `id` replaces an earlier alert) and `list_alerts` \
-         returns the recent ones, newest first. Climate (when `[climate] enabled`): each area with a \
+         returns the recent ones, newest first. `speak` says a sentence on the speaker satellites \
+         of one `room` or of every room (only the Allowed and Connected ones). Climate (when `[climate] enabled`): each area with a \
          climate device is a zone (`off`, `pending`, `active`). `climate_status` shows every \
          zone's reading, decision and why (`source`, `reason`), overrides and pending proposal. \
          The engine learns rules from history and proposes them; nothing applies until \

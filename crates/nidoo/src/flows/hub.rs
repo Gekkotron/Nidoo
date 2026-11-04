@@ -111,6 +111,7 @@ impl Hub {
         validate(&flow).map_err(|err| HubError::InvalidFlow(err.to_string()))?;
         self.check_house(&flow)?;
         self.check_area(&mut flow)?;
+        self.check_speak_rooms(&mut flow)?;
         let warning = (self.fallback_active() && uses_sun_or_is_dark(&flow))
             .then(|| PARIS_FALLBACK_WARNING.to_owned());
         let flow = self.write_flow(&flow)?;
@@ -390,6 +391,33 @@ impl Hub {
         }
     }
 
+    /// Resolves the room of every `speak` node to an area id (a name is accepted, as for
+    /// `flow.area`) and refuses one the house does not have.
+    fn check_speak_rooms(&self, flow: &mut Flow) -> Result<(), HubError> {
+        let reg = self.read();
+        let areas = reg.effective_areas();
+        for node in &mut flow.nodes {
+            let NodeKind::Speak(params) = &mut node.kind else {
+                continue;
+            };
+            let Some(raw) = params.room.clone() else {
+                continue;
+            };
+            let resolved = reg.resolve_area(&raw);
+            if !areas
+                .iter()
+                .any(|area| area.id == resolved && area.id != UNASSIGNED_AREA)
+            {
+                return Err(HubError::InvalidFlow(format!(
+                    "unknown area `{raw}` in node `{}`",
+                    node.id
+                )));
+            }
+            params.room = Some(resolved);
+        }
+        Ok(())
+    }
+
     /// Checks every entity a node names exists and every command maps; publishes nothing.
     fn check_house(&self, flow: &Flow) -> Result<(), HubError> {
         let reg = self.read();
@@ -420,20 +448,22 @@ impl Hub {
                     )));
                 }
             }
-            if let NodeKind::Notify(params) = &node.kind {
-                // `validate` already refused a text that does not parse.
-                let texts = [Some(&params.title), params.body.as_ref()];
-                for template in texts.into_iter().flatten().filter_map(|t| parse(t).ok()) {
-                    if let Some(id) = template
-                        .entities()
-                        .into_iter()
-                        .find(|id| !results.contains(id) && reg.entity(id).is_none())
-                    {
-                        return Err(HubError::InvalidFlow(format!(
-                            "unknown entity `{id}` in node `{}`",
-                            node.id
-                        )));
-                    }
+            let texts = match &node.kind {
+                NodeKind::Notify(params) => vec![Some(&params.title), params.body.as_ref()],
+                NodeKind::Speak(params) => vec![Some(&params.text)],
+                _ => Vec::new(),
+            };
+            // `validate` already refused a text that does not parse.
+            for template in texts.into_iter().flatten().filter_map(|t| parse(t).ok()) {
+                if let Some(id) = template
+                    .entities()
+                    .into_iter()
+                    .find(|id| !results.contains(id) && reg.entity(id).is_none())
+                {
+                    return Err(HubError::InvalidFlow(format!(
+                        "unknown entity `{id}` in node `{}`",
+                        node.id
+                    )));
                 }
             }
             let entity = match &node.kind {
@@ -458,6 +488,7 @@ impl Hub {
                 NodeKind::Delay(_)
                 | NodeKind::Limit(_)
                 | NodeKind::Notify(_)
+                | NodeKind::Speak(_)
                 | NodeKind::TimeBetween(_)
                 | NodeKind::TriggerSchedule(_)
                 | NodeKind::TriggerSun(_)

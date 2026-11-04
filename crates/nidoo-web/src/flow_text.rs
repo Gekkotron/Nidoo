@@ -48,6 +48,7 @@ pub fn role(kind: &NodeKind) -> Role {
         NodeKind::Command(_)
         | NodeKind::FlowEnable(_)
         | NodeKind::Notify(_)
+        | NodeKind::Speak(_)
         | NodeKind::Math(_) => Role::Action,
         NodeKind::Delay(_) | NodeKind::Limit(_) => Role::Wait,
     }
@@ -393,6 +394,17 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             let title =
                 template::parse(&p.title).map_or_else(|_| p.title.clone(), |t| t.label(&name));
             t::notify(lang, &title)
+        }
+        NodeKind::Speak(p) => {
+            let name = |id: &str| ctx.entities.get(id).map(|e| entity_title(lang, e));
+            let text = template::parse(&p.text).map_or_else(|_| p.text.clone(), |t| t.label(&name));
+            let room = p.room.as_deref().map(|id| {
+                ctx.areas
+                    .iter()
+                    .find(|a| a.id == id)
+                    .map_or_else(|| id.to_owned(), |a| a.name.clone())
+            });
+            t::speak(lang, &text, room.as_deref())
         }
         NodeKind::FlowEnable(p) => {
             let target = match &p.flow {

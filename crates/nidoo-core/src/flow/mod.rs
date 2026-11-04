@@ -26,10 +26,10 @@ pub use math::{
 pub use model::{
     CommandParams, DelayParams, Edge, Flow, FlowEnableParams, FlowMode, IfParams, LimitParams,
     MAX_AVERAGE_SECS, MAX_LIMIT, MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind,
-    NotifyParams, OffPeakEdge, Op, Position, RuleOp, SunWhich, SwitchParams, SwitchRule,
-    TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
-    TriggerSignalParams, TriggerSilentParams, TriggerStateParams, TriggerSunParams,
-    command_with_number, math_names, uses_sun_or_is_dark,
+    NotifyParams, OffPeakEdge, Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams,
+    SwitchRule, TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams,
+    TriggerScheduleParams, TriggerSignalParams, TriggerSilentParams, TriggerStateParams,
+    TriggerSunParams, command_with_number, math_names, uses_sun_or_is_dark,
 };
 pub use scalar::{CompareError, Scalar, compare};
 pub use schedule::{Schedule, ScheduleError};

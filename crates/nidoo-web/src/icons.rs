@@ -314,7 +314,7 @@ pub fn consumer_icon(icon: Option<nidoo_core::energy::ConsumerIcon>) -> &'static
 /// The glyph of a flow node on the canvas: a bolt for a trigger, a fork for an `if` or a
 /// switch, a clock for a schedule or a time-of-day check, a sun for a solar event, a moon for an
 /// `if` on darkness, an hourglass for a delay, a play triangle for a command, a toggle for a
-/// flow switch and a bell for a notification.
+/// flow switch, a bell for a notification and a speaker for a spoken sentence.
 pub fn node_icon(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::TriggerState(_) => NODE_BOLT,
@@ -332,6 +332,7 @@ pub fn node_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Command(_) => NODE_PLAY,
         NodeKind::FlowEnable(_) => NODE_SWITCH,
         NodeKind::Notify(_) => CHANNEL_ALARM,
+        NodeKind::Speak(_) => SPEAKER,
         NodeKind::Math(_) => NODE_MATH,
     }
 }

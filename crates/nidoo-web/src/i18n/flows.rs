@@ -22,6 +22,8 @@ pub enum FlowText {
     Disarm,
     Wait,
     Notify,
+    Speak,
+    SpeakAllRooms,
     Enable,
     Disable,
     // Words inside sentences.
@@ -306,6 +308,8 @@ impl FlowText {
         FlowText::Disarm,
         FlowText::Wait,
         FlowText::Notify,
+        FlowText::Speak,
+        FlowText::SpeakAllRooms,
         FlowText::Enable,
         FlowText::Disable,
         FlowText::ThisFlow,
@@ -584,6 +588,8 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::Disarm => ("Disarm", "Désactiver"),
         T::Wait => ("Wait", "Attendre"),
         T::Notify => ("Notify", "Notifier"),
+        T::Speak => ("Speak", "Annoncer"),
+        T::SpeakAllRooms => ("All rooms", "Toutes les pièces"),
         T::Enable => ("Enable", "Activer"),
         T::Disable => ("Disable", "Désactiver"),
         T::ThisFlow => ("this flow", "cette automatisation"),
@@ -1188,6 +1194,20 @@ pub fn at_most(lang: Lang, max: u32, per: &str) -> String {
     )
 }
 
+/// `Speak "Dinner is ready" — Kitchen` / `Annoncer « Le dîner est prêt » — Cuisine`; `room` is
+/// the room's name, or `None` for every room. No text reads "Speak" / "Annoncer".
+pub fn speak(lang: Lang, text: &str, room: Option<&str>) -> String {
+    let room = room.unwrap_or_else(|| flow_text(lang, FlowText::SpeakAllRooms));
+    if text.trim().is_empty() {
+        return format!("{} — {room}", flow_text(lang, FlowText::Speak));
+    }
+    pick(
+        lang,
+        format!("Speak \"{text}\" — {room}"),
+        format!("Annoncer «{NBSP}{text}{NBSP}» — {room}"),
+    )
+}
+
 /// `Notify "Door open"` / `Notifier « Porte ouverte »`; no title reads "Notify" / "Notifier".
 pub fn notify(lang: Lang, title: &str) -> String {
     if title.trim().is_empty() {
@@ -1605,6 +1625,23 @@ mod tests {
         FlowText::SevInfo,
         FlowText::NodeAction,
     ];
+
+    #[test]
+    fn speak_sentences() {
+        assert_eq!(
+            speak(Lang::En, "Dinner", Some("Kitchen")),
+            "Speak \"Dinner\" — Kitchen"
+        );
+        assert_eq!(
+            speak(Lang::En, "Dinner", None),
+            "Speak \"Dinner\" — All rooms"
+        );
+        assert_eq!(
+            speak(Lang::Fr, "Dîner", None),
+            "Annoncer «\u{a0}Dîner\u{a0}» — Toutes les pièces"
+        );
+        assert_eq!(speak(Lang::En, " ", None), "Speak — All rooms");
+    }
 
     #[test]
     fn removed_wires_counts() {

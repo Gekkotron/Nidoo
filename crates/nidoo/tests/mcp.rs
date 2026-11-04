@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
+mod common;
+
 type Client = RunningService<RoleClient, ()>;
 
 /// A recorded ZBMINI switch: the `rooms/stair/light` device, with its diagnostic sensor.
@@ -66,6 +68,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "get_history",
     "get_grid_day",
     "send_notification",
+    "speak",
     "list_alerts",
     "climate_status",
     "get_climate_zone",
@@ -230,6 +233,7 @@ async fn lists_the_expected_tools() {
     assert!(instructions.contains("set_override"), "{instructions}");
     assert!(instructions.contains("send_command"), "{instructions}");
     assert!(instructions.contains("send_notification"), "{instructions}");
+    assert!(instructions.contains("`speak`"), "{instructions}");
     assert!(instructions.contains("optional `field`"), "{instructions}");
     assert!(instructions.contains("list_alerts"), "{instructions}");
     assert!(instructions.contains("`notify`"), "{instructions}");
@@ -1726,4 +1730,62 @@ async fn mcp_set_settings_error_never_echoes_a_secret() {
         text_of(&result)
     );
     assert!(!format!("{result:?}").contains("sk-test-123"));
+}
+
+#[tokio::test]
+async fn speak_tool_says_the_sentence_on_the_satellites() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut server = Server::start().await;
+    server.online();
+    server
+        .hub
+        .set_tts(common::speech::ready_tts(dir.path().join("tts")).await);
+    server.hub.ingest(
+        "nidoo/ui/_areas",
+        br#"{"areas":[{"id":"kitchen","name":"Kitchen"},{"id":"office","name":"Office"}]}"#,
+    );
+    common::speech::satellite(&server.hub, "a", "kitchen");
+    common::speech::satellite(&server.hub, "b", "office");
+    let client = server.client().await;
+
+    let result = call(
+        &client,
+        "speak",
+        json!({"text": "Dinner", "room": "Kitchen"}),
+    )
+    .await;
+    assert_eq!(json_of("speak", &result), json!({"players": 1}));
+    let all = call(&client, "speak", json!({"text": "Dinner"})).await;
+    assert_eq!(json_of("speak", &all), json!({"players": 2}));
+    let mut players = Vec::new();
+    while let Ok(publish) = server.publisher.try_recv() {
+        if publish.topic == "nidoo-sound/speak" {
+            let v: Value = serde_json::from_str(&publish.payload).expect("json");
+            players.push(v["players"].clone());
+        }
+    }
+    assert_eq!(players, vec![json!(["a"]), json!(["a", "b"])]);
+
+    let unknown = call(&client, "speak", json!({"text": "Dinner", "room": "attic"})).await;
+    assert_eq!(unknown.is_error, Some(true));
+    assert!(
+        text_of(&unknown).contains("unknown room `attic`"),
+        "{}",
+        text_of(&unknown)
+    );
+}
+
+#[tokio::test]
+async fn speak_tool_without_speech_is_an_error() {
+    let server = Server::start().await;
+    server.online();
+    common::speech::satellite(&server.hub, "a", "kitchen");
+    let client = server.client().await;
+    let result = call(&client, "speak", json!({"text": "Dinner"})).await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text_of(&result).contains("speech is not set up"),
+        "{}",
+        text_of(&result)
+    );
 }

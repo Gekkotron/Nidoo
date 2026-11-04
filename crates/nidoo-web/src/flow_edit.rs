@@ -340,6 +340,7 @@ pub fn next_node_id(flow: &Flow, kind: &NodeKind) -> String {
         NodeKind::Command(_) => "command",
         NodeKind::FlowEnable(_) => "flow_switch",
         NodeKind::Notify(_) => "notify",
+        NodeKind::Speak(_) => "speak",
         NodeKind::Switch(_) => "switch",
         NodeKind::TimeBetween(_) => "time",
         NodeKind::Math(_) => "math",

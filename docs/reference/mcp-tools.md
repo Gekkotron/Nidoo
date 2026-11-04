@@ -93,6 +93,7 @@ Network presence needs `network.enabled`, on by default; otherwise these tools a
 
 | Tool | What it does |
 | --- | --- |
+| `speak` | Says a sentence on the speaker satellites and returns `{players}`, how many were asked. Args: `text` (required), optional `room` (an area id or name; every room without it), `language`, `voice`. Only the satellites whose Allowed and Connected are on count. Fails when speech is not set up, the room is unknown, or no satellite can speak there. |
 | `send_notification` | Sends a phone push and returns its alert id. Args: `title` (required), optional `body`, `channel` (`alarm`, `security`, `camera`, `energy`, `climate`, `system`, `misc`; default `misc`), `severity` (`info`, `warning`, `critical`; default `info`), `entity_id`, `image_url`, `silent`, `id`. Sending again with the same `id` replaces the earlier alert; without one the id is `mcp-<unix seconds>-<n>`. |
 | `list_alerts` | The recent push alerts, newest first. Args: optional `limit` (20 by default), `channel`. |
 

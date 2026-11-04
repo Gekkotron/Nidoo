@@ -351,6 +351,7 @@ fn node_editor_body(
         NodeKind::Command(_) => FlowText::NodeCommand,
         NodeKind::FlowEnable(_) => FlowText::NodeFlowSwitch,
         NodeKind::Notify(_) => FlowText::Notify,
+        NodeKind::Speak(_) => FlowText::Speak,
         NodeKind::Switch(_) => FlowText::SwitchCard,
         NodeKind::TimeBetween(_) => FlowText::TimeCard,
         NodeKind::Math(_) => FlowText::MathCard,
@@ -1370,6 +1371,8 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
         NodeKind::TriggerManual(p) => manual_fields(form, id, p.value).into_any(),
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
         NodeKind::Notify(p) => notify_fields(form, id, p).into_any(),
+        // The form arrives with the Speak entry of the action picker.
+        NodeKind::Speak(_) => ().into_any(),
         NodeKind::Switch(p) => switch_fields(form, id, p).into_any(),
         NodeKind::TimeBetween(p) => time_fields(form, id, p).into_any(),
         NodeKind::Delay(p) => {
