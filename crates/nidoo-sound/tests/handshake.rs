@@ -619,3 +619,72 @@ async fn failed_handshake_never_reaches_the_group() {
     p.send_json(FakePlayer::hello(400_000)).await;
     assert!(matches!(l.next().await, FromPlayer::Accepted { .. }));
 }
+
+#[tokio::test]
+async fn commands_listed_in_client_hello_are_used() {
+    let (mut h, mut p) = start().await;
+    // sendspin-js lists volume and mute in client/hello, not in client/state.
+    let mut hello = FakePlayer::hello(400_000);
+    hello["payload"]["player@v1_support"]["supported_commands"] = json!(["volume", "mute"]);
+    p.send_json(hello).await;
+    assert!(matches!(h.event().await, PlayerEvent::Connected(_)));
+    h.cmds
+        .send(PlayerCmd::Activate { playback: true })
+        .await
+        .unwrap();
+    assert_eq!(p.recv_json().await["type"], "server/activate");
+    p.send_json(
+        json!({"type":"client/state","payload":{"available":true,"player":{
+        "volume":100,"muted":false,"static_delay_ms":0,"required_lead_time_ms":250,
+        "min_buffer_ms":250,"supported_commands":["set_static_delay"]}}}),
+    )
+    .await;
+    let PlayerEvent::State {
+        supported_commands, ..
+    } = h.event().await
+    else {
+        panic!("expected State")
+    };
+    assert!(supported_commands.iter().any(|c| c == "volume"));
+    h.cmds.send(PlayerCmd::Volume(30)).await.unwrap();
+    let v = p.recv_json().await;
+    assert_eq!(
+        v["payload"]["player"],
+        json!({"command":"volume","volume":30})
+    );
+}
+
+#[tokio::test]
+async fn delta_client_state_keeps_earlier_fields() {
+    let (mut h, mut p) = start_ready(400_000, &["volume", "mute"]).await;
+    p.send_json(
+        json!({"type":"client/state","payload":{"available":true,"player":{
+        "volume":20,"muted":false,"output_delay_ms":40,"required_lead_time_ms":150,
+        "min_buffer_ms":300,"supported_commands":["volume","mute"]}}}),
+    )
+    .await;
+    h.event().await;
+    // sendspin-js sends only the fields that changed after its first state.
+    p.send_json(json!({"type":"client/state","payload":{"available":true,"player":{"volume":12}}}))
+        .await;
+    let PlayerEvent::State {
+        volume,
+        supported_commands,
+        min_buffer_ms,
+        output_delay_ms,
+        ..
+    } = h.event().await
+    else {
+        panic!("expected State")
+    };
+    assert_eq!(
+        (volume, min_buffer_ms, output_delay_ms),
+        (Some(12), Some(300), Some(40))
+    );
+    assert_eq!(supported_commands, vec!["volume", "mute"]);
+    h.cmds.send(PlayerCmd::Volume(5)).await.unwrap();
+    assert_eq!(
+        p.recv_json().await["payload"]["player"],
+        json!({"command":"volume","volume":5})
+    );
+}

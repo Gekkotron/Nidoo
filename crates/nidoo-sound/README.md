@@ -52,7 +52,9 @@ It speaks the Sendspin protocol **1.0.0-rc1** as implemented by ESPHome
 2026.10.2 (sendspin-cpp 0.9.3): Noise `KKpsk2` with the published Sentinel
 PSK (the satellites' unpaired access), the `player@v1` role, clock sync, one
 group holding every player, player volume and mute. ESPHome and this server
-are updated together.
+are updated together. Players that list their commands in `client/hello` and
+send only changed fields in later `client/state` messages (sendspin-js 5.0.0,
+the browser player) work too.
 
 Deliberate subset of the spec, which asks more of a full server:
 
