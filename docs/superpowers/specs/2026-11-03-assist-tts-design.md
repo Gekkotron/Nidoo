@@ -119,7 +119,8 @@ downloads them with their own token. Nidoo never ships the weights.
 - Exactly one model is loaded: the active one. Loading happens in the
   background at boot and on activation; until it is ready the engine reports
   `loading`, and on failure `error` with a readable message. Switching
-  models loads the new one first, then drops the old one.
+  models drops the old one before loading the new one (changed during build:
+  this halves peak memory, and speech is refused while loading either way).
 - Synthesis runs on a **dedicated thread** (not the async runtime), one
   request at a time, fed by a small bounded queue. A full queue answers
   `503` at once rather than piling up *(my call; the builder picks the queue

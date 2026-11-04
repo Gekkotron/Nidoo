@@ -314,6 +314,34 @@ The French [assistant](../users/assistant.md). Types are camelCase. A turn is `{
 | `GET /api/v1/assist/turns?limit=…` | `{turns, kept}`: the recent turns, newest first (`limit` 50 by default, at most 200). `kept` is `true` when the history database keeps them (90 days); `false` means only the hub's memory, the last 100 turns, lost on restart. |
 | `POST /api/v1/assist/turns/{id}/wrong` | Marks a turn as wrongly understood (`204`); `404` for an unknown id. |
 
+## Speech
+
+Text-to-speech for the [assistant's voice](../users/assistant.md#voice). Needs a hub built with the `tts` feature (the default); without it `GET /api/v1/assist/tts/status` has `speechBuilt: false` and the speech routes answer `409`. Types are camelCase.
+
+Engine state is `{state: "no_model"}`, `{state: "loading", model}`, `{state: "ready", model}` or `{state: "error", model, message}`. A model is `{id, repo, revision, weights, size, licence, languages, french, source: "download" | "upload", installedAt, active}`. A download is `{model, state: "running" | "done" | "failed" | "cancelled", done, total, file, error}` (bytes).
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/v1/assist/tts/status` | `{engine, active, voice, tokenSet, download, speechBuilt}`. The token itself is never returned. |
+| `GET /api/v1/assist/tts/models` | The installed models, a list. |
+| `DELETE /api/v1/assist/tts/models/{id}` | Removes a model (`204`); `404` for an unknown id. Removing the active one unloads it. |
+| `PUT /api/v1/assist/tts/active` | `{model}`, an id or `null` for none; returns the status. The model loads in the background (state `loading`). `404` for an unknown id. |
+| `POST /api/v1/assist/tts/inspect` | `{url}`: a Hugging Face address (`https://huggingface.co/owner/repo`, `hf://owner/repo[@rev]` or `owner/repo`). Returns `{repo, revision, gated, licence, weights: [{name, size}], smallBytes}`. `422` for another host, a bad shape, or a repository that is not a Phonon model; `502` when Hugging Face cannot be reached. |
+| `POST /api/v1/assist/tts/downloads` | `{repo, revision, weights}`; starts the background job and returns its progress (`202`). `409` while another download runs; `422` for a weight file the repository does not offer. A refusal for disk space, a size over the cap, or a gated repository without an accepted token comes back as a `failed` job whose `error` says why, not as an HTTP error. |
+| `GET /api/v1/assist/tts/downloads/current` | The running job, or the last one until the next attempt; `404` when there is none. Poll it about once a second. |
+| `DELETE /api/v1/assist/tts/downloads/current` | Cancels the job and deletes its temporary folder (`204`). |
+| `POST /api/v1/assist/tts/uploads` | Opens an upload session; returns `{id}`. |
+| `PUT /api/v1/assist/tts/uploads/{id}/files/{name}` | The raw file as the body, one file per request, streamed to disk (`204`). Only the file names a Phonon model holds are accepted, at most one weight file (200 MB cap) and 8 MB for each other file. `422` for a name that is not allowed, `413` for a file over the cap, `404` for an unknown session. |
+| `POST /api/v1/assist/tts/uploads/{id}/finish` | Checks the files make a loadable model and installs it; returns the model. `422` when they do not. |
+| `DELETE /api/v1/assist/tts/uploads/{id}` | Abandons the session and deletes its files (`204`). |
+| `GET /api/v1/assist/tts/voices` | `{voices, chosen, fellBack, catalogOffline}`. A voice is `{name, language, gender, age, description, source: "model" | "catalog", onDisk}`. |
+| `PUT /api/v1/assist/tts/voice` | `{voice}`: chooses the voice for speech; a catalog voice is downloaded first (about 256 KB). Returns the voices. `422` for an unknown voice. |
+| `PUT /api/v1/assist/tts/token` | `{token}` follows the secret rules of the settings: left out keeps the stored token, `null` clears it, a string sets it (`204`). It does not restart the hub. |
+| `POST /api/v1/assist/speech` | `{text, voice?}`; returns `{id, url}` (`201`), where `url` is `/api/v1/assist/speech/{id}.wav`. The text is at most 500 characters and not empty (`422`); `voice` defaults to the chosen voice. `409` when no model is active or the engine is not ready, with the reason; `503` when the queue (four requests) is full. |
+| `GET /api/v1/assist/speech/{id}.wav` | The speech as `audio/wav`: 24 kHz, 16-bit, mono, with a header of unknown length followed by the audio as it is produced. Valid for 60 seconds after the `POST`, so a client can retry once; `404` for an unknown or expired id. The text is never in the address. |
+
+Speech management errors use the [common statuses](#errors) and also: `413` for an upload file over its cap, `502` when Hugging Face cannot be reached or refuses the token (the account has not accepted the terms, or the token is wrong), and `507` when the disk lacks room for a download.
+
 ## Errors
 
 Errors are `{"error": "…"}` with one of these statuses:
