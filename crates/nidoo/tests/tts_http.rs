@@ -587,3 +587,33 @@ async fn a_catalog_voice_can_be_chosen_end_to_end() {
     assert_eq!(status["voice"], "Noemie");
     assert!(r.root().join("voices/AAA.safetensors").is_file());
 }
+
+#[tokio::test]
+async fn a_catalog_voice_can_be_heard_without_choosing_it() {
+    let r = rig().await;
+    let id = r.install().await;
+    r.send(reqwest::Method::PUT, "/active", json!({"model": id}))
+        .await;
+    r.status_until("ready").await;
+    let speech = format!("http://{}/api/v1/assist/speech", r.addr);
+    let post = |body: Value| {
+        let (client, speech) = (r.client.clone(), speech.clone());
+        async move {
+            let resp = client.post(speech).json(&body).send().await.unwrap();
+            (
+                resp.status(),
+                resp.json::<Value>().await.unwrap_or(Value::Null),
+            )
+        }
+    };
+    let (s, v) = post(json!({"text": "Bonjour", "voice": "Noemie"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    assert!(r.root().join("voices/AAA.safetensors").is_file());
+    let (_, voices) = r.get("/voices").await;
+    assert_eq!(
+        voices["chosen"], "default",
+        "hearing a voice does not choose it"
+    );
+    let (s, _) = post(json!({"text": "Bonjour", "voice": "nobody"})).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+}

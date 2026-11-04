@@ -36,7 +36,7 @@ Search covers devices only. Flows, moods and settings are not searched.
 
 ## Assistant
 
-**Assistant** in the sidebar, or the round button in the bottom-right corner of every other page, opens the Assistant page (`/assistant`): type a short French sentence such as "allume la lumière du salon" or "mets la chambre à 19" and press Enter. The hub replies in one line; when it needs an answer (which room, or Oui / Non for an unusual setpoint) the choices appear as buttons. The panel beside the conversation shows how the selected sentence was understood, with a **Faux** button to mark it wrong, and the **Simulation** switch tries sentences without touching the house. See [Assistant](assistant.md).
+**Assistant** in the sidebar, or the round button in the bottom-right corner of every other page, opens the Assistant page (`/assistant`): type a short French sentence such as "allume la lumière du salon" or "mets la chambre à 19" and press Enter. The hub replies in one line; when it needs an answer (which room, or Oui / Non for an unusual setpoint) the choices appear as buttons. The panel beside the conversation shows how the selected sentence was understood, with a **Wrong** button (« Faux » in French) to mark it wrong, and the **Simulation** switch tries sentences without touching the house. See [Assistant](assistant.md).
 
 ## Home header
 

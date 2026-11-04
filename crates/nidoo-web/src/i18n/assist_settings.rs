@@ -40,6 +40,8 @@ pub enum AssistSettingsText {
     VoiceFellBack,
     VoiceCatalogOffline,
     VoiceEmpty,
+    /// The start of a voice's ▶ label: "Listen to" + the voice name.
+    Listen,
     // Installed models.
     ModelsEmpty,
     Uploaded,
@@ -142,6 +144,7 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
             "Les voix du catalogue sont indisponibles hors ligne.",
         ),
         VoiceEmpty => ("No voices to choose from.", "Aucune voix à choisir."),
+        Listen => ("Listen to", "Écouter"),
         ModelsEmpty => (
             "No model installed yet. Add one below.",
             "Aucun modèle installé. Ajoutez-en un ci-dessous.",
@@ -235,11 +238,11 @@ mod tests {
             | StateReady | StateError | ActiveModel | NoActiveModel | NotBuilt | NoFrench
             | ActiveNoFrench | TestSentence | TestLabel | Play | Speaking | FirstSound
             | PlayFailed | VoiceDefault | VoiceFellBack | VoiceCatalogOffline | VoiceEmpty
-            | ModelsEmpty | Uploaded | UseModel | ActiveLabel | Remove | RemoveQuestion
-            | RemoveYes | Cancel | SpeaksFrench | LicenceLabel | UrlLabel | UrlPlaceholder
-            | ListFiles | Listing | WeightsLabel | NeedsToken | Download | Downloading
-            | DownloadFailed | DownloadCancelled | DownloadDone | OpenRepo | GatedNote
-            | UploadHeading | UploadHint | UploadChoose | Uploading | UploadNothing
+            | Listen | ModelsEmpty | Uploaded | UseModel | ActiveLabel | Remove
+            | RemoveQuestion | RemoveYes | Cancel | SpeaksFrench | LicenceLabel | UrlLabel
+            | UrlPlaceholder | ListFiles | Listing | WeightsLabel | NeedsToken | Download
+            | Downloading | DownloadFailed | DownloadCancelled | DownloadDone | OpenRepo
+            | GatedNote | UploadHeading | UploadHint | UploadChoose | Uploading | UploadNothing
             | UploadDone | TokenLabel | TokenSet | TokenNotSet | Save | Clear | TokenSaved
             | TokenCleared | Loading | CouldNotLoad | UnitB | UnitKb | UnitMb | UnitGb | UnitMs => {
                 true
@@ -278,6 +281,7 @@ mod tests {
             VoiceFellBack,
             VoiceCatalogOffline,
             VoiceEmpty,
+            Listen,
             ModelsEmpty,
             Uploaded,
             UseModel,

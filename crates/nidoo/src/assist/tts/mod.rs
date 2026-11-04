@@ -407,20 +407,28 @@ impl Tts {
     pub async fn set_voice(&self, voice: &str) -> Result<VoicesView, TtsError> {
         {
             let _guard = self.voice_lock.lock().await;
-            if voice != DEFAULT_VOICE {
-                let active = self.store.read_state().active;
-                let manifest = active
-                    .as_deref()
-                    .and_then(|id| self.store.get(id))
-                    .ok_or_else(|| TtsError::Invalid("no model is active".into()))?;
-                if !self.engine.voices().iter().any(|v| v == voice) {
-                    let path = self.fetch_catalog_voice(voice, &manifest.languages).await?;
-                    self.engine.add_voice(voice.to_owned(), path);
-                }
-            }
+            self.register_voice(voice).await?;
             self.save_state(|s| s.voice = voice.to_owned());
         }
         Ok(self.voices().await)
+    }
+
+    /// Makes a voice usable by the engine: a catalogue voice is downloaded and registered.
+    /// The caller holds `voice_lock`.
+    async fn register_voice(&self, voice: &str) -> Result<(), TtsError> {
+        if voice == DEFAULT_VOICE {
+            return Ok(());
+        }
+        let active = self.store.read_state().active;
+        let manifest = active
+            .as_deref()
+            .and_then(|id| self.store.get(id))
+            .ok_or_else(|| TtsError::Invalid("no model is active".into()))?;
+        if !self.engine.voices().iter().any(|v| v == voice) {
+            let path = self.fetch_catalog_voice(voice, &manifest.languages).await?;
+            self.engine.add_voice(voice.to_owned(), path);
+        }
+        Ok(())
     }
 
     /// Keeps, clears or replaces the Hugging Face token.
@@ -429,7 +437,11 @@ impl Tts {
     }
 
     /// Starts speaking a text now; the returned address streams the clip as it fills.
-    pub fn speak(&self, req: SpeechRequest) -> Result<SpeechTicket, TtsError> {
+    ///
+    /// A named voice is used without being chosen: a catalogue voice not yet on the disk is
+    /// downloaded first, and an unknown one is refused. With no voice named, the chosen one
+    /// speaks, or the default when it is not usable.
+    pub async fn speak(&self, req: SpeechRequest) -> Result<SpeechTicket, TtsError> {
         let text = req.text.trim();
         if text.is_empty() {
             return Err(TtsError::Invalid("the text is empty".into()));
@@ -439,6 +451,13 @@ impl Tts {
                 "the text is longer than {} characters",
                 speech::MAX_SPEECH_CHARS
             )));
+        }
+        // Only a ready engine can take a new voice; otherwise the engine says why it cannot speak.
+        if let Some(voice) = req.voice.as_deref()
+            && matches!(self.engine.state(), EngineState::Ready { .. })
+        {
+            let _guard = self.voice_lock.lock().await;
+            self.register_voice(voice).await?;
         }
         let wanted = req.voice.unwrap_or_else(|| self.chosen_voice());
         let voice = self.engine.voices().contains(&wanted).then_some(wanted);

@@ -1,7 +1,7 @@
 ---
 title: Assistant
 sidebar_position: 19
-description: Short French sentences typed on the Assistant page switch lights, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Faux button.
+description: Short French sentences typed on the Assistant page switch lights, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
 ---
 
 The **Assistant** understands short French sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page.
@@ -41,11 +41,11 @@ The setpoint holds until the zone's next scheduled change, at most the zone's ma
 
 Every reply names the room, what was done and the value, for example "Chambre Léa réglée à 19 °C (avant 17,5 °C)." When a light does not answer, the reply says which one.
 
-## Simulation and Faux
+## Simulation and Wrong
 
 The **Simulation** switch under the field plans and replies but sends nothing to the house; replies start with "Simulation :". It is the safe way to try phrasings. The page remembers it per browser.
 
-The panel next to the conversation, **How it understood**, shows the selected turn: the normalised words, the intent, the room and how it was found, the devices, the value and its arithmetic ("19 − 1 = 18 °C", or "mesure 18 > consigne 15,5 : 18 + 1 = 19 °C" when the reading was the start), the safety check, each action with its result, and the time taken. **Faux** marks a turn as wrongly understood, so it can be found in the log later.
+The panel next to the conversation, **How it understood**, shows the selected turn: the normalised words, the intent, the room and how it was found, the devices, the value and its arithmetic ("19 − 1 = 18 °C", or "mesure 18 > consigne 15,5 : 18 + 1 = 19 °C" when the reading was the start), the safety check, each action with its result, and the time taken. **Wrong** (« Faux » in French) marks a turn as wrongly understood, so it can be found in the log later; the turn then shows **Marked wrong**.
 
 With the history database, turns are kept 90 days. Without it, the hub keeps the last 100 turns in memory and the page says history is not kept.
 
@@ -85,7 +85,7 @@ No internet on the hub, or a token you would rather not use? Under **Upload from
 
 **Speech** at the top shows the engine's state: No model, Loading, Ready or Error with a message. A broken or missing model never stops the hub or text Assist: speech just shows an error.
 
-**Voice** lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) in the languages the model speaks: 15 French voices, with gender, age and a short description. A catalog voice is downloaded the first time you choose it (about 256 KB). Once the catalog list has been fetched it is kept on the disk, so the whole catalog stays listed offline (a voice not yet downloaded is marked unavailable offline); with no copy yet, no catalog voice is listed. If the chosen voice is not usable with the active model, speech falls back to Default and the screen says so.
+**Voice** lists **Default**, the model's own voice, and the free catalog [`gradium/phonon-voices`](https://huggingface.co/gradium/phonon-voices) (Apache-2.0) in the languages the model speaks: 15 French voices, with gender, age and a short description, in alphabetical order (an accented first letter sorts with its plain letter, so Élise comes before Eve). A catalog voice is downloaded the first time you choose it or listen to it (about 256 KB). The **▶** button on each voice speaks the **Try it** sentence (or the default one when the field is empty) in that voice without choosing it, through the player of the **Try it** section. Once the catalog list has been fetched it is kept on the disk, so the whole catalog stays listed offline (a voice not yet downloaded is marked unavailable offline); with no copy yet, no catalog voice is listed. If the chosen voice is not usable with the active model, speech falls back to Default and the screen says so.
 
 ### Testing
 
