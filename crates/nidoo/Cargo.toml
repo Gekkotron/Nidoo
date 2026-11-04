@@ -9,12 +9,13 @@ repository.workspace = true
 [features]
 default = ["tts", "stt"]
 tts = ["dep:ptts", "dep:xn"]
-# Speech input (the recognizer comes with the next step).
-stt = []
+stt = ["dep:sherpa-onnx"]
 
 [dependencies]
 ptts = { version = "=0.6.0", default-features = false, features = ["hf"], optional = true }
 xn = { version = "=0.2.13", optional = true }
+# Speech input: Parakeet + Silero VAD (its build script downloads the prebuilt libraries).
+sherpa-onnx = { version = "=2.0.1", optional = true }
 if-addrs = "0.13"
 anyhow.workspace = true
 axum.workspace = true
