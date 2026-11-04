@@ -26,6 +26,9 @@ pub struct SoundConfig {
     /// How far ahead of playback chunks are timestamped (raised to cover the
     /// players' own minimum buffer).
     pub lead_ms: u32,
+    /// Phone PCM gathered before playback starts, to ride out Wi-Fi stalls
+    /// (adds this much delay; 0 = none).
+    pub input_buffer_ms: u32,
     /// Silence on a connected input after which playback stops.
     pub idle_stop_ms: u32,
     pub discovery_prefix: String,
@@ -39,6 +42,7 @@ impl Default for SoundConfig {
             listen_port: crate::listen::DEFAULT_PORT,
             data_dir: PathBuf::from("./data"),
             lead_ms: 500,
+            input_buffer_ms: 250,
             idle_stop_ms: 5000,
             discovery_prefix: "homeassistant".into(),
         }
@@ -98,6 +102,7 @@ mod tests {
             let c = SoundConfig::load(None).unwrap();
             assert_eq!(c.input_port, 4953);
             assert_eq!(c.listen_port, 8927);
+            assert_eq!(c.input_buffer_ms, 250);
             assert_eq!(c.data_dir, PathBuf::from("./data"));
             assert_eq!((c.lead_ms, c.idle_stop_ms), (500, 5000));
             assert_eq!(c.discovery_prefix, "homeassistant");
