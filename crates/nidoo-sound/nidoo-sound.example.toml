@@ -1,0 +1,29 @@
+# nidoo-sound configuration. Copy to `nidoo-sound.toml` (git-ignored) next to
+# where the service runs, or pass `--config <file>`. Every key can also be set
+# with an environment variable: NIDOO_SOUND_<KEY>, `__` for nesting, e.g.
+# NIDOO_SOUND_INPUT_PORT=4953, NIDOO_SOUND_MQTT__HOST=localhost.
+
+# TCP port of the music input: raw PCM, s16le, 48 kHz, stereo (Oikos Cast).
+input_port = 4953
+
+# Holds sound/identity.key (the server's Sendspin identity: keep it) and
+# sound/players.json (each satellite's volume, mute and approval).
+data_dir = "./data"
+
+# How far ahead of playback audio is timestamped, in ms. Raised automatically
+# to cover what the satellites ask for (min_buffer_ms + output_delay_ms).
+lead_ms = 500
+
+# Connected but silent this long (ms) = the phone stopped: the satellites go idle.
+idle_stop_ms = 5000
+
+# Home Assistant MQTT discovery prefix the hub reads.
+discovery_prefix = "homeassistant"
+
+[mqtt]
+# Same broker and login as the hub (nidoo.toml [mqtt]).
+host = "localhost"
+port = 1883
+# user = "nidoo"
+# password = "secret"
+client_id = "nidoo-sound"
