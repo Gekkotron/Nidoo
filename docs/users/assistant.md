@@ -77,7 +77,7 @@ Under **Add a model**, paste the model page address (`https://huggingface.co/own
 
 Choose one and press **Download**. It runs in the background with a progress bar and a **Cancel** button; the model appears in the list only when every file is complete and checked. One download runs at a time. If the repository is gated and no token is saved, or the account has not accepted the terms, the screen says so and links to the model page. A restart of the hub drops an unfinished download.
 
-No internet on the hub, or a token you would rather not use? Press **Upload from this computer** and pick the model's files (the same files, from a download made elsewhere). The hub checks that they make a loadable model before keeping them.
+No internet on the hub, or a token you would rather not use? Press **Upload from this computer** and pick the model's files (the same files, from a download made elsewhere). The hub keeps the files once the weight file and the required small files are all there; it does not load the model at that point, so a model that cannot load shows as an Error when you make it active, and you can remove it.
 
 ### Choosing the model and the voice
 

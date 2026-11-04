@@ -330,9 +330,9 @@ Engine state is `{state: "no_model"}`, `{state: "loading", model}`, `{state: "re
 | `POST /api/v1/assist/tts/downloads` | `{repo, revision, weights}`; starts the background job and returns its progress (`202`). `409` while another download runs; `422` for a weight file the repository does not offer. A refusal for disk space, a size over the cap, or a gated repository without an accepted token comes back as a `failed` job whose `error` says why, not as an HTTP error. |
 | `GET /api/v1/assist/tts/downloads/current` | The running job, or the last one until the next attempt; `404` when there is none. Poll it about once a second. |
 | `DELETE /api/v1/assist/tts/downloads/current` | Cancels the job and deletes its temporary folder (`204`). |
-| `POST /api/v1/assist/tts/uploads` | Opens an upload session; returns `{id}`. |
-| `PUT /api/v1/assist/tts/uploads/{id}/files/{name}` | The raw file as the body, one file per request, streamed to disk (`204`). Only the file names a Phonon model holds are accepted, at most one weight file (200 MB cap) and 8 MB for each other file. `422` for a name that is not allowed, `413` for a file over the cap, `404` for an unknown session. |
-| `POST /api/v1/assist/tts/uploads/{id}/finish` | Checks the files make a loadable model and installs it; returns the model. `422` when they do not. |
+| `POST /api/v1/assist/tts/uploads` | Opens an upload session; returns `{id}`. An idle session already open is replaced and its files are discarded; `409` only while a file is being written. |
+| `PUT /api/v1/assist/tts/uploads/{id}/files/{name}` | The raw file as the body, one file per request, streamed to disk (`204`). Only the file names a Phonon model holds are accepted, at most one weight file (200 MB cap) and 8 MB for each other file. `422` for a name that is not allowed or a second weight file, `409` for a file name sent twice, `413` for a file over the cap (which also ends the session), `404` for an unknown session. |
+| `POST /api/v1/assist/tts/uploads/{id}/finish` | Installs the files as a model and returns it. The model is not load-tested here: one that cannot load shows as an engine `error` when activated. `422` when a required file or the weight file is missing, `409` while a file is still arriving, `404` for an unknown session. |
 | `DELETE /api/v1/assist/tts/uploads/{id}` | Abandons the session and deletes its files (`204`). |
 | `GET /api/v1/assist/tts/voices` | `{voices, chosen, fellBack, catalogOffline}`. A voice is `{name, language, gender, age, description, source: "model" | "catalog", onDisk}`. |
 | `PUT /api/v1/assist/tts/voice` | `{voice}`: chooses the voice for speech; a catalog voice is downloaded first (about 256 KB). Returns the voices. `422` for an unknown voice. |
@@ -340,7 +340,7 @@ Engine state is `{state: "no_model"}`, `{state: "loading", model}`, `{state: "re
 | `POST /api/v1/assist/speech` | `{text, voice?}`; returns `{id, url}` (`201`), where `url` is `/api/v1/assist/speech/{id}.wav`. The text is at most 500 characters and not empty (`422`); `voice` defaults to the chosen voice. `409` when no model is active or the engine is not ready, with the reason; `503` when the queue (four requests) is full. |
 | `GET /api/v1/assist/speech/{id}.wav` | The speech as `audio/wav`: 24 kHz, 16-bit, mono, with a header of unknown length followed by the audio as it is produced. Valid for 60 seconds after the `POST`, so a client can retry once; `404` for an unknown or expired id. The text is never in the address. |
 
-Speech management errors use the [common statuses](#errors) and also: `413` for an upload file over its cap, `502` when Hugging Face cannot be reached or refuses the token (the account has not accepted the terms, or the token is wrong), and `507` when the disk lacks room for a download.
+Speech management errors use the [common statuses](#errors) and also: `413` for an upload file over its cap, and `502` when Hugging Face cannot be reached while listing a repository. Download refusals (not enough disk space, a file over its size cap, a token the account has not accepted the terms for, a wrong token) are not HTTP errors: the `POST` answers `202` and the job then shows as `failed` with the reason in `error`.
 
 ## Errors
 
