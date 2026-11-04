@@ -371,6 +371,72 @@ fn folding_moving_into_cover() {
 }
 
 #[test]
+fn sound_satellite_controls_fold_into_volume() {
+    // A satellite (`nidoo-sound`) is one device with a Volume number, Mute and Allowed switches
+    // and a Connected sensor: one card, the volume, holds the rest.
+    let mut registry = Registry::new(config());
+    let entity = |device: &str, object: &str, extra: serde_json::Value| {
+        let mut v = json!({
+            "name": object,
+            "unique_id": format!("{device}_{object}"),
+            "state_topic": format!("test/{device}/{object}"),
+            "device": { "identifiers": [device], "name": device },
+        });
+        if let (Some(v), serde_json::Value::Object(extra)) = (v.as_object_mut(), extra) {
+            v.extend(extra);
+        }
+        v.to_string().into_bytes()
+    };
+    let command = |device: &str, object: &str| json!({ "command_topic": format!("test/{device}/{object}/set") });
+    for (component, object, extra) in [
+        ("number", "volume", command("nidoo_sound_x", "volume")),
+        ("switch", "mute", command("nidoo_sound_x", "mute")),
+        ("switch", "allowed", command("nidoo_sound_x", "allowed")),
+        (
+            "binary_sensor",
+            "connected",
+            json!({ "device_class": "connectivity" }),
+        ),
+    ] {
+        feed(
+            &mut registry,
+            &format!("nidoo/{component}/nidoo_sound_x/{object}/config"),
+            entity("nidoo_sound_x", object, extra),
+        );
+    }
+    for id in [
+        "nidoo_sound_x_mute",
+        "nidoo_sound_x_allowed",
+        "nidoo_sound_x_connected",
+    ] {
+        let folded = registry.entity(id).expect("satellite entity");
+        assert_eq!(
+            folded.part_of.as_deref(),
+            Some("nidoo_sound_x_volume"),
+            "{id}"
+        );
+    }
+    let volume = registry.entity("nidoo_sound_x_volume").expect("volume");
+    assert_eq!(volume.part_of, None);
+
+    // Any other device with one number and one switch keeps both as cards.
+    for (component, object) in [("number", "level"), ("switch", "power")] {
+        feed(
+            &mut registry,
+            &format!("nidoo/{component}/plain_dev/{object}/config"),
+            entity("plain_dev", object, command("plain_dev", object)),
+        );
+    }
+    for id in ["plain_dev_level", "plain_dev_power"] {
+        assert_eq!(
+            registry.entity(id).expect("plain entity").part_of,
+            None,
+            "{id}"
+        );
+    }
+}
+
+#[test]
 fn groups_never_fold_into_each_other() {
     // Every group is on the hub's one `nidoo_group` device: with a single light group, a number
     // group must stay a card of its own.

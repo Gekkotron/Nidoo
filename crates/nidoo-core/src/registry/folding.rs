@@ -6,6 +6,8 @@
 //!   sensor folds into the cover of its device when both read the same `state_topic` and the
 //!   sensor's `value_template` reads exactly one JSON field that the cover's template also reads.
 //!   A binary sensor with `device_class: moving` on a device with exactly one cover folds too.
+//! - A speaker satellite (device id starting with [`SOUND_DEVICE_PREFIX`]) with exactly one
+//!   number, its volume, folds its switches (Mute, Allowed) and binary sensors (Connected) into it.
 //! - Hub groups never fold: they all share the hub's one `nidoo_group` device, so a single light
 //!   group would otherwise swallow every number or select group.
 //!
@@ -17,7 +19,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::model::{Entity, Kind};
+use crate::model::{Entity, Kind, SOUND_DEVICE_PREFIX};
 
 /// The device every hub group is published on (`groups/discovery.rs` in nidoo).
 const GROUPS_DEVICE: &str = "nidoo_group";
@@ -32,6 +34,21 @@ pub(super) fn compute(entities: &BTreeMap<String, Entity>) -> BTreeMap<String, S
         }
         if let Some(light) = entity.device_id.as_deref().and_then(|d| light_of.get(d)) {
             part_of.insert(entity.unique_id.clone(), (*light).to_owned());
+        }
+    }
+    let number_of = single_per_device(entities, Kind::Number);
+    for entity in entities.values() {
+        if !matches!(entity.kind, Kind::Switch | Kind::BinarySensor) {
+            continue;
+        }
+        let Some(device_id) = entity.device_id.as_deref() else {
+            continue;
+        };
+        if !device_id.starts_with(SOUND_DEVICE_PREFIX) {
+            continue;
+        }
+        if let Some(volume) = number_of.get(device_id) {
+            part_of.insert(entity.unique_id.clone(), (*volume).to_owned());
         }
     }
     let cover_of = single_per_device(entities, Kind::Cover);

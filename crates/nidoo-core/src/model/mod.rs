@@ -22,3 +22,8 @@ pub use state::{
 };
 pub use switch_type::SwitchType;
 pub use ui_override::{ENERGY_ROLES, LIGHT_ON_PRESETS, PatchError, SHOW_AS, UiOverride};
+
+/// Every speaker satellite's device id starts with this (`nidoo_sound_<short id>`); its entities
+/// are `<device id>_volume`, `_mute`, `_allowed` and `_connected`. The devices are published by
+/// the `nidoo-sound` service (`crates/nidoo-sound/src/mqtt.rs`).
+pub const SOUND_DEVICE_PREFIX: &str = "nidoo_sound_";
