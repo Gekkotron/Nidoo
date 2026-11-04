@@ -621,3 +621,31 @@
 .temp__humidity {
   white-space: nowrap;
 }
+
+/* Speaker satellite: volume with its value, mute and the test button; Allow while it waits */
+.satellite__volume {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.satellite__value {
+  min-width: 2.5ch;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.satellite__mute[aria-pressed="true"] {
+  color: var(--accent-amber);
+}
+
+.satellite__waiting {
+  margin: 0;
+}
+
+.satellite__error {
+  margin: 4px 0 0;
+  color: var(--danger);
+}

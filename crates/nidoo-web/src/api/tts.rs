@@ -4,8 +4,8 @@
 use gloo_net::http::Request;
 use nidoo_api::{
     ApiError, AvailableLanguage, DownloadRequest, DownloadView, HouseRequest, InspectRequest,
-    LanguageRequest, ModelView, RepoListing, SpeechRequest, SpeechTicket, TtsStatus, UploadSession,
-    VoicesView,
+    LanguageRequest, ModelView, RepoListing, SoundSpeakReply, SoundSpeakRequest, SpeechRequest,
+    SpeechTicket, TtsStatus, UploadSession, VoicesView,
 };
 
 use super::core::{check, check_unless_404, encode_id, read_json};
@@ -136,6 +136,12 @@ pub async fn set_token(token: Option<&str>) -> Result<(), ApiError> {
     let body = serde_json::json!({ "token": token });
     check(Request::put(&format!("{BASE}/token")).json(&body), None).await?;
     Ok(())
+}
+
+/// Says a sentence on the speaker satellites of a room, of every room or of one satellite.
+pub async fn sound_speak(req: &SoundSpeakRequest) -> Result<SoundSpeakReply, ApiError> {
+    let response = check(Request::post("/api/v1/sound/speak").json(req), None).await?;
+    read_json(response).await
 }
 
 /// Asks the hub to speak a text; the ticket's URL streams the audio.
