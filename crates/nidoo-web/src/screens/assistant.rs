@@ -171,6 +171,28 @@ fn storage() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|w| w.local_storage().ok().flatten())
 }
 
+/// Where a turn came from when a satellite heard it (`satellite:<sid>`): the satellite's name
+/// and room, its id when the house does not know it; `None` for a browser.
+pub fn turn_source(
+    client: &str,
+    entities: &std::collections::BTreeMap<String, nidoo_api::EntityView>,
+    areas: &[nidoo_api::AreaView],
+) -> Option<String> {
+    let sid = client.strip_prefix("satellite:")?;
+    let volume = format!("{}{sid}_volume", nidoo_core::model::SOUND_DEVICE_PREFIX);
+    let Some(entity) = entities.get(&volume) else {
+        return Some(sid.to_owned());
+    };
+    let name = entity
+        .device_name
+        .clone()
+        .unwrap_or_else(|| entity.name.clone());
+    Some(match crate::format::room_name(areas, &entity.area) {
+        Some(room) => format!("{name} · {room}"),
+        None => name,
+    })
+}
+
 /// This browser's client id, made once and kept in `localStorage` (a fresh one each visit
 /// when storage is blocked).
 fn client_id() -> String {
@@ -263,6 +285,16 @@ pub fn AssistantScreen() -> impl IntoView {
     let t = move |k| assistant_text(lang(), k);
     let toasts = use_context::<Toasts>();
     let client = StoredValue::new(client_id());
+    // The satellite a spoken turn came from, by name and room (no house in some tests).
+    let house = use_context::<crate::house::House>();
+    let source = move |client: &str| {
+        let house = house.as_ref()?;
+        house.entities.with_untracked(|entities| {
+            house
+                .areas
+                .with_untracked(|areas| turn_source(client, entities, areas))
+        })
+    };
     // Oldest first, as the conversation reads.
     let turns = RwSignal::new(Vec::<AssistTurn>::new());
     let kept = RwSignal::new(None::<bool>);
@@ -575,6 +607,9 @@ pub fn AssistantScreen() -> impl IntoView {
                                     class:assist__turn--wrong=turn.wrong
                                     on:click=move |_| selected.set(Some(id.clone()))
                                 >
+                                    {source(&turn.client).map(|from| {
+                                        view! { <p class="assist__source">{from}</p> }
+                                    })}
                                     <p class="assist__said">{turn.text.clone()}</p>
                                     <div class="assist__answer">
                                         <p class="assist__reply">{turn.reply.clone()}</p>
@@ -885,5 +920,67 @@ mod tests {
         assert_eq!(labels, ["Words", "Room", "Value", "Actions", "Time"]);
         assert_eq!(rows[1].1, "salon (mots : salon)");
         assert_eq!(rows[3].1, "salon → consigne 18,5 °C : ok");
+    }
+
+    fn volume(device: &str, name: &str, area: &str) -> nidoo_api::EntityView {
+        use nidoo_core::model::{Capabilities, EntityCategory, EntityState, Kind, UiOverride};
+        nidoo_api::EntityView {
+            id: format!("{device}_volume"),
+            device_id: Some(device.into()),
+            name: "Volume".into(),
+            device_name: Some(name.into()),
+            label: None,
+            kind: Kind::Number,
+            component: Kind::Number.component().to_string(),
+            protocol_kind: Kind::Number,
+            device_class: None,
+            unit: None,
+            icon: None,
+            category: EntityCategory::Primary,
+            enabled_by_default: true,
+            area: area.into(),
+            part_of: None,
+            capabilities: Capabilities::default(),
+            ui: UiOverride::default(),
+            state: EntityState::default(),
+        }
+    }
+
+    fn areas() -> Vec<nidoo_api::AreaView> {
+        let kitchen = serde_json::json!({
+            "id": "kitchen", "name": "Kitchen", "icon": null, "order": null,
+            "entity_count": 1, "primary_count": 1
+        });
+        vec![serde_json::from_value(kitchen).unwrap()]
+    }
+
+    #[test]
+    fn turn_source_names_the_satellite_and_its_room() {
+        let entities: std::collections::BTreeMap<_, _> = [
+            volume("nidoo_sound_aaaaaaaaaaaa", "Desk speaker", "kitchen"),
+            volume(
+                "nidoo_sound_bbbbbbbbbbbb",
+                "Loose speaker",
+                nidoo_core::model::UNASSIGNED_AREA,
+            ),
+        ]
+        .into_iter()
+        .map(|e| (e.id.clone(), e))
+        .collect();
+        let areas = areas();
+        assert_eq!(
+            turn_source("satellite:aaaaaaaaaaaa", &entities, &areas).as_deref(),
+            Some("Desk speaker · Kitchen")
+        );
+        assert_eq!(
+            turn_source("satellite:bbbbbbbbbbbb", &entities, &areas).as_deref(),
+            Some("Loose speaker")
+        );
+        assert_eq!(
+            turn_source("satellite:cccccccccccc", &entities, &areas).as_deref(),
+            Some("cccccccccccc"),
+            "unknown satellite"
+        );
+        assert_eq!(turn_source("k3j2h1", &entities, &areas), None, "a browser");
     }
 }
