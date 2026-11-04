@@ -1,18 +1,22 @@
 //! `/assistant`: type a French sentence, read the hub's reply, answer its question with a tap,
 //! and see how the sentence was understood. The replies are French and written by the hub;
-//! the page chrome follows the language setting.
+//! the page chrome follows the language setting. When the hub has a speech model in use, each
+//! new reply is read aloud (a header switch turns that off, per browser) and ▶ reads one again.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use nidoo_api::SpeechRequest;
 use nidoo_assist::pending::PENDING_TTL_S;
 use nidoo_assist::view::{AssistRequest, AssistTurn, PendingReply, Question, QuestionKind, Trace};
+use wasm_bindgen_futures::JsFuture;
 
 use crate::api::assist::{get_turns, mark_wrong, post_assist};
+use crate::api::tts;
 use crate::components::toast::Toasts;
 use crate::i18n::{
     AssistSettingsText, AssistantText, Lang, assist_settings_text, assistant_text, use_lang,
 };
-use crate::icons::GEAR;
+use crate::icons::{GEAR, PLAY, SPEAKER, SPEAKER_OFF};
 
 /// The id this browser gives the hub, so its pending question is its own.
 const CLIENT_KEY: &str = "nidoo.assist.client";
@@ -26,6 +30,11 @@ const HISTORY_KEY: &str = "nidoo.assist.history";
 const HISTORY_MAX: usize = 50;
 /// Where this browser last cleared the conversation (a [`ClearMark`]).
 const CLEARED_KEY: &str = "nidoo.assist.cleared";
+/// Whether replies are read aloud, per browser: `"0"` when turned off, on otherwise.
+const SPEAK_KEY: &str = "nidoo.assist.speak";
+/// A tenth of a second of silence. Played on the click or key that sends a sentence, it lets
+/// Safari play the reply that arrives later on the same element.
+const SILENCE: &str = "data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
 
 /// The sentences sent, browsed with the arrows as in a shell: up for older, down for newer,
 /// and down past the newest gives back the sentence being typed.
@@ -177,6 +186,20 @@ fn client_id() -> String {
     id
 }
 
+fn stored_speak() -> bool {
+    storage()
+        .and_then(|s| s.get_item(SPEAK_KEY).ok().flatten())
+        .is_none_or(|v| v != "0")
+}
+
+/// Whether a failed `play()` only means a newer clip took the element over.
+fn superseded(err: &wasm_bindgen::JsValue) -> bool {
+    js_sys::Reflect::get(err, &"name".into())
+        .ok()
+        .and_then(|name| name.as_string())
+        .is_some_and(|name| name == "AbortError")
+}
+
 fn stored_simulate() -> bool {
     storage()
         .and_then(|s| s.get_item(SIMULATE_KEY).ok().flatten())
@@ -251,6 +274,73 @@ pub fn AssistantScreen() -> impl IntoView {
     let received = RwSignal::new(None::<(String, f64)>);
     let input = NodeRef::<leptos::html::Input>::new();
     let history = StoredValue::new(stored_history());
+    // Whether the hub can speak (a speech model in use) and whether this browser wants it.
+    let can_speak = RwSignal::new(false);
+    let speak_on = RwSignal::new(stored_speak());
+    let audio = NodeRef::<leptos::html::Audio>::new();
+
+    spawn_local(async move {
+        if let Ok(status) = tts::get_status().await {
+            let _ = can_speak.try_set(status.speech_built && status.active.is_some());
+        }
+    });
+    Effect::new(move |_| {
+        let on = speak_on.get();
+        if let Some(s) = storage() {
+            let _ = s.set_item(SPEAK_KEY, if on { "1" } else { "0" });
+        }
+    });
+    let hush = move || {
+        if let Some(el) = audio.get_untracked() {
+            let _ = el.pause();
+        }
+    };
+    // Runs inside the click or key press, before any await: Safari plays later only on an
+    // element that already played in a user gesture.
+    let unlock = move || {
+        if !can_speak.get_untracked() {
+            return;
+        }
+        if let Some(el) = audio.get_untracked()
+            && el.src().is_empty()
+        {
+            el.set_src(SILENCE);
+            if let Ok(promise) = el.play() {
+                spawn_local(async move {
+                    let _ = JsFuture::from(promise).await;
+                });
+            }
+        }
+    };
+    let say = move |text: String| {
+        if text.trim().is_empty() {
+            return;
+        }
+        spawn_local(async move {
+            let failed = match tts::speak(&SpeechRequest { text, voice: None }).await {
+                Ok(ticket) => match audio.get_untracked() {
+                    Some(el) => {
+                        el.set_src(&ticket.url);
+                        let refused = match el.play() {
+                            Ok(promise) => JsFuture::from(promise)
+                                .await
+                                .err()
+                                .filter(|err| !superseded(err)),
+                            Err(err) => Some(err),
+                        };
+                        refused.map(|_| {
+                            assist_settings_text(lang(), AssistSettingsText::PlayFailed).to_owned()
+                        })
+                    }
+                    None => None,
+                },
+                Err(err) => Some(format!("{} {}", t(AssistantText::SpeakFailed), err.error)),
+            };
+            if let (Some(message), Some(toasts)) = (failed, toasts) {
+                toasts.push(message);
+            }
+        });
+    };
 
     spawn_local(async move {
         if let Ok(list) = get_turns(LIMIT).await {
@@ -284,6 +374,9 @@ pub fn AssistantScreen() -> impl IntoView {
                 // `try_`: the page may be gone by the time the hub answers.
                 Ok(turn) => {
                     let id = turn.id.clone();
+                    if can_speak.get_untracked() && speak_on.get_untracked() {
+                        say(turn.reply.clone());
+                    }
                     received.try_set(Some((id.clone(), js_sys::Date::now())));
                     turns.try_update(|list| list.push(turn));
                     selected.try_set(Some(id));
@@ -309,6 +402,7 @@ pub fn AssistantScreen() -> impl IntoView {
         if sentence.is_empty() || busy.get_untracked() {
             return;
         }
+        unlock();
         text.set(String::new());
         history.update_value(|h| {
             h.push(sentence.clone());
@@ -325,6 +419,7 @@ pub fn AssistantScreen() -> impl IntoView {
         if busy.get_untracked() {
             return;
         }
+        unlock();
         submit(AssistRequest {
             client: client.get_value(),
             text: None,
@@ -377,6 +472,7 @@ pub fn AssistantScreen() -> impl IntoView {
             return;
         };
         store_clear_mark(&mark);
+        hush();
         turns.set(Vec::new());
         selected.set(None);
         if let Some(field) = input.get_untracked() {
@@ -400,23 +496,51 @@ pub fn AssistantScreen() -> impl IntoView {
             <section class="assist__talk">
                 <div class="assist__head">
                     <p class="assist__hint">{move || t(AssistantText::Hint)}</p>
-                    <a
-                        class="assist__settings"
-                        href="/assistant/settings"
-                        aria-label=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
-                        title=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
-                        inner_html=GEAR
-                    ></a>
-                    <button
-                        type="button"
-                        class="assist__clear"
-                        title=move || t(AssistantText::ClearHint)
-                        disabled=move || turns.with(Vec::is_empty)
-                        on:click=move |_| clear()
-                    >
-                        {move || t(AssistantText::Clear)}
-                    </button>
+                    <div class="assist__tools">
+                        <Show when=move || can_speak.get()>
+                            <button
+                                type="button"
+                                class="assist__speak"
+                                aria-label=move || t(AssistantText::Speak)
+                                aria-pressed=move || if speak_on.get() { "true" } else { "false" }
+                                title=move || {
+                                    t(if speak_on.get() {
+                                        AssistantText::SpeakOn
+                                    } else {
+                                        AssistantText::SpeakOff
+                                    })
+                                }
+                                inner_html=move || if speak_on.get() { SPEAKER } else { SPEAKER_OFF }
+                                on:click=move |_| {
+                                    let on = !speak_on.get_untracked();
+                                    if on {
+                                        unlock();
+                                    } else {
+                                        hush();
+                                    }
+                                    speak_on.set(on);
+                                }
+                            ></button>
+                        </Show>
+                        <a
+                            class="assist__settings"
+                            href="/assistant/settings"
+                            aria-label=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
+                            title=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
+                            inner_html=GEAR
+                        ></a>
+                        <button
+                            type="button"
+                            class="assist__clear"
+                            title=move || t(AssistantText::ClearHint)
+                            disabled=move || turns.with(Vec::is_empty)
+                            on:click=move |_| clear()
+                        >
+                            {move || t(AssistantText::Clear)}
+                        </button>
+                    </div>
                 </div>
+                <audio node_ref=audio class="assist__audio" preload="none"></audio>
                 <Show when=move || kept.get() == Some(false)>
                     <p class="assist__note">{move || t(AssistantText::NotKept)}</p>
                 </Show>
@@ -438,7 +562,28 @@ pub fn AssistantScreen() -> impl IntoView {
                                     on:click=move |_| selected.set(Some(id.clone()))
                                 >
                                     <p class="assist__said">{turn.text.clone()}</p>
-                                    <p class="assist__reply">{turn.reply.clone()}</p>
+                                    <div class="assist__answer">
+                                        <p class="assist__reply">{turn.reply.clone()}</p>
+                                        <Show when=move || can_speak.get()>
+                                            {
+                                                let reply = turn.reply.clone();
+                                                view! {
+                                                    <button
+                                                        type="button"
+                                                        class="assist__play"
+                                                        aria-label=move || t(AssistantText::Listen)
+                                                        title=move || t(AssistantText::Listen)
+                                                        inner_html=PLAY
+                                                        on:click=move |ev| {
+                                                            ev.stop_propagation();
+                                                            unlock();
+                                                            say(reply.clone());
+                                                        }
+                                                    ></button>
+                                                }
+                                            }
+                                        </Show>
+                                    </div>
                                 </li>
                             }
                         }
