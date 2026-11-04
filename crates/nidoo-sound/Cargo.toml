@@ -34,5 +34,6 @@ bytes = "1.12.1"
 x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 
 [dev-dependencies]
+nidoo-core = { path = "../nidoo-core" }
 hex = "0.4.3"
 tempfile = "3.27.0"
