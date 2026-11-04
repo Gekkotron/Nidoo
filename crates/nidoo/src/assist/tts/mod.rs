@@ -1,5 +1,20 @@
 //! Text-to-speech: the Phonon model, fetched from Hugging Face and run on the hub's CPU.
 
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use nidoo_api::{
+    DEFAULT_VOICE, DownloadRequest, DownloadView, EngineState, ModelView, RepoListing, Secret,
+    TtsStatus, UploadSession, VoicesView,
+};
+
+use engine::{Engine, SpeakerLoader};
+use hf::HfClient;
+use store::{ModelStore, TtsState};
+use upload::Uploads;
+use voices::VoiceCatalog;
+
 pub mod download;
 pub mod engine;
 pub mod hf;
@@ -8,6 +23,7 @@ pub mod phonon;
 pub mod source;
 pub mod store;
 pub mod tone;
+pub mod upload;
 pub mod voices;
 
 /// The Hugging Face site every model comes from.
@@ -66,4 +82,304 @@ pub enum TtsError {
     /// A disk operation failed.
     #[error("disk error: {0}")]
     Io(String),
+}
+
+/// Where the speech parts live and how they are built.
+pub struct TtsConfig {
+    /// The folder holding models, voices, state and token.
+    pub root: PathBuf,
+    /// The Hugging Face address (injected in tests only).
+    pub hf_base: String,
+    /// What turns a model folder into a speaker.
+    pub loader: Arc<dyn SpeakerLoader>,
+}
+
+impl TtsConfig {
+    /// The real setup under `data_dir/assist/tts`.
+    pub fn for_data_dir(data_dir: &Path) -> TtsConfig {
+        #[cfg(feature = "tts")]
+        let loader: Arc<dyn SpeakerLoader> = Arc::new(phonon::PhononLoader);
+        #[cfg(not(feature = "tts"))]
+        let loader: Arc<dyn SpeakerLoader> = Arc::new(engine::NoSpeechLoader);
+        TtsConfig {
+            root: data_dir.join("assist").join("tts"),
+            hf_base: HF_BASE.to_owned(),
+            loader,
+        }
+    }
+}
+
+/// How long a freshly loading model is waited for before its voice is left alone.
+const READY_WAIT: Duration = Duration::from_secs(120);
+
+/// The speech facade: store, engine, downloads, uploads and voices behind one handle.
+pub struct Tts {
+    store: Arc<ModelStore>,
+    engine: Engine,
+    downloads: download::Downloads,
+    uploads: Uploads,
+    catalog: VoiceCatalog,
+    hf_base: String,
+    /// Serialises read-modify-write of `state.json`.
+    state_lock: Mutex<()>,
+    /// One voice choice at a time (two fetches of a voice share one `.part` file).
+    voice_lock: tokio::sync::Mutex<()>,
+}
+
+impl Tts {
+    /// Opens the store and loads the chosen model. Never fails: problems show as the
+    /// engine's state.
+    pub fn start(cfg: TtsConfig) -> Arc<Tts> {
+        let store = Arc::new(ModelStore::open(&cfg.root));
+        let tts = Arc::new(Tts {
+            engine: engine::start(cfg.loader),
+            downloads: download::Downloads::default(),
+            uploads: Uploads::new(Arc::clone(&store)),
+            catalog: VoiceCatalog::new(cfg.root.join("voices")),
+            hf_base: cfg.hf_base,
+            state_lock: Mutex::new(()),
+            voice_lock: tokio::sync::Mutex::new(()),
+            store,
+        });
+        if let Some(id) = tts.store.read_state().active {
+            if tts.store.get(&id).is_some() {
+                tts.load(&id);
+            } else {
+                tts.save_state(|s| s.active = None);
+            }
+        }
+        tts
+    }
+
+    /// The engine, for speech requests.
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    /// The saved voice name.
+    pub fn chosen_voice(&self) -> String {
+        self.store.read_state().voice
+    }
+
+    fn client(&self) -> HfClient {
+        HfClient::new(&self.hf_base, self.store.token())
+    }
+
+    fn save_state(&self, f: impl FnOnce(&mut TtsState)) {
+        let _guard = self.state_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.store.read_state();
+        f(&mut state);
+        if let Err(e) = self.store.write_state(&state) {
+            tracing::warn!("cannot save the speech state: {e}");
+        }
+    }
+
+    /// Loads an installed model and, once ready, registers the chosen catalogue voice.
+    fn load(self: &Arc<Self>, id: &str) {
+        let Some(manifest) = self.store.get(id) else {
+            return;
+        };
+        self.engine
+            .load(id, self.store.dir(id), manifest.weights.clone());
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let (tts, id) = (Arc::clone(self), id.to_owned());
+            handle.spawn(async move { tts.apply_chosen_voice(&id).await });
+        }
+    }
+
+    async fn apply_chosen_voice(&self, id: &str) {
+        let deadline = tokio::time::Instant::now() + READY_WAIT;
+        loop {
+            match self.engine.state() {
+                EngineState::Ready { model } if model == id => break,
+                EngineState::Loading { model } if model == id => {}
+                _ => return,
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let _guard = self.voice_lock.lock().await;
+        let voice = self.chosen_voice();
+        if voice == DEFAULT_VOICE || self.engine.voices().contains(&voice) {
+            return;
+        }
+        let languages = self.store.get(id).map(|m| m.languages).unwrap_or_default();
+        if let Ok(path) = self.fetch_catalog_voice(&voice, &languages).await {
+            self.engine.add_voice(voice, path);
+        }
+    }
+
+    async fn fetch_catalog_voice(
+        &self,
+        voice: &str,
+        languages: &[String],
+    ) -> Result<PathBuf, TtsError> {
+        let client = self.client();
+        let (list, _) = self.catalog.list(&client).await;
+        let found = list
+            .iter()
+            .find(|v| {
+                v.name == voice
+                    && v.language
+                        .as_ref()
+                        .is_some_and(|l| languages.iter().any(|m| m == l))
+            })
+            .ok_or_else(|| TtsError::Invalid(format!("unknown voice: {voice}")))?;
+        self.catalog.fetch(&client, found).await
+    }
+
+    /// Engine state, choices, token flag and the current download.
+    pub fn status(&self) -> TtsStatus {
+        let state = self.store.read_state();
+        TtsStatus {
+            engine: self.engine.state(),
+            active: state.active,
+            voice: state.voice,
+            token_set: self.store.token().is_some(),
+            download: self.downloads.current(),
+            speech_built: cfg!(feature = "tts"),
+        }
+    }
+
+    /// The installed models.
+    pub fn models(&self) -> Vec<ModelView> {
+        let active = self.store.read_state().active;
+        self.store
+            .list()
+            .iter()
+            .map(|m| m.view(active.as_deref() == Some(m.id.as_str())))
+            .collect()
+    }
+
+    /// Deletes a model; the active one is unloaded and no model stays active.
+    pub fn remove(&self, id: &str) -> Result<(), TtsError> {
+        if self.store.get(id).is_none() {
+            return Err(TtsError::NotFound(id.to_owned()));
+        }
+        if self.store.read_state().active.as_deref() == Some(id) {
+            self.engine.unload();
+            self.save_state(|s| s.active = None);
+        }
+        self.store.remove(id)
+    }
+
+    /// Chooses the model in use, or none.
+    pub fn set_active(self: &Arc<Self>, model: Option<String>) -> Result<TtsStatus, TtsError> {
+        match model {
+            Some(id) => {
+                if self.store.get(&id).is_none() {
+                    return Err(TtsError::NotFound(id));
+                }
+                self.save_state(|s| s.active = Some(id.clone()));
+                self.load(&id);
+            }
+            None => {
+                self.engine.unload();
+                self.save_state(|s| s.active = None);
+            }
+        }
+        Ok(self.status())
+    }
+
+    /// Reads a Hugging Face repository.
+    pub async fn inspect(&self, url: &str) -> Result<RepoListing, TtsError> {
+        let src = source::parse_source(url)?;
+        self.client().inspect(&src).await
+    }
+
+    /// Starts the background download.
+    pub fn start_download(&self, req: DownloadRequest) -> Result<DownloadView, TtsError> {
+        self.downloads
+            .start(Arc::clone(&self.store), self.client(), req, |_| {})
+    }
+
+    /// The running or last download.
+    pub fn download(&self) -> Option<DownloadView> {
+        self.downloads.current()
+    }
+
+    /// Stops the running download.
+    pub fn cancel_download(&self) -> Result<(), TtsError> {
+        self.downloads.cancel()
+    }
+
+    /// Opens an upload session.
+    pub fn upload_open(&self) -> Result<UploadSession, TtsError> {
+        self.uploads.open()
+    }
+
+    /// Streams one file of an upload to disk.
+    pub async fn upload_file(
+        &self,
+        id: &str,
+        name: &str,
+        body: axum::body::Body,
+    ) -> Result<(), TtsError> {
+        self.uploads.file(id, name, body).await
+    }
+
+    /// Closes an upload and installs the model.
+    pub fn upload_finish(&self, id: &str) -> Result<ModelView, TtsError> {
+        self.uploads.finish(id)
+    }
+
+    /// Drops an upload and its files.
+    pub fn upload_abort(&self, id: &str) -> Result<(), TtsError> {
+        self.uploads.abort(id)
+    }
+
+    /// The voices on offer and the chosen one.
+    pub async fn voices(&self) -> VoicesView {
+        let state = self.store.read_state();
+        let languages = state
+            .active
+            .as_deref()
+            .and_then(|id| self.store.get(id))
+            .map(|m| m.languages)
+            .unwrap_or_default();
+        let mut model_voices = self.engine.voices();
+        if model_voices.is_empty() {
+            model_voices.push(DEFAULT_VOICE.to_owned());
+        }
+        let (list, offline) = if languages.is_empty() {
+            (vec![], false)
+        } else {
+            self.catalog.list(&self.client()).await
+        };
+        voices::view(
+            &model_voices,
+            &languages,
+            &list,
+            |v| self.catalog.path_of(v).is_ok_and(|p| p.is_file()),
+            &state.voice,
+            offline,
+        )
+    }
+
+    /// Chooses the voice speech uses.
+    pub async fn set_voice(&self, voice: &str) -> Result<VoicesView, TtsError> {
+        {
+            let _guard = self.voice_lock.lock().await;
+            if voice != DEFAULT_VOICE {
+                let active = self.store.read_state().active;
+                let manifest = active
+                    .as_deref()
+                    .and_then(|id| self.store.get(id))
+                    .ok_or_else(|| TtsError::Invalid("no model is active".into()))?;
+                if !self.engine.voices().iter().any(|v| v == voice) {
+                    let path = self.fetch_catalog_voice(voice, &manifest.languages).await?;
+                    self.engine.add_voice(voice.to_owned(), path);
+                }
+            }
+            self.save_state(|s| s.voice = voice.to_owned());
+        }
+        Ok(self.voices().await)
+    }
+
+    /// Keeps, clears or replaces the Hugging Face token.
+    pub fn set_token(&self, input: Secret) -> Result<(), TtsError> {
+        self.store.set_token(input)
+    }
 }
