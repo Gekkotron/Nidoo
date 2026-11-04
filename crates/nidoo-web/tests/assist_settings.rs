@@ -110,6 +110,12 @@ async fn a_live_hub_shows_its_state_voices_and_models() {
     assert!(text.contains("a/b"), "{text}");
     assert!(text.contains("74.6 MB"), "{text}");
     assert!(text.contains("0123456"), "{text}");
+    let active = m
+        .host
+        .query_selector(".assist-set__active")
+        .unwrap()
+        .unwrap();
+    assert_eq!(active.text_content().as_deref(), Some("Active"));
     assert!(text.contains("does not speak French"), "{text}");
     assert!(text.contains("Default is used"), "{text}");
     assert!(text.contains("unavailable offline"), "{text}");

@@ -647,6 +647,7 @@ pub fn AssistSettingsScreen() -> impl IntoView {
                                                     prop:checked=m.active
                                                     on:change=move |_| activate(use_id.clone())
                                                 />
+                                                <span class="assist-set__active">{move || t(T::ActiveLabel)}</span>
                                                 <span class="assist-set__name">{name}</span>
                                                 <span class="assist-set__muted">" " {detail}</span>
                                                 {if french {

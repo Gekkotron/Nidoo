@@ -405,3 +405,9 @@ label.assist-set__item {
 .assist-set__file-input:disabled {
   cursor: default;
 }
+
+.assist-set__active {
+  margin-right: 6px;
+  color: var(--muted);
+  font-size: 0.85em;
+}

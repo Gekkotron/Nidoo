@@ -51,7 +51,7 @@ With the history database, turns are kept 90 days. Without it, the hub keeps the
 
 ## Voice
 
-The hub can turn text into French speech, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Assistant settings**. For now this is a capability, not a habit: **Assist does not speak its replies yet**. Who speaks when is decided once satellites (microphone and speaker boards) exist.
+The hub can turn text into French speech, on its own processor, with no cloud call when it speaks. Open it with the gear button at the top right of the Assistant page, which leads to **Speech settings** (« Réglages de la voix » in French). For now this is a capability, not a habit: **Assist does not speak its replies yet**. Who speaks when is decided once satellites (microphone and speaker boards) exist.
 
 The engine is [Phonon](https://huggingface.co/gradium) by Gradium. The hub never ships the model files: you download them yourself, under their licence.
 
@@ -77,11 +77,11 @@ Under **Add a model**, paste the model page address (`https://huggingface.co/own
 
 Choose one and press **Download**. It runs in the background with a progress bar and a **Cancel** button; the model appears in the list only when every file is complete and checked. One download runs at a time. If the repository is gated and no token is saved, or the account has not accepted the terms, the screen says so and links to the model page. A restart of the hub drops an unfinished download.
 
-No internet on the hub, or a token you would rather not use? Press **Upload from this computer** and pick the model's files (the same files, from a download made elsewhere). The hub keeps the files once the weight file and the required small files are all there; it does not load the model at that point, so a model that cannot load shows as an Error when you make it active, and you can remove it.
+No internet on the hub, or a token you would rather not use? Under **Upload from this computer**, press **Choose a folder** and pick the model's folder (the same files, from a download made elsewhere). The hub keeps the files once the weight file and the required small files are all there; it does not load the model at that point, so a model that cannot load shows as an Error when you make it active, and you can remove it.
 
 ### Choosing the model and the voice
 
-**Installed models** lists each model with its weight file, size, short commit, licence and whether it speaks French. Select **Active** on one to use it; only the active model is loaded in memory, and switching unloads the previous one first. **Remove** deletes a model (after a confirmation); removing the active one leaves none active. A model that does not speak French can be installed, and the screen warns you.
+**Installed models** lists each model with its weight file, size, short commit, licence and whether it speaks French. Select **Active** (« Actif ») on one to use it; only the active model is loaded in memory, and switching unloads the previous one first. **Remove** deletes a model (after a confirmation); removing the active one leaves none active. A model that does not speak French can be installed, and the screen warns you.
 
 **Speech** at the top shows the engine's state: No model, Loading, Ready or Error with a message. A broken or missing model never stops the hub or text Assist: speech just shows an error.
 
@@ -89,7 +89,7 @@ No internet on the hub, or a token you would rather not use? Press **Upload from
 
 ### Testing
 
-**Test** has a sentence field and a **Play** button. It plays the speech in your browser and shows the time to first sound. On the hub's processor the first sound should come in about a second; the engine uses half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
+**Try it** (« Essai ») has a sentence field and a **Play** button. It plays the speech in your browser and shows the time to first sound. On the hub's processor the first sound should come in about a second; the engine uses half of the cores by default so the rest of the house stays responsive (set `RAYON_NUM_THREADS` in the hub's environment to change that).
 
 ### The speech address
 

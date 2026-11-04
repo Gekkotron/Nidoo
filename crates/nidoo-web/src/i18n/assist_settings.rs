@@ -44,6 +44,8 @@ pub enum AssistSettingsText {
     ModelsEmpty,
     Uploaded,
     UseModel,
+    /// The visible label of a model's radio.
+    ActiveLabel,
     Remove,
     RemoveQuestion,
     RemoveYes,
@@ -146,6 +148,7 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
         ),
         Uploaded => ("Uploaded", "Importé"),
         UseModel => ("Use this model", "Utiliser ce modèle"),
+        ActiveLabel => ("Active", "Actif"),
         Remove => ("Remove", "Supprimer"),
         RemoveQuestion => ("Remove this model?", "Supprimer ce modèle ?"),
         RemoveYes => ("Yes, remove", "Oui, supprimer"),
@@ -232,13 +235,15 @@ mod tests {
             | StateReady | StateError | ActiveModel | NoActiveModel | NotBuilt | NoFrench
             | ActiveNoFrench | TestSentence | TestLabel | Play | Speaking | FirstSound
             | PlayFailed | VoiceDefault | VoiceFellBack | VoiceCatalogOffline | VoiceEmpty
-            | ModelsEmpty | Uploaded | UseModel | Remove | RemoveQuestion | RemoveYes | Cancel
-            | SpeaksFrench | LicenceLabel | UrlLabel | UrlPlaceholder | ListFiles | Listing
-            | WeightsLabel | NeedsToken | Download | Downloading | DownloadFailed
-            | DownloadCancelled | DownloadDone | OpenRepo | GatedNote | UploadHeading
-            | UploadHint | UploadChoose | Uploading | UploadNothing | UploadDone | TokenLabel
-            | TokenSet | TokenNotSet | Save | Clear | TokenSaved | TokenCleared | Loading
-            | CouldNotLoad | UnitB | UnitKb | UnitMb | UnitGb | UnitMs => true,
+            | ModelsEmpty | Uploaded | UseModel | ActiveLabel | Remove | RemoveQuestion
+            | RemoveYes | Cancel | SpeaksFrench | LicenceLabel | UrlLabel | UrlPlaceholder
+            | ListFiles | Listing | WeightsLabel | NeedsToken | Download | Downloading
+            | DownloadFailed | DownloadCancelled | DownloadDone | OpenRepo | GatedNote
+            | UploadHeading | UploadHint | UploadChoose | Uploading | UploadNothing
+            | UploadDone | TokenLabel | TokenSet | TokenNotSet | Save | Clear | TokenSaved
+            | TokenCleared | Loading | CouldNotLoad | UnitB | UnitKb | UnitMb | UnitGb | UnitMs => {
+                true
+            }
         }
     }
 
@@ -276,6 +281,7 @@ mod tests {
             ModelsEmpty,
             Uploaded,
             UseModel,
+            ActiveLabel,
             Remove,
             RemoveQuestion,
             RemoveYes,
