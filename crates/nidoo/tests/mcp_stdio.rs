@@ -61,6 +61,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "get_history",
     "get_grid_day",
     "send_notification",
+    "speak",
     "list_alerts",
     "climate_status",
     "get_climate_zone",

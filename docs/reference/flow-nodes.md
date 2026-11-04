@@ -428,6 +428,19 @@ Outputs: one. The step fails if the push service rejects the alert.
 
 A placeholder named after a [`math`](#math) card (`{name}`, or `{name:2}` to round) prints that card's result from this run; a result the run did not compute prints `?`. A math result wins over an entity of the same name, and the hub refuses a math `name` that is an entity id, so the two never clash.
 
+## `speak`
+
+Says a sentence out loud on the speaker satellites (see [Sound](../users/sound.md)).
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `text` | string | Required, not empty. Takes `{entity_id}` placeholders like a `notify` title; values are written in French when the house speech language is French, in English otherwise. |
+| `room` | string, optional | The room whose satellites speak: an area id, or a room name that the hub turns into its id when the flow is saved. Absent: every room. An unknown room is refused at save. |
+
+Only satellites whose Allowed and Connected are both on speak; a muted one counts and stays silent. The sentence plays over the music, which is turned down while it plays.
+
+Outputs: one. The step detail reads `spoke on <n> satellite(s): <text>`. The step fails, with the reason, when speech is not set up on the hub, when no satellite can speak in the room, or when the broker is offline.
+
 ## `flow.enable`
 
 Enables or disables a flow.

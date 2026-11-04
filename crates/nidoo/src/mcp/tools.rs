@@ -25,7 +25,7 @@ use super::params::{
     Include, ListAlertsParams, ListDevicesParams, ListEntitiesParams, MAX_LIMIT, NetworkWatchList,
     SearchParams, SearchResult, SendCommandParams, SendNotificationParams, Sent, SetAreasParams,
     SetGroupParams, SetHomeSettingsParams, SetNetworkWatchParams, SetOverrideParams,
-    SetSettingsParams, SetVirtualParams,
+    SetSettingsParams, SetVirtualParams, SpeakParams, Spoken,
 };
 use super::{NidooMcp, ToolError};
 use crate::history::query as history_query;
@@ -574,6 +574,24 @@ impl NidooMcp {
             .notify("mcp", &alert)
             .map(|id| Json(Sent { id }))
             .map_err(|rejected| ToolError(rejected.reason))
+    }
+
+    /// Says a sentence out loud on the speaker satellites and returns how many were asked.
+    /// `room` (an area id or name) picks one room; without it every room speaks. Only the
+    /// satellites whose Allowed and Connected are on count; a muted one stays silent. Fails
+    /// when speech is not set up, the room is unknown, or no satellite can speak there.
+    #[tool(name = "speak")]
+    async fn speak(&self, Parameters(params): Parameters<SpeakParams>) -> ToolResult<Spoken> {
+        log_write("speak", &params);
+        let target = match params.room {
+            Some(room) => crate::sound::SpeakTarget::Room(room),
+            None => crate::sound::SpeakTarget::All,
+        };
+        self.hub
+            .speak_in(target, &params.text, params.language, params.voice)
+            .await
+            .map(|players| Json(Spoken { players }))
+            .map_err(|err| ToolError(err.to_string()))
     }
 
     /// The push alerts the phone received, newest first, with their channel, severity, title,

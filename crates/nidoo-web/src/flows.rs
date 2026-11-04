@@ -80,6 +80,7 @@ fn summary_label(lang: Lang, node: &Node) -> String {
         NodeKind::Command(p) => command_label(lang, command_name(&p.command)),
         NodeKind::FlowEnable(p) => flow_switch_text(lang, p),
         NodeKind::Notify(_) => flow_text(lang, FlowText::Notify).into(),
+        NodeKind::Speak(_) => flow_text(lang, FlowText::Speak).into(),
         NodeKind::Switch(_) => flow_text(lang, FlowText::SwitchCard).into(),
         NodeKind::TimeBetween(_) => flow_text(lang, FlowText::TimeCard).into(),
         NodeKind::Math(_) => flow_text(lang, FlowText::MathCard).into(),

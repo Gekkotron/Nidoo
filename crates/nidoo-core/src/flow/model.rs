@@ -177,6 +177,9 @@ pub enum NodeKind {
     /// Sends a phone push notification.
     #[serde(rename = "notify")]
     Notify(NotifyParams),
+    /// Says a sentence on the speaker satellites of one room, or of every room.
+    #[serde(rename = "speak")]
+    Speak(SpeakParams),
     /// Branches on the first matching rule (or every matching rule) over an entity's value.
     #[serde(rename = "switch")]
     Switch(SwitchParams),
@@ -206,6 +209,7 @@ impl NodeKind {
             NodeKind::Command(_) => "command",
             NodeKind::FlowEnable(_) => "flow.enable",
             NodeKind::Notify(_) => "notify",
+            NodeKind::Speak(_) => "speak",
             NodeKind::Switch(_) => "switch",
             NodeKind::TimeBetween(_) => "time.between",
             NodeKind::Math(_) => "math",
@@ -592,6 +596,19 @@ pub struct NotifyParams {
     pub extra: BTreeMap<String, Value>,
 }
 
+/// Params of `speak`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct SpeakParams {
+    /// The sentence to say; required, not empty.
+    /// Takes `{entity_id}` placeholders filled at run time, as `notify` does.
+    pub text: String,
+    /// The room (an area id; a room name is resolved when the flow is saved). Absent means
+    /// every room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+}
+
 /// Params of `delay`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -797,6 +814,30 @@ mod tests {
     fn null_area_reads_as_none() {
         let flow = Flow::decode(br#"{"id":"a","name":"A","area":null}"#).unwrap();
         assert_eq!(flow.area, None);
+    }
+
+    #[test]
+    fn speak_node_round_trips() {
+        let text =
+            r#"{"id":"s","type":"speak","params":{"text":"Dinner is ready","room":"kitchen"}}"#;
+        let node: Node = serde_json::from_str(text).unwrap();
+        assert!(!node.kind.is_trigger());
+        assert!(node.kind.ports().is_empty());
+        assert_eq!(node.kind.type_name(), "speak");
+        assert!(matches!(&node.kind, NodeKind::Speak(p)
+            if p.text == "Dinner is ready" && p.room.as_deref() == Some("kitchen")));
+        assert_eq!(
+            serde_json::to_value(&node).unwrap(),
+            serde_json::from_str::<serde_json::Value>(text).unwrap()
+        );
+        // No room: every room, and nothing is written back.
+        let all = r#"{"id":"s","type":"speak","params":{"text":"Hi"}}"#;
+        let node: Node = serde_json::from_str(all).unwrap();
+        assert!(matches!(&node.kind, NodeKind::Speak(p) if p.room.is_none()));
+        assert_eq!(
+            serde_json::to_value(&node).unwrap(),
+            serde_json::from_str::<serde_json::Value>(all).unwrap()
+        );
     }
 
     #[test]

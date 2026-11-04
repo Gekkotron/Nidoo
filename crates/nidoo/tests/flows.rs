@@ -13,6 +13,8 @@ use nidoo_core::flow::{Flow, NodeKind};
 use nidoo_core::model::{Area, AreasDocument, Command};
 use tokio::sync::mpsc;
 
+mod common;
+
 const LED_ID: &str = "0x60a423fffe94d1c6_light_zigbee2mqtt";
 const MOTION_ID: &str = "0x00158d008b5a2d65_occupancy_zigbee2mqtt";
 const LED_STATE_TOPIC: &str = "zigbee2mqtt/rooms/living/led_ceiling";
@@ -2752,4 +2754,94 @@ async fn average_after_an_unrecorded_field_trigger_is_refused() {
             .await
             .is_ok()
     );
+}
+
+/// Declares a living room (`sejour`, named "Séjour") and a kitchen, each with one satellite.
+fn rooms_with_satellites(hub: &Hub) {
+    hub.ingest(
+        "nidoo/ui/_areas",
+        r#"{"areas":[{"id":"sejour","name":"Séjour"},{"id":"kitchen","name":"Kitchen"}]}"#
+            .as_bytes(),
+    );
+    common::speech::satellite(hub, "a", "sejour");
+    common::speech::satellite(hub, "b", "kitchen");
+}
+
+fn speak_node(params: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "id": "s", "type": "speak", "params": params })
+}
+
+#[tokio::test]
+async fn set_flow_resolves_the_speak_room_and_refuses_an_unknown_one() {
+    let (hub, _publisher) = hub_with_entities();
+    rooms_with_satellites(&hub);
+    let node = speak_node(serde_json::json!({ "text": "Dinner", "room": "Séjour" }));
+    let flow = Flow::decode(chain_json("dinner", true, vec![node]).as_bytes()).expect("flow");
+    let saved = hub.set_flow(flow).await.expect("saved").flow;
+    let speak = saved
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.id == "s")
+        .expect("node");
+    assert!(
+        matches!(&speak.kind, NodeKind::Speak(p) if p.room.as_deref() == Some("sejour")),
+        "{:?}",
+        speak.kind
+    );
+
+    let node = speak_node(serde_json::json!({ "text": "Dinner", "room": "attic" }));
+    let flow = Flow::decode(chain_json("ghost", true, vec![node]).as_bytes()).expect("flow");
+    match hub.set_flow(flow).await {
+        Err(HubError::InvalidFlow(reason)) => assert!(reason.contains("attic"), "{reason}"),
+        other => panic!("expected InvalidFlow, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn speak_step_says_the_sentence_on_the_room_satellites() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (hub, mut publisher, _engine) = engine_hub();
+    hub.set_tts(common::speech::ready_tts(dir.path().join("tts")).await);
+    rooms_with_satellites(&hub);
+    let node = speak_node(serde_json::json!({ "text": "Dinner", "room": "kitchen" }));
+    hub.ingest(
+        "nidoo/automation/dinner",
+        chain_json("dinner", true, vec![node]).as_bytes(),
+    );
+    settle().await;
+    let mut events = hub.subscribe();
+    hub.run_flow("dinner").expect("run");
+    let run = next_run(&mut events, |run| run.status != RunStatus::Running).await;
+    let step = run.steps.last().expect("step");
+    assert_eq!(step.outcome, StepOutcome::Ok, "{run:?}");
+    assert_eq!(step.detail, "spoke on 1 satellite(s): Dinner");
+    let mut spoken = Vec::new();
+    while let Ok(publish) = publisher.try_recv() {
+        if publish.topic == "nidoo-sound/speak" {
+            spoken.push(publish);
+        }
+    }
+    assert_eq!(spoken.len(), 1, "{spoken:?}");
+    assert!(!spoken[0].retain);
+    let payload: serde_json::Value = serde_json::from_str(&spoken[0].payload).expect("json");
+    assert_eq!(payload["players"], serde_json::json!(["b"]));
+}
+
+#[tokio::test]
+async fn speak_step_without_speech_fails() {
+    let (hub, _publisher, _engine) = engine_hub();
+    rooms_with_satellites(&hub);
+    let node = speak_node(serde_json::json!({ "text": "Dinner" }));
+    hub.ingest(
+        "nidoo/automation/dinner",
+        chain_json("dinner", true, vec![node]).as_bytes(),
+    );
+    settle().await;
+    let mut events = hub.subscribe();
+    hub.run_flow("dinner").expect("run");
+    let run = next_run(&mut events, |run| run.status != RunStatus::Running).await;
+    let step = run.steps.last().expect("step");
+    assert_eq!(step.outcome, StepOutcome::Failed, "{run:?}");
+    assert_eq!(step.detail, "speech is not set up on this hub");
 }

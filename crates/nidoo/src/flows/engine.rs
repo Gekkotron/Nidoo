@@ -19,7 +19,7 @@ use chrono::Timelike;
 use nidoo_api::{RunStatus, StepOutcome, StepView, TriggerInfo, WsEvent};
 use nidoo_core::flow::math::{fit_to_entity, parse_formula};
 use nidoo_core::flow::sun::is_dark_with_offset;
-use nidoo_core::flow::template::render;
+use nidoo_core::flow::template::{Lang, render};
 use nidoo_core::flow::{
     Flow, FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar,
     Schedule, command_with_number, compare, field_scalar, format_duration, headline_scalar,
@@ -37,6 +37,7 @@ use super::sun::{ArmedSun, next_sun_fire};
 use crate::clock;
 use crate::home::OffPeakNow;
 use crate::hub::{Hub, StateTouched};
+use crate::sound::SpeakTarget;
 use nidoo_api::ConnectionStatus;
 
 /// How long after the link comes back the off-peak base is seeded when no device report did.
@@ -1212,6 +1213,57 @@ fn step(node: &str, outcome: StepOutcome, detail: String, ports: Option<Vec<Stri
 }
 
 /// Runs one node: its outcome, the detail to record and the output port to follow.
+/// `text` with its placeholders filled: `{entity_id}` is the entity's value (a math result of
+/// this run wins over an entity of the same name) and `{trigger}` the value that started the
+/// run, with the unit and words of its entity. `validate` refused a text that does not parse, so
+/// the fallback to the raw text never shows.
+fn fill_text(
+    hub: &Hub,
+    results: &BTreeMap<String, f64>,
+    trigger: Option<&TriggerInfo>,
+    lang: Lang,
+    text: &str,
+) -> String {
+    let lookup = |id: &str| {
+        results
+            .get(id)
+            .map(|value| Reading {
+                value: Scalar::Number(*value),
+                unit: None,
+                device_class: None,
+            })
+            .or_else(|| hub.reading(id))
+    };
+    // The value the trigger carried, with the unit and words of its entity.
+    let trigger = trigger.and_then(|t| {
+        let value = Scalar::from_json(&t.value)?;
+        let mut reading = t
+            .entity
+            .as_deref()
+            .and_then(|id| hub.reading(id))
+            .unwrap_or(Reading {
+                value: value.clone(),
+                unit: None,
+                device_class: None,
+            });
+        reading.value = value;
+        Some(reading)
+    });
+    render(text, lang, &lookup, trigger.as_ref()).unwrap_or_else(|_| text.to_owned())
+}
+
+/// The language a spoken sentence's values are written in: French when the house speaks French,
+/// English otherwise.
+fn speech_lang(hub: &Hub) -> Lang {
+    let house = hub
+        .tts()
+        .and_then(|tts| tts.status().languages.into_iter().next());
+    match house.as_ref().and_then(|l| l.code.split('-').next()) {
+        Some("fr") => Lang::Fr,
+        _ => Lang::En,
+    }
+}
+
 async fn run_node(
     hub: &Hub,
     now: &Now,
@@ -1369,36 +1421,7 @@ async fn run_node(
         }
         NodeKind::Notify(params) => {
             let lang = params.lang.unwrap_or_default();
-            // A math result of this run wins over an entity of the same name.
-            let lookup = |id: &str| {
-                results
-                    .get(id)
-                    .map(|value| Reading {
-                        value: Scalar::Number(*value),
-                        unit: None,
-                        device_class: None,
-                    })
-                    .or_else(|| hub.reading(id))
-            };
-            // The value the trigger carried, with the unit and words of its entity.
-            let trigger = trigger.and_then(|t| {
-                let value = Scalar::from_json(&t.value)?;
-                let mut reading = t
-                    .entity
-                    .as_deref()
-                    .and_then(|id| hub.reading(id))
-                    .unwrap_or(Reading {
-                        value: value.clone(),
-                        unit: None,
-                        device_class: None,
-                    });
-                reading.value = value;
-                Some(reading)
-            });
-            // `validate` refused a text that does not parse, so the fallback never shows.
-            let fill = |text: &str| {
-                render(text, lang, &lookup, trigger.as_ref()).unwrap_or_else(|_| text.to_owned())
-            };
+            let fill = |text: &str| fill_text(hub, results, trigger, lang, text);
             let title = fill(&params.title);
             let mut alert = serde_json::json!({
                 "v": 1,
@@ -1425,6 +1448,21 @@ async fn run_node(
             match hub.notify("flow", &alert) {
                 Ok(id) => (StepOutcome::Ok, format!("sent {id}: {title}"), Vec::new()),
                 Err(rejected) => failed(rejected.reason),
+            }
+        }
+        NodeKind::Speak(params) => {
+            let text = fill_text(hub, results, trigger, speech_lang(hub), &params.text);
+            let target = match &params.room {
+                Some(room) => SpeakTarget::Room(room.clone()),
+                None => SpeakTarget::All,
+            };
+            match hub.speak_in(target, &text, None, None).await {
+                Ok(n) => (
+                    StepOutcome::Ok,
+                    format!("spoke on {n} satellite(s): {text}"),
+                    Vec::new(),
+                ),
+                Err(err) => failed(err.to_string()),
             }
         }
         NodeKind::If(params) => {

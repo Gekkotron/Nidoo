@@ -343,6 +343,25 @@ pub struct SendNotificationParams {
     pub id: Option<String>,
 }
 
+/// A sentence to say on the speaker satellites.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SpeakParams {
+    /// The sentence to say; required, not empty.
+    pub text: String,
+    /// A room (area id or name); every room when left out.
+    pub room: Option<String>,
+    /// The language code to speak in; the house language when left out.
+    pub language: Option<String>,
+    /// The voice to use; the language's chosen voice when left out.
+    pub voice: Option<String>,
+}
+
+/// How many satellites `speak` sent the sentence to.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Spoken {
+    pub players: usize,
+}
+
 /// The id of the alert `send_notification` raised.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Sent {

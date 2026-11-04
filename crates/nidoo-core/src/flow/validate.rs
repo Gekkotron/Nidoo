@@ -52,6 +52,8 @@ pub enum FlowError {
     #[error("node `{node}`: {reason}")]
     BadNotify { node: String, reason: String },
     #[error("node `{node}`: {reason}")]
+    BadSpeak { node: String, reason: String },
+    #[error("node `{node}`: {reason}")]
     BadMath { node: String, reason: String },
 }
 
@@ -197,6 +199,18 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                 }
                 if let Some(reason) = p.severity.as_deref().and_then(notify_severity_error) {
                     return Err(bad(reason));
+                }
+            }
+            NodeKind::Speak(p) => {
+                let bad = |reason: String| FlowError::BadSpeak {
+                    node: node.id.clone(),
+                    reason,
+                };
+                if p.text.trim().is_empty() {
+                    return Err(bad("text must not be empty".to_owned()));
+                }
+                if let Err(err) = template::parse(&p.text) {
+                    return Err(bad(format!("text: {err}")));
                 }
             }
             NodeKind::TriggerSun(p) => {
@@ -909,6 +923,33 @@ mod tests {
             .unwrap(),
         );
         f
+    }
+
+    fn speak_flow(params: &str) -> Flow {
+        let mut f = schedule_flow("*/10 * * * *", "act");
+        f.nodes.push(
+            serde_json::from_str(&format!(r#"{{"id":"n","type":"speak","params":{params}}}"#))
+                .unwrap(),
+        );
+        f
+    }
+
+    #[test]
+    fn validate_rejects_empty_speak_text() {
+        let err = validate(&speak_flow(r#"{"text":"  "}"#)).unwrap_err();
+        assert_eq!(
+            err,
+            FlowError::BadSpeak {
+                node: "n".into(),
+                reason: "text must not be empty".into()
+            }
+        );
+        let err = validate(&speak_flow(r#"{"text":"Temp {x"}"#)).unwrap_err();
+        assert!(
+            matches!(&err, FlowError::BadSpeak { reason, .. } if reason.starts_with("text:")),
+            "{err}"
+        );
+        assert!(validate(&speak_flow(r#"{"text":"Dinner","room":"kitchen"}"#)).is_ok());
     }
 
     #[test]
