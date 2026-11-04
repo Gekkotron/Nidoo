@@ -23,7 +23,7 @@ use crate::screens::alarm_settings::SwitchRow;
 pub struct Satellite {
     pub device_id: String,
     pub name: String,
-    /// The room id of the satellite's entities.
+    /// The room id of the satellite: its Volume entity's (the hub's rule), else any entity's.
     pub area: String,
     pub allowed: Option<EntityView>,
     pub mute: Option<EntityView>,
@@ -116,6 +116,10 @@ fn gather<'a>(entities: impl Iterator<Item = &'a EntityView>) -> Vec<Satellite> 
         .map(|(_, slot)| slot);
         if let Some(slot) = slot {
             *slot = Some(e.clone());
+        }
+        // The satellite's room is its Volume's, as the hub reads it to pick the speakers.
+        if e.id.ends_with("_volume") {
+            sat.area = e.area.clone();
         }
     }
     let mut list: Vec<Satellite> = found.into_values().collect();
@@ -493,6 +497,23 @@ mod tests {
         let found = satellites(&map(all));
         assert!(!found[0].service_online());
         assert!(!found[0].is_connected());
+    }
+
+    #[test]
+    fn the_room_is_the_volume_entity_room() {
+        // The card opens the Volume entity's sheet, and the hub reads the Volume's room: a room
+        // changed there must win over the other entities' rooms.
+        let mut all = full("nidoo_sound_aaa", "A", true);
+        for e in &mut all {
+            e.area = if e.id.ends_with("_volume") {
+                "office"
+            } else {
+                "kitchen"
+            }
+            .into();
+        }
+        let found = satellites(&map(all));
+        assert_eq!(found[0].area, "office");
     }
 
     #[test]
