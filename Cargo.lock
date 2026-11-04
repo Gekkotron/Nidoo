@@ -2647,6 +2647,7 @@ dependencies = [
  "figment",
  "futures-util",
  "getrandom 0.2.17",
+ "hmac",
  "iana-time-zone",
  "if-addrs 0.13.4",
  "mime_guess",
