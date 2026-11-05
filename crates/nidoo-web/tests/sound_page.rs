@@ -244,9 +244,10 @@ async fn lists_satellites_by_name_and_ignores_other_devices() {
         .into_iter()
         .find(|a| a.text_content().unwrap_or_default() == "Kitchen speaker")
         .expect("name links to the entity page");
+    // The Volume's page: its room is the satellite's room.
     assert_eq!(
         link.get_attribute("href").as_deref(),
-        Some("/entity/nidoo_sound_aaaaaaaaaaaa_allowed")
+        Some("/entity/nidoo_sound_aaaaaaaaaaaa_volume")
     );
 }
 
@@ -561,4 +562,133 @@ async fn a_failed_row_test_shows_the_reason_under_that_row() {
         reason(&rows[2]).as_deref(),
         Some("this satellite cannot speak now")
     );
+}
+
+const REMOVE_BEDROOM: &str = "/api/v1/sound/satellites/bbbbbbbbbbbb";
+
+fn button(row: &web_sys::Element, selector: &str) -> web_sys::HtmlElement {
+    row.query_selector(selector)
+        .unwrap()
+        .unwrap_or_else(|| panic!("no {selector} in {:?}", row.text_content()))
+        .unchecked_into()
+}
+
+fn removes(stub: &FetchStub) -> Vec<String> {
+    stub.requests()
+        .into_iter()
+        .filter(|r| r.method == "DELETE")
+        .map(|r| r.url)
+        .collect()
+}
+
+#[wasm_bindgen_test]
+async fn every_row_has_a_remove_button_that_asks_first() {
+    let stub = FetchStub::install();
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    // Connected or not, allowed or not: every satellite can be removed.
+    assert_eq!(all(&m.host, ".satellite__remove").len(), 2);
+    button(&rows[0], ".satellite__remove").click();
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    assert!(rows[0].query_selector(".confirm").unwrap().is_some());
+    assert!(rows[1].query_selector(".confirm").unwrap().is_none());
+    assert!(
+        removes(&stub).is_empty(),
+        "nothing is sent before the answer"
+    );
+    // Cancel closes the question and sends nothing.
+    all(&rows[0], ".confirm button")[1].click();
+    settle().await;
+    assert!(m.host.query_selector(".confirm").unwrap().is_none());
+    assert!(removes(&stub).is_empty());
+}
+
+#[wasm_bindgen_test]
+async fn confirming_remove_asks_the_hub_to_forget_that_satellite() {
+    let stub = FetchStub::install();
+    stub.reply("DELETE", REMOVE_BEDROOM, 202, "");
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    button(&rows[0], ".satellite__remove").click();
+    settle().await;
+    all(&m.host, ".confirm button")[0].click();
+    settle().await;
+    assert_eq!(removes(&stub), [REMOVE_BEDROOM]);
+    assert!(m.host.query_selector(".confirm").unwrap().is_none());
+    assert!(
+        m.host
+            .query_selector(".satellite__error")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[wasm_bindgen_test]
+async fn a_failed_remove_shows_the_reason_under_that_row() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "DELETE",
+        REMOVE_BEDROOM,
+        409,
+        r#"{"error":"the sound service is offline"}"#,
+    );
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    button(&rows[0], ".satellite__remove").click();
+    settle().await;
+    all(&m.host, ".confirm button")[0].click();
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    let reason = rows[0]
+        .query_selector(".satellite__error")
+        .unwrap()
+        .and_then(|e| e.text_content());
+    assert_eq!(reason.as_deref(), Some("the sound service is offline"));
+}
+
+#[wasm_bindgen_test]
+async fn the_room_picker_moves_every_entity_of_the_satellite() {
+    let stub = FetchStub::install();
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    let select: web_sys::HtmlSelectElement = rows[0]
+        .query_selector("select.sound-room")
+        .unwrap()
+        .expect("room picker")
+        .unchecked_into();
+    // Bedroom has no room yet; Kitchen speaker's picker shows its room.
+    assert_eq!(select.value(), "");
+    let kitchen: web_sys::HtmlSelectElement = rows[1]
+        .query_selector("select.sound-room")
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    assert_eq!(kitchen.value(), "kitchen");
+    select.set_value("kitchen");
+    select
+        .dispatch_event(&web_sys::Event::new("change").unwrap())
+        .unwrap();
+    settle().await;
+    let mut moved: Vec<(String, Value)> = stub
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == "PATCH")
+        .map(|r| (r.url, serde_json::from_str(&r.body).unwrap()))
+        .collect();
+    moved.sort_by(|a, b| a.0.cmp(&b.0));
+    let want: Vec<(String, Value)> = ["allowed", "connected", "mute", "volume"]
+        .iter()
+        .map(|o| {
+            (
+                format!("/api/v1/entities/{BEDROOM}_{o}/override"),
+                json!({"area": "kitchen"}),
+            )
+        })
+        .collect();
+    assert_eq!(moved, want);
 }

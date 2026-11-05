@@ -666,3 +666,12 @@
   margin: 8px 0 0;
   color: var(--danger);
 }
+
+/* Settings → Sound: a row's remove question and room picker */
+.sound-row .confirm {
+  margin: 8px 0;
+}
+
+.sound-room-field .select {
+  min-width: 10ch;
+}
