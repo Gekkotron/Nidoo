@@ -78,7 +78,7 @@ pub struct SetOverrideParams {
     /// `area`, `hidden`, `order`, `cardStyle`, `favorite`, `energyRole` (solar, grid,
     /// grid_export, battery, house, consumer, water), `energyInvert`, `securityHidden`,
     /// `energyIcon`, `energyMeter`, `homePinned`, `securityAction`, `securityAsk`, `ungrouped`,
-    /// `showAs` (light, door, siren, chime, plug), `lightOnPreset` (white, warm, red, green,
+    /// `showAs` (light, door, siren, chime, plug, tv), `lightOnPreset` (white, warm, red, green,
     /// blue), `lightOnBrightness` (1 to
     /// 255), `climatePresets`, `mainControl` (one of the entity's announced controls, or `none`
     /// to hide it), `invert` (a switch wired the other way round: the hub swaps on and off in
