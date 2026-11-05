@@ -41,6 +41,16 @@ impl Hub {
     /// Asks `text` aloud on the satellites of `target` and waits for the answer, at most
     /// [`ASK_LIMIT`].
     pub async fn ask_aloud(&self, target: SpeakTarget, text: &str) -> AskOutcome {
+        self.ask_aloud_within(target, text, ASK_LIMIT).await
+    }
+
+    /// [`Hub::ask_aloud`] with its own time limit.
+    pub async fn ask_aloud_within(
+        &self,
+        target: SpeakTarget,
+        text: &str,
+        limit: Duration,
+    ) -> AskOutcome {
         let Some(tx) = self.voice_asks.get() else {
             return AskOutcome::Off;
         };
@@ -53,7 +63,7 @@ impl Hub {
         if tx.send(request).await.is_err() {
             return AskOutcome::Off;
         }
-        match tokio::time::timeout(ASK_LIMIT, answer).await {
+        match tokio::time::timeout(limit, answer).await {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(_)) | Err(_) => AskOutcome::Silence,
         }

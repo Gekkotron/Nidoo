@@ -2912,7 +2912,18 @@ async fn run_ask_flow(hub: &Hub, node: serde_json::Value, after: serde_json::Val
     settle().await;
     let mut events = hub.subscribe();
     hub.run_flow("asker").expect("run");
-    next_run(&mut events, |run| run.status != RunStatus::Running).await
+    // A question may wait up to 45 s (paused time in the tests that wait that long).
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            if let WsEvent::FlowRunChanged { run, .. } = events.recv().await.expect("open channel")
+                && run.status != RunStatus::Running
+            {
+                return run;
+            }
+        }
+    })
+    .await
+    .expect("the run ends")
 }
 
 fn set_target() -> serde_json::Value {
@@ -3006,6 +3017,12 @@ async fn ask_default_used_without_number() {
     )
     .await;
     assert_eq!(ask_ports(&run), ["1"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert!(
+        step.detail.ends_with("→ oui (default 20)"),
+        "{}",
+        step.detail
+    );
     assert_eq!(sent_to(&sent, TARGET_TOPIC), ["20"]);
 }
 
@@ -3051,4 +3068,73 @@ async fn ask_without_voice_goes_none() {
         "{}",
         step.detail
     );
+}
+
+#[tokio::test]
+async fn ask_retry_without_satellite_says_why() {
+    let (hub, _publisher, _engine) = engine_hub();
+    fake_voice(
+        &hub,
+        vec![
+            heard("bof"),
+            AskOutcome::NoSatellite("no free satellite".into()),
+        ],
+    );
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert_eq!(ask_ports(&run), ["none"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert_eq!(
+        step.detail,
+        "asked \"Warm it up?\" → heard \"bof\" → retry: no free satellite → none"
+    );
+}
+
+/// A voice that answers the first question `after` seconds late with `bof`, then never
+/// answers the retry. Returns the log of requests.
+fn slow_voice(hub: &Hub, after: u64) -> Arc<Mutex<Vec<(SpeakTarget, String)>>> {
+    let (tx, mut rx) = mpsc::channel::<AskRequest>(4);
+    hub.set_voice_asks(tx);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&log);
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Some(request) = rx.recv().await {
+            let first = {
+                let mut log = sink.lock().expect("log");
+                log.push((request.target, request.text));
+                log.len() == 1
+            };
+            if first {
+                tokio::time::sleep(Duration::from_secs(after)).await;
+                let _ = request.reply.send(heard("bof"));
+            } else {
+                held.push(request.reply); // never answered
+            }
+        }
+    });
+    log
+}
+
+#[tokio::test(start_paused = true)]
+async fn ask_with_its_retry_stays_within_one_limit() {
+    let (hub, _publisher, _engine) = engine_hub();
+    let log = slow_voice(&hub, 30);
+    let started = tokio::time::Instant::now();
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert!(
+        started.elapsed() <= Duration::from_secs(45),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(ask_ports(&run), ["none"], "{run:?}");
+    assert_eq!(log.lock().expect("log").len(), 2, "the retry was asked");
+}
+
+#[tokio::test(start_paused = true)]
+async fn ask_gives_no_retry_when_under_five_seconds_remain() {
+    let (hub, _publisher, _engine) = engine_hub();
+    let log = slow_voice(&hub, 42);
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert_eq!(ask_ports(&run), ["none"], "{run:?}");
+    assert_eq!(log.lock().expect("log").len(), 1, "no retry");
 }

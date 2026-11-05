@@ -36,7 +36,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use super::EngineRequest;
 use super::schedule::{Armed, Now, now_in, rearm, timer_clock};
 use super::sun::{ArmedSun, next_sun_fire};
-use crate::assist::stt::ask::AskOutcome;
+use crate::assist::stt::ask::{ASK_LIMIT, AskOutcome};
 use crate::clock;
 use crate::home::OffPeakNow;
 use crate::hub::{Hub, StateTouched};
@@ -1611,6 +1611,9 @@ fn result_of(results: &BTreeMap<String, f64>, name: &str) -> Result<f64, String>
         .ok_or_else(|| format!("no result {name} in this run"))
 }
 
+/// Below this much time left, a not-understood answer gets no retry.
+const ASK_RETRY_MIN: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Runs an ask card: says the question, listens, and picks the output port of the answer
 /// heard. A heard answer that matches nothing gets one retry on the satellite that heard it.
 /// Every way of not getting an answer leaves by `none` with the step Ok.
@@ -1627,7 +1630,9 @@ async fn run_ask(
         Some(room) => SpeakTarget::Room(room.clone()),
         None => SpeakTarget::All,
     };
-    let (sid, first) = match hub.ask_aloud(target, &text).await {
+    // The whole step, retry included, stays within one limit.
+    let deadline = tokio::time::Instant::now() + ASK_LIMIT;
+    let (sid, first) = match hub.ask_aloud_within(target, &text, ASK_LIMIT).await {
         AskOutcome::Heard { sid, text } => (sid, text),
         AskOutcome::Silence => return none(format!("asked \"{text}\" → no answer")),
         AskOutcome::NoSatellite(reason) => return none(format!("ask: {reason}")),
@@ -1635,13 +1640,23 @@ async fn run_ask(
     };
     let mut heard = vec![first];
     let mut found = match_answer(&params.answers, &heard[0]);
+    let mut retry_failed = None;
     if found.is_none() {
-        let again = format!("{} {text}", not_understood(lang));
-        if let AskOutcome::Heard { text: second, .. } =
-            hub.ask_aloud(SpeakTarget::Satellite(sid), &again).await
-        {
-            found = match_answer(&params.answers, &second);
-            heard.push(second);
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left >= ASK_RETRY_MIN {
+            let again = format!("{} {text}", not_understood(lang));
+            match hub
+                .ask_aloud_within(SpeakTarget::Satellite(sid), &again, left)
+                .await
+            {
+                AskOutcome::Heard { text: second, .. } => {
+                    found = match_answer(&params.answers, &second);
+                    heard.push(second);
+                }
+                AskOutcome::Silence => {}
+                AskOutcome::NoSatellite(reason) => retry_failed = Some(reason),
+                AskOutcome::Off => retry_failed = Some("speech input is off".to_owned()),
+            }
         }
     }
     let said = heard
@@ -1650,19 +1665,22 @@ async fn run_ask(
         .collect::<Vec<_>>()
         .join(", ");
     let Some(index) = found else {
-        return none(format!("asked \"{text}\" → heard {said} → none"));
+        let retry = retry_failed.map_or_else(String::new, |why| format!(" → retry: {why}"));
+        return none(format!("asked \"{text}\" → heard {said}{retry} → none"));
     };
-    let number = heard
-        .last()
-        .and_then(|h| first_number(h))
-        .or(params.default);
+    let said_number = heard.last().and_then(|h| first_number(h));
+    let number = said_number.or(params.default);
     let mut detail = format!(
         "asked \"{text}\" → heard {said} → {}",
         params.answers[index].label
     );
     if let (Some(name), Some(n)) = (&params.name, number) {
         results.insert(name.clone(), n);
-        detail.push_str(&format!(" ({})", number_text(n)));
+        if said_number.is_some() {
+            detail.push_str(&format!(" ({})", number_text(n)));
+        } else {
+            detail.push_str(&format!(" (default {})", number_text(n)));
+        }
     }
     (StepOutcome::Ok, detail, vec![(index + 1).to_string()])
 }

@@ -62,6 +62,13 @@ const NO: &[&str] = &[
     "pas la peine",
     "not now",
     "no thanks",
+    "pas d accord",
+    "pas ok",
+    "pas okay",
+    "not ok",
+    "not okay",
+    "no go",
+    "surtout pas",
 ];
 
 /// The index of the answer that was heard: the one with the longest matching phrase
@@ -229,19 +236,23 @@ fn fold_token(token: String) -> String {
 }
 
 /// The first number in what was heard: digits (`21`, `21,5`) or French / English words up to 100.
+///
+/// A number right after `à` / `to` / `at` / `sur` wins ("oui dans dix minutes à 21" is 21);
+/// otherwise the first number.
 pub fn first_number(heard: &str) -> Option<f64> {
     let tokens = number_tokens(heard);
-    for i in 0..tokens.len() {
-        let token = &tokens[i];
+    let at = |i: usize| -> Option<f64> {
+        let token = tokens.get(i)?;
         if token.starts_with(|c: char| c.is_ascii_digit()) {
-            if let Ok(n) = token.replace(',', ".").parse::<f64>() {
-                return Some(n);
-            }
-        } else if let Some((value, _)) = spoken_number(&tokens[i..]) {
-            return Some(f64::from(value));
+            token.replace(',', ".").parse::<f64>().ok()
+        } else {
+            spoken_number(&tokens[i..]).map(|(value, _)| f64::from(value))
         }
-    }
-    None
+    };
+    let marked = (0..tokens.len())
+        .filter(|&i| matches!(tokens[i].as_str(), "a" | "to" | "at" | "sur"))
+        .find_map(|i| at(i + 1));
+    marked.or_else(|| (0..tokens.len()).find_map(at))
 }
 
 #[cfg(test)]
@@ -305,6 +316,25 @@ mod tests {
         assert_eq!(first_number("twenty two"), Some(22.0));
         assert_eq!(first_number("quatre-vingt-dix"), Some(90.0));
         assert_eq!(first_number("oui"), None);
+    }
+    #[test]
+    fn negated_yes_is_no() {
+        for (labels, h) in [
+            (["Oui", "Non"], "pas d'accord"),
+            (["Oui", "Non"], "pas ok"),
+            (["Oui", "Non"], "surtout pas"),
+            (["Yes", "No"], "not okay"),
+            (["Yes", "No"], "no go"),
+        ] {
+            assert_eq!(match_answer(&a(&labels), h), Some(1), "{h}");
+        }
+    }
+    #[test]
+    fn number_after_a_marker_wins() {
+        assert_eq!(first_number("oui dans dix minutes à 21"), Some(21.0));
+        assert_eq!(first_number("oui 21"), Some(21.0));
+        assert_eq!(first_number("oui à vingt et un"), Some(21.0));
+        assert_eq!(first_number("yes in ten minutes to 19"), Some(19.0));
     }
     #[test]
     fn article_un_is_not_a_number() {

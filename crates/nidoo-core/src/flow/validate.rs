@@ -501,15 +501,7 @@ pub fn check_math_card(node_id: &str, params: &MathParams, flow: &Flow) -> Resul
         return Err(bad(format!("`{}` is not a valid name", params.name)));
     }
     let formula = parse_formula(&params.formula).map_err(|e| bad(e.reason))?;
-    let others: std::collections::BTreeSet<&str> = flow
-        .nodes
-        .iter()
-        .filter(|n| n.id != node_id)
-        .filter_map(|n| match &n.kind {
-            NodeKind::Math(p) => Some(p.name.as_str()),
-            _ => None,
-        })
-        .collect();
+    let others = crate::flow::math_names(flow);
     for name in formula.names() {
         if input_names.contains(name) || name == "trigger" {
             continue;
@@ -702,7 +694,7 @@ fn find_cycle(flow: &Flow) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow::{Edge, MathParams, Node, NodeKind, reference_flow};
+    use crate::flow::{AskAnswer, AskParams, Edge, MathParams, Node, NodeKind, reference_flow};
     use crate::flow::{command_with_number, parse_formula};
 
     fn edge(from: &str, to: &str, port: Option<&str>) -> Edge {
@@ -2004,6 +1996,28 @@ mod tests {
             name: "a".into(),
             ..MathParams::default()
         });
+        assert_eq!(validate(&flow), Ok(()));
+    }
+
+    #[test]
+    fn math_card_may_read_an_ask_name() {
+        let mut flow = math_flow(serde_json::json!({ "formula": "temp + 1", "name": "b" }));
+        flow.nodes.push(Node {
+            id: "q".into(),
+            name: None,
+            position: None,
+            kind: NodeKind::Ask(AskParams {
+                text: "T".into(),
+                answers: vec![AskAnswer {
+                    label: "A".into(),
+                    words: vec![],
+                }],
+                name: Some("temp".into()),
+                ..AskParams::default()
+            }),
+            extra: Default::default(),
+        });
+        flow.edges.push(edge("t", "q", None));
         assert_eq!(validate(&flow), Ok(()));
     }
 

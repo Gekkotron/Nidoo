@@ -175,6 +175,8 @@ enum Event {
     /// The clip of the hub's own question (none when it could not be made).
     AskClip {
         sid: String,
+        /// The question it belongs to: a clip of a cancelled question is dropped.
+        id: u64,
         clip: Option<String>,
     },
 }
@@ -417,6 +419,10 @@ impl Voice {
             text,
             reply,
         } = request;
+        if reply.is_closed() {
+            // The run was cancelled before the question was taken: say nothing.
+            return;
+        }
         let candidates = {
             let reg = self.hub.read();
             match speaking_satellites(&reg, &target) {
@@ -458,7 +464,11 @@ impl Voice {
             sats.push(sid);
         }
         if sats.is_empty() {
-            let _ = reply.send(AskOutcome::NoSatellite("no free satellite".to_owned()));
+            let why = match &target {
+                SpeakTarget::Room(room) => format!("no free satellite in {room}"),
+                _ => "no free satellite".to_owned(),
+            };
+            let _ = reply.send(AskOutcome::NoSatellite(why));
             return;
         }
         let id = self.next_ask;
@@ -490,7 +500,7 @@ impl Voice {
                         None
                     }
                 };
-                let _ = events.send(Event::AskClip { sid, clip }).await;
+                let _ = events.send(Event::AskClip { sid, id, clip }).await;
             });
         }
     }
@@ -538,8 +548,10 @@ impl Voice {
                 self.mark(&sid, "reply");
                 self.feed(&sid, Input::Replied { clip, question }).await;
             }
-            Event::AskClip { sid, clip } => {
-                self.feed(&sid, Input::AskClip(clip)).await;
+            Event::AskClip { sid, id, clip } => {
+                if self.sats.get(&sid).and_then(|sat| sat.ask_id) == Some(id) {
+                    self.feed(&sid, Input::AskClip(clip)).await;
+                }
             }
         }
     }
@@ -1311,6 +1323,90 @@ mod tests {
             tokio::spawn(async move { asker.ask_aloud(SpeakTarget::All, "Encore ?").await });
         wait_for("the second question", || speaks(&log).len() == 2).await;
         again.abort();
+    }
+
+    #[tokio::test]
+    async fn a_closed_asker_is_not_spoken_to() {
+        let (hub, log, board, dir) = start_heard(true, None, None, "oui").await;
+        with_speech(&hub, dir.path()).await;
+        board.recv().await.expect("hello");
+        let (reply, answer) = oneshot::channel();
+        drop(answer);
+        hub.voice_asks
+            .get()
+            .expect("voice service")
+            .send(AskRequest {
+                target: SpeakTarget::All,
+                text: "Je chauffe ?".to_owned(),
+                reply,
+            })
+            .await
+            .expect("sent");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(speaks(&log).is_empty(), "nothing was spoken");
+        assert!(holds(&log).is_empty(), "nothing was held");
+    }
+
+    #[tokio::test]
+    async fn busy_room_is_named_in_the_detail() {
+        let (hub, log, board, _dir) = start(true).await;
+        let Some(HubMsg::Hello { nonce, hub: to, .. }) = board.recv().await else {
+            panic!("no hello")
+        };
+        let key = board.key.clone();
+        let wake = BoardMsg::Wake {
+            nonce,
+            session: 1,
+            kind: WakeKind::WakeWord,
+            listen_ctr: 0,
+        };
+        board.send(to, wake, &key).await;
+        wait_for("the exchange's hold", || !holds(&log).is_empty()).await;
+        let outcome = hub
+            .ask_aloud(SpeakTarget::Room("living".into()), "Je chauffe ?")
+            .await;
+        assert_eq!(
+            outcome,
+            AskOutcome::NoSatellite("no free satellite in living".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_late_clip_of_a_cancelled_ask_is_dropped() {
+        let (hub, _log) = house().await;
+        let dir = tempfile::tempdir().unwrap();
+        let stt = stt(dir.path(), true, "oui").await;
+        let board = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (events, _results) = mpsc::channel(8);
+        let mut voice = Voice {
+            hub,
+            stt,
+            socket: Arc::new(socket),
+            board_port: board.local_addr().unwrap().port(),
+            sats: HashMap::new(),
+            rooms: Rooms::default(),
+            counter: HubCounter::default(),
+            started: Instant::now(),
+            events,
+            refused: 0,
+            ask: default_ask(),
+            pending: HashMap::new(),
+            next_ask: 0,
+        };
+        voice.greet().await;
+        // Ask 2 now runs on the satellite; the clip of cancelled ask 1 arrives late.
+        voice.sats.get_mut(SID).expect("satellite").ask_id = Some(2);
+        voice.feed(SID, Input::AskStart).await;
+        let clip = |id| Event::AskClip {
+            sid: SID.to_owned(),
+            id,
+            clip: Some("late".to_owned()),
+        };
+        voice.on_event(clip(1)).await;
+        assert!(!voice.sats[SID].session.is_speaking(), "stale clip taken");
+        voice.on_event(clip(2)).await;
+        assert!(voice.sats[SID].session.is_speaking(), "own clip dropped");
     }
 
     #[tokio::test]
