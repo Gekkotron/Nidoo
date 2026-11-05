@@ -375,6 +375,14 @@ mod tests {
             ["Ma maison", "Réglages", "À propos"]
         );
         assert_eq!(
+            labels(&crumbs("/settings/assistant-voice", Lang::Fr, names)),
+            ["Ma maison", "Réglages", "Voix"]
+        );
+        assert_eq!(
+            labels(&crumbs("/settings/assistant-listening", Lang::En, names)),
+            ["My home", "Settings", "Listening"]
+        );
+        assert_eq!(
             labels(&crumbs("/settings/nope", Lang::En, names)),
             ["My home", "Settings"]
         );

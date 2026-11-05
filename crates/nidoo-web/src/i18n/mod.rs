@@ -252,6 +252,8 @@ pub enum Key {
     Appearance,
     Alarm,
     NetworkPresence,
+    AssistantVoice,
+    AssistantListening,
     Sound,
     System,
     Zigbee2mqtt,
@@ -399,6 +401,8 @@ impl Key {
         Key::Appearance,
         Key::Alarm,
         Key::NetworkPresence,
+        Key::AssistantVoice,
+        Key::AssistantListening,
         Key::Sound,
         Key::System,
         Key::Zigbee2mqtt,
@@ -565,6 +569,8 @@ pub fn text(lang: Lang, key: Key) -> &'static str {
         Key::Appearance => ("Appearance", "Apparence"),
         Key::Alarm => ("Alarm", "Alarme"),
         Key::NetworkPresence => ("Network presence", "Présence réseau"),
+        Key::AssistantVoice => ("Voice", "Voix"),
+        Key::AssistantListening => ("Listening", "Écoute"),
         Key::Sound => ("Sound", "Son"),
         Key::System => ("System", "Système"),
         Key::Zigbee2mqtt => ("Zigbee2MQTT", "Zigbee2MQTT"),
@@ -827,6 +833,8 @@ mod tests {
             | Key::Appearance
             | Key::Alarm
             | Key::NetworkPresence
+            | Key::AssistantVoice
+            | Key::AssistantListening
             | Key::Sound
             | Key::System
             | Key::Zigbee2mqtt
@@ -892,7 +900,7 @@ mod tests {
         for &k in Key::ALL {
             assert!(listed(k));
         }
-        assert_eq!(Key::ALL.len(), 142);
+        assert_eq!(Key::ALL.len(), 144);
     }
     #[test]
     fn every_key_differs_between_languages() {

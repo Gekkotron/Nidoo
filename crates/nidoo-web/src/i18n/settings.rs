@@ -16,6 +16,8 @@ pub enum SettingsText {
     HintPush,
     HintAlarm,
     HintNetworkPresence,
+    HintAssistantVoice,
+    HintAssistantListening,
     HintSound,
     HintSystem,
     HintAppearance,
@@ -43,6 +45,7 @@ pub enum SettingsText {
     Copied,
     CopyFailed,
     GroupHouse,
+    GroupAssistant,
     GroupHub,
     Connecting,
     Online,
@@ -94,6 +97,8 @@ impl SettingsText {
         SettingsText::HintPush,
         SettingsText::HintAlarm,
         SettingsText::HintNetworkPresence,
+        SettingsText::HintAssistantVoice,
+        SettingsText::HintAssistantListening,
         SettingsText::HintSound,
         SettingsText::HintSystem,
         SettingsText::HintAppearance,
@@ -121,6 +126,7 @@ impl SettingsText {
         SettingsText::Copied,
         SettingsText::CopyFailed,
         SettingsText::GroupHouse,
+        SettingsText::GroupAssistant,
         SettingsText::GroupHub,
         SettingsText::Connecting,
         SettingsText::Online,
@@ -193,6 +199,14 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
             "Who is home, by pinging devices",
             "Qui est là, en envoyant un ping aux appareils",
         ),
+        T::HintAssistantVoice => (
+            "Text to speech (TTS): languages, voices, models",
+            "Synthèse vocale (TTS) : langues, voix, modèles",
+        ),
+        T::HintAssistantListening => (
+            "Speech recognition (STT) and the satellites' key",
+            "Reconnaissance vocale (STT) et clé des satellites",
+        ),
         T::HintSound => (
             "Speaker satellites: approve, mute, volume",
             "Satellites audio : approbation, sourdine, volume",
@@ -247,6 +261,7 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
             "Échec de la copie : sélectionnez le texte",
         ),
         T::GroupHouse => ("Your home", "Votre maison"),
+        T::GroupAssistant => ("Assistant", "Assistant"),
         T::GroupHub => ("Hub and connections", "Hub et connexions"),
         T::Connecting => ("Connecting…", "Connexion…"),
         T::Online => ("Online", "En ligne"),
@@ -369,6 +384,7 @@ mod tests {
         SettingsText::ThemeAuto,
         SettingsText::ThemeNight,
         SettingsText::ThemeIvoire,
+        SettingsText::GroupAssistant,
         SettingsText::EnergyViewFlux,
         SettingsText::EnergyViewOrbite,
         SettingsText::Version,
@@ -387,7 +403,7 @@ mod tests {
     #[test]
     fn all_lists_every_variant() {
         // The match in `settings_text` is exhaustive, so a new variant only needs listing here.
-        assert_eq!(SettingsText::ALL.len(), 74);
+        assert_eq!(SettingsText::ALL.len(), 77);
     }
 
     #[test]
