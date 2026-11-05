@@ -137,6 +137,10 @@ pub struct Registry {
     /// Entities a message on one of their state topics reached since boot, whether it read a
     /// value or not: [`Self::restore_state`] leaves them alone.
     spoken: BTreeSet<String>,
+    /// Last payload (and its `at`) per subscribed availability topic. The broker sends a
+    /// retained message once per subscription, so an entity discovered while the topic is
+    /// already subscribed would otherwise never hear it: [`Self::store`] replays it.
+    last_availability: BTreeMap<String, (String, u64)>,
 }
 
 impl Registry {
@@ -160,6 +164,7 @@ impl Registry {
             device_automation_actions: BTreeMap::new(),
             template_failures: BTreeSet::new(),
             spoken: BTreeSet::new(),
+            last_availability: BTreeMap::new(),
         }
     }
 
@@ -434,6 +439,14 @@ impl Registry {
         let Some(ids) = self.topic_index.get(topic) else {
             return;
         };
+        if ids.iter().any(|id| {
+            self.entities
+                .get(id)
+                .is_some_and(|e| e.bindings.availability_topics().contains(topic))
+        }) {
+            self.last_availability
+                .insert(topic.to_owned(), (text.to_owned(), at));
+        }
         for id in ids {
             let (Some(entity), Some(state)) = (self.entities.get(id), self.states.get_mut(id))
             else {
@@ -486,16 +499,47 @@ impl Registry {
     }
 
     /// Indexes and stores `entity`, replacing any entity with the same id, and reports it.
+    /// An availability topic it did not read before gets the word that topic last said.
     fn store(&mut self, entity: Entity, changes: &mut Vec<Change>) {
         let id = entity.unique_id.clone();
+        let mut heard = BTreeSet::new();
         if let Some(previous) = self.entities.get(&id) {
             let previous = previous.clone();
+            heard = previous.bindings.availability_topics();
             self.unindex(&id, &previous);
         }
         self.index(&id, &entity);
+        self.forget_unread_availability();
         self.states.entry(id.clone()).or_default();
         self.entities.insert(id.clone(), entity);
-        changes.push(Change::EntityUpserted(id));
+        changes.push(Change::EntityUpserted(id.clone()));
+        self.replay_availability(&id, &heard, changes);
+    }
+
+    /// Applies the remembered word of each availability-only topic of `id` not in `heard`.
+    fn replay_availability(
+        &mut self,
+        id: &str,
+        heard: &BTreeSet<String>,
+        changes: &mut Vec<Change>,
+    ) {
+        let (Some(entity), Some(state)) = (self.entities.get(id), self.states.get_mut(id)) else {
+            return;
+        };
+        let before = state.clone();
+        for topic in entity.bindings.availability_topics() {
+            if heard.contains(&topic) || !entity.bindings.is_availability_only(&topic) {
+                continue;
+            }
+            let Some((text, at)) = self.last_availability.get(&topic) else {
+                continue;
+            };
+            // A template failure leaves the availability as it was; the next message retries.
+            let _ = apply_parts(entity, state, &topic, text, *at, &self.templates);
+        }
+        if differs(&before, state) {
+            changes.push(Change::StateChanged(id.to_owned()));
+        }
     }
 
     fn remove_entity(&mut self, id: &str, changes: &mut Vec<Change>) {
@@ -503,6 +547,7 @@ impl Registry {
             return;
         };
         self.unindex(id, &entity);
+        self.forget_unread_availability();
         self.states.remove(id);
         self.origin.remove(id);
         self.template_failures.remove(id);
@@ -517,6 +562,14 @@ impl Registry {
             }
             self.subscriptions.insert(topic);
         }
+    }
+
+    /// Drops the remembered word of the topics no entity reads any more: the hub unsubscribes
+    /// from them, and the next subscription brings the retained word back.
+    fn forget_unread_availability(&mut self) {
+        let index = &self.topic_index;
+        self.last_availability
+            .retain(|topic, _| index.contains_key(topic));
     }
 
     fn unindex(&mut self, id: &str, entity: &Entity) {

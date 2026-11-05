@@ -6,7 +6,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use nidoo_core::discovery::DiscoveryTopic;
-use nidoo_core::model::{EntityCategory, Kind, StateValue, UNASSIGNED_AREA};
+use nidoo_core::model::{Availability, EntityCategory, Kind, StateValue, UNASSIGNED_AREA};
 use nidoo_core::registry::{Change, Inbound, Registry, RegistryConfig};
 use serde_json::json;
 
@@ -1276,4 +1276,104 @@ fn restore_state_keeps_a_value_already_read() {
     let state = registry.state("test_switch").expect("state");
     assert_eq!(state.value, StateValue::OnOff(true));
     assert_eq!(state.last_update, Some(AT));
+}
+
+/// A satellite of the sound service, reading the service's shared `nidoo-sound/status`.
+fn sound_satellite(sid: &str) -> Inbound {
+    let config = json!({
+        "unique_id": format!("nidoo_sound_{sid}_connected"),
+        "state_topic": format!("nidoo-sound/{sid}/connected"),
+        "availability_topic": "nidoo-sound/status",
+        "device_class": "connectivity",
+        "device": {"identifiers": [format!("nidoo_sound_{sid}")], "name": sid}
+    });
+    Inbound::Discovery(
+        discovery_topic(&format!(
+            "nidoo/binary_sensor/nidoo_sound_{sid}/connected/config"
+        )),
+        config.to_string().into_bytes(),
+    )
+}
+
+/// The broker sends a retained message once per subscription, and the hub is already
+/// subscribed to a shared availability topic when a second entity reading it is discovered:
+/// the newcomer gets the word the topic last said instead of staying unknown.
+#[test]
+fn late_entity_gets_the_last_word_of_a_shared_availability_topic() {
+    let mut registry = Registry::new(config());
+    registry.apply(sound_satellite("a"));
+    let inbound = registry.route("nidoo-sound/status", b"online".to_vec(), AT);
+    registry.apply(inbound);
+
+    let changes = registry.apply(sound_satellite("b"));
+    assert!(
+        changes.contains(&Change::StateChanged("nidoo_sound_b_connected".to_owned())),
+        "{changes:?}"
+    );
+    let late = registry.state("nidoo_sound_b_connected").expect("state");
+    assert_eq!(late.availability, Availability::Online);
+    assert_eq!(
+        late.value,
+        StateValue::Unknown,
+        "only the availability is replayed"
+    );
+
+    // The service's last will reaches both.
+    let inbound = registry.route("nidoo-sound/status", b"offline".to_vec(), AT + 1);
+    registry.apply(inbound);
+    for id in ["nidoo_sound_a_connected", "nidoo_sound_b_connected"] {
+        assert_eq!(
+            registry.state(id).expect("state").availability,
+            Availability::Offline
+        );
+    }
+}
+
+/// Once no entity reads a topic any more the hub unsubscribes, and the next subscription brings
+/// the retained word back: the remembered one is dropped with the topic.
+#[test]
+fn availability_word_is_forgotten_with_its_last_reader() {
+    let mut registry = Registry::new(config());
+    registry.apply(sound_satellite("a"));
+    let inbound = registry.route("nidoo-sound/status", b"online".to_vec(), AT);
+    registry.apply(inbound);
+    registry.apply(Inbound::Discovery(
+        discovery_topic("nidoo/binary_sensor/nidoo_sound_a/connected/config"),
+        Vec::new(),
+    ));
+    assert!(
+        !registry
+            .subscription_topics()
+            .contains("nidoo-sound/status")
+    );
+
+    registry.apply(sound_satellite("b"));
+    let fresh = registry.state("nidoo_sound_b_connected").expect("state");
+    assert_eq!(fresh.availability, Availability::Unknown);
+}
+
+/// A re-discovery of the only entity reading a topic keeps the subscription, so the broker
+/// sends nothing again: the remembered word survives for a later reader.
+#[test]
+fn availability_word_survives_a_rediscovery_of_its_only_reader() {
+    let mut registry = Registry::new(config());
+    registry.apply(sound_satellite("a"));
+    let inbound = registry.route("nidoo-sound/status", b"online".to_vec(), AT);
+    registry.apply(inbound);
+    let renamed = json!({
+        "unique_id": "nidoo_sound_a_connected",
+        "name": "Renamed",
+        "state_topic": "nidoo-sound/a/connected",
+        "availability_topic": "nidoo-sound/status",
+        "device_class": "connectivity",
+        "device": {"identifiers": ["nidoo_sound_a"], "name": "a"}
+    });
+    registry.apply(Inbound::Discovery(
+        discovery_topic("nidoo/binary_sensor/nidoo_sound_a/connected/config"),
+        renamed.to_string().into_bytes(),
+    ));
+
+    registry.apply(sound_satellite("b"));
+    let late = registry.state("nidoo_sound_b_connected").expect("state");
+    assert_eq!(late.availability, Availability::Online);
 }
