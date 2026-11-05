@@ -1,4 +1,4 @@
-//! FR/EN text: the Assistant's speech settings screen (`/assistant/settings`).
+//! FR/EN text: the Assistant's speech settings (Settings → Assistant → Voice and Listening).
 
 use super::*;
 
@@ -8,9 +8,7 @@ pub enum AssistSettingsText {
     /// The ⚙ link's label in the Assistant header.
     OpenSettings,
     /// The link back to the Assistant.
-    Back,
     /// The page title.
-    Title,
     // Section headings.
     TestHeading,
     VoiceHeading,
@@ -109,8 +107,6 @@ pub fn assist_settings_text(lang: Lang, k: AssistSettingsText) -> &'static str {
     use AssistSettingsText::*;
     let (en, fr) = match k {
         OpenSettings => ("Speech settings", "Réglages de la voix"),
-        Back => ("Assistant", "Assistant"),
-        Title => ("Speech settings", "Réglages de la voix"),
         TestHeading => ("Try it", "Essai"),
         VoiceHeading => ("Voice", "Voix"),
         ModelsHeading => ("Installed models", "Modèles installés"),
@@ -262,8 +258,6 @@ mod tests {
         use AssistSettingsText::*;
         match k {
             OpenSettings
-            | Back
-            | Title
             | TestHeading
             | VoiceHeading
             | ModelsHeading
@@ -349,8 +343,6 @@ mod tests {
         use AssistSettingsText::*;
         &[
             OpenSettings,
-            Back,
-            Title,
             TestHeading,
             VoiceHeading,
             ModelsHeading,
@@ -437,6 +429,6 @@ mod tests {
         use AssistSettingsText::*;
         assert!(ALL.iter().all(|&k| listed(k)));
         // The rest differ or is a shared word.
-        assert_table(ALL, assist_settings_text, &[Back, LicenceLabel, UnitMs]);
+        assert_table(ALL, assist_settings_text, &[LicenceLabel, UnitMs]);
     }
 }

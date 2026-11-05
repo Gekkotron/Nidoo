@@ -1,4 +1,4 @@
-//! Assistant → Speech settings → Speech input: the recognition model (download, state), its
+//! Settings → Assistant → Listening: the recognition model (download, state), its
 //! settings and the satellites' shared key with the line to paste into `secrets.yaml`.
 
 use std::sync::Arc;
@@ -27,6 +27,17 @@ pub fn stt_moving(status: &SttStatus) -> bool {
 /// The line each satellite's `secrets.yaml` takes.
 pub fn secrets_line(key: &str) -> String {
     format!("voice_key: \"{key}\"")
+}
+
+/// Settings → Assistant → Listening (`/settings/assistant-listening`): the speech input card,
+/// inside the Settings sub-page frame.
+#[component]
+pub fn AssistListeningPage() -> impl IntoView {
+    view! {
+        <div class="assist-set">
+            <SpeechInputSection />
+        </div>
+    }
 }
 
 #[component]

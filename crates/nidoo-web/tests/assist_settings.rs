@@ -1,11 +1,11 @@
 #![cfg(target_arch = "wasm32")]
-//! The speech settings screen: its cards render with no hub, the language tabs follow the
+//! Settings → Assistant → Voice: its cards render with no hub, the language tabs follow the
 //! status order, ▶ speaks in the tab's language, and each state of a live hub shows.
 
 use leptos::prelude::*;
 use nidoo_web::components::toast::Toasts;
 use nidoo_web::i18n::Lang;
-use nidoo_web::screens::assist_settings::AssistSettingsScreen;
+use nidoo_web::screens::assist_settings::AssistVoicePage;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
@@ -34,7 +34,7 @@ fn mount() -> Mounted {
     let app = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
         provide_context(Toasts::new());
         provide_context(RwSignal::new(Lang::En));
-        view! { <AssistSettingsScreen /> }
+        view! { <AssistVoicePage /> }
     });
     Mounted {
         _app: Box::new(app),
@@ -113,20 +113,26 @@ async fn the_cards_render_even_when_the_hub_does_not_answer() {
     settle().await;
     assert_eq!(
         texts(&m.host, ".assist-set__card > h2"),
-        [
-            "Languages",
-            "Speech input",
-            "Installed models",
-            "Add a model"
-        ]
+        ["Languages", "Installed models", "Add a model"]
     );
     let text = m.host.text_content().unwrap_or_default();
     assert!(
         text.contains("could not be loaded"),
         "a failed load is said: {text}"
     );
-    let back = m.host.query_selector(".assist-set__back").unwrap().unwrap();
-    assert_eq!(back.get_attribute("href").as_deref(), Some("/assistant"));
+    // The Settings frame gives the title and Back: the page has neither of its own.
+    assert!(
+        m.host
+            .query_selector(".assist-set__back")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        m.host
+            .query_selector(".assist-set__title")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[wasm_bindgen_test]

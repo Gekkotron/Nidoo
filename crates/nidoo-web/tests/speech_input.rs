@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 use nidoo_web::components::toast::Toasts;
 use nidoo_web::i18n::Lang;
-use nidoo_web::screens::speech_input::SpeechInputSection;
+use nidoo_web::screens::speech_input::AssistListeningPage;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
@@ -42,7 +42,7 @@ fn mount() -> Mounted {
     let app = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
         provide_context(Toasts::new());
         provide_context(RwSignal::new(Lang::En));
-        view! { <SpeechInputSection /> }
+        view! { <AssistListeningPage /> }
     });
     Mounted {
         _app: Box::new(app),
@@ -74,6 +74,24 @@ fn sent(stub: &FetchStub, method: &str, url: &str) -> Vec<String> {
         .filter(|r| r.method == method && r.url == url)
         .map(|r| r.body)
         .collect()
+}
+
+#[wasm_bindgen_test]
+async fn the_listening_page_holds_the_speech_input_card() {
+    let stub = FetchStub::install();
+    stub.reply("GET", &format!("{BASE}/status"), 200, &status(false, false));
+    let m = mount();
+    settle().await;
+    let card = m
+        .host
+        .query_selector(".assist-set > .assist-set__card")
+        .unwrap()
+        .expect("the speech input card inside the page");
+    assert!(
+        card.text_content()
+            .unwrap_or_default()
+            .contains("Speech input")
+    );
 }
 
 #[wasm_bindgen_test]
