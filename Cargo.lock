@@ -2950,6 +2950,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nidoo-satellite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "nidoo-sound",
+ "nidoo-voice",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "nidoo-solcast"
 version = "0.1.0"
 dependencies = [
