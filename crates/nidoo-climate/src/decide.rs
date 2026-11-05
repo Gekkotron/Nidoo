@@ -1092,8 +1092,9 @@ mod tests {
     fn correction_runs_against_the_setback_target() {
         let mut c = empty_room(15.0);
         c.settings.feedback.enabled = true;
+        // Just over the setback's band (17.5): one step, not a jump.
         c.thermometer = Some(ReadingSource {
-            value: 19.0,
+            value: 17.6,
             age_s: 30,
         });
         let d = c.run();
@@ -1105,7 +1106,7 @@ mod tests {
 
     #[test]
     fn correction_lowers_unheld_devices() {
-        let d = corrected(21.6, 30).run();
+        let d = corrected(19.6, 30).run();
         assert_eq!(d.source, Source::Schedule);
         assert_eq!(d.setpoint, Some(Setpoint::Temp(19.0)));
         assert_eq!(d.entities["trv"].setpoint, Some(18.5));
@@ -1115,6 +1116,14 @@ mod tests {
             "{}",
             d.reason
         );
+    }
+
+    #[test]
+    fn correction_jumps_by_the_gap_within_the_base() {
+        // 2.6 over the target: a -2.5 jump, held by the rules' 17 °C base.
+        let d = corrected(21.6, 30).run();
+        assert_eq!(d.adjust, Some(-2.0));
+        assert_eq!(d.entities["trv"].setpoint, Some(17.0));
     }
 
     #[test]
@@ -1137,7 +1146,7 @@ mod tests {
 
     #[test]
     fn held_device_keeps_its_value() {
-        let mut c = corrected(21.6, 30);
+        let mut c = corrected(19.6, 30);
         c.devices = vec![dev_step("a", 0.5), dev_step("b", 0.5)];
         c.overrides = vec![dev_ov("a", 20.0)];
         let d = c.run();
@@ -1156,6 +1165,7 @@ mod tests {
             offset: -0.5,
             since: NOW - 7200,
             last_step_at: Some(NOW - 7200),
+            reached: false,
         });
         let d = c.run();
         assert_eq!(d.adjust, Some(-0.5));
@@ -1165,7 +1175,8 @@ mod tests {
 
     #[test]
     fn coarse_device_sets_the_step() {
-        let mut c = corrected(21.6, 30);
+        // 0.6 over the target: one 1 °C step (a 0.5 °C step would give -0.5).
+        let mut c = corrected(19.6, 30);
         c.devices = vec![dev_step("a", 0.5), dev_step("b", 1.0)];
         let d = c.run();
         assert_eq!(d.adjust, Some(-1.0));
@@ -1183,9 +1194,9 @@ mod tests {
 
     #[test]
     fn quiet_thermometer_reads_the_room_and_still_corrects() {
-        let mut c = corrected(21.0, 2 * 3600);
+        let mut c = corrected(19.6, 2 * 3600);
         c.reading = Reading::Fresh {
-            value: 21.0,
+            value: 19.6,
             age_s: 2 * 3600,
             from_sensor: true,
             sensor_stale: false,
