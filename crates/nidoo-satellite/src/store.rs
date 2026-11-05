@@ -217,23 +217,25 @@ fn write_settings(path: &Path, settings: &Settings) -> anyhow::Result<()> {
         wake_threshold: settings.wake_threshold,
     };
     let body = serde_json::to_vec_pretty(&file)?;
-    write_private_atomic(path, &body)
+    write_private_atomic(path, &body).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Replaces `path` with `bytes` in one rename; the file is `0600` from the start.
-pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let tmp = path.with_extension("tmp");
+/// Replaces `path` with `bytes` through `<path>.tmp` and one rename; both are `0600`
+/// from the start.
+pub(crate) fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     let _ = std::fs::remove_file(&tmp);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(&tmp)
-        .with_context(|| format!("creating {}", tmp.display()))?;
+        .open(&tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;
     drop(f);
-    std::fs::rename(&tmp, path).with_context(|| format!("replacing {}", path.display()))
+    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]
