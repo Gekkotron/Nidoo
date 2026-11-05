@@ -39,6 +39,12 @@ esphome:
     priority: -100
     then:
       - lambda: nidoo_voice_setup("${voice_key}", ${voice_board_port});
+      # The chime input is not fed by the media pipeline, so nothing tells it
+      # its format: without this it is 16 kHz mono and the mixer rejects it
+      # (or pins itself to 16 kHz). Same as the DAC: s16, stereo, 48 kHz.
+      - lambda: |-
+          id(chime_in).set_audio_stream_info(esphome::audio::AudioStreamInfo(16, 2, 48000));
+          nidoo_chime_prepare();
       # Start the microphone once and never stop it: restarting the I2S mic
       # costs about a second of silence, the start of every command.
       - microphone.capture: mic
@@ -123,7 +129,7 @@ interval:
           // Give the music back no earlier than 1 s after the wake word: the
           // music already sent ahead must not play over the command.
           if (id(voice_unmute_pending) && (int32_t) (now - id(voice_opened_at) - 1000) >= 0) {
-            id(music_in).apply_ducking(0, 150);
+            id(music_in).apply_ducking(0, 0);
             id(voice_unmute_pending) = false;
           }
           nidoo_chime_pump(id(chime_in));
