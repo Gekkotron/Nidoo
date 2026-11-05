@@ -1,9 +1,9 @@
 # Nidoo sound satellite: Seeed Studio XIAO ESP32S3 + INMP441 microphone + PCM5102A DAC.
 #
 # Plays the music streamed by nidoo-sound (a Sendspin-compatible server), and
-# listens after "Hey Jarvis": the microphone goes to the Nidoo hub, signed with
-# the shared voice_key, only inside that window (see nidoo_voice.h and
-# docs/reference/voice-protocol.md).
+# listens after "Hey Jarvis": a short chime says so (nidoo_chime.h), and the
+# microphone goes to the Nidoo hub, signed with the shared voice_key, only
+# inside that window (see nidoo_voice.h and docs/reference/voice-protocol.md).
 # Per-board values come from substitutions (override with --substitution or a
 # per-board file under satellite/boards/) and from the git-ignored secrets.yaml.
 #
@@ -34,6 +34,7 @@ esphome:
   min_version: 2026.10.2
   includes:
     - nidoo_voice.h
+    - nidoo_chime.h
   on_boot:
     priority: -100
     then:
@@ -119,12 +120,13 @@ interval:
             id(voice_open) = true;
             id(led).turn_on().perform();
           }
-          // Give the speaker back no earlier than 1 s after the wake word: the
+          // Give the music back no earlier than 1 s after the wake word: the
           // music already sent ahead must not play over the command.
           if (id(voice_unmute_pending) && (int32_t) (now - id(voice_opened_at) - 1000) >= 0) {
-            id(dac).set_mute_state(id(voice_was_muted));
+            id(music_in).apply_ducking(0, 150);
             id(voice_unmute_pending) = false;
           }
+          nidoo_chime_pump(id(chime_in));
 
 wifi:
   ssid: !secret wifi_ssid
@@ -169,6 +171,20 @@ speaker:
     sample_rate: 48000
     bits_per_sample: 16bit
     num_channels: 2
+    # The music is silenced, and the chime starts, behind what this buffer
+    # already holds: 100 ms instead of the default 500 ms. Network hiccups are
+    # absorbed further up, by the seconds nidoo-sound sends ahead.
+    buffer_duration: 100ms
+  # Music and the wake chime share the DAC.
+  - platform: mixer
+    id: dac_mixer
+    output_speaker: dac
+    task_stack_in_psram: true
+    source_speakers:
+      - id: music_in
+      # Holds the whole 200 ms chime.
+      - id: chime_in
+        buffer_duration: 250ms
 
 sendspin:
   id: sendspin_hub
@@ -187,7 +203,7 @@ media_player:
     id: player
     name: Player
     media_pipeline:
-      speaker: dac
+      speaker: music_in
       format: NONE
       num_channels: 2
       sources:
@@ -204,14 +220,11 @@ globals:
   - id: voice_until
     type: uint32_t
     initial_value: "0"
-  # When the window opened, and whether the speaker was muted before.
+  # When the window opened.
   - id: voice_opened_at
     type: uint32_t
     initial_value: "0"
-  - id: voice_was_muted
-    type: bool
-    initial_value: "false"
-  # The speaker is muted by the window and waits to be given back.
+  # The music is silenced by the window and waits to be given back.
   - id: voice_unmute_pending
     type: bool
     initial_value: "false"
@@ -261,11 +274,13 @@ micro_wake_word:
         then:
           - lambda: |-
               // Quiet at once, so the first words are clean; the hub then holds
-              // the room's music. The DAC speaker itself, never the media
-              // player: its state goes to nidoo-sound as the satellite's Mute.
-              id(voice_was_muted) = id(dac).get_mute_state();
-              id(dac).set_mute_state(true);
+              // the room's music. The music input only (173 dB and more is
+              // silence), so the chime still plays; never the media player's
+              // mute: it goes to nidoo-sound as the satellite's Mute, and a
+              // muted satellite stays silent, chime included.
+              id(music_in).apply_ducking(255, 0);
               id(voice_unmute_pending) = false;
+              nidoo_chime_start();
               nidoo_voice_wake(0);
               id(voice_opened_at) = millis();
               id(voice_until) = millis() + 8000;

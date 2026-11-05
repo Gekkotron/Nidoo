@@ -117,8 +117,10 @@ network.
 
 ## Speech input
 
-Say **"Hey Jarvis"** near a satellite, then a request in French: the user LED
-lights while it listens, and the house answers on that satellite (see
+Say **"Hey Jarvis"** near a satellite, then a request in French: a short
+two-note chime plays and the user LED lights while it listens (a muted
+satellite stays silent, chime included), and the house answers on that
+satellite (see
 [Talk to a satellite](../docs/users/talk-to-a-satellite.md)). The wake word
 runs on the board (`micro_wake_word`); the microphone goes to the hub over
 UDP only inside that window, signed with the shared `voice_key` from the
