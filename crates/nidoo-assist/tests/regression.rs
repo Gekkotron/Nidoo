@@ -10,6 +10,8 @@ enum Expect {
     Confirm(&'static str, f64),
     Answer(&'static str),
     Ask(&'static [&'static str]),
+    /// Every shutter listed, in order, sent the same command.
+    Covers(Command, &'static [&'static str]),
     NotUnderstood,
 }
 
@@ -117,6 +119,28 @@ const ROWS: &[(&str, Expect)] = &[
     ("fais-moi un café", NotUnderstood),
     ("allume et éteins le salon", NotUnderstood),
     ("n'éteins pas le salon", NotUnderstood),
+    (
+        "ferme les volets du salon",
+        Covers(Command::Close, &["cover_baie", "cover_fenetre"]),
+    ),
+    (
+        "ferme tous les volets",
+        Covers(
+            Command::Close,
+            &["cover_baie", "cover_fenetre", "cover_lea"],
+        ),
+    ),
+    (
+        "ouvre les volets du salon à 30 %",
+        Covers(
+            Command::SetPosition { position: 30 },
+            &["cover_baie", "cover_fenetre"],
+        ),
+    ),
+    ("ferme les volets", Ask(&["Salon", "Chambre Léa"])),
+    ("ne ferme pas les volets", NotUnderstood),
+    ("ferme les rideaux du salon", NotUnderstood),
+    ("monte le salon", NotUnderstood),
 ];
 
 #[test]
@@ -131,7 +155,7 @@ fn regression_table() {
                 fn command(a: &Action) -> Option<(&str, Command)> {
                     match a {
                         Action::Light { entity, command } => Some((entity, command.clone())),
-                        Action::Setpoint { .. } => None,
+                        Action::Setpoint { .. } | Action::Cover { .. } => None,
                     }
                 }
                 let want = if *on {
@@ -164,6 +188,12 @@ fn regression_table() {
                         [Action::Setpoint { zone: z, setpoint }] if z == zone && setpoint == value
                     )
                 )
+            }
+            (Covers(want, ids), Plan::Act { actions, .. }) => {
+                actions.len() == ids.len()
+                    && actions.iter().zip(ids.iter()).all(|(a, id)| {
+                        matches!(a, Action::Cover { entity, command } if entity == id && command == want)
+                    })
             }
             (Answer(text), Plan::Answer { reply, .. }) => reply == text,
             (Ask(labels), Plan::Ask { choices, .. }) => {

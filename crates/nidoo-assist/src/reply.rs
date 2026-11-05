@@ -157,6 +157,20 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
     let text = match done {
         Done::Lights { area, on, names } => lights(house.area_name(area), *on, names, results),
         Done::Setpoint { zone, from, to } => setpoint(house.area_name(zone), *from, *to, results),
+        Done::Covers {
+            area,
+            open,
+            position,
+            names,
+            unable,
+        } => covers(
+            area.as_deref().map(|a| house.area_name(a)),
+            *open,
+            *position,
+            names,
+            unable,
+            results,
+        ),
     };
     if simulate {
         format!("Simulation : {text}")
@@ -220,6 +234,85 @@ fn lights(area: &str, on: bool, names: &[String], results: &[ActionResult]) -> S
     text
 }
 
+/// Shutters of a room (`area`) or of the whole house (`None`), shaped like the lights' reply.
+fn covers(
+    area: Option<&str>,
+    open: bool,
+    position: Option<u8>,
+    names: &[String],
+    unable: &[String],
+    results: &[ActionResult],
+) -> String {
+    let n = names.len();
+    let (one, many) = match (open, position) {
+        (true, Some(p)) => (format!("ouvert à {p} %"), format!("ouverts à {p} %")),
+        (true, None) => ("ouvert".to_string(), "ouverts".to_string()),
+        (false, _) => ("fermé".to_string(), "fermés".to_string()),
+    };
+    // " dans le Salon" after a room, nothing for the whole house.
+    let place = area.map(|a| format!(" {}", dans(a))).unwrap_or_default();
+    let failed: Vec<(&str, &str)> = names
+        .iter()
+        .zip(results)
+        .filter_map(|(name, r)| match r {
+            ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
+            ActionResult::Offline => Some((name.as_str(), "hors ligne")),
+            _ => None,
+        })
+        .collect();
+    let skipped = results
+        .iter()
+        .filter(|r| **r == ActionResult::Skipped)
+        .count();
+    let mut text = if n == 1 {
+        let name = &names[0];
+        match failed.first() {
+            Some((_, why)) => format!("« {name} » n'a pas répondu{place} : {why}."),
+            None if skipped == 1 => format!("Volet « {name} » déjà {one}{place}."),
+            None => format!("Volet « {name} » {one}{place}."),
+        }
+    } else if !failed.is_empty() && failed.len() == n {
+        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
+        format!("Rien n'a répondu{place} : {}.", list.join(", "))
+    } else {
+        let already = if skipped == n { "déjà " } else { "" };
+        let mut text = match area {
+            Some(a) => format!("{a} : volets {already}{many} ({n} volets)."),
+            None => format!("Tous les volets {already}{many} ({n} volets)."),
+        };
+        if !failed.is_empty() {
+            let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
+            let verb = if failed.len() == 1 { "n'a" } else { "n'ont" };
+            text.push_str(&format!(
+                " {} sur {n} {verb} pas répondu : {}.",
+                failed.len(),
+                list.join(", ")
+            ));
+        }
+        text
+    };
+    if !unable.is_empty() {
+        text.push(' ');
+        text.push_str(&cannot(unable, open, position));
+    }
+    text
+}
+
+/// The shutters that cannot do what was asked: « Volet ne sait pas se mettre à une position. »
+pub fn cannot(names: &[String], open: bool, position: Option<u8>) -> String {
+    let what = match (position, open) {
+        (Some(_), _) => "se mettre à une position",
+        (None, true) => "s'ouvrir",
+        (None, false) => "se fermer",
+    };
+    let verb = if names.len() == 1 {
+        "ne sait"
+    } else {
+        "ne savent"
+    };
+    format!("{} {verb} pas {what}.", names.join(", "))
+}
+
 fn setpoint(area: &str, from: Option<f64>, to: f64, results: &[ActionResult]) -> String {
     match results.first() {
         Some(ActionResult::Failed(why)) => format!(
@@ -252,6 +345,98 @@ mod tests {
             on,
             names: names.iter().map(|n| n.to_string()).collect(),
         }
+    }
+
+    fn covers_done(area: Option<&str>, open: bool, position: Option<u8>, names: &[&str]) -> Done {
+        Done::Covers {
+            area: area.map(str::to_string),
+            open,
+            position,
+            names: names.iter().map(|n| n.to_string()).collect(),
+            unable: vec![],
+        }
+    }
+
+    fn said(d: &Done, results: &[ActionResult]) -> String {
+        let f = fixture::house();
+        done(d, results, &f.house(), false)
+    }
+
+    #[test]
+    fn covers_reply_shapes() {
+        use ActionResult::{Ok, Skipped};
+        let salon = Some("salon");
+        assert_eq!(
+            said(&covers_done(salon, false, None, &["Baie"]), &[Ok]),
+            "Volet « Baie » fermé dans le Salon."
+        );
+        assert_eq!(
+            said(&covers_done(salon, true, Some(30), &["Baie"]), &[Ok]),
+            "Volet « Baie » ouvert à 30 % dans le Salon."
+        );
+        assert_eq!(
+            said(&covers_done(salon, false, None, &["Baie"]), &[Skipped]),
+            "Volet « Baie » déjà fermé dans le Salon."
+        );
+        assert_eq!(
+            said(
+                &covers_done(salon, false, None, &["Baie", "Fenêtre"]),
+                &[Ok, Ok]
+            ),
+            "Salon : volets fermés (2 volets)."
+        );
+        assert_eq!(
+            said(
+                &covers_done(salon, true, Some(30), &["Baie", "Fenêtre"]),
+                &[Ok, Ok]
+            ),
+            "Salon : volets ouverts à 30 % (2 volets)."
+        );
+        assert_eq!(
+            said(
+                &covers_done(None, false, None, &["Baie", "Fenêtre", "Volet"]),
+                &[Ok, Ok, Ok]
+            ),
+            "Tous les volets fermés (3 volets)."
+        );
+        assert_eq!(
+            said(
+                &covers_done(None, true, None, &["Baie", "Fenêtre"]),
+                &[Skipped, Skipped]
+            ),
+            "Tous les volets déjà ouverts (2 volets)."
+        );
+    }
+
+    #[test]
+    fn whole_house_with_one_offline_names_it() {
+        use ActionResult::{Offline, Ok};
+        assert_eq!(
+            said(
+                &covers_done(None, false, None, &["Baie", "Fenêtre", "Volet"]),
+                &[Ok, Offline, Ok]
+            ),
+            "Tous les volets fermés (3 volets). 1 sur 3 n'a pas répondu : Fenêtre."
+        );
+        assert_eq!(
+            said(
+                &covers_done(Some("salon"), false, None, &["Baie", "Fenêtre"]),
+                &[Offline, Offline]
+            ),
+            "Rien n'a répondu dans le Salon : Baie, Fenêtre."
+        );
+    }
+
+    #[test]
+    fn covers_reply_names_the_unable() {
+        let mut d = covers_done(None, true, Some(30), &["Baie"]);
+        if let Done::Covers { unable, .. } = &mut d {
+            unable.push("Volet".into());
+        }
+        assert_eq!(
+            said(&d, &[ActionResult::Ok]),
+            "Volet « Baie » ouvert à 30 %. Volet ne sait pas se mettre à une position."
+        );
     }
 
     #[test]
