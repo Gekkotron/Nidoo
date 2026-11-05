@@ -27,6 +27,16 @@ Spec: `docs/superpowers/specs/2026-11-02-assist-design.md`. Plan: `docs/superpow
 - [ ] **P3** Learned shortcuts shared with the Android app; English sentences.
 - [ ] **P3** The floating button opens the conversation as a panel over the page instead of navigating.
 
+## Sound (`nidoo-sound`): future ideas
+
+What `nidoo-sound` does not support yet (see Supported features in `crates/nidoo-sound/README.md`). Each is its own brainstorm.
+
+- [ ] **P3** Music per room: several inputs, each played on a chosen set of rooms (Sendspin groups), instead of one source in every room; pick the rooms from Nidoo.
+- [ ] **P3** Compressed audio to the satellites (FLAC, which the Sendspin spec asks servers to offer): less Wi-Fi than raw PCM (about 1.5 Mbit/s per satellite today).
+- [ ] **P3** Pairing: pair each player instead of the shared unpaired-access key, so only paired players can play and a man in the middle on the LAN is shut out.
+- [ ] **P3** Advertise `_sendspin-server._tcp`, so players that only dial advertised servers find the service, without giving two connections to a player that both advertises and dials.
+- [ ] **P3** Controller and metadata roles, and `group/update`: now-playing title and artwork on the players, play, pause and next from them.
+
 ## Other backlog ideas (unrelated to dashboards)
 
 ### Homey-gap features

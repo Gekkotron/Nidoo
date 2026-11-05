@@ -25,13 +25,14 @@ nidoo-sound run [--config nidoo-sound.toml]
 | Played report | yes | `nidoo-sound/spoken` once a sentence's last sample plays, or at once when it is dropped |
 | Satellite address | yes | Diagnostic sensor, the IPv4 address while connected |
 | Hardware check | yes | `nidoo-sound tone` (hidden): a 440 Hz tone, volume, mute and unmute on every player found |
-| Several music sources, or music per room | no | One input, played in every room |
-| FLAC or other codecs | no | PCM only |
-| Pairing | no | Unpaired access only (Sentinel PSK) |
-| Advertising `_sendspin-server._tcp` | no | Players that only dial advertised servers do not find it |
-| Controller, metadata, artwork, visualizer roles; `group/update` | no | |
+| Several music sources, or music per room | not yet | One input, played in every room |
+| FLAC or other codecs | not yet | PCM only |
+| Pairing | not yet | Unpaired access only (Sentinel PSK) |
+| Advertising `_sendspin-server._tcp` | not yet | Players that only dial advertised servers do not find it |
+| Controller, metadata, artwork, visualizer roles; `group/update` | not yet | |
 
-The protocol details are in [Protocol and known deviations](#protocol-and-known-deviations).
+The "not yet" lines are ideas for later, in `TODOS.md` (Sound: future ideas). The
+protocol details are in [Protocol and known deviations](#protocol-and-known-deviations).
 
 ## Configuration
 
