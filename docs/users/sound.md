@@ -180,6 +180,23 @@ A satellite also listens: say "Hey Jarvis" and a request near it, and the
 house answers on it while the room's music is held. See
 [Talk to a satellite](talk-to-a-satellite.md).
 
+## Supported features
+
+- **Music in sync** in every room, from one source: the raw PCM a phone app
+  sends to port 4953.
+- **Satellites found on their own** over mDNS, and **players that connect
+  themselves** (a web player) on port 8927.
+- **Per satellite:** Allowed (approval), Volume, Mute, Room, a Connected and
+  an Address sensor, and **Remove** (see [Remove a satellite](#remove-a-satellite)).
+  Volume, mute and Allowed are remembered across restarts.
+- **Speech** on one satellite, one room or every room, over the music, which
+  is turned down while the sentence plays (see [Speak in a room](#speak-in-a-room)).
+- **Talking to a satellite**: the room's music is held while it listens (see
+  [Talk to a satellite](talk-to-a-satellite.md)).
+
+Not supported: several sources or different music per room, compressed audio
+(FLAC), pairing. The details are in `crates/nidoo-sound/README.md`.
+
 ## Known limits
 
 - Audio travels as uncompressed PCM (about 1.5 Mbit/s per satellite), fine on
