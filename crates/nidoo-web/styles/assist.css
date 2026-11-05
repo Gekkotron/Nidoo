@@ -318,20 +318,6 @@
   max-width: 760px;
 }
 
-.assist-set__back {
-  align-self: flex-start;
-  color: var(--muted);
-  text-decoration: none;
-}
-
-.assist-set__back:hover {
-  color: var(--ink);
-}
-
-.assist-set__title {
-  margin: 0;
-}
-
 .assist-set__card {
   display: flex;
   flex-direction: column;
@@ -434,10 +420,21 @@ label.assist-set__item {
   color: var(--danger);
 }
 
+/* A status tag beside a field: the field's height, centred on it. */
 .assist-set__state {
-  padding: 2px 10px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: var(--touch-min);
+  padding: 0 14px;
   border: 1px solid var(--chip-border);
   border-radius: 999px;
+}
+
+/* One ring on a focused field, drawn over its border instead of 2px outside it. */
+.assist-set .field:where(input, select, textarea):focus-visible {
+  outline-offset: -1px;
 }
 
 .assist-set__state--ready {

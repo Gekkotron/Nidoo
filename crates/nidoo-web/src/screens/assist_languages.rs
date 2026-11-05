@@ -1,4 +1,4 @@
-//! The Languages card of `/assistant/settings`: one tab per language the hub speaks (the house
+//! The Languages card of Settings → Assistant → Voice: one tab per language the hub speaks (the house
 //! language first) with its model, a test sentence and its voices, and a **+ Add** tab.
 
 use std::collections::HashMap;

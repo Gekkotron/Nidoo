@@ -8,8 +8,8 @@ description: The signed UDP messages between a speaker satellite and the hub: la
 
 A speaker satellite sends its microphone to the hub over UDP, only inside a
 *window*: after the wake word, or after the hub's **Listen** (a follow-up
-answer). The hub listens on UDP **4960** (Assistant → Speech settings → Speech
-input), each board on UDP **4961**. Messages are **authenticated, not
+answer). The hub listens on UDP **4960** (Settings → Assistant → Listening),
+each board on UDP **4961**. Messages are **authenticated, not
 encrypted**: a device without the shared key can neither inject audio nor send
 a board's microphone elsewhere, but someone on the network can hear a window's
 audio.

@@ -1,4 +1,4 @@
-//! The Settings → Sound page: the speaker satellites the sound service publishes, one row each,
+//! The Settings → Assistant → Sound page: the speaker satellites the sound service publishes, one row each,
 //! with the switch that approves a new one, its mute, its volume, its room, a button that removes
 //! it (after an inline "are you sure?") and, once allowed, a button that says a test sentence on
 //! that satellite alone.
@@ -623,7 +623,7 @@ fn SayBox(satellites: Memo<Vec<Satellite>>) -> impl IntoView {
     }
 }
 
-/// The Settings → Sound page.
+/// The Settings → Assistant → Sound page.
 #[component]
 pub fn SoundSettingsPage() -> impl IntoView {
     let house = expect_context::<House>();
