@@ -20,6 +20,8 @@ Each exchange shows in the Assistant history with the satellite's name and
 room. A request is a real one, with the same rules and confirmations as
 typing it.
 
+A Mac can listen too: see [A Mac as a satellite](mac-satellite.md).
+
 ## Set it up
 
 1. **Speech output.** The answers are spoken with the hub's voice: set up a
