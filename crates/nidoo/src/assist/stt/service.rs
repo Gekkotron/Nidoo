@@ -11,15 +11,18 @@ use std::time::{Duration, Instant};
 use nidoo_assist::view::AssistRequest;
 use nidoo_core::command::Publish;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::Stt;
+use super::ask::{AskOutcome, AskRequest};
 use super::engine::Vad;
 use super::guard::{HubCounter, ReplayGuard};
 use super::packet::{BoardMsg, HubMsg, WakeKind, decode_board, encode_hub};
 use super::session::{Input, Output, Rooms, Session, SessionCfg};
 use crate::hub::Hub;
-use crate::sound::{HOLD_TOPIC, SpeakTarget, room_of, room_satellites, voice_satellites};
+use crate::sound::{
+    HOLD_TOPIC, SpeakTarget, room_of, room_satellites, speaking_satellites, voice_satellites,
+};
 
 /// The UDP port every board listens on.
 pub const BOARD_PORT: u16 = 4961;
@@ -102,6 +105,10 @@ pub async fn run_voice_with(
     let socket = Arc::new(socket);
     let (events, mut results) = mpsc::channel(64);
     let mut spoken = hub.subscribe_spoken();
+    let (ask_tx, mut asks) = mpsc::channel::<AskRequest>(8);
+    if hub.voice_asks.set(ask_tx).is_err() {
+        tracing::debug!("the hub already has a voice service for its questions");
+    }
     let mut voice = Voice {
         hub,
         stt,
@@ -114,6 +121,8 @@ pub async fn run_voice_with(
         events,
         refused: 0,
         ask,
+        pending: HashMap::new(),
+        next_ask: 0,
     };
     let mut hello = tokio::time::interval(HELLO_EVERY);
     let mut tick = tokio::time::interval(TICK);
@@ -128,6 +137,7 @@ pub async fn run_voice_with(
             _ = hello.tick() => voice.greet().await,
             _ = tick.tick() => voice.on_tick().await,
             Some(event) = results.recv() => voice.on_event(event).await,
+            Some(request) = asks.recv() => voice.on_ask(request).await,
             report = spoken.recv() => match report {
                 Ok(report) => {
                     let clip = report.id;
@@ -162,6 +172,18 @@ enum Event {
         clip: Option<String>,
         question: bool,
     },
+    /// The clip of the hub's own question (none when it could not be made).
+    AskClip {
+        sid: String,
+        clip: Option<String>,
+    },
+}
+
+/// A question of the hub being asked on some satellites.
+struct Pending {
+    reply: oneshot::Sender<AskOutcome>,
+    /// The satellites that have not given up yet.
+    sats: Vec<String>,
 }
 
 /// One satellite the hub greets.
@@ -173,6 +195,8 @@ struct Sat {
     addr: SocketAddrV4,
     /// The exchange's stages, in ms since its wake word.
     stages: Vec<(&'static str, u64)>,
+    /// The hub's question this satellite is asking, if any.
+    ask_id: Option<u64>,
 }
 
 struct Voice {
@@ -188,6 +212,9 @@ struct Voice {
     /// Datagrams refused so far (logged now and then).
     refused: u64,
     ask: AskFn,
+    /// Questions of the hub in flight, by id.
+    pending: HashMap<u64, Pending>,
+    next_ask: u64,
 }
 
 fn unix_us() -> u64 {
@@ -240,6 +267,7 @@ impl Voice {
                 guard: ReplayGuard::default(),
                 addr,
                 stages: Vec::new(),
+                ask_id: None,
             });
             sat.addr = addr;
             let mut nonce = [0u8; 8];
@@ -359,6 +387,141 @@ impl Voice {
 
     async fn on_tick(&mut self) {
         self.feed_all(|| Input::Tick).await;
+        // A question nobody waits for any more (its flow run ended) is given up.
+        let closed: Vec<u64> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| p.reply.is_closed())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in closed {
+            self.cancel_ask(id, None).await;
+        }
+    }
+
+    /// Drops question `id` and ends its satellites' exchanges, except `keep`.
+    async fn cancel_ask(&mut self, id: u64, keep: Option<&str>) -> Option<Pending> {
+        let pending = self.pending.remove(&id)?;
+        for sid in &pending.sats {
+            if Some(sid.as_str()) != keep {
+                self.feed(sid, Input::AskCancel).await;
+            }
+        }
+        Some(pending)
+    }
+
+    /// Asks the hub's question on the free satellites of the request's target.
+    async fn on_ask(&mut self, request: AskRequest) {
+        let AskRequest {
+            target,
+            text,
+            reply,
+        } = request;
+        let candidates = {
+            let reg = self.hub.read();
+            match speaking_satellites(&reg, &target) {
+                Ok(speaking) => {
+                    let able = voice_satellites(&reg);
+                    Ok(speaking
+                        .into_iter()
+                        .filter(|sid| able.iter().any(|(s, _)| s == sid))
+                        .map(|sid| {
+                            let room = room_of(&reg, &sid).unwrap_or_else(|| sid.clone());
+                            (sid, room)
+                        })
+                        .collect::<Vec<_>>())
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        };
+        let candidates = match candidates {
+            Ok(c) => c,
+            Err(why) => {
+                let _ = reply.send(AskOutcome::NoSatellite(why));
+                return;
+            }
+        };
+        let Some(engines) = self.stt.engines() else {
+            let _ = reply.send(AskOutcome::Off);
+            return;
+        };
+        let mut sats = Vec::new();
+        for (sid, room) in candidates {
+            let Some(sat) = self.sats.get_mut(&sid) else {
+                continue;
+            };
+            if !sat.session.is_idle() || !self.rooms.admit(&sid, &room) {
+                continue;
+            }
+            sat.session = Session::new(session_cfg(&self.stt));
+            sat.vad = engines.vads.new_vad();
+            sats.push(sid);
+        }
+        if sats.is_empty() {
+            let _ = reply.send(AskOutcome::NoSatellite("no free satellite".to_owned()));
+            return;
+        }
+        let id = self.next_ask;
+        self.next_ask += 1;
+        self.pending.insert(
+            id,
+            Pending {
+                reply,
+                sats: sats.clone(),
+            },
+        );
+        for sid in sats {
+            if let Some(sat) = self.sats.get_mut(&sid) {
+                sat.ask_id = Some(id);
+            }
+            self.mark(&sid, "ask");
+            self.feed(&sid, Input::AskStart).await;
+            let hub = Arc::clone(&self.hub);
+            let events = self.events.clone();
+            let text = text.clone();
+            tokio::spawn(async move {
+                let clip = match hub
+                    .speak_clip(SpeakTarget::Satellite(sid.clone()), &text, None, None)
+                    .await
+                {
+                    Ok((clip, _)) => Some(clip),
+                    Err(e) => {
+                        tracing::info!(%sid, "the question is not spoken: {e}");
+                        None
+                    }
+                };
+                let _ = events.send(Event::AskClip { sid, clip }).await;
+            });
+        }
+    }
+
+    /// The asking session of `sid` gave its answer.
+    async fn on_answer(&mut self, sid: &str, answer: Option<String>) {
+        let Some(id) = self.sats.get_mut(sid).and_then(|sat| sat.ask_id.take()) else {
+            return;
+        };
+        match answer {
+            Some(text) => {
+                // `feed` -> `run` -> here -> `feed`: the loop needs a box.
+                if let Some(pending) = Box::pin(self.cancel_ask(id, Some(sid))).await {
+                    let _ = pending.reply.send(AskOutcome::Heard {
+                        sid: sid.to_owned(),
+                        text,
+                    });
+                }
+            }
+            None => {
+                let Some(pending) = self.pending.get_mut(&id) else {
+                    return;
+                };
+                pending.sats.retain(|s| s != sid);
+                if pending.sats.is_empty()
+                    && let Some(pending) = self.pending.remove(&id)
+                {
+                    let _ = pending.reply.send(AskOutcome::Silence);
+                }
+            }
+        }
     }
 
     async fn on_event(&mut self, event: Event) {
@@ -374,6 +537,9 @@ impl Voice {
             } => {
                 self.mark(&sid, "reply");
                 self.feed(&sid, Input::Replied { clip, question }).await;
+            }
+            Event::AskClip { sid, clip } => {
+                self.feed(&sid, Input::AskClip(clip)).await;
             }
         }
     }
@@ -406,8 +572,11 @@ impl Voice {
     async fn run(&mut self, sid: &str, output: Output) {
         match output {
             Output::Hold => self.hold(sid, HOLD_MS),
-            Output::Answer(_) => {}
+            Output::Answer(answer) => self.on_answer(sid, answer).await,
             Output::Release => {
+                if let Some(sat) = self.sats.get_mut(sid) {
+                    sat.ask_id = None;
+                }
                 self.hold(sid, 0);
                 self.rooms.done(sid);
                 self.log_exchange(sid);
@@ -719,12 +888,22 @@ mod tests {
         second: Option<&str>,
         ask: Option<AskFn>,
     ) -> (Arc<Hub>, Arc<Mutex<Vec<Publish>>>, Board, tempfile::TempDir) {
+        start_heard(with_key, second, ask, "Jarvis, allume la lumière du salon.").await
+    }
+
+    /// [`start_with`], the engines hearing `heard`.
+    async fn start_heard(
+        with_key: bool,
+        second: Option<&str>,
+        ask: Option<AskFn>,
+        heard: &'static str,
+    ) -> (Arc<Hub>, Arc<Mutex<Vec<Publish>>>, Board, tempfile::TempDir) {
         let (hub, log) = house().await;
         if let Some(sid) = second {
             add_satellite(&hub, sid).await;
         }
         let dir = tempfile::tempdir().unwrap();
-        let stt = stt(dir.path(), with_key, "Jarvis, allume la lumière du salon.").await;
+        let stt = stt(dir.path(), with_key, heard).await;
         let board = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let board_port = board.local_addr().unwrap().port();
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -951,5 +1130,203 @@ mod tests {
             holds(&log).iter().all(|h| h["for_ms"] != 0),
             "not released between the question and the answer"
         );
+    }
+
+    /// The hub speaks through a tone synthesiser (so `speak_clip` works).
+    async fn with_speech(hub: &Hub, dir: &Path) {
+        use crate::assist::tts::tone::ToneLoader;
+        use crate::assist::tts::{Tts, TtsConfig};
+        use axum::body::Body;
+        use nidoo_api::LanguageRequest;
+        let tts = Tts::start(TtsConfig {
+            root: dir.join("tts"),
+            hf_base: "http://127.0.0.1:1".to_owned(),
+            loader: Arc::new(ToneLoader),
+        });
+        let upload = tts.upload_open().unwrap();
+        let files: [(&str, &[u8]); 3] = [
+            (
+                "config.json",
+                br#"{"languages":["fr","en"],"model_id":"M"}"#,
+            ),
+            ("tokenizer.json", b"{}"),
+            ("model.q8.gguf", b"weights"),
+        ];
+        for (name, body) in files {
+            tts.upload_file(&upload.id, name, Body::from(body.to_vec()))
+                .await
+                .unwrap();
+        }
+        let model = tts.upload_finish(&upload.id).unwrap();
+        let req = LanguageRequest {
+            model: model.id,
+            voice: None,
+        };
+        tts.set_language("fr", req).await.unwrap();
+        for _ in 0..250 {
+            let status = serde_json::to_value(tts.status()).unwrap();
+            if status["languages"][0]["engine"]["state"] == "ready" {
+                hub.set_tts(tts);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the synthesiser never got ready");
+    }
+
+    fn speaks(log: &Mutex<Vec<Publish>>) -> Vec<serde_json::Value> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.topic == crate::sound::SPEAK_TOPIC)
+            .map(|p| serde_json::from_str(&p.payload).unwrap())
+            .collect()
+    }
+
+    /// Reports the `n`th spoken clip as played until the board is asked to listen.
+    async fn play_and_wait_listen(
+        hub: &Hub,
+        log: &Mutex<Vec<Publish>>,
+        board: &Board,
+        n: usize,
+    ) -> u64 {
+        wait_for("the question spoken", || speaks(log).len() >= n).await;
+        let clip = speaks(log)[n - 1]["id"].as_str().unwrap().to_owned();
+        loop {
+            let report = json!({"id": clip, "played": true}).to_string();
+            hub.ingest_message(crate::sound::SPOKEN_TOPIC, report.as_bytes(), false);
+            match tokio::time::timeout(Duration::from_millis(500), board.recv_for()).await {
+                Ok(Some((_, HubMsg::Listen { hub_ctr }))) => return hub_ctr,
+                Ok(Some(_)) | Err(_) => {}
+                Ok(None) => panic!("the board was never asked to listen"),
+            }
+        }
+    }
+
+    use super::super::ask::AskOutcome;
+
+    #[tokio::test]
+    async fn ask_aloud_hears_the_answer() {
+        let (hub, log, board, dir) = start_heard(true, None, None, "oui").await;
+        with_speech(&hub, dir.path()).await;
+        let Some(HubMsg::Hello { nonce, hub: to, .. }) = board.recv().await else {
+            panic!("no hello")
+        };
+        let key = board.key.clone();
+        let asker = Arc::clone(&hub);
+        let asked = tokio::spawn(async move {
+            asker
+                .ask_aloud(SpeakTarget::Room("living".into()), "Je chauffe ?")
+                .await
+        });
+        let listen_ctr = play_and_wait_listen(&hub, &log, &board, 1).await;
+        assert_eq!(holds(&log)[0]["for_ms"], HOLD_MS, "held for the question");
+        let follow = BoardMsg::Wake {
+            nonce,
+            session: 1,
+            kind: WakeKind::FollowUp,
+            listen_ctr,
+        };
+        board.send(to, follow, &key).await;
+        board.phrase(SID, to, 1).await;
+        let outcome = tokio::time::timeout(WAIT, asked).await.unwrap().unwrap();
+        assert_eq!(
+            outcome,
+            AskOutcome::Heard {
+                sid: SID.to_owned(),
+                text: "oui".to_owned()
+            }
+        );
+        wait_for("the release", || {
+            holds(&log).last().is_some_and(|h| h["for_ms"] == 0)
+        })
+        .await;
+        assert!(
+            hub.assist_turns(10).await.turns.is_empty(),
+            "the answer is not an assistant turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn busy_satellites_are_skipped() {
+        let (hub, log, board, _dir) = start(true).await;
+        let Some(HubMsg::Hello { nonce, hub: to, .. }) = board.recv().await else {
+            panic!("no hello")
+        };
+        let key = board.key.clone();
+        let wake = BoardMsg::Wake {
+            nonce,
+            session: 1,
+            kind: WakeKind::WakeWord,
+            listen_ctr: 0,
+        };
+        board.send(to, wake, &key).await;
+        wait_for("the exchange's hold", || !holds(&log).is_empty()).await;
+        let outcome = hub.ask_aloud(SpeakTarget::All, "Je chauffe ?").await;
+        assert_eq!(
+            outcome,
+            AskOutcome::NoSatellite("no free satellite".to_owned())
+        );
+        assert!(speaks(&log).is_empty(), "nothing was spoken");
+    }
+
+    #[tokio::test]
+    async fn ask_aloud_without_voice_is_off() {
+        let (hub, _log) = house().await;
+        assert_eq!(
+            hub.ask_aloud(SpeakTarget::All, "Je chauffe ?").await,
+            AskOutcome::Off
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_room_has_no_satellite() {
+        let (hub, _log, board, _dir) = start(true).await;
+        board.recv().await.expect("hello");
+        let outcome = hub
+            .ask_aloud(SpeakTarget::Room("nowhere".into()), "Je chauffe ?")
+            .await;
+        assert!(matches!(outcome, AskOutcome::NoSatellite(_)), "{outcome:?}");
+    }
+
+    #[tokio::test]
+    async fn closed_asker_releases_the_satellite() {
+        let (hub, log, board, dir) = start_heard(true, None, None, "oui").await;
+        with_speech(&hub, dir.path()).await;
+        board.recv().await.expect("hello");
+        let asker = Arc::clone(&hub);
+        let asked =
+            tokio::spawn(async move { asker.ask_aloud(SpeakTarget::All, "Je chauffe ?").await });
+        play_and_wait_listen(&hub, &log, &board, 1).await;
+        assert!(holds(&log).iter().all(|h| h["for_ms"] != 0));
+        // The flow run is cancelled: the future is dropped mid-question.
+        asked.abort();
+        wait_for("the release", || {
+            holds(&log).last().is_some_and(|h| h["for_ms"] == 0)
+        })
+        .await;
+        // The satellite is free again: a new question is spoken.
+        let asker = Arc::clone(&hub);
+        let again =
+            tokio::spawn(async move { asker.ask_aloud(SpeakTarget::All, "Encore ?").await });
+        wait_for("the second question", || speaks(&log).len() == 2).await;
+        again.abort();
+    }
+
+    #[tokio::test]
+    async fn silence_answers_silence() {
+        let (hub, log, board, dir) = start_heard(true, None, None, "oui").await;
+        with_speech(&hub, dir.path()).await;
+        board.recv().await.expect("hello");
+        let asker = Arc::clone(&hub);
+        let asked =
+            tokio::spawn(async move { asker.ask_aloud(SpeakTarget::All, "Je chauffe ?").await });
+        play_and_wait_listen(&hub, &log, &board, 1).await;
+        let outcome = tokio::time::timeout(WAIT, asked).await.unwrap().unwrap();
+        assert_eq!(outcome, AskOutcome::Silence);
+        wait_for("the release", || {
+            holds(&log).last().is_some_and(|h| h["for_ms"] == 0)
+        })
+        .await;
     }
 }
