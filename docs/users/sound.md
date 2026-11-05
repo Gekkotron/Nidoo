@@ -114,7 +114,26 @@ the container (the satellites' settings stay in `data/sound/`).
    music is playing, the satellite joins in sync. The same page has each
    satellite's **Mute** and **Volume**; on Home, the satellite is one card
    with its volume, mute and test button.
-4. Put the device in its room like any other device.
+4. Pick its **Room** on the same page. The picker moves every entity of the
+   satellite at once; the satellite then shows in that room and speaks there.
+   Setting the room on its own page works too: the satellite's name opens its
+   **Volume** page, and the Volume's room is the satellite's room.
+
+## Remove a satellite
+
+Every satellite in **Settings → Sound** has a trash button, connected or not.
+Press it, then **Remove** to confirm (or **Cancel**). `nidoo-sound` forgets
+the satellite: its volume, mute and Allowed, and the broker messages that made
+it a device in Nidoo. Its card, controls and room go at once, with no restart.
+
+Use it for a board you replaced, reflashed under a new name, or gave away. A
+satellite that is still powered and on the network comes back a few seconds
+later as a new one, "Waiting for approval", with no room, exactly as on its
+first install. To keep a board out for good, switch it off or leave
+**Allowed** off.
+
+While `nidoo-sound` is stopped, removing is refused ("the sound service is
+offline"): start it first.
 
 ## Speak in a room
 

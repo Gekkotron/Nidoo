@@ -22,6 +22,9 @@ pub enum SoundText {
     Room,
     AllRooms,
     Send,
+    Remove,
+    RemoveQuestion,
+    NoRoom,
 }
 
 /// A fixed word or sentence of the sound page.
@@ -57,6 +60,12 @@ pub fn sound_text(lang: Lang, k: SoundText) -> &'static str {
         Room => ("Room", "Pièce"),
         AllRooms => ("All rooms", "Toutes les pièces"),
         Send => ("Send", "Envoyer"),
+        Remove => ("Remove", "Retirer"),
+        RemoveQuestion => (
+            "Remove this satellite? If it is still on, it comes back waiting for approval.",
+            "Retirer ce satellite\u{a0}? S’il est encore allumé, il revient en attente d’approbation.",
+        ),
+        NoRoom => ("No room", "Aucune pièce"),
     };
     match lang {
         Lang::En => en,
@@ -112,6 +121,9 @@ mod tests {
             Room,
             AllRooms,
             Send,
+            Remove,
+            RemoveQuestion,
+            NoRoom,
         ];
         crate::i18n::assert_table(&all, sound_text, &[Volume]);
     }

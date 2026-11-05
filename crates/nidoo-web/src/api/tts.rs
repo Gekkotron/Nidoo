@@ -138,6 +138,12 @@ pub async fn set_token(token: Option<&str>) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Forgets a speaker satellite: `path` is [`remove_path`](crate::screens::sound_settings::remove_path).
+pub async fn remove_satellite(path: &str) -> Result<(), ApiError> {
+    check(Request::delete(path).build(), None).await?;
+    Ok(())
+}
+
 /// Says a sentence on the speaker satellites of a room, of every room or of one satellite.
 pub async fn sound_speak(req: &SoundSpeakRequest) -> Result<SoundSpeakReply, ApiError> {
     let response = check(Request::post("/api/v1/sound/speak").json(req), None).await?;

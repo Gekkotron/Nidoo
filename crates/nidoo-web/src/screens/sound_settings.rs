@@ -1,6 +1,7 @@
 //! The Settings → Sound page: the speaker satellites the sound service publishes, one row each,
-//! with the switch that approves a new one, its mute, its volume and, once allowed, a button that
-//! says a test sentence on that satellite alone.
+//! with the switch that approves a new one, its mute, its volume, its room, a button that removes
+//! it (after an inline "are you sure?") and, once allowed, a button that says a test sentence on
+//! that satellite alone.
 
 use std::collections::BTreeMap;
 
@@ -8,17 +9,18 @@ use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
-use nidoo_api::{AreaView, EntityView, MAX_SPEECH_CHARS, SoundSpeakRequest};
+use nidoo_api::{AreaView, EntityView, MAX_SPEECH_CHARS, OverridePatch, SoundSpeakRequest};
 use nidoo_core::model::{
     Availability, Command, EntityState, SOUND_DEVICE_PREFIX, StateValue, UNASSIGNED_AREA,
 };
 
 use crate::cards::Sender;
 use crate::components::card_frame::sheet_path;
-use crate::format::{area_name, room_name};
+use crate::components::confirm::{ConfirmBar, Confirming};
+use crate::format::area_name;
 use crate::house::House;
 use crate::i18n::{Lang, SoundText, said_on, sound_text, speaker_test, use_lang, use_sound_text};
-use crate::icons::SPEECH_BUBBLE;
+use crate::icons::{SPEECH_BUBBLE, TRASH};
 use crate::screens::alarm_settings::SwitchRow;
 
 /// One speaker satellite, gathered from its entities.
@@ -71,9 +73,10 @@ impl Satellite {
             .unwrap_or(&self.device_id)
     }
 
-    /// The entity whose page the satellite's name opens.
+    /// The entity whose page the satellite's name opens: its Volume, the card the others fold
+    /// into, whose room the room lists and the hub read.
     fn page_entity(&self) -> Option<&EntityView> {
-        self.allowed.as_ref().or(self.volume.as_ref())
+        self.volume.as_ref().or(self.allowed.as_ref())
     }
 }
 
@@ -161,8 +164,56 @@ pub fn status_label(satellites: &[Satellite], lang: Lang) -> String {
     }
 }
 
-/// How long a failed test's reason stays on screen.
+/// `(id, name)` of the rooms a satellite can be put in, in the order of `areas`; the catch-all
+/// area is the picker's "No room".
+pub fn room_choices(areas: &[AreaView]) -> Vec<(String, String)> {
+    areas
+        .iter()
+        .filter(|a| a.id != UNASSIGNED_AREA)
+        .map(|a| (a.id.clone(), a.name.clone()))
+        .collect()
+}
+
+/// Every entity of device `device_id`, sorted: the room picker moves them all, as the device
+/// sheet does.
+pub fn device_entity_ids(entities: &BTreeMap<String, EntityView>, device_id: &str) -> Vec<String> {
+    entities
+        .values()
+        .filter(|e| e.device_id.as_deref() == Some(device_id))
+        .map(|e| e.id.clone())
+        .collect()
+}
+
+/// The hub route that forgets `satellite`.
+pub fn remove_path(satellite: &Satellite) -> String {
+    format!("/api/v1/sound/satellites/{}", satellite.short_id())
+}
+
+/// The one-field patch that moves an entity to `area`; `None` clears the field.
+fn area_patch(area: Option<&str>) -> OverridePatch {
+    let mut patch = OverridePatch::new();
+    patch.insert("area".to_owned(), serde_json::json!(area));
+    patch
+}
+
+/// How long a failed action's reason stays on screen.
 const TEST_ERROR_MS: u32 = 5_000;
+
+/// Shows `reason` through `show` and clears it [`TEST_ERROR_MS`] later, unless a newer failure
+/// replaced it (`shown` counts the failures shown).
+async fn flash_error(shown: StoredValue<u32>, show: impl Fn(Option<String>), reason: String) {
+    let Some(mine) = shown.try_update_value(|n| {
+        *n = n.wrapping_add(1);
+        *n
+    }) else {
+        return;
+    };
+    show(Some(reason));
+    TimeoutFuture::new(TEST_ERROR_MS).await;
+    if shown.try_get_value() == Some(mine) {
+        show(None);
+    }
+}
 
 /// The request the test button sends: the test sentence, on `satellite` alone.
 pub fn test_request(satellite: &Satellite, lang: Lang) -> SoundSpeakRequest {
@@ -185,26 +236,33 @@ pub fn say_test(
         let Err(err) = crate::api::tts::sound_speak(&req).await else {
             return;
         };
-        let Some(mine) = shown.try_update_value(|n| {
-            *n = n.wrapping_add(1);
-            *n
-        }) else {
-            return;
-        };
-        show(Some(err.error));
-        TimeoutFuture::new(TEST_ERROR_MS).await;
-        if shown.try_get_value() == Some(mine) {
-            show(None);
-        }
+        flash_error(shown, show, err.error).await;
     });
 }
 
-/// The last failed test on the page: the satellite's device id and the reason. Held by the page
-/// so it survives the rows being redrawn on a state change.
+/// The last failed action on the page (a test, a removal, a room change): the satellite's
+/// device id and the reason. Held by the page so it survives the rows being redrawn on a state
+/// change.
 #[derive(Clone, Copy)]
-struct TestError {
+struct RowError {
     error: RwSignal<Option<(String, String)>>,
     shown: StoredValue<u32>,
+}
+
+impl RowError {
+    /// Shows `reason` under `device`'s row for a while.
+    fn flash(self, device: String, reason: String) {
+        spawn_local(async move {
+            flash_error(
+                self.shown,
+                move |r| {
+                    self.error.try_set(r.map(|r| (device.clone(), r)));
+                },
+                reason,
+            )
+            .await;
+        });
+    }
 }
 
 /// A guess of the state after `value`, for the optimistic write.
@@ -215,9 +273,13 @@ fn guess(entity: &EntityView, value: StateValue) -> EntityState {
     }
 }
 
-/// One satellite: its name, room, connection dot, approval badge and controls.
+/// One satellite: its name, connection dot, approval badge, controls and room.
 #[component]
-fn SatelliteRow(satellite: Satellite, test_error: TestError) -> impl IntoView {
+fn SatelliteRow(
+    satellite: Satellite,
+    row_error: RowError,
+    confirming: Confirming,
+) -> impl IntoView {
     let house = expect_context::<House>();
     let sender = Sender::from_context();
     let lang = use_lang();
@@ -233,12 +295,6 @@ fn SatelliteRow(satellite: Satellite, test_error: TestError) -> impl IntoView {
     } else {
         SoundText::Disconnected
     };
-    let room = house.areas.with(|areas| {
-        room_name(areas, &satellite.area).map(|name| {
-            let id = satellite.area.clone();
-            area_name(lang(), &id, &name)
-        })
-    });
     let waiting = satellite.allowed.is_some() && !satellite.is_allowed();
 
     let test = satellite.is_allowed().then(|| {
@@ -247,11 +303,9 @@ fn SatelliteRow(satellite: Satellite, test_error: TestError) -> impl IntoView {
             let device = satellite.device_id.clone();
             say_test(
                 test_request(&satellite, lang()),
-                test_error.shown,
+                row_error.shown,
                 move |reason| {
-                    test_error
-                        .error
-                        .try_set(reason.map(|r| (device.clone(), r)));
+                    row_error.error.try_set(reason.map(|r| (device.clone(), r)));
                 },
             );
         };
@@ -266,10 +320,102 @@ fn SatelliteRow(satellite: Satellite, test_error: TestError) -> impl IntoView {
             ></button>
         }
     });
+    let remove_button = {
+        let device = satellite.device_id.clone();
+        view! {
+            <button
+                type="button"
+                class="btn btn--icon satellite__remove"
+                aria-label=move || t(SoundText::Remove)
+                title=move || t(SoundText::Remove)
+                inner_html=TRASH
+                on:click=move |_| confirming.ask(&device)
+            ></button>
+        }
+    };
+    let asking = {
+        let satellite = satellite.clone();
+        move || {
+            confirming.is_asking(&satellite.device_id).then(|| {
+                let device = satellite.device_id.clone();
+                let path = remove_path(&satellite);
+                let on_yes = Callback::new(move |()| {
+                    confirming.clear();
+                    let (device, path) = (device.clone(), path.clone());
+                    spawn_local(async move {
+                        // The entities go once the sound service has cleared them.
+                        if let Err(err) = crate::api::tts::remove_satellite(&path).await {
+                            row_error.flash(device, err.error);
+                        }
+                    });
+                });
+                view! {
+                    <ConfirmBar
+                        question=Signal::derive(move || t(SoundText::RemoveQuestion).to_owned())
+                        yes=Signal::derive(move || t(SoundText::Remove).to_owned())
+                        on_yes=on_yes
+                        on_cancel=Callback::new(move |()| confirming.clear())
+                    />
+                }
+            })
+        }
+    };
+    let room_picker = {
+        let device = satellite.device_id.clone();
+        let current = satellite.area.clone();
+        let on_change = move |ev: leptos::ev::Event| {
+            let value = event_target_value(&ev);
+            let ids = house
+                .entities
+                .with_untracked(|m| device_entity_ids(m, &device));
+            let device = device.clone();
+            spawn_local(async move {
+                let area = (!value.is_empty()).then_some(value.as_str());
+                let mut first_error = None;
+                for id in ids {
+                    match crate::api::set_override(&id, area_patch(area)).await {
+                        // The reply is the entity as the hub now has it.
+                        Ok(view) => {
+                            house.entities.try_update(|m| {
+                                m.insert(view.id.clone(), view);
+                            });
+                        }
+                        Err(e) => {
+                            first_error.get_or_insert(e.error);
+                        }
+                    }
+                }
+                if let Some(error) = first_error {
+                    row_error.flash(device, error);
+                }
+            });
+        };
+        let choices = house.areas.with(|areas| room_choices(areas));
+        let none_selected = !choices.iter().any(|(id, _)| *id == current);
+        let options = choices
+            .into_iter()
+            .map(|(id, name)| {
+                let selected = id == current;
+                let label = area_name(lang(), &id, &name);
+                view! { <option value=id selected=selected>{label}</option> }
+            })
+            .collect_view();
+        view! {
+            <label class="override__flag sound-room-field">
+                <span class="override__label">{move || t(SoundText::Room)}</span>
+                <select class="select sound-room" on:change=on_change>
+                    <option value="" selected=none_selected>
+                        {move || t(SoundText::NoRoom)}
+                    </option>
+                    {options}
+                </select>
+            </label>
+        }
+    };
     let failed = {
         let device = satellite.device_id.clone();
         move || {
-            test_error.error.with(|e| {
+            row_error.error.with(|e| {
                 e.as_ref()
                     .filter(|(d, _)| *d == device)
                     .map(|(_, reason)| reason.clone())
@@ -371,9 +517,10 @@ fn SatelliteRow(satellite: Satellite, test_error: TestError) -> impl IntoView {
                         }
                     })}
                 {test}
+                {remove_button}
             </div>
-            {room.map(|r| view! { <p class="settings__hint">{r}</p> })}
-            <div class="alarm-row__body">{allowed} {mute} {volume}</div>
+            {asking}
+            <div class="alarm-row__body">{allowed} {mute} {volume} {room_picker}</div>
             {move || failed().map(|e| view! { <p class="satellite__error" role="alert">{e}</p> })}
         </li>
     }
@@ -482,10 +629,11 @@ pub fn SoundSettingsPage() -> impl IntoView {
     let house = expect_context::<House>();
     let t = use_sound_text();
     let list = Memo::new(move |_| house.entities.with(satellites));
-    let test_error = TestError {
+    let row_error = RowError {
         error: RwSignal::new(None),
         shown: StoredValue::new(0),
     };
+    let confirming = Confirming::new();
     let service_offline = move || list.with(|l| l.iter().any(|s| !s.service_online()));
     view! {
         <div class="alarm-settings">
@@ -511,7 +659,15 @@ pub fn SoundSettingsPage() -> impl IntoView {
                         {move || {
                             list.get()
                                 .into_iter()
-                                .map(|s| view! { <SatelliteRow satellite=s test_error=test_error /> })
+                                .map(|s| {
+                                    view! {
+                                        <SatelliteRow
+                                            satellite=s
+                                            row_error=row_error
+                                            confirming=confirming
+                                        />
+                                    }
+                                })
                                 .collect_view()
                         }}
                     </ul>
@@ -684,6 +840,71 @@ mod tests {
         assert_eq!(req.satellite.as_deref(), Some("aaa"));
         assert_eq!(req.text, "Speaker test: Desk");
         assert_eq!(req.room, None);
+    }
+
+    #[test]
+    fn the_name_opens_the_volume_page() {
+        // The Volume is the satellite's card: the others fold into it, and its room is the
+        // one the room lists and the hub read. A room set on another entity's page is lost.
+        let found = satellites(&map(full("nidoo_sound_aaa", "Desk", true)));
+        assert_eq!(
+            found[0].page_entity().map(|e| e.id.as_str()),
+            Some("nidoo_sound_aaa_volume")
+        );
+    }
+
+    #[test]
+    fn remove_path_names_the_satellite_by_its_short_id() {
+        let found = satellites(&map(full("nidoo_sound_aaa", "Desk", true)));
+        assert_eq!(remove_path(&found[0]), "/api/v1/sound/satellites/aaa");
+    }
+
+    #[test]
+    fn the_room_moves_every_entity_of_the_satellite() {
+        let mut all = full("nidoo_sound_aaa", "Desk", true);
+        all.push(entity(
+            "nidoo_sound_aaa_address",
+            Some(("nidoo_sound_aaa", "Desk")),
+            StateValue::Text("192.0.2.1".into()),
+        ));
+        all.extend(full("nidoo_sound_bbb", "Other", true));
+        let ids = device_entity_ids(&map(all), "nidoo_sound_aaa");
+        assert_eq!(
+            ids,
+            [
+                "nidoo_sound_aaa_address",
+                "nidoo_sound_aaa_allowed",
+                "nidoo_sound_aaa_connected",
+                "nidoo_sound_aaa_mute",
+                "nidoo_sound_aaa_volume",
+            ]
+        );
+    }
+
+    #[test]
+    fn room_choices_leave_out_the_catch_all() {
+        let area = |id: &str, name: &str| AreaView {
+            id: id.into(),
+            name: name.into(),
+            icon: None,
+            order: None,
+            entity_count: 0,
+            primary_count: 0,
+            group_names: Default::default(),
+            group_favorites: Default::default(),
+        };
+        let areas = vec![
+            area("office", "Office"),
+            area(UNASSIGNED_AREA, "Unassigned"),
+            area("kitchen", "Kitchen"),
+        ];
+        assert_eq!(
+            room_choices(&areas),
+            [
+                ("office".to_owned(), "Office".to_owned()),
+                ("kitchen".to_owned(), "Kitchen".to_owned())
+            ]
+        );
     }
 
     #[test]
