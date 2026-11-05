@@ -52,6 +52,12 @@ pub enum Input {
         clip: String,
     },
     Tick,
+    /// The hub starts an exchange by speaking its own question (ignored unless idle).
+    AskStart,
+    /// The question's clip is ready (`None`: it could not be made).
+    AskClip(Option<String>),
+    /// The hub gave the question up: end the exchange without an answer.
+    AskCancel,
 }
 
 /// What to do.
@@ -69,6 +75,9 @@ pub enum Output {
     Ask(String),
     /// Reopen the board's window; report its counter with [`Session::listening`].
     Listen,
+    /// The hub's question was answered with this text (`None`: nothing usable was heard).
+    /// Always comes before the [`Output::Release`] of an asking session.
+    Answer(Option<String>),
 }
 
 /// Session tuning from the settings.
@@ -88,6 +97,10 @@ enum Phase {
         until: u64,
     },
     Transcribing {
+        since: u64,
+    },
+    /// The hub's question is being made into a clip.
+    Preparing {
         since: u64,
     },
     Thinking {
@@ -113,6 +126,8 @@ pub struct Session {
     cfg: SessionCfg,
     phase: Phase,
     last_hold: u64,
+    /// The exchange is the hub's question: the transcript goes back as an answer.
+    asking: bool,
 }
 
 fn listening(session: u32, now: u64, window: u64) -> Phase {
@@ -137,7 +152,13 @@ impl Session {
             cfg,
             phase: Phase::Idle,
             last_hold: 0,
+            asking: false,
         }
+    }
+
+    /// The exchange in progress is the hub's own question.
+    pub fn is_asking(&self) -> bool {
+        self.asking
     }
 
     pub fn is_idle(&self) -> bool {
@@ -229,6 +250,11 @@ impl Session {
                 let text = strip_wake_word(&text);
                 if text.is_empty() {
                     self.release()
+                } else if self.asking {
+                    self.asking = false;
+                    let mut out = vec![Output::Answer(Some(text))];
+                    out.extend(self.release());
+                    out
                 } else {
                     self.phase = Phase::Thinking { since: now };
                     vec![Output::Ask(text)]
@@ -265,6 +291,27 @@ impl Session {
                 };
                 Vec::new()
             }
+            (Input::AskStart, Phase::Idle) => {
+                self.asking = true;
+                self.phase = Phase::Preparing { since: now };
+                self.last_hold = now;
+                vec![Output::Hold]
+            }
+            (Input::AskClip(clip), Phase::Preparing { .. }) => match clip {
+                Some(clip) => {
+                    self.phase = Phase::Speaking {
+                        clip,
+                        question: true,
+                        since: now,
+                    };
+                    Vec::new()
+                }
+                None => self.release(),
+            },
+            (Input::AskCancel, phase) if self.asking && *phase != Phase::Idle => {
+                self.asking = false;
+                self.release()
+            }
             (Input::Tick, _) => self.on_tick(now, vad),
             _ => Vec::new(),
         }
@@ -288,6 +335,7 @@ impl Session {
                 false
             }
             Phase::Transcribing { since }
+            | Phase::Preparing { since }
             | Phase::Thinking { since }
             | Phase::Speaking { since, .. } => now >= since + SPOKEN_WAIT_MS,
             Phase::Margin { until } => {
@@ -341,6 +389,9 @@ impl Session {
 
     fn release(&mut self) -> Vec<Output> {
         self.phase = Phase::Idle;
+        if std::mem::take(&mut self.asking) {
+            return vec![Output::Answer(None), Output::Release];
+        }
         vec![Output::Release]
     }
 }
@@ -753,6 +804,161 @@ mod tests {
             phrase.len(),
             10 * 640,
             "only the session's own, newer packets"
+        );
+    }
+
+    /// The hub's question is spoken (clip `c1`), the window reopens and a phrase is heard,
+    /// up to the transcription.
+    fn ask_to_transcribing(r: &mut Rig) {
+        assert_eq!(r.on(Input::AskStart), vec![Output::Hold]);
+        assert!(r.on(Input::AskClip(Some("c1".into()))).is_empty());
+        let spoken_at = r.now;
+        assert!(r.on(Input::Spoken { clip: "c1".into() }).is_empty());
+        assert_eq!(r.ticks_until(spoken_at + 350), vec![Output::Listen]);
+        r.s.listening(7);
+        let out = r.on(Input::Wake {
+            session: 2,
+            kind: WakeKind::FollowUp,
+            listen_ctr: 7,
+        });
+        assert!(out.is_empty(), "{out:?}");
+        assert!(r.audio(2, 800, true).is_empty());
+        let out = r.audio(2, 600, false);
+        assert!(has_transcribe(&out), "{out:?}");
+    }
+
+    #[test]
+    fn ask_speaks_then_listens_then_answers() {
+        let mut r = Rig::new();
+        assert!(!r.s.is_asking());
+        ask_to_transcribing(&mut r);
+        assert!(r.s.is_asking());
+        let out = r.on(Input::Transcript("oui à 21".into()));
+        assert_eq!(
+            out,
+            vec![Output::Answer(Some("oui à 21".into())), Output::Release]
+        );
+        assert!(r.s.is_idle());
+        assert!(!r.s.is_asking());
+    }
+
+    #[test]
+    fn asked_transcript_is_stripped_of_the_wake_word() {
+        let mut r = Rig::new();
+        ask_to_transcribing(&mut r);
+        let out = r.on(Input::Transcript("hey jarvis oui".into()));
+        assert_eq!(
+            out,
+            vec![Output::Answer(Some("oui".into())), Output::Release]
+        );
+    }
+
+    #[test]
+    fn an_empty_asked_transcript_answers_none() {
+        let mut r = Rig::new();
+        ask_to_transcribing(&mut r);
+        let out = r.on(Input::Transcript("Jarvis.".into()));
+        assert_eq!(out, vec![Output::Answer(None), Output::Release]);
+        assert!(r.s.is_idle());
+    }
+
+    #[test]
+    fn ask_silence_answers_none() {
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        r.on(Input::AskClip(Some("c1".into())));
+        r.on(Input::Spoken { clip: "c1".into() });
+        r.ticks_until(r.now + 300);
+        r.s.listening(7);
+        let out = r.ticks_until(r.now + FOLLOW_UP_START_MS + 100);
+        assert_eq!(out, vec![Output::Answer(None), Output::Release]);
+        assert!(r.s.is_idle());
+        assert!(!r.s.is_asking());
+    }
+
+    #[test]
+    fn ask_without_clip_answers_none() {
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        let out = r.on(Input::AskClip(None));
+        assert_eq!(out, vec![Output::Answer(None), Output::Release]);
+        assert!(r.s.is_idle());
+    }
+
+    #[test]
+    fn ask_cancel_releases_without_answer() {
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        r.on(Input::AskClip(Some("c1".into())));
+        assert_eq!(r.on(Input::AskCancel), vec![Output::Release]);
+        assert!(r.s.is_idle());
+        assert!(!r.s.is_asking());
+
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        assert_eq!(r.on(Input::AskCancel), vec![Output::Release], "preparing");
+    }
+
+    #[test]
+    fn ask_cancel_does_not_touch_a_normal_exchange() {
+        let mut r = Rig::new();
+        to_transcribing(&mut r);
+        assert!(r.on(Input::AskCancel).is_empty());
+        assert!(!r.s.is_idle());
+    }
+
+    #[test]
+    fn ask_start_ignored_when_busy() {
+        let mut r = Rig::new();
+        r.wake(1);
+        assert!(r.on(Input::AskStart).is_empty());
+        assert!(!r.s.is_asking());
+    }
+
+    #[test]
+    fn wake_word_during_ask_is_ignored() {
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        assert!(r.wake(1).is_empty(), "preparing");
+        r.on(Input::AskClip(Some("c1".into())));
+        assert!(r.wake(1).is_empty(), "speaking");
+        assert!(r.s.is_asking());
+        r.on(Input::Spoken { clip: "c1".into() });
+        r.ticks_until(r.now + 300);
+        r.s.listening(7);
+        r.on(Input::Wake {
+            session: 2,
+            kind: WakeKind::FollowUp,
+            listen_ctr: 7,
+        });
+        r.audio(2, 800, true);
+        r.audio(2, 600, false);
+        let out = r.on(Input::Transcript("non".into()));
+        assert_eq!(
+            out,
+            vec![Output::Answer(Some("non".into())), Output::Release]
+        );
+    }
+
+    #[test]
+    fn a_stuck_ask_expires_with_none() {
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        let out = r.ticks_until(r.now + SPOKEN_WAIT_MS + 100);
+        let tail: Vec<_> = out.iter().rev().take(2).rev().cloned().collect();
+        assert_eq!(tail, vec![Output::Answer(None), Output::Release], "{out:?}");
+        assert!(r.s.is_idle());
+    }
+
+    #[test]
+    fn the_ask_hold_is_refreshed() {
+        let mut r = Rig::new();
+        r.on(Input::AskStart);
+        let out = r.ticks_until(r.now + 25_000);
+        assert_eq!(
+            out.iter().filter(|o| **o == Output::Hold).count(),
+            2,
+            "{out:?}"
         );
     }
 }
