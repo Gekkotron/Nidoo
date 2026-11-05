@@ -18,6 +18,7 @@ const PLAYER_KEY: &str = "player.key";
 const SETTINGS: &str = "settings.json";
 
 /// The satellite's Sendspin identity: a Curve25519 keypair made once and kept.
+#[derive(Clone)]
 pub struct PlayerIdentity {
     /// The base64url public key, as `client/init` sends it.
     pub client_id: String,

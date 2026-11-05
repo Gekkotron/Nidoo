@@ -2955,13 +2955,21 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "bytes",
+ "futures-util",
+ "mdns-sd",
  "nidoo-sound",
  "nidoo-voice",
  "rand 0.10.3",
  "serde",
  "serde_json",
+ "snow",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tracing",
+ "url",
  "x25519-dalek",
 ]
 
