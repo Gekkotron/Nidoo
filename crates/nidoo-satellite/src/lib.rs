@@ -3,3 +3,4 @@
 //! or UI of its own. Everything here is platform-neutral and tested on Linux.
 
 pub mod store;
+pub mod voice;
