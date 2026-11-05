@@ -458,10 +458,12 @@ pub struct FeedbackSettings {
     pub band: f64,
     /// Offset change per correction, in degrees.
     pub step: f64,
-    /// Minimum minutes between two corrections.
+    /// Minimum minutes between two steps. The saving side's first move (lowering in heat, raising
+    /// in cool) jumps by the gap at once instead.
     pub interval_min: u32,
-    /// Minutes after the schedule target began before the slow side may step: raising the
-    /// setpoint in heat, extra cooling in cool.
+    /// Longest wait after the schedule target began before the slow side may step (raising the
+    /// setpoint in heat, extra cooling in cool). The wait ends earlier once the room reaches the
+    /// band.
     pub warmup_min: u32,
     /// Largest offset below the target, in degrees (positive).
     pub max_below: f64,

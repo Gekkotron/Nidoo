@@ -512,7 +512,8 @@ impl Hub {
             let kept = FeedbackState::after(
                 inp.feedback.as_ref(),
                 &decision,
-                inp.settings.feedback.enabled,
+                &inp.settings.feedback,
+                inp.thermometer,
                 now,
             );
             let mut rt = self.climate_runtime();
@@ -1324,6 +1325,7 @@ mod tests {
             offset: -0.5,
             since: 1,
             last_step_at: Some(2),
+            reached: false,
         };
         hub.climate_runtime()
             .feedback
@@ -1443,6 +1445,7 @@ mod tests {
                 offset: -1.0,
                 since: 500,
                 last_step_at: Some(500),
+                reached: false,
             })
         );
         assert!(!rt.feedback.contains_key("office"));

@@ -102,10 +102,21 @@ the offset → commanded.
 
 Each evaluation, with a usable room-thermometer value `r` (§6.3):
 
-- `r > target + band` and at least `interval` since the last step → offset −= step.
-- `r < target − band` and at least `interval` since the last step, **and** the block began at
-  least `warmup` ago → offset += step.
+- `r > target + band` → the offset jumps to `−(r − target)` rounded to the nearest `step`, at
+  once, whatever the interval, when that is deeper than the offset held. Otherwise, with at least
+  `interval` since the last step → offset −= step.
+- `r < target − band` and at least `interval` since the last step, **and** the warm-up is over →
+  offset += step. The warm-up is over once the room has reached the band (`r ≥ target − band`)
+  since the target began, or `warmup` after the target began at the latest.
 - Otherwise the offset stays.
+
+*Changed 2026-11-05:* the saving side used to move one `step` per `interval` too, so a room 2 °C
+over its target took 45 min to reach −2.0 while the AC kept heating. It now jumps by the gap
+(21.2 °C on a 20 °C target → −1.0, 21.9 °C → −2.0) and keeps stepping if the room stays above.
+The warm-up used to be a fixed `warmup` (60 min) after the target began; it now ends as soon as
+the room first reaches the band, with `warmup` kept as the cap, so the change can only shorten
+it. Recovery after a jump stays one `step` per `interval` once the warm-up is over (*Claude's
+call*). No new setting.
 
 Limits, applied to the result (heat):
 - lowest: `target + offset ≥ max(target − max_below, base of the rules, frost)`;
@@ -116,11 +127,12 @@ empty, so the floor can sit up to `max_below` under the setback target; the rule
 bounds it (a 19 °C block over a 15 °C base never commands below 15 °C), and the upper limit means
 the correction never undoes a setback.
 
-*Claude's call:* `warmup` (default 60 min) stops a boost at every block start: at 09:00 the room is
-cold because the block just began, not because the setpoint is too low.
+*Claude's call:* the warm-up (at most `warmup`, default 60 min) stops a boost at every block start:
+at 09:00 the room is cold because the block just began, not because the setpoint is too low.
 
-**Cool** mirrors it. Above `target + band` the setpoint goes down one step (more cooling); below
-`target − band` it goes up one step (saving), with the same interval and warm-up. Limits in cool:
+**Cool** mirrors it. Above `target + band` the setpoint goes down one step (more cooling) once the
+warm-up is over (reached means `r ≤ target + band`); below `target − band` it jumps up by the gap
+rounded to `step` (saving), then steps once per interval, as heat does above the band. Limits in cool:
 - lowest (extra cooling): `target + offset ≥ target − max_above`;
 - highest (saving): `target + offset ≤ min(target + max_below, base of the rules)` when the base
   is a temperature, else `target + max_below`. `frost` plays no part in cool.
@@ -137,7 +149,8 @@ room. When a hold ends, the device simply gets target + offset. *Claude's call.*
 ### 6.2 State and resets
 
 The engine is stateless per pass today; the offset lives in the hub's climate runtime per zone:
-`{ offset, last_step_at, scheduled_at_start, block_started_at }`.
+`{ offset, last_step_at, scheduled_at_start, block_started_at }`, plus `reached` (the room has
+reached the band since the target began; *added 2026-11-05*).
 
 The offset goes back to 0, and `last_step_at` and the warm-up restart, when:
 - the Schedule row stops applying (safety, override, eco, away, holiday, idle);
@@ -145,13 +158,16 @@ The offset goes back to 0, and `last_step_at` and the warm-up restart, when:
 
 When the **target** changes (a new block or the base, or a presence setback starting or ending)
 the offset carries over, held within the new target's limits: it measures how far the unit reads
-from the room, whatever the target. Only the warm-up restarts. *Changed 2026-10-30 (PR #113):*
+from the room, whatever the target. Only the warm-up restarts (`since` and `reached` reset; a
+reading already in the new target's band counts as reached at once). *Changed 2026-10-30 (PR #113):*
 resetting it threw away the Salon's -2 °C at every presence toggle.
 
 A **hub restart** picks the offset up from the zone's retained decision (`adjust`), when that
 decision was a Schedule or Empty temperature and the correction is still on. The warm-up and the
 step clock start at the decision's `at`: a decision is republished only when its outcome changes,
 so that is about when the offset last stepped. The retained offset is used whatever its age.
+`reached` starts false, with the `warmup` cap counted from that `at`: a restart during a heat-up
+must not raise early (*Claude's call, 2026-11-05*).
 *Changed 2026-10-30:* a reset sent the plain target after each restart and the room overshot
 until the correction stepped back down.
 
@@ -189,8 +205,9 @@ until the correction stepped back down.
 - **Hand changes** (engine spec §7): a commanded value changed by the correction is the engine's
   own command and goes through the ledger like any other; a corrected setpoint must never look
   like a hand change, and a real hand change still holds the device.
-- **Command rate** (engine spec §5.5): steps are at most one per `interval` (default 15 min), and
-  commands at most once per entity per 60 s, as today.
+- **Command rate** (engine spec §5.5): steps are at most one per `interval` (default 15 min), except
+  the saving-side jump (§6.1), which only ever makes the offset deeper; commands
+  stay at most once per entity per 60 s, as today.
 - **Device step**: the effective step is at least the device's `temp_step` (a device with 1 °C steps
   moves 1 °C at a time). *Claude's call.*
 - **Learner** (engine spec §6.2): the device history will show corrected targets. A slot where the

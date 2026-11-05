@@ -2386,6 +2386,7 @@ mod engine {
     }
 
     /// An active heating zone at 19 °C with the correction on and a room thermometer at `room`.
+    /// 19.6 is just over the band: one step down (-0.5), not a jump.
     async fn corrected_rig(room: f64) -> Rig {
         let mut rig = Rig::new(None).await;
         rig.sim.set(&rig.hub, 0, "heat", 19.0, 20.0);
@@ -2414,7 +2415,7 @@ mod engine {
 
     #[tokio::test(start_paused = true)]
     async fn correction_steps_down_and_is_not_a_hand_change() {
-        let mut rig = corrected_rig(21.6).await;
+        let mut rig = corrected_rig(19.6).await;
         let out = rig.pass(0).await;
         assert_eq!(temperature_commands(&out), vec![18.5], "{out:?}");
         // The device echoed 18.5: the next report is not someone's doing.
@@ -2446,7 +2447,7 @@ mod engine {
 
     #[tokio::test(start_paused = true)]
     async fn correction_note_is_stable_while_the_reading_ages() {
-        let mut rig = corrected_rig(21.6).await;
+        let mut rig = corrected_rig(19.6).await;
         // The thermometer reported 20 min ago: the note must not carry its age.
         let first = rig.pass(1200).await;
         assert_eq!(decisions_published(&first), 1, "{first:?}");
@@ -2464,7 +2465,7 @@ mod engine {
 
     #[tokio::test(start_paused = true)]
     async fn correction_survives_restart_without_hand_change() {
-        let mut rig = corrected_rig(21.6).await;
+        let mut rig = corrected_rig(19.6).await;
         // The device sits at the corrected 18.5, as the retained decision says.
         rig.sim.set(&rig.hub, 0, "heat", 18.5, 20.0);
         let decision = Decision {
@@ -2476,7 +2477,7 @@ mod engine {
             source: Source::Schedule,
             cause: None,
             reason: "Schedule base: 19.0 °C".into(),
-            reading: Some(21.6),
+            reading: Some(19.6),
             reading_age_s: Some(30),
             outdoor_mean: None,
             home: true,
@@ -2507,8 +2508,23 @@ mod engine {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn warmup_ends_once_the_room_reached_the_band() {
+        // The room sits in the band (18.5 and up) on the first tick, then cools: the correction
+        // raises 10 min into the block instead of waiting out the 60-min warm-up.
+        let mut rig = corrected_rig(18.6).await;
+        let out = rig.pass(0).await;
+        assert!(temperature_commands(&out).is_empty(), "{out:?}");
+        rig.hub.ingest(
+            "zigbee2mqtt/rooms/bedroom2/thermometer",
+            br#"{"temperature":18.0}"#,
+        );
+        let out = rig.pass(600).await;
+        assert_eq!(temperature_commands(&out), vec![19.5], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn real_hand_change_still_holds() {
-        let mut rig = corrected_rig(21.6).await;
+        let mut rig = corrected_rig(19.6).await;
         rig.pass(0).await;
         assert_eq!(rig.sim.units[&0].1, 18.5);
         rig.sim.set(&rig.hub, 0, "heat", 21.0, 20.0);
