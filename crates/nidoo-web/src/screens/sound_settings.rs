@@ -1,8 +1,10 @@
 //! The Settings → Sound page: the speaker satellites the sound service publishes, one row each,
-//! with the switch that approves a new one, its mute and its volume.
+//! with the switch that approves a new one, its mute, its volume and, once allowed, a button that
+//! says a test sentence on that satellite alone.
 
 use std::collections::BTreeMap;
 
+use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
@@ -15,7 +17,8 @@ use crate::cards::Sender;
 use crate::components::card_frame::sheet_path;
 use crate::format::{area_name, room_name};
 use crate::house::House;
-use crate::i18n::{Lang, SoundText, said_on, sound_text, use_lang, use_sound_text};
+use crate::i18n::{Lang, SoundText, said_on, sound_text, speaker_test, use_lang, use_sound_text};
+use crate::icons::SPEECH_BUBBLE;
 use crate::screens::alarm_settings::SwitchRow;
 
 /// One speaker satellite, gathered from its entities.
@@ -58,6 +61,14 @@ impl Satellite {
                 .connected
                 .as_ref()
                 .is_some_and(|e| e.state.value == StateValue::OnOff(true))
+    }
+
+    /// The short id the hub takes to speak on this satellite alone: the device id without
+    /// `nidoo_sound_`.
+    pub fn short_id(&self) -> &str {
+        self.device_id
+            .strip_prefix(SOUND_DEVICE_PREFIX)
+            .unwrap_or(&self.device_id)
     }
 
     /// The entity whose page the satellite's name opens.
@@ -150,6 +161,52 @@ pub fn status_label(satellites: &[Satellite], lang: Lang) -> String {
     }
 }
 
+/// How long a failed test's reason stays on screen.
+const TEST_ERROR_MS: u32 = 5_000;
+
+/// The request the test button sends: the test sentence, on `satellite` alone.
+pub fn test_request(satellite: &Satellite, lang: Lang) -> SoundSpeakRequest {
+    SoundSpeakRequest {
+        text: speaker_test(lang, &satellite.name),
+        satellite: Some(satellite.short_id().to_owned()),
+        ..Default::default()
+    }
+}
+
+/// Sends `req`; a failure's reason goes to `show` and is cleared [`TEST_ERROR_MS`] later, unless
+/// a newer failure replaced it (`shown` counts the failures shown). Both the dashboard card and
+/// the Settings row use it.
+pub fn say_test(
+    req: SoundSpeakRequest,
+    shown: StoredValue<u32>,
+    show: impl Fn(Option<String>) + 'static,
+) {
+    spawn_local(async move {
+        let Err(err) = crate::api::tts::sound_speak(&req).await else {
+            return;
+        };
+        let Some(mine) = shown.try_update_value(|n| {
+            *n = n.wrapping_add(1);
+            *n
+        }) else {
+            return;
+        };
+        show(Some(err.error));
+        TimeoutFuture::new(TEST_ERROR_MS).await;
+        if shown.try_get_value() == Some(mine) {
+            show(None);
+        }
+    });
+}
+
+/// The last failed test on the page: the satellite's device id and the reason. Held by the page
+/// so it survives the rows being redrawn on a state change.
+#[derive(Clone, Copy)]
+struct TestError {
+    error: RwSignal<Option<(String, String)>>,
+    shown: StoredValue<u32>,
+}
+
 /// A guess of the state after `value`, for the optimistic write.
 fn guess(entity: &EntityView, value: StateValue) -> EntityState {
     EntityState {
@@ -160,7 +217,7 @@ fn guess(entity: &EntityView, value: StateValue) -> EntityState {
 
 /// One satellite: its name, room, connection dot, approval badge and controls.
 #[component]
-fn SatelliteRow(satellite: Satellite) -> impl IntoView {
+fn SatelliteRow(satellite: Satellite, test_error: TestError) -> impl IntoView {
     let house = expect_context::<House>();
     let sender = Sender::from_context();
     let lang = use_lang();
@@ -183,6 +240,42 @@ fn SatelliteRow(satellite: Satellite) -> impl IntoView {
         })
     });
     let waiting = satellite.allowed.is_some() && !satellite.is_allowed();
+
+    let test = satellite.is_allowed().then(|| {
+        let satellite = satellite.clone();
+        let on_click = move |_| {
+            let device = satellite.device_id.clone();
+            say_test(
+                test_request(&satellite, lang()),
+                test_error.shown,
+                move |reason| {
+                    test_error
+                        .error
+                        .try_set(reason.map(|r| (device.clone(), r)));
+                },
+            );
+        };
+        view! {
+            <button
+                type="button"
+                class="btn btn--icon satellite__speak"
+                aria-label=move || t(SoundText::TestSpeaker)
+                title=move || t(SoundText::TestSpeaker)
+                inner_html=SPEECH_BUBBLE
+                on:click=on_click
+            ></button>
+        }
+    });
+    let failed = {
+        let device = satellite.device_id.clone();
+        move || {
+            test_error.error.with(|e| {
+                e.as_ref()
+                    .filter(|(d, _)| *d == device)
+                    .map(|(_, reason)| reason.clone())
+            })
+        }
+    };
 
     let name = match satellite.page_entity() {
         Some(e) => {
@@ -277,9 +370,11 @@ fn SatelliteRow(satellite: Satellite) -> impl IntoView {
                             </span>
                         }
                     })}
+                {test}
             </div>
             {room.map(|r| view! { <p class="settings__hint">{r}</p> })}
             <div class="alarm-row__body">{allowed} {mute} {volume}</div>
+            {move || failed().map(|e| view! { <p class="satellite__error" role="alert">{e}</p> })}
         </li>
     }
 }
@@ -387,6 +482,10 @@ pub fn SoundSettingsPage() -> impl IntoView {
     let house = expect_context::<House>();
     let t = use_sound_text();
     let list = Memo::new(move |_| house.entities.with(satellites));
+    let test_error = TestError {
+        error: RwSignal::new(None),
+        shown: StoredValue::new(0),
+    };
     let service_offline = move || list.with(|l| l.iter().any(|s| !s.service_online()));
     view! {
         <div class="alarm-settings">
@@ -412,7 +511,7 @@ pub fn SoundSettingsPage() -> impl IntoView {
                         {move || {
                             list.get()
                                 .into_iter()
-                                .map(|s| view! { <SatelliteRow satellite=s /> })
+                                .map(|s| view! { <SatelliteRow satellite=s test_error=test_error /> })
                                 .collect_view()
                         }}
                     </ul>
@@ -575,6 +674,16 @@ mod tests {
         let one = serde_json::to_value(speak_request("Hello", "kitchen")).unwrap();
         assert_eq!(one["room"], "kitchen");
         assert_eq!(one["satellite"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn the_test_request_names_the_satellite_by_its_short_id() {
+        let found = satellites(&map(full("nidoo_sound_aaa", "Desk", true)));
+        assert_eq!(found[0].short_id(), "aaa");
+        let req = test_request(&found[0], Lang::En);
+        assert_eq!(req.satellite.as_deref(), Some("aaa"));
+        assert_eq!(req.text, "Speaker test: Desk");
+        assert_eq!(req.room, None);
     }
 
     #[test]
