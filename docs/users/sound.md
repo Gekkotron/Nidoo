@@ -194,8 +194,9 @@ house answers on it while the room's music is held. See
 - **Talking to a satellite**: the room's music is held while it listens (see
   [Talk to a satellite](talk-to-a-satellite.md)).
 
-Not supported: several sources or different music per room, compressed audio
-(FLAC), pairing. The details are in `crates/nidoo-sound/README.md`.
+Not supported yet: several sources or different music per room, compressed
+audio (FLAC), pairing. They are ideas for later, listed in the repository's
+`TODOS.md`; the details are in `crates/nidoo-sound/README.md`.
 
 ## Known limits
 
