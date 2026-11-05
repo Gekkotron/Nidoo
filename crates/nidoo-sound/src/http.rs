@@ -166,6 +166,7 @@ mod tests {
             client_id: client_id.to_owned(),
             name: name.to_owned(),
             volume: 45,
+            speech_volume: 45,
             muted: false,
             allowed,
         }

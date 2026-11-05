@@ -41,6 +41,11 @@ pub enum Control {
         short_id: String,
         volume: u8,
     },
+    /// The Speech volume: answers and announcements.
+    SetSpeech {
+        short_id: String,
+        volume: u8,
+    },
     SetMute {
         short_id: String,
         muted: bool,
@@ -60,6 +65,7 @@ impl Control {
     pub fn short_id(&self) -> &str {
         match self {
             Control::SetVolume { short_id, .. }
+            | Control::SetSpeech { short_id, .. }
             | Control::SetMute { short_id, .. }
             | Control::SetAllowed { short_id, .. }
             | Control::Remove { short_id } => short_id,
@@ -69,6 +75,7 @@ impl Control {
     fn apply(&self, p: &mut PlayerPrefs) {
         match *self {
             Control::SetVolume { volume, .. } => p.volume = volume.min(100),
+            Control::SetSpeech { volume, .. } => p.speech_volume = volume.min(100),
             Control::SetMute { muted, .. } => p.muted = muted,
             Control::SetAllowed { allowed, .. } => p.allowed = allowed,
             Control::Remove { .. } => {}
@@ -621,6 +628,8 @@ impl Group {
                     link.send(PlayerCmd::Volume(prefs.volume)).await;
                     link.expect_volume = Some(prefs.volume);
                 }
+                // Saved and published only; the player side comes with the levels.
+                Control::SetSpeech { .. } => {}
                 Control::SetMute { .. } => {
                     link.send(PlayerCmd::Mute(prefs.muted)).await;
                     link.expect_mute = Some(prefs.muted);
