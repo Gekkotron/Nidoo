@@ -1,0 +1,14 @@
+[package]
+name = "nidoo-voice"
+description = "The signed UDP datagrams between a voice satellite and the Nidoo hub"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+getrandom = "0.2"
+hmac = "0.12"
+sha2 = "0.10"
+thiserror.workspace = true
