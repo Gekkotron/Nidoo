@@ -178,6 +178,7 @@ impl Runtime {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut buf = vec![0u8; 2048];
+        let mut sendspin_open = true;
         loop {
             let actions = tokio::select! {
                 c = control.recv() => match c {
@@ -190,7 +191,16 @@ impl Runtime {
                     }
                     Some(c) => self.control(c),
                 },
-                Some(ev) = sendspin.recv() => self.sendspin(ev),
+                ev = sendspin.recv(), if sendspin_open => match ev {
+                    Some(ev) => self.sendspin(ev),
+                    None => {
+                        // The Sendspin server stopped: no music can reach us any more.
+                        tracing::error!("the Sendspin server stopped");
+                        sendspin_open = false;
+                        self.playout().clear();
+                        self.brain.set_sendspin(false, Instant::now())
+                    }
+                },
                 got = self.udp.recv_from(&mut buf) => match got {
                     Ok((n, _)) => self.brain.on_datagram(&buf[..n], Instant::now()),
                     Err(e) => {
@@ -297,5 +307,81 @@ impl Runtime {
                 true
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wake_head::TrainProgress;
+
+    struct NoMic;
+    impl MicSwitch for NoMic {
+        fn set(&mut self, _on: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    struct NoDetector;
+    impl WakeDetector for NoDetector {
+        fn push(&mut self, _: &[i16]) -> bool {
+            false
+        }
+        fn reset(&mut self) {}
+    }
+    struct NoTrainer;
+    impl Trainer for NoTrainer {
+        fn start(&mut self) {}
+        fn push(&mut self, _: &[i16]) -> TrainProgress {
+            TrainProgress::Training
+        }
+        fn cancel(&mut self) {}
+    }
+
+    #[tokio::test]
+    async fn sendspin_server_ending_shows_waiting_for_the_hub() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let brain = Brain::new(
+            store.identity().sid.clone(),
+            None,
+            true,
+            GREETING_TTL,
+            Box::new(NoDetector),
+            Box::new(NoTrainer),
+        );
+        let (ui_tx, mut ui) = watch::channel(brain.ui(Instant::now()));
+        let (local, _local_rx) = watch::channel(LocalPlayerState {
+            volume: 100,
+            muted: false,
+        });
+        let runtime = Runtime {
+            brain,
+            store,
+            udp: UdpSocket::bind("127.0.0.1:0").await.unwrap(),
+            mic: Box::new(NoMic),
+            playout: Arc::new(Mutex::new(Playout::default())),
+            local,
+            ui: ui_tx,
+        };
+        let (_control, control_rx) = mpsc::channel(4);
+        let (events, events_rx) = mpsc::channel(4);
+        let (_mic, mic_rx) = mpsc::channel(4);
+        tokio::spawn(runtime.run(control_rx, events_rx, mic_rx));
+
+        events.send(SendspinEvent::Connected).await.unwrap();
+        let wait = Duration::from_secs(2);
+        tokio::time::timeout(wait, ui.wait_for(|u| u.status.contains("voice key")))
+            .await
+            .expect("connected")
+            .unwrap();
+        // The server task ended (it never sends Disconnected then).
+        drop(events);
+        tokio::time::timeout(
+            wait,
+            ui.wait_for(|u| u.status.contains("Waiting for the hub")),
+        )
+        .await
+        .expect("the menu no longer claims a connection")
+        .unwrap();
     }
 }
