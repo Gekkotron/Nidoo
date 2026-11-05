@@ -41,12 +41,18 @@ pub struct VoiceLink {
     nonce: Option<u64>,
     hub: Option<SocketAddrV4>,
     greeted_at: Option<Instant>,
+    greeting_ttl: Duration,
     session: u32,
     window: Option<Window>,
 }
 
 impl VoiceLink {
     pub fn new(key: Key, sid: String) -> Self {
+        Self::with_greeting_ttl(key, sid, GREETING_TTL)
+    }
+
+    /// Like [`VoiceLink::new`] with another greeting lifetime (tests use a short one).
+    pub fn with_greeting_ttl(key: Key, sid: String, greeting_ttl: Duration) -> Self {
         Self {
             key,
             sid,
@@ -54,6 +60,7 @@ impl VoiceLink {
             nonce: None,
             hub: None,
             greeted_at: None,
+            greeting_ttl,
             session: 0,
             window: None,
         }
@@ -95,10 +102,10 @@ impl VoiceLink {
         }
     }
 
-    /// True when a Hello came within the last `GREETING_TTL`.
+    /// True when a Hello came within the greeting lifetime (`GREETING_TTL` by default).
     pub fn greeted(&self, now: Instant) -> bool {
         self.greeted_at
-            .is_some_and(|at| now.saturating_duration_since(at) < GREETING_TTL)
+            .is_some_and(|at| now.saturating_duration_since(at) < self.greeting_ttl)
     }
 
     /// Where to send datagrams: the address inside the last Hello.
