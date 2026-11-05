@@ -29,9 +29,10 @@ spoken reply can be louder (or quieter) than the music. The satellite itself
 has one volume: it plays at the louder of the two settings, and `nidoo-sound`
 turns the other one down in the audio it sends.
 
-- Moving the slider that is currently the louder one acts at once. Moving the
-  quieter one is heard after a few seconds, because the audio already sent
-  ahead of the satellite has to play out first.
+- While something is playing, moving either slider takes effect after a few
+  seconds: the audio already sent ahead of the satellite plays out first, so
+  the music never jumps louder or quieter when you move Speech. With nothing
+  playing, the change acts at once.
 - **Speech at 0 is silent**, like Music at 0: spoken replies are not heard on
   that satellite.
 - **Mute** silences both.
