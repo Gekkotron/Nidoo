@@ -40,7 +40,9 @@ rarely touched afterwards.
 
 - The stream is PCM s16le, 48 kHz, stereo, no codec (`pacer.rs:16-27`).
 - `nidoo-sound` sends about 5 s ahead; anything done in the samples is heard
-  up to ~5 s after the change. A Sendspin volume command acts at once.
+  up to ~5 s after the change. A Sendspin volume command acts at once, so
+  while streaming `nidoo-sound` holds it back until the chunk made with the
+  new gains plays (see "Calls made").
 - Device curves differ today:
   - ESP32 (ESPHome 2026.10.2 `i2s_audio` speaker): gain in dB is linear in
     volume, from −49 dB at 1 % to 0 dB at 100 %; 0 is silence
@@ -129,9 +131,10 @@ the right order (Speech above Music) but not the exact gap. Say so in
 
 ## Behaviour to expect (say it in the docs)
 
-- Moving the slider that is currently the louder one acts at once (device
-  volume). Moving the quieter one is heard after a few seconds (it is in the
-  audio already sent ahead).
+- While something is playing, both sliders take effect after a few seconds:
+  the audio already sent ahead carries the old gains and plays out first, so
+  the device volume changes with the first chunk made with the new gains and
+  the music never jumps. With nothing playing, a change acts at once.
 - Mute silences both.
 - Speech at 0 is silent, like Music at 0: spoken replies are not heard on
   that satellite.
@@ -143,6 +146,9 @@ the right order (Speech above Music) but not the exact gap. Say so in
 - The Mac satellite adopts the ESP32 curve rather than `nidoo-sound` knowing
   each player's curve.
 - A device-side change keeps the gap between the two settings.
+- Device volume deferred by the stream lead while streaming (final review C2):
+  otherwise the music already sent would play up to ~24 dB too loud or too
+  quiet until the new gains arrive.
 - Speech starts equal to Music on upgrade and for new players.
 - Device-side change with both settings equal: both move. At 0 or 100 the
   moved pair clamps and the gap shrinks; it is not restored later.

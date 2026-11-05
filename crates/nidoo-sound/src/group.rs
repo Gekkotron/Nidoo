@@ -188,6 +188,11 @@ struct Link {
     expect_volume: Option<u8>,
     /// The device volume last sent to the player (kept after its echo).
     sent_volume: Option<u8>,
+    /// A device volume waiting for the audio that carries its gains: the
+    /// level and the time on the shared clock it is sent (the timestamp of the
+    /// first chunk made with the new gains). Audio already sent plays out at
+    /// the old device volume first.
+    pending_volume: Option<(u8, i64)>,
     /// Device volume and sample gains from its saved Music and Speech settings.
     levels: Levels,
     expect_mute: Option<bool>,
@@ -215,6 +220,7 @@ impl Link {
             output_delay_us: 0,
             expect_volume: None,
             sent_volume: None,
+            pending_volume: None,
             levels: Levels {
                 device: 0,
                 music_gain: 1.0,
@@ -233,14 +239,49 @@ impl Link {
     }
 
     /// Takes the levels of `prefs`; commands the device volume when it is not the one
-    /// last sent (`force`: whatever was sent, as on connect).
+    /// last sent or waiting to be (`force`: whatever was sent, as on connect).
+    ///
+    /// While streaming, the audio already sent carries the old gains, so the device
+    /// volume changes with the first chunk made with the new ones; the echo of the
+    /// old value is meanwhile not a change on the device (`expect_volume`).
     async fn set_levels(&mut self, prefs: &PlayerPrefs, force: bool) {
         self.levels = split(prefs.volume, prefs.speech_volume);
         let device = self.levels.device;
-        if force || self.sent_volume != Some(device) {
-            self.send(PlayerCmd::Volume(device)).await;
-            self.sent_volume = Some(device);
-            self.expect_volume = Some(device);
+        if force {
+            self.pending_volume = None;
+            self.send_volume(device).await;
+            return;
+        }
+        let target = self.pending_volume.map(|(d, _)| d).or(self.sent_volume);
+        if target == Some(device) {
+            return;
+        }
+        match self.next_ts().filter(|_| self.streaming) {
+            Some(at) => {
+                self.pending_volume = Some((device, at));
+                self.expect_volume = Some(device);
+            }
+            None => {
+                self.pending_volume = None;
+                self.send_volume(device).await;
+            }
+        }
+    }
+
+    async fn send_volume(&mut self, device: u8) {
+        self.send(PlayerCmd::Volume(device)).await;
+        self.sent_volume = Some(device);
+        self.expect_volume = Some(device);
+    }
+
+    /// Sends the waiting device volume once its audio plays, or at once when
+    /// nothing is streaming any more.
+    async fn flush_volume(&mut self, now: i64) {
+        if let Some((device, at)) = self.pending_volume
+            && (now >= at || !self.streaming)
+        {
+            self.pending_volume = None;
+            self.send_volume(device).await;
         }
     }
 
@@ -384,7 +425,8 @@ impl Group {
                 _ = tick.tick(), if self.playing
                     || self.mixer.is_playing()
                     || self.mixer.has_queued()
-                    || !self.reports.is_empty() => {
+                    || !self.reports.is_empty()
+                    || self.links().any(|l| l.pending_volume.is_some()) => {
                     self.on_tick(&publish).await
                 }
             }
@@ -829,6 +871,9 @@ impl Group {
         if !self.mixer.is_playing() && self.mixer.has_queued() {
             self.start_sentence(now).await;
         }
+        for link in self.links_mut() {
+            link.flush_volume(now).await;
+        }
         let targets = self.mixer.targets().to_vec();
         let is_target = |link: &Link| link.short_id().is_some_and(|s| targets.contains(&s));
 
@@ -859,16 +904,17 @@ impl Group {
             let mut ts = self.speech_clock.unwrap_or(now + lead);
             while ts - lead <= now && ts < end {
                 // One mix per distinct pair of gains.
-                let mut mixed: Vec<((u32, u32), bytes::Bytes)> = Vec::new();
+                let mut mixed: Vec<(u32, bytes::Bytes)> = Vec::new();
                 for link in self.links().filter(|l| l.streaming && is_target(l)) {
+                    // No music here: only the Speech gain matters.
                     let gains = (link.levels.music_gain, link.levels.speech_gain);
-                    let key = (gains.0.to_bits(), gains.1.to_bits());
+                    let key = gains.1.to_bits();
                     let data = match mixed.iter().find(|(k, _)| *k == key) {
                         Some((_, d)) => d.clone(),
                         None => {
                             let d = self
                                 .mixer
-                                .mix_chunk(ts, None, gains)
+                                .mix_chunk(ts, None, (1.0, gains.1))
                                 .unwrap_or_else(|| bytes::Bytes::from(vec![0; CHUNK_BYTES]));
                             mixed.push((key, d.clone()));
                             d
@@ -2206,6 +2252,87 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(p.control_cmd().await, PlayerCmd::Volume(90));
+    }
+
+    /// Sets Speech to 80 on a streaming player at (30, 30) and returns it with
+    /// the timestamp of the first chunk that carries the new gains.
+    async fn streaming_then_speech_80(h: &mut Harness) -> (Fake, i64) {
+        let (mut a, _) = h.ready_player("a", "A").await;
+        h.play_long(50).await;
+        h.clock.advance(200_000);
+        let sent = audio_of(&a.drain().await);
+        let next = sent.last().expect("music is streaming").0 + CHUNK_US;
+        h.control
+            .send(Control::SetSpeech {
+                short_id: short_id("A"),
+                volume: 80,
+            })
+            .await
+            .unwrap();
+        loop {
+            if h.published_for(&short_id("A")).await.0.speech_volume == 80 {
+                break;
+            }
+        }
+        (a, next)
+    }
+
+    #[tokio::test]
+    async fn volume_waits_for_the_audio_while_streaming() {
+        let mut h = Harness::start_levels(&[("A", 30, 30)]).await;
+        let (mut a, next) = streaming_then_speech_80(&mut h).await;
+        assert!(next > h.clock.now_us());
+        assert_eq!(volumes_of(&a.drain().await), Vec::<u8>::new());
+        h.clock.set(next - 1);
+        assert_eq!(volumes_of(&a.drain().await), Vec::<u8>::new());
+        h.clock.set(next);
+        assert_eq!(volumes_of(&a.drain().await), vec![80]);
+        // Sent once.
+        h.clock.advance(100_000);
+        assert_eq!(volumes_of(&a.drain().await), Vec::<u8>::new());
+    }
+
+    #[tokio::test]
+    async fn volume_is_immediate_when_not_streaming() {
+        let mut h = Harness::start_levels(&[("A", 30, 30)]).await;
+        let (mut a, _) = connect_levels(&mut h, "a", "A").await;
+        h.control
+            .send(Control::SetSpeech {
+                short_id: short_id("A"),
+                volume: 80,
+            })
+            .await
+            .unwrap();
+        assert_eq!(a.control_cmd().await, PlayerCmd::Volume(80));
+    }
+
+    #[tokio::test]
+    async fn old_value_report_while_pending_is_ignored() {
+        let mut h = Harness::start_levels(&[("A", 30, 30)]).await;
+        let (a, _next) = streaming_then_speech_80(&mut h).await;
+        a.state("A", 30, false).await;
+        let more = tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                if let Some(Published::Player { .. }) = h.published.recv().await {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(more.is_err(), "nothing published");
+        let saved = StateStore::load(h._dir.path().join("players.json")).unwrap();
+        let prefs = saved.get("A").unwrap();
+        assert_eq!((prefs.volume, prefs.speech_volume), (30, 80));
+    }
+
+    #[tokio::test]
+    async fn pending_volume_is_sent_at_once_when_the_stream_ends() {
+        let mut h = Harness::start_levels(&[("A", 30, 30)]).await;
+        let (mut a, _next) = streaming_then_speech_80(&mut h).await;
+        h.input.send(InputEvent::Stopped).await.unwrap();
+        let got = a.drain().await;
+        assert!(got.contains(&PlayerCmd::StreamEnd));
+        assert_eq!(volumes_of(&got), vec![80]);
     }
 
     #[tokio::test]
