@@ -8,6 +8,7 @@ use nidoo_sound::clock::{Clock, MonotonicClock};
 use nidoo_sound::config::{self, SoundConfig};
 use nidoo_sound::discover::{self, DiscoveryEvent};
 use nidoo_sound::group::{Group, sendspin_connector};
+use nidoo_sound::http::Satellites;
 use nidoo_sound::input::{InputEvent, run_pcm_input};
 use nidoo_sound::listen::accept_players;
 use nidoo_sound::mqtt::run_mqtt;
@@ -111,6 +112,22 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     let (speak_tx, speak_rx) = mpsc::channel(nidoo_sound::mixer::MAX_QUEUED);
     let (speech_tx, speech_rx) = mpsc::channel(4);
     let (publish_tx, publish_rx) = mpsc::channel(256);
+    // The group publishes here; the tee keeps the HTTP snapshot current and
+    // passes every message on to the MQTT link unchanged.
+    let (group_publish_tx, mut group_publish_rx) = mpsc::channel(256);
+    let satellites = Satellites::default();
+    {
+        let satellites = satellites.clone();
+        let publish_tx = publish_tx.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = group_publish_rx.recv().await {
+                satellites.apply(&msg);
+                if publish_tx.send(msg).await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
     tracing::info!(hub = %cfg.hub_base_url(), "speech clips come from the hub");
     tokio::spawn(nidoo_sound::speech::run_speech_fetcher(
         cfg.hub_base_url(),
@@ -118,6 +135,9 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         speech_tx,
         publish_tx.clone(),
     ));
+    // Only the tee and the fetcher keep the MQTT link's channel open, so it closes
+    // when the group stops.
+    drop(publish_tx);
     let (hold_tx, hold_rx) = mpsc::channel(16);
     let lead_us = i64::from(cfg.lead_ms) * 1_000;
     let group = Group::new(
@@ -143,8 +163,21 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         ));
     }
     let group = tokio::spawn(group.run(
-        discovery, input_rx, control_rx, speech_rx, hold_rx, publish_tx,
+        discovery,
+        input_rx,
+        control_rx,
+        speech_rx,
+        hold_rx,
+        group_publish_tx,
     ));
+    if cfg.http_port != 0 {
+        tokio::spawn(nidoo_sound::http::serve(
+            cfg.http_port,
+            satellites,
+            control_tx.clone(),
+        ));
+        tracing::info!(http_port = cfg.http_port, "HTTP API on /players");
+    }
     let mqtt = {
         let cfg = cfg.clone();
         tokio::spawn(async move {

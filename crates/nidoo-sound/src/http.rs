@@ -99,6 +99,21 @@ pub fn router(satellites: Satellites, control: mpsc::Sender<Control>) -> Router 
         .with_state((satellites, control))
 }
 
+/// Serves the API on `0.0.0.0:port` until the process ends. A bind error is
+/// logged and the function returns: audio playback does not depend on it.
+pub async fn serve(port: u16, satellites: Satellites, control: mpsc::Sender<Control>) {
+    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::warn!(port, error = %e, "HTTP API cannot listen, running without it");
+            return;
+        }
+    };
+    if let Err(e) = axum::serve(listener, router(satellites, control)).await {
+        tracing::warn!(error = %e, "HTTP API stopped");
+    }
+}
+
 async fn list_players(State((satellites, _)): State<ApiState>) -> Json<Vec<SatelliteView>> {
     Json(satellites.list())
 }

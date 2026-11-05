@@ -103,7 +103,7 @@ COPY --from=sound-builder /src/target/release/nidoo-sound /usr/local/bin/nidoo-s
 
 # ./data is /data from here (sound/identity.key, sound/players.json).
 WORKDIR /
-EXPOSE 4953 8927
+EXPOSE 4953 4954 8927
 ENTRYPOINT ["/usr/local/bin/nidoo-sound"]
 CMD ["run"]
 

@@ -52,6 +52,7 @@ the same values as `NIDOO_SOUND_MQTT__*`.
 |---|---|---|---|
 | `input_port` | `NIDOO_SOUND_INPUT_PORT` | `4953` | TCP port of the PCM input (s16le, 48 kHz, stereo) |
 | `listen_port` | `NIDOO_SOUND_LISTEN_PORT` | `8927` | players that connect themselves open `ws://<host>:<port>/sendspin`; `0` turns it off |
+| `http_port` | `NIDOO_SOUND_HTTP_PORT` | `4954` | TCP port of the HTTP API (see below); `0` turns it off |
 | `data_dir` | `NIDOO_SOUND_DATA_DIR` | `./data` | holds `sound/identity.key` and `sound/players.json` |
 | `lead_ms` | `NIDOO_SOUND_LEAD_MS` | `500` | how far ahead audio is timestamped; raised to cover the players' `min_buffer_ms + output_delay_ms` |
 | `input_buffer_ms` | `NIDOO_SOUND_INPUT_BUFFER_MS` | `250` | phone audio gathered before playback starts, so Wi-Fi stalls up to about this long play through without gaps; adds this much delay |
@@ -66,6 +67,38 @@ the same values as `NIDOO_SOUND_MQTT__*`.
 
 `sound/identity.key` is the server's Sendspin identity (a Curve25519 key):
 keep it with your backups.
+
+## HTTP API
+
+On `http_port` (default `4954`, all interfaces, no login: keep it on the LAN),
+`nidoo-sound` lists the approved satellites and sets their volume and mute. A
+change goes through the same path as an MQTT command, so it is saved in
+`players.json` and reaches Nidoo like a change made there. If the port cannot
+be bound, `nidoo-sound` logs a warning and plays on without the API.
+
+`GET /players` returns `200` with the approved satellites, sorted by name:
+
+```json
+[{"id": "0123456789ab", "name": "Kitchen", "volume": 45, "muted": false, "connected": true}]
+```
+
+`id` is the satellite's 12-character short id, the same one its MQTT topics use.
+
+`PUT /players/{id}` takes a JSON body with `volume` (0-100), `muted` (boolean),
+or both:
+
+```
+PUT /players/0123456789ab
+{"volume": 60, "muted": false}
+```
+
+It answers `204` with no body. Errors have the body `{"error": "<text>"}`:
+
+| Status | When |
+|---|---|
+| `400` | no field given, `volume` above 100, or a body that is not valid JSON of that shape; nothing is changed |
+| `404` | the id is unknown, or the satellite is not approved |
+| `503` | `nidoo-sound` is stopping |
 
 ## MQTT
 
