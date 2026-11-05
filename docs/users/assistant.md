@@ -28,12 +28,25 @@ A change starts from what the room's devices are really set to, a temperature se
 
 The setpoint holds until the zone's next scheduled change, at most the zone's manual hold (4 h by default): the same hold a change made by hand on the device gets. It replaces a temperature set by hand on a unit of the zone, so every unit follows it. "Allume le chauffage" alone is not a setpoint; the assistant asks for a temperature.
 
+**Shutters**, open, closed or at a position, for a room, a named shutter or the whole house:
+
+| Sentence | Does |
+|---|---|
+| « ouvre les volets du salon » | opens every shutter in the Salon |
+| « ferme les volets du salon », « baisse les stores du salon » | closes them |
+| « ouvre les volets du salon à 30 % » | moves them to 30 % open |
+| « ferme le volet de la baie » | the shutter whose name holds "baie" |
+| « ferme tous les volets », « ouvre tous les volets » | every shutter in the house, no question |
+| « ferme les volets » | asks "Dans quelle pièce ?" with the rooms that have shutters (none asked when only one has any) |
+
+"Volet", "store" and "volet roulant" all work; "monte" / "remonte" open and "baisse" / "descends" close. A position is the percentage open, 0 closed and 100 open, as the shutter's card shows it, and goes with an open verb only: « ferme les volets à 30 % » is ambiguous, so the assistant answers with an example instead of moving anything. A shutter that only opens and closes is named in the reply as unable to take a position; the others still move. Shutters already where they are asked to be are left alone, an offline one gets no command and the reply says it did not answer. The reply comes as soon as each shutter starts moving.
+
 **Temperatures**: « quelle température fait-il dans le salon ? », « il fait combien au bureau ? », « il fait combien dehors ? ». A room's temperature is its climate zone's reading, else its thermometer; outdoors is the climate engine's outdoor sensor, else the weather. An old reading is said with its age.
 
 ## Safety
 
 - **A statement or a question is not an order.** "Il fait 18 degrés au salon", "la lumière du salon est allumée ?" or "qui a éteint le salon ?" never act (a temperature question is answered). A polite request still is one: « peux-tu allumer la lumière du salon ? ».
-- **Not sure, no action.** Two opposite orders ("allume et éteins"), a negation ("n'éteins pas"), a percentage ("à 50 %") or a device it does not handle yet (shutters, plugs) give "Je n'ai pas compris", with a few example sentences built from your rooms.
+- **Not sure, no action.** Two opposite orders ("allume et éteins"), a negation ("n'éteins pas"), a percentage that is not a shutter position ("mets le salon à 50 %") or a device it does not handle yet (curtains, plugs) give "Je n'ai pas compris", with a few example sentences built from your rooms.
 - **Ambiguous room, a question.** "La chambre" with two bedrooms asks "Dans quelle pièce ?" with the rooms as buttons. You can also type the answer ("Léa").
 - **Unusual setpoint, a confirmation.** A setpoint outside **16–23 °C**, or more than **3 °C** away from the room's current temperature, is asked first: "Passer le Salon à 25 °C ?" with **Oui** / **Non** (typing "oui" or "non" works too). A yes applies exactly the value asked about. The 16–23 °C range is set by `assist_min_c` and `assist_max_c` in the [home settings](../reference/http-api.md#home-settings).
 - **Out of the device's range, a refusal.** A value the heaters cannot take is refused with their range, never clamped silently.
@@ -106,4 +119,4 @@ For other clients, such as the future satellites, speech is two HTTP calls: a `P
 
 ## Not yet
 
-Speaking to the assistant works through the satellites: see [Talk to a satellite](talk-to-a-satellite.md); a spoken turn shows the satellite and its room in the history. English sentences, shutters, brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.
+Speaking to the assistant works through the satellites: see [Talk to a satellite](talk-to-a-satellite.md); a spoken turn shows the satellite and its room in the history. English sentences, stopping a shutter half-way ("stop"), brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.

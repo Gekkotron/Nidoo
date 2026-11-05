@@ -409,6 +409,13 @@ fn covers(
             RoomMatch::One(_) | RoomMatch::Many(_)
         ) {
         (&[][..], names)
+    } else if names.is_empty()
+        && !room.is_empty()
+        && matches!(resolve_room(house, room), RoomMatch::Unknown)
+        && cover_members(None, house).iter().any(|c| named(c, room))
+    {
+        // And the other way: "ferme le volet de la baie" names a shutter, not a room.
+        (room, &[][..])
     } else {
         (names, room)
     };
@@ -1242,6 +1249,17 @@ mod tests {
     fn named_shutter() {
         let got = covers_of(&p("ferme le volet baie du salon"));
         assert_eq!(ids(&got), ["cover_baie"]);
+    }
+
+    #[test]
+    fn shutter_named_after_a_linker() {
+        // "de la baie" names no room but does name a shutter.
+        let got = covers_of(&p("ferme le volet de la baie"));
+        assert_eq!(ids(&got), ["cover_baie"]);
+        assert_eq!(
+            reply_of(&p("ferme le volet de la cave")),
+            "Je ne connais pas de pièce « cave »."
+        );
     }
 
     #[test]
