@@ -4,7 +4,8 @@
 use std::collections::BTreeSet;
 
 use nidoo_core::flow::{
-    Edge, Flow, Lang, MathParams, Node, NodeKind, Position, SwitchParams, SwitchRule, math_names,
+    ASK_MAX_ANSWERS, AskAnswer, AskParams, Edge, Flow, Lang, MathParams, Node, NodeKind, Position,
+    SwitchParams, SwitchRule, math_names,
 };
 
 use crate::flow_layout::Pt;
@@ -156,6 +157,17 @@ fn switch_params<'a>(flow: &'a mut Flow, node: &str) -> Option<&'a mut SwitchPar
         })
 }
 
+/// The params of ask `node`, when it is one.
+fn ask_params<'a>(flow: &'a mut Flow, node: &str) -> Option<&'a mut AskParams> {
+    flow.nodes
+        .iter_mut()
+        .find(|n| n.id == node)
+        .and_then(|n| match &mut n.kind {
+            NodeKind::Ask(p) => Some(p),
+            _ => None,
+        })
+}
+
 /// Rewrites the numeric exit ports of `node`'s edges through `map` (old 0-based rule index to
 /// the new one, `None` drops the wire). Other ports are left alone. Returns the edges dropped.
 fn remap_exits(flow: &mut Flow, node: &str, map: impl Fn(usize) -> Option<usize>) -> usize {
@@ -188,6 +200,60 @@ pub fn add_rule(flow: &mut Flow, node: &str, rule: SwitchRule) {
     if let Some(p) = switch_params(flow, node) {
         p.rules.push(rule);
     }
+}
+
+/// Appends `answer` to ask `node`; its new exit has no wire yet. Does nothing on another node
+/// or when the card already has [`ASK_MAX_ANSWERS`] answers.
+pub fn add_answer(flow: &mut Flow, node: &str, answer: AskAnswer) {
+    if let Some(p) = ask_params(flow, node)
+        && p.answers.len() < ASK_MAX_ANSWERS
+    {
+        p.answers.push(answer);
+    }
+}
+
+/// Moves answer `from` to position `to` (0-based) in ask `node`; every wire follows its answer
+/// and the `none` exit stays put. Does nothing when an index is out of range.
+pub fn move_answer(flow: &mut Flow, node: &str, from: usize, to: usize) {
+    let Some(p) = ask_params(flow, node) else {
+        return;
+    };
+    if from >= p.answers.len() || to >= p.answers.len() || from == to {
+        return;
+    }
+    let answer = p.answers.remove(from);
+    p.answers.insert(to, answer);
+    remap_exits(flow, node, |i| Some(moved_index(i, from, to)));
+}
+
+/// Where item `i` lands when item `from` moves to `to`.
+fn moved_index(i: usize, from: usize, to: usize) -> usize {
+    if i == from {
+        to
+    } else if from < to && i > from && i <= to {
+        i - 1
+    } else if to < from && i >= to && i < from {
+        i + 1
+    } else {
+        i
+    }
+}
+
+/// Deletes answer `index` (0-based) from ask `node`: its wires go, later exits are renumbered,
+/// `none` is untouched. Returns how many wires were removed.
+pub fn delete_answer(flow: &mut Flow, node: &str, index: usize) -> usize {
+    let Some(p) = ask_params(flow, node) else {
+        return 0;
+    };
+    if index >= p.answers.len() {
+        return 0;
+    }
+    p.answers.remove(index);
+    remap_exits(flow, node, |i| match i.cmp(&index) {
+        std::cmp::Ordering::Less => Some(i),
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Greater => Some(i - 1),
+    })
 }
 
 /// Moves rule `from` to position `to` (0-based) in switch `node`; every wire follows its rule.
@@ -340,7 +406,8 @@ pub fn next_node_id(flow: &Flow, kind: &NodeKind) -> String {
         NodeKind::Command(_) => "command",
         NodeKind::FlowEnable(_) => "flow_switch",
         NodeKind::Notify(_) => "notify",
-        NodeKind::Speak(_) | NodeKind::Ask(_) => "speak",
+        NodeKind::Speak(_) => "speak",
+        NodeKind::Ask(_) => "ask",
         NodeKind::Switch(_) => "switch",
         NodeKind::TimeBetween(_) => "time",
         NodeKind::Math(_) => "math",
@@ -677,6 +744,83 @@ mod tests {
             pairs(&[("1", "a"), ("2", "c"), ("otherwise", "o")])
         );
         assert_eq!(nidoo_core::flow::validate(&f), Ok(()));
+    }
+
+    fn ask_flow() -> Flow {
+        let answer = |l: &str| nidoo_core::flow::AskAnswer {
+            label: l.into(),
+            words: vec![],
+        };
+        let mut f = flow(vec![
+            trigger("t"),
+            node(
+                "s",
+                NodeKind::Ask(nidoo_core::flow::AskParams {
+                    text: "Hi".into(),
+                    answers: vec![answer("a"), answer("b"), answer("c")],
+                    ..Default::default()
+                }),
+            ),
+            wait("a"),
+            wait("b"),
+            wait("c"),
+            wait("o"),
+        ]);
+        connect(&mut f, "t", None, "s").unwrap();
+        for (port, to) in [("1", "a"), ("2", "b"), ("3", "c"), ("none", "o")] {
+            connect(&mut f, "s", Some(port), to).unwrap();
+        }
+        assert_eq!(nidoo_core::flow::validate(&f), Ok(()));
+        f
+    }
+
+    #[test]
+    fn delete_answer_renumbers_later_exits() {
+        let mut f = ask_flow();
+        assert_eq!(delete_answer(&mut f, "s", 1), 1);
+        assert_eq!(exits(&f), pairs(&[("1", "a"), ("2", "c"), ("none", "o")]));
+        assert_eq!(nidoo_core::flow::validate(&f), Ok(()));
+    }
+
+    #[test]
+    fn move_answer_keeps_wires_with_their_answer() {
+        let mut f = ask_flow();
+        move_answer(&mut f, "s", 0, 2);
+        assert_eq!(
+            exits(&f),
+            pairs(&[("1", "b"), ("2", "c"), ("3", "a"), ("none", "o")])
+        );
+        let NodeKind::Ask(p) = &f.node("s").unwrap().kind else {
+            panic!()
+        };
+        let labels: Vec<_> = p.answers.iter().map(|a| a.label.as_str()).collect();
+        assert_eq!(labels, ["b", "c", "a"]);
+        assert_eq!(nidoo_core::flow::validate(&f), Ok(()));
+    }
+
+    #[test]
+    fn add_answer_appends_and_stops_at_six() {
+        let mut f = ask_flow();
+        let new = || nidoo_core::flow::AskAnswer {
+            label: "x".into(),
+            words: vec![],
+        };
+        add_answer(&mut f, "s", new());
+        assert_eq!(exits(&f).len(), 4);
+        for _ in 0..5 {
+            add_answer(&mut f, "s", new());
+        }
+        let NodeKind::Ask(p) = &f.node("s").unwrap().kind else {
+            panic!()
+        };
+        assert_eq!(p.answers.len(), nidoo_core::flow::ASK_MAX_ANSWERS);
+    }
+
+    #[test]
+    fn ask_ids_are_numbered_ask() {
+        let f = ask_flow();
+        let kind = f.node("s").unwrap().kind.clone();
+        assert_eq!(next_node_id(&f, &kind), "ask_1");
     }
 
     #[test]

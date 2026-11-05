@@ -450,7 +450,10 @@ fn card(id: String, c: Shared, house: House) -> impl IntoView {
         kind.with(|k| {
             k.as_ref().map_or_else(String::new, |k| {
                 let mut class = format!("{NODE_CLASS} {}", role_class(role(k)));
-                if matches!(k, NodeKind::Switch(_) | NodeKind::TimeBetween(_)) {
+                if matches!(
+                    k,
+                    NodeKind::Switch(_) | NodeKind::Ask(_) | NodeKind::TimeBetween(_)
+                ) {
                     class.push_str(" flow-node--exits");
                 }
                 // Cards with room to spare wrap their title to two lines before cutting it.

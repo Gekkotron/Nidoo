@@ -71,7 +71,9 @@ const LABEL_DX: f64 = 24.0;
 /// The height of a card: [`NODE_H`], except a switch, which grows to give each exit a row.
 pub fn node_height(kind: &NodeKind) -> f64 {
     match kind {
-        NodeKind::Switch(_) => NODE_H.max(EXIT_PAD + EXIT_H * kind.ports().len() as f64),
+        NodeKind::Switch(_) | NodeKind::Ask(_) => {
+            NODE_H.max(EXIT_PAD + EXIT_H * kind.ports().len() as f64)
+        }
         _ => NODE_H,
     }
 }
@@ -373,7 +375,7 @@ pub fn out_anchor(kind: &NodeKind, at: Pt, port: Option<&str>) -> Pt {
     let down = match (kind, port) {
         (NodeKind::If(_), Some("true")) | (NodeKind::TimeBetween(_), Some("in")) => 0.3,
         (NodeKind::If(_), Some("false")) | (NodeKind::TimeBetween(_), Some("out")) => 0.7,
-        (NodeKind::Switch(_), Some(port)) => {
+        (NodeKind::Switch(_) | NodeKind::Ask(_), Some(port)) => {
             let ports = kind.ports();
             ports
                 .iter()
