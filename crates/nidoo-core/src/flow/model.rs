@@ -235,8 +235,8 @@ impl NodeKind {
     }
 
     /// The named output ports: `true` and `false` for `if`; `1` to `n` (then `otherwise` when
-    /// set) for `switch`; `in` and `out` for `time.between`; `1` to `n` then `none` for `ask`; none for the others (which have one
-    /// unnamed output).
+    /// set) for `switch`; `in` and `out` for `time.between`; `1` to `n` then `none` for `ask`;
+    /// none for the others (which have one unnamed output).
     pub fn ports(&self) -> Vec<String> {
         match self {
             NodeKind::If(_) => vec!["true".into(), "false".into()],

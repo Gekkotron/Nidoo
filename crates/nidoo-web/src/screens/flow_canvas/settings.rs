@@ -815,6 +815,7 @@ fn ask_fields(form: Form, id: String, p: nidoo_core::flow::AskParams) -> impl In
             has_name.set(!raw.trim().is_empty());
         }
     };
+    let id_for_default = id.clone();
     let default_id = id;
     let on_default = move |ev: web_sys::Event| {
         let value = event_target_value(&ev);
@@ -823,7 +824,17 @@ fn ask_fields(form: Form, id: String, p: nidoo_core::flow::AskParams) -> impl In
         });
     };
     let name = p.name.clone().unwrap_or_default();
-    let default = p.default.map(|d| d.to_string()).unwrap_or_default();
+    // Read from the live draft each time the field is shown, so it never holds a stale value
+    // (clearing the name clears the default). Untracked: typing must not rewrite the input.
+    let default_now = {
+        let id = id_for_default;
+        move || {
+            draft.with_untracked(|f| match f.node(&id).map(|n| &n.kind) {
+                Some(NodeKind::Ask(p)) => p.default.map(|d| d.to_string()).unwrap_or_default(),
+                _ => String::new(),
+            })
+        }
+    };
     view! {
         <TemplateField
             label=word(FlowText::AskTextLabel)
@@ -864,7 +875,7 @@ fn ask_fields(form: Form, id: String, p: nidoo_core::flow::AskParams) -> impl In
                     type="number"
                     step="any"
                     class="field"
-                    prop:value=default.clone()
+                    prop:value=default_now.clone()
                     on:input=on_default.clone()
                 />
             </label>

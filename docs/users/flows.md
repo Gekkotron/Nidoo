@@ -234,7 +234,7 @@ An `ask` card speaks a question on a satellite and waits for the answer. Say the
 - No leads nowhere, or to a `notify` card.
 - No answer leads to whatever should happen when nobody replies, often nothing.
 
-Each answer has a label, which is spoken back and matched against what was heard, and optional **Also accepts** words, comma-separated, for other ways of saying it (`yes`, `sure`, `okay`). When two answers could match, the longest phrase wins, so "yes but no thanks" goes to the answer that holds "no thanks", not to Yes. A leading article such as "un" or "one" is not read as a number.
+Each answer has a label, which is matched against what was heard, and optional **Also accepts** words, comma-separated, for other ways of saying it (`yes`, `sure`, `okay`). When two answers could match, the longest phrase wins, so "yes but no thanks" goes to the answer that holds "no thanks", not to Yes. A leading article such as "un" or "one" is not read as a number.
 
 An answer can also carry a number: "set it to 21". Give **Keep the number as** a name (lowercase letters, digits and `_`, starting with a letter, as for a [math](#compute-a-value) result) and later cards use it like a math result, for example a `command` with `"value_from": "temp"`. **If no number** is the value used when the answer holds none. It only appears when a name is set; clearing the name clears it too.
 
@@ -264,9 +264,9 @@ Exits are the ports `1` to `6` in the order of the answers, then `none`. Leave a
 
 How it behaves:
 
-- Only satellites that both speak and listen are asked, and a satellite busy in an Assist exchange is skipped. With no **Room**, any such satellite of the house may be asked.
+- Only satellites that both speak and listen are asked, and a satellite busy in an Assist exchange is skipped. With no **Room**, one satellite per room is asked (the first by id) and the first answer wins.
 - Silence leaves by `none` at once. An answer that was heard but matches nothing gets **one** retry on the satellite that heard it, then leaves by `none`.
-- The whole step takes 45 seconds at most.
+- The whole step, retry included, takes 45 seconds at most.
 - With no speech input, or no satellite to ask on, the card leaves by `none` and the run log says why. It is not a failed step.
 - It needs [speech input](sound.md#talk-to-a-satellite) on a satellite with a microphone.
 

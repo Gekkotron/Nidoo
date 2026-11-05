@@ -161,6 +161,11 @@ impl Session {
         self.asking
     }
 
+    #[cfg(test)]
+    pub fn is_speaking(&self) -> bool {
+        matches!(self.phase, Phase::Speaking { .. })
+    }
+
     pub fn is_idle(&self) -> bool {
         self.phase == Phase::Idle
     }
