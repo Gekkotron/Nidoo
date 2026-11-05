@@ -2867,6 +2867,8 @@ p.override__hint {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  /* `/settings#assistant` scrolls a group up: keep its title in view. */
+  scroll-margin-top: 16px;
 }
 
 .settings__group-title {

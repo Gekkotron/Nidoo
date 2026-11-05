@@ -1,4 +1,4 @@
-//! FR/EN text: Assistant → Speech settings → Speech input (talking to a satellite).
+//! FR/EN text: Settings → Assistant → Listening (talking to a satellite).
 
 use super::*;
 

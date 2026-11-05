@@ -14,7 +14,7 @@ Each satellite shows up in Nidoo as a device with:
 - **Volume** (0–100) and **Mute**, usable from dashboards, flows, the Android
   app and the assistants like any other control;
 - **Allowed**: a new satellite plays nothing until you switch it on (in
-  **Settings → Sound**);
+  **Settings → Assistant → Sound**);
 - **Connected** (diagnostic): whether the satellite is online.
 
 Volume, mute and Allowed are remembered: they survive a satellite reboot, a
@@ -108,7 +108,7 @@ the container (the satellites' settings stay in `data/sound/`).
 
 1. Build and flash it: [`satellite/README.md`](https://github.com/Gekkotron/Nidoo/tree/main/satellite)
    has the parts, the wiring and the commands.
-2. Within a few seconds it appears in **Settings → Sound** under its ESPHome
+2. Within a few seconds it appears in **Settings → Assistant → Sound** under its ESPHome
    name, marked "Waiting for approval", with **Allowed** off.
 3. Switch **Allowed** on there, or with **Allow** on its card on Home. If
    music is playing, the satellite joins in sync. The same page has each
@@ -121,7 +121,7 @@ the container (the satellites' settings stay in `data/sound/`).
 
 ## Remove a satellite
 
-Every satellite in **Settings → Sound** has a trash button, connected or not.
+Every satellite in **Settings → Assistant → Sound** has a trash button, connected or not.
 Press it, then **Remove** to confirm (or **Cancel**). `nidoo-sound` forgets
 the satellite: its volume, mute and Allowed, and the broker messages that made
 it a device in Nidoo. Its card, controls and room go at once, with no restart.
@@ -139,12 +139,12 @@ offline"): start it first.
 
 The house can say a sentence on the satellites: a reminder in the kitchen, an
 announcement in every room. The sentence is made by the hub's speech (set it
-up under **Speech settings**, from the gear on the Assistant page, see
+up under **Settings → Assistant → Voice**, also reached from the gear on the Assistant page, see
 [Assistant](assistant.md#voice)); without it the satellites cannot speak.
 
 - **The test button.** Each satellite's card on Home has a small speech
   bubble that says "Speaker test: <name>" on that satellite only.
-- **Settings → Sound.** Type a sentence in **Say something**, pick **All
+- **Settings → Assistant → Sound.** Type a sentence in **Say something**, pick **All
   rooms** or a room (only rooms that hold a satellite are listed) and press
   **Send**. The page says how many satellites it was sent to, or why it could
   not be said.

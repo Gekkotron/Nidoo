@@ -23,9 +23,9 @@ typing it.
 ## Set it up
 
 1. **Speech output.** The answers are spoken with the hub's voice: set up a
-   French voice first (Assistant → Speech settings). Without one the house
+   French voice first (Settings → Assistant → Voice). Without one the house
    still acts, and the answer stays in the history.
-2. **The model.** In Assistant → Speech settings → **Speech input**, press
+2. **The model.** In Settings → Assistant → **Listening**, press
    **Download**. The hub fetches the recognition model (Parakeet, about
    490 MB, 670 MB on disk) and an end-of-phrase detector, checks every file,
    and loads them (about 1 GB of memory, a couple of seconds).
