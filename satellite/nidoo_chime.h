@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "esphome/components/audio/audio.h"
 #include "esphome/components/speaker/speaker.h"
 
 static const uint32_t NC_RATE = 48000;
@@ -39,9 +40,14 @@ inline void nc_make() {
   }
 }
 
+// Builds the chime once, at boot, so the wake-word callback never pays for it.
+inline void nidoo_chime_prepare() {
+  if (nc_pcm.empty()) nc_make();
+}
+
 // Plays the chime from its start (again, if it is still playing).
 inline void nidoo_chime_start() {
-  if (nc_pcm.empty()) nc_make();
+  nidoo_chime_prepare();  // lazy fallback
   nc_at = 0;
 }
 
