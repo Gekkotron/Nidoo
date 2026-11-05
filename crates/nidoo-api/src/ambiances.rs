@@ -858,9 +858,18 @@ mod tests {
         assert!(already_there(&cover(None, Some(100)), &Command::Open));
         assert!(already_there(&cover(Some("open"), None), &Command::Open));
         // A known position wins over the open/closed word: half-open is neither.
-        assert!(!already_there(&cover(Some("open"), Some(30)), &Command::Open));
-        assert!(!already_there(&cover(Some("closed"), Some(30)), &Command::Close));
-        assert!(already_there(&cover(Some("open"), Some(100)), &Command::Open));
+        assert!(!already_there(
+            &cover(Some("open"), Some(30)),
+            &Command::Open
+        ));
+        assert!(!already_there(
+            &cover(Some("closed"), Some(30)),
+            &Command::Close
+        ));
+        assert!(already_there(
+            &cover(Some("open"), Some(100)),
+            &Command::Open
+        ));
         assert!(already_there(
             &cover(None, Some(40)),
             &Command::SetPosition { position: 40 }
