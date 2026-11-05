@@ -129,8 +129,13 @@ impl Playout {
         if self.muted || self.wake_muted {
             return 0.0;
         }
+        if self.volume == 0 {
+            return 0.0;
+        }
+        // The ESP32 satellite's curve, shared with `nidoo-sound`: dB linear in
+        // volume, -49 dB at 1 % up to 0 dB at 100 %.
         let v = f32::from(self.volume) / 100.0;
-        v * v
+        10f32.powf(-49.0 * (1.0 - v) / 20.0)
     }
 
     /// Fills `out` (interleaved, `channels` per frame) with the frames due from
@@ -257,7 +262,12 @@ mod tests {
         let mut p = Playout::default();
         p.push(0, &pcm(4 * 480, HALF, HALF));
         p.set_volume(50);
-        assert!(fill(&mut p, 480, 2, 0).iter().all(|&s| s == 0.125));
+        let want = 0.5 * 10f32.powf(-24.5 / 20.0);
+        assert!(
+            fill(&mut p, 480, 2, 0)
+                .iter()
+                .all(|&s| (s - want).abs() < 1e-4)
+        );
         p.set_volume(0);
         assert!(fill(&mut p, 480, 2, 10_000).iter().all(|&s| s == 0.0));
         p.set_volume(100);
