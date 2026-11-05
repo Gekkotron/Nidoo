@@ -6,7 +6,8 @@ use nidoo_api::{AreaView, EntityView};
 use nidoo_climate::doc::{Decision, Setpoint, Source, ZoneSettings, ZoneState};
 use nidoo_climate::view::{LearnStatus, ZoneView};
 use nidoo_core::model::{
-    Availability, Capabilities, EntityCategory, EntityState, Kind, LightState, StateValue,
+    Availability, Capabilities, CoverState, EntityCategory, EntityState, Kind, LightState,
+    StateValue,
 };
 
 use crate::house::{HeatRange, House};
@@ -97,6 +98,19 @@ pub fn light(id: &str, name: &str, area: &str, on: bool) -> EntityView {
     e
 }
 
+/// A shutter, open; `can_position` adds a position (0–100 %) to open/close.
+pub fn cover(id: &str, name: &str, area: &str, can_position: bool) -> EntityView {
+    let mut e = entity(id, name, Kind::Cover, area);
+    e.capabilities.open_close = true;
+    e.capabilities.stop = true;
+    e.capabilities.position = can_position;
+    e.state.value = StateValue::Cover(CoverState {
+        state: Some("open".into()),
+        position: can_position.then_some(100),
+    });
+    e
+}
+
 pub fn thermometer(id: &str, area: &str, value: f64) -> EntityView {
     let mut e = entity(id, "Température", Kind::Sensor, area);
     e.device_class = Some("temperature".into());
@@ -161,8 +175,9 @@ pub fn zone(
     }
 }
 
-/// Salon (4 lights, a hidden one, plus a group), Salon TV, Bureau (a thermometer, no
-/// heating), Chambre Léa and Chambre Tom (heated), Garage (nothing).
+/// Salon (4 lights, a hidden one, plus a group; two shutters with a position), Salon TV, Bureau
+/// (a thermometer, no heating), Chambre Léa (heated, an open/close-only shutter) and Chambre Tom
+/// (heated), Garage (nothing).
 pub fn house() -> Fixture {
     let mut hidden = light("light_ambiance_tv", "Ambiance TV", "salon", false);
     hidden.ui.hidden = true;
@@ -192,6 +207,9 @@ pub fn house() -> Fixture {
             hidden,
             group,
             light("light_lampe_lea", "Lampe", "chambre_lea", false),
+            cover("cover_baie", "Baie", "salon", true),
+            cover("cover_fenetre", "Fenêtre", "salon", true),
+            cover("cover_lea", "Volet", "chambre_lea", false),
             thermometer("sensor_salon_temperature", "salon", 18.2),
             thermometer("sensor_bureau_temperature", "bureau", 20.1),
             thermometer("sensor_lea_temperature", "chambre_lea", 16.5),

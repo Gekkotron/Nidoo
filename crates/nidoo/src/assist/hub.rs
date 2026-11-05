@@ -197,6 +197,14 @@ fn what(action: &Action) -> (String, String) {
         Action::Setpoint { zone, setpoint } => {
             (zone.clone(), format!("consigne {}", temp(*setpoint)))
         }
+        Action::Cover { entity, command } => {
+            let what = match command {
+                Command::SetPosition { position } => format!("ouvrir à {position} %"),
+                Command::Close => "fermer".into(),
+                _ => "ouvrir".into(),
+            };
+            (entity.clone(), what)
+        }
     }
 }
 
@@ -480,7 +488,7 @@ impl Hub {
         };
         join_all(actions.iter().map(|action| async move {
             match action {
-                Action::Light { entity, command } => {
+                Action::Light { entity, command } | Action::Cover { entity, command } => {
                     let Some(view) = house.entity(entity) else {
                         return (ActionResult::Failed("inconnue".into()), None);
                     };

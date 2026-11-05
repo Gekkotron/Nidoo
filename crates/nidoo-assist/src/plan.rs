@@ -9,7 +9,7 @@ use nidoo_core::model::{Command, EntityCategory, Kind, StateValue};
 
 use crate::house::House;
 use crate::intent::{Change, Intent, parse};
-use crate::reply::{dans, de, le, number, temp};
+use crate::reply::{cannot, dans, de, le, number, temp};
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
 use crate::view::Trace;
@@ -17,13 +17,14 @@ use crate::view::Trace;
 /// The most choices a question offers.
 pub const MAX_CHOICES: usize = 6;
 
-/// An understood intent with what is already resolved: the area and lights picked from a
-/// question, and whether the safety question was answered yes.
+/// An understood intent with what is already resolved: the area, lights and shutters picked
+/// from a question, and whether the safety question was answered yes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Request {
     pub intent: Intent,
     pub area: Option<String>,
     pub lights: Option<Vec<String>>,
+    pub covers: Option<Vec<String>>,
     pub confirmed: bool,
 }
 
@@ -33,6 +34,7 @@ impl Request {
             intent,
             area: None,
             lights: None,
+            covers: None,
             confirmed: false,
         }
     }
@@ -50,6 +52,11 @@ pub enum Action {
         zone: String,
         setpoint: f64,
     },
+    /// A shutter: open, close or a position.
+    Cover {
+        entity: String,
+        command: Command,
+    },
 }
 
 /// What the actions do, for the reply. `names` are in the actions' order.
@@ -64,6 +71,15 @@ pub enum Done {
         zone: String,
         from: Option<f64>,
         to: f64,
+    },
+    /// Shutters of a room, or of the whole house (`area: None`). `unable`: the chosen shutters
+    /// that cannot do what was asked (no position, say), sent nothing.
+    Covers {
+        area: Option<String>,
+        open: bool,
+        position: Option<u8>,
+        names: Vec<String>,
+        unable: Vec<String>,
     },
 }
 
@@ -154,10 +170,27 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
         Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
-        // Planned in the next step; not understood until then.
-        Intent::Covers { .. } | Intent::CoverPositionHint | Intent::CoverPositionRange => {
-            not_understood(house)
-        }
+        Intent::Covers {
+            open,
+            position,
+            all,
+            names,
+            room,
+        } => covers(req, *open, *position, *all, names, room, house),
+        Intent::CoverPositionHint => answer(
+            "Pour une position, dites par exemple « ouvre les volets à 30 % ».".into(),
+            Trace {
+                intent: Some("covers_hint".into()),
+                ..Default::default()
+            },
+        ),
+        Intent::CoverPositionRange => answer(
+            "La position va de 0 à 100 %.".into(),
+            Trace {
+                intent: Some("covers_range".into()),
+                ..Default::default()
+            },
+        ),
     }
 }
 
@@ -202,7 +235,8 @@ fn light_members<'a>(on: bool, area: Option<&str>, house: &House<'a>) -> Vec<&'a
     category_members(&action, house.entities)
 }
 
-/// A light whose name holds every name word (a plural word also matches its singular).
+/// A light or shutter whose name holds every name word (a plural word also matches its
+/// singular).
 fn named(light: &EntityView, names: &[String]) -> bool {
     let words = name_words(&light.name);
     names.iter().all(|n| {
@@ -323,6 +357,157 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
             area,
             on,
             names: chosen.iter().map(|l| l.name.clone()).collect(),
+        },
+        trace,
+    }
+}
+
+fn cover_members<'a>(area: Option<&str>, house: &House<'a>) -> Vec<&'a EntityView> {
+    let action = CategoryAction {
+        what: Category::Covers,
+        to: Target::Close,
+        brightness: None,
+        area: area.map(str::to_string),
+        except: vec![],
+    };
+    category_members(&action, house.entities)
+}
+
+/// What a shutter is sent: a position when one was asked (and it takes one), else open/close,
+/// or the position 100 / 0 when it only takes a position. `None`: it cannot do it.
+fn cover_command(cover: &EntityView, open: bool, position: Option<u8>) -> Option<Command> {
+    let caps = &cover.capabilities;
+    match position {
+        Some(position) => caps.position.then_some(Command::SetPosition { position }),
+        None if caps.open_close => Some(if open { Command::Open } else { Command::Close }),
+        None if caps.position => Some(Command::SetPosition {
+            position: if open { 100 } else { 0 },
+        }),
+        None => None,
+    }
+}
+
+fn covers(
+    req: &Request,
+    open: bool,
+    position: Option<u8>,
+    all: bool,
+    names: &[String],
+    room: &[String],
+    house: &House,
+) -> Plan {
+    let mut trace = Trace {
+        intent: Some(if open { "covers_open" } else { "covers_close" }.into()),
+        ..Default::default()
+    };
+    // Words that name no shutter but do name a room are the room ("ferme le salon" form).
+    let (names, room) = if room.is_empty()
+        && !names.is_empty()
+        && !cover_members(None, house).iter().any(|c| named(c, names))
+        && matches!(
+            resolve_room(house, names),
+            RoomMatch::One(_) | RoomMatch::Many(_)
+        ) {
+        (&[][..], names)
+    } else {
+        (names, room)
+    };
+    let whole_house = all && room.is_empty() && names.is_empty() && req.area.is_none();
+    let (area, members) = if whole_house {
+        trace.room_how = Some("toute la maison".into());
+        let members = cover_members(None, house);
+        if members.is_empty() {
+            return answer("Pas de volet dans la maison.".into(), trace);
+        }
+        (None, members)
+    } else {
+        let candidates: Vec<&EntityView> = cover_members(None, house)
+            .into_iter()
+            .filter(|c| names.is_empty() || named(c, names))
+            .collect();
+        let none = if names.is_empty() {
+            "Pas de volet dans la maison.".to_string()
+        } else {
+            format!("Je ne trouve pas de volet « {} ».", names.join(" "))
+        };
+        let (area, how) = match pick_room(req, room, &areas_of(&candidates, house), none, house) {
+            Ok(found) => found,
+            Err(plan) => return (*plan).with_trace(trace),
+        };
+        let area_name = house.area_name(&area).to_string();
+        trace.room = Some(area.clone());
+        trace.room_how = Some(how);
+        let members = cover_members(Some(&area), house);
+        if members.is_empty() {
+            return answer(format!("Pas de volet {}.", dans(&area_name)), trace);
+        }
+        // Words of the room's own name were part of the room phrase.
+        let mut area_words = name_words(&area_name);
+        area_words.extend(name_words(&area));
+        let names: Vec<String> = names
+            .iter()
+            .filter(|n| !area_words.contains(&fold(n)))
+            .cloned()
+            .collect();
+        let chosen: Vec<&EntityView> = match &req.covers {
+            Some(ids) => members
+                .iter()
+                .copied()
+                .filter(|c| ids.contains(&c.id))
+                .collect(),
+            None if names.is_empty() => members.clone(),
+            None => members
+                .iter()
+                .copied()
+                .filter(|c| named(c, &names))
+                .collect(),
+        };
+        if chosen.is_empty() {
+            let choices = members
+                .iter()
+                .take(MAX_CHOICES)
+                .map(|c| {
+                    let mut next = req.clone();
+                    next.area = Some(area.clone());
+                    next.covers = Some(vec![c.id.clone()]);
+                    (c.name.clone(), next)
+                })
+                .collect();
+            return Plan::Ask {
+                question: format!("Quel volet {} ?", de(&area_name)),
+                choices,
+                trace,
+            };
+        }
+        (Some(area), chosen)
+    };
+    let mut actions = Vec::new();
+    let mut acted = Vec::new();
+    let mut unable = Vec::new();
+    for c in &members {
+        match cover_command(c, open, position) {
+            Some(command) => {
+                trace.entities.push(c.id.clone());
+                actions.push(Action::Cover {
+                    entity: c.id.clone(),
+                    command,
+                });
+                acted.push(c.name.clone());
+            }
+            None => unable.push(c.name.clone()),
+        }
+    }
+    if actions.is_empty() {
+        return answer(cannot(&unable, open, position), trace);
+    }
+    Plan::Act {
+        actions,
+        done: Done::Covers {
+            area,
+            open,
+            position,
+            names: acted,
+            unable,
         },
         trace,
     }
@@ -981,6 +1166,143 @@ mod tests {
             Plan::Answer { reply, .. } => reply.clone(),
             other => panic!("not an answer: {other:?}"),
         }
+    }
+
+    fn covers_of(plan: &Plan) -> Vec<(String, Command)> {
+        match plan {
+            Plan::Act { actions, .. } => actions
+                .iter()
+                .map(|a| match a {
+                    Action::Cover { entity, command } => (entity.clone(), command.clone()),
+                    other => panic!("not a cover: {other:?}"),
+                })
+                .collect(),
+            other => panic!("not an act: {other:?}"),
+        }
+    }
+
+    fn ids(got: &[(String, Command)]) -> Vec<&str> {
+        got.iter().map(|(e, _)| e.as_str()).collect()
+    }
+
+    #[test]
+    fn room_shutters_close() {
+        let plan = p("ferme les volets du salon");
+        let got = covers_of(&plan);
+        assert_eq!(ids(&got), ["cover_baie", "cover_fenetre"]);
+        assert!(got.iter().all(|(_, c)| *c == Command::Close));
+        match plan {
+            Plan::Act { done, .. } => assert_eq!(
+                done,
+                Done::Covers {
+                    area: Some("salon".into()),
+                    open: false,
+                    position: None,
+                    names: vec!["Baie".into(), "Fenêtre".into()],
+                    unable: vec![],
+                }
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn whole_house_needs_no_room() {
+        let plan = p("ferme tous les volets");
+        let got = covers_of(&plan);
+        assert_eq!(ids(&got), ["cover_baie", "cover_fenetre", "cover_lea"]);
+        assert!(matches!(
+            plan,
+            Plan::Act {
+                done: Done::Covers { area: None, .. },
+                ..
+            }
+        ));
+        let open = covers_of(&p("ouvre tous les volets"));
+        assert!(open.iter().all(|(_, c)| *c == Command::Open));
+    }
+
+    #[test]
+    fn no_room_asks_rooms_with_shutters() {
+        assert_eq!(labels(&p("ferme les volets")), ["Salon", "Chambre Léa"]);
+    }
+
+    #[test]
+    fn a_choice_resolves_the_room() {
+        let choice = match p("ferme les volets") {
+            Plan::Ask { choices, .. } => choices[1].1.clone(),
+            other => panic!("{other:?}"),
+        };
+        let f = fixture::house();
+        let got = covers_of(&plan_request(&choice, &f.house()));
+        assert_eq!(ids(&got), ["cover_lea"]);
+    }
+
+    #[test]
+    fn named_shutter() {
+        let got = covers_of(&p("ferme le volet baie du salon"));
+        assert_eq!(ids(&got), ["cover_baie"]);
+    }
+
+    #[test]
+    fn unknown_named_shutter_asks_which() {
+        let plan = p("ferme le volet porte du salon");
+        match &plan {
+            Plan::Ask { question, .. } => assert_eq!(question, "Quel volet du Salon ?"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(labels(&plan), ["Baie", "Fenêtre"]);
+    }
+
+    #[test]
+    fn position_sets_position() {
+        let got = covers_of(&p("ouvre les volets du salon à 30 %"));
+        assert_eq!(ids(&got), ["cover_baie", "cover_fenetre"]);
+        assert!(
+            got.iter()
+                .all(|(_, c)| *c == Command::SetPosition { position: 30 })
+        );
+    }
+
+    #[test]
+    fn position_on_open_close_only_room_answers() {
+        let reply = reply_of(&p("ouvre les volets de la chambre de léa à 30 %"));
+        assert!(
+            reply.contains("ne sait pas se mettre à une position"),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn position_with_some_unable_acts_on_the_others() {
+        let plan = p("ouvre tous les volets à 30 %");
+        assert_eq!(ids(&covers_of(&plan)), ["cover_baie", "cover_fenetre"]);
+        match plan {
+            Plan::Act {
+                done: Done::Covers { unable, .. },
+                ..
+            } => {
+                assert_eq!(unable, ["Volet"])
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn close_with_position_gives_the_hint() {
+        assert!(reply_of(&p("ferme les volets à 30 %")).starts_with("Pour une position"));
+        assert_eq!(
+            reply_of(&p("ouvre les volets à 130 %")),
+            "La position va de 0 à 100 %."
+        );
+    }
+
+    #[test]
+    fn room_without_shutters_answers() {
+        assert_eq!(
+            reply_of(&p("ferme les volets du bureau")),
+            "Pas de volet dans le Bureau."
+        );
     }
 
     #[test]
