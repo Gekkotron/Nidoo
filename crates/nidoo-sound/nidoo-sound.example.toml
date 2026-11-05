@@ -10,6 +10,10 @@ input_port = 4953
 # ws://<host>:<port>/sendspin. 0 turns this endpoint off.
 listen_port = 8927
 
+# TCP port of the HTTP API: GET /players lists the approved satellites,
+# PUT /players/{id} sets a satellite's volume and mute. 0 turns it off.
+http_port = 4954
+
 # Holds sound/identity.key (the server's Sendspin identity: keep it) and
 # sound/players.json (each satellite's volume, mute and approval).
 data_dir = "./data"

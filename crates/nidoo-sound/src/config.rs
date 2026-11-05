@@ -28,6 +28,8 @@ pub struct SoundConfig {
     /// TCP port where players that connect to us (e.g. a browser player)
     /// open `ws://<host>:<port>/sendspin`; 0 turns this endpoint off.
     pub listen_port: u16,
+    /// TCP port of the HTTP API (GET /players, PUT /players/{id}); 0 turns it off.
+    pub http_port: u16,
     /// Holds `sound/identity.key` and `sound/players.json`.
     pub data_dir: PathBuf,
     /// How far ahead of playback chunks are timestamped (raised to cover the
@@ -56,6 +58,7 @@ impl Default for SoundConfig {
             mqtt: MqttSettings::default(),
             input_port: 4953,
             listen_port: crate::listen::DEFAULT_PORT,
+            http_port: 4954,
             data_dir: PathBuf::from("./data"),
             lead_ms: 500,
             input_buffer_ms: 250,
@@ -196,6 +199,7 @@ mod tests {
             let c = SoundConfig::load(None).unwrap();
             assert_eq!(c.input_port, 4953);
             assert_eq!(c.listen_port, 8927);
+            assert_eq!(c.http_port, 4954);
             assert_eq!(c.input_buffer_ms, 250);
             assert_eq!(c.data_dir, PathBuf::from("./data"));
             assert_eq!((c.lead_ms, c.idle_stop_ms), (500, 5000));
@@ -237,6 +241,16 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env("NIDOO_SOUND_LISTEN_PORT", 0);
             assert_eq!(SoundConfig::load(None).unwrap().listen_port, 0);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn http_port_from_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("NIDOO_SOUND_HTTP_PORT", "0");
+            let c = SoundConfig::load(None).unwrap();
+            assert_eq!(c.http_port, 0);
             Ok(())
         });
     }

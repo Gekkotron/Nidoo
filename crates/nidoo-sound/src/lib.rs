@@ -2,7 +2,8 @@
 //!
 //! It plays one raw PCM input (the phone, on TCP 4953) on every approved
 //! satellite in sync, and exposes each satellite's volume, mute and approval
-//! to Nidoo through MQTT discovery.
+//! to Nidoo through MQTT discovery. An HTTP API (port 4954) lists the approved
+//! satellites and sets their volume and mute.
 
 pub mod clock;
 pub mod config;
