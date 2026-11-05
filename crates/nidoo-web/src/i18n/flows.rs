@@ -97,7 +97,6 @@ pub enum FlowText {
     AskNameLabel,
     AskDefaultLabel,
     AskNoAnswer,
-    AskEverywhere,
     DefaultAnswerYes,
     DefaultAnswerNo,
     DisableSelfSub,
@@ -397,7 +396,6 @@ impl FlowText {
         FlowText::AskNameLabel,
         FlowText::AskDefaultLabel,
         FlowText::AskNoAnswer,
-        FlowText::AskEverywhere,
         FlowText::DefaultAnswerYes,
         FlowText::DefaultAnswerNo,
         FlowText::DisableSelfSub,
@@ -752,7 +750,6 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::AskNameLabel => ("Keep the number as", "Garder le nombre sous"),
         T::AskDefaultLabel => ("If no number", "Sans nombre"),
         T::AskNoAnswer => ("No answer", "Pas de réponse"),
-        T::AskEverywhere => ("everywhere", "partout"),
         T::DefaultAnswerYes => ("Yes", "Oui"),
         T::DefaultAnswerNo => ("No", "Non"),
         T::SectionWhen => ("WHEN · TRIGGER", "Déclencheurs"),
@@ -1269,13 +1266,14 @@ pub fn speak(lang: Lang, text: &str, room: Option<&str>) -> String {
 }
 
 /// `Ask "Heat up?" in Kitchen: Yes / No / no answer` / `Demande « Chauffer ? » dans Cuisine : Oui
-/// / Non / pas de réponse`; `room` is the room's name, or `None` for everywhere.
+/// / Non / pas de réponse`; `room` is the room's name, or `None` for every room, worded as
+/// Speak words it (`Ask "Heat up?" — All rooms: Yes / no answer`).
 pub fn ask_card(lang: Lang, text: &str, room: Option<&str>, answers: &[&str]) -> String {
     let (en_room, fr_room) = match room {
         Some(r) => (format!("in {r}"), format!("dans {r}")),
         None => (
-            flow_text(Lang::En, FlowText::AskEverywhere).to_owned(),
-            flow_text(Lang::Fr, FlowText::AskEverywhere).to_owned(),
+            format!("— {}", flow_text(Lang::En, FlowText::SpeakAllRooms)),
+            format!("— {}", flow_text(Lang::Fr, FlowText::SpeakAllRooms)),
         ),
     };
     let mut parts: Vec<&str> = answers.to_vec();
@@ -1731,11 +1729,11 @@ mod tests {
         );
         assert_eq!(
             ask_card(Lang::En, "Heat up?", None, &["Yes"]),
-            "Ask \"Heat up?\" everywhere: Yes / no answer"
+            "Ask \"Heat up?\" — All rooms: Yes / no answer"
         );
         assert_eq!(
             ask_card(Lang::Fr, "Q", None, &[]),
-            "Demande «\u{a0}Q\u{a0}» partout\u{a0}: pas de réponse"
+            "Demande «\u{a0}Q\u{a0}» — Toutes les pièces\u{a0}: pas de réponse"
         );
     }
 

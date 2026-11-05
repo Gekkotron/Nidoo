@@ -4,8 +4,9 @@
 
 use leptos::prelude::*;
 use nidoo_core::flow::{
-    Flow, IfParams, MAX_SWITCH_RULES, Missing, Node, NodeKind, OffPeakEdge, Op, RuleOp, Scalar,
-    SwitchParams, SwitchRule, TimeBetweenParams, command_with_number, math_names,
+    ASK_MAX_ANSWERS, AskAnswer, Flow, IfParams, MAX_SWITCH_RULES, Missing, Node, NodeKind,
+    OffPeakEdge, Op, RuleOp, Scalar, SwitchParams, SwitchRule, TimeBetweenParams,
+    command_with_number, is_valid_name, math_names,
 };
 use nidoo_core::model::{Command, Kind};
 
@@ -18,7 +19,10 @@ use super::value_field::IfValueField;
 use crate::command_form::{CommandFields, FieldStyle, entity_actions, retarget};
 use crate::entity_picker::needs::{is_commandable, is_signal, keep};
 use crate::entity_picker::{EntityPickField, Suggest};
-use crate::flow_edit::{add_rule, delete_rule, move_rule, remove_node, set_otherwise};
+use crate::flow_edit::{
+    add_answer, add_rule, delete_answer, delete_rule, move_answer, move_rule, remove_node,
+    set_otherwise,
+};
 use crate::house::House;
 use crate::i18n::flows::{
     FlowText, flow_text, invalid_json, removed_wires, signal_chip_label, use_flow_text,
@@ -524,8 +528,6 @@ fn severity_word(lang: Lang, severity: &str) -> String {
 /// A `speak` card: the sentence (with placeholders, as a notification title) and the room whose
 /// satellites say it: every room, or one of the rooms that hold a satellite.
 fn speak_fields(form: Form, id: String, p: nidoo_core::flow::SpeakParams) -> impl IntoView {
-    let t = use_flow_text();
-    let house = expect_context::<House>();
     let text_id = id.clone();
     let text_write = Callback::new(move |value: Option<String>| {
         form.update(&text_id, |n| {
@@ -534,16 +536,39 @@ fn speak_fields(form: Form, id: String, p: nidoo_core::flow::SpeakParams) -> imp
             }
         });
     });
-    let on_room = move |ev: web_sys::Event| {
-        let value = event_target_value(&ev);
-        form.update(&id, |n| {
+    let room_id = id;
+    let room_write = Callback::new(move |room: Option<String>| {
+        form.update(&room_id, |n| {
             if let NodeKind::Speak(ref mut f) = n.kind {
-                f.room = (!value.is_empty()).then_some(value);
+                f.room = room;
             }
         });
-    };
+    });
     let results = Signal::from(result_names(form.editor.draft));
-    let chosen = p.room.clone().unwrap_or_default();
+    view! {
+        <TemplateField
+            label=word(FlowText::SpeakTextLabel)
+            results=results
+            initial=p.text
+            placeholder=word(FlowText::SpeakTextExample)
+            optional=false
+            write=text_write
+        />
+        {room_field(p.room, room_write)}
+    }
+}
+
+/// The room picker of Speak and Ask: every room with a satellite, "All rooms" first. A room
+/// chosen earlier stays listed even once its satellites are gone.
+fn room_field(chosen: Option<String>, write: Callback<Option<String>>) -> impl IntoView {
+    let t = use_flow_text();
+    let house = expect_context::<House>();
+    let on_room = move |ev: web_sys::Event| {
+        let value = event_target_value(&ev);
+        write.run((!value.is_empty()).then_some(value));
+    };
+    let current = chosen.clone().unwrap_or_default();
+    let chosen = current.clone();
     let rooms = move || {
         let mut rooms = house.entities.with(|m| {
             let found = crate::screens::sound_settings::satellites(m);
@@ -551,7 +576,6 @@ fn speak_fields(form: Form, id: String, p: nidoo_core::flow::SpeakParams) -> imp
                 .areas
                 .with(|areas| crate::screens::sound_settings::satellite_rooms(&found, areas))
         });
-        // A room chosen earlier stays listed even once its satellites are gone.
         if !chosen.is_empty() && !rooms.iter().any(|(id, _)| *id == chosen) {
             let name = house.areas.with(|areas| {
                 areas
@@ -563,16 +587,7 @@ fn speak_fields(form: Form, id: String, p: nidoo_core::flow::SpeakParams) -> imp
         }
         rooms
     };
-    let current = p.room.clone().unwrap_or_default();
     view! {
-        <TemplateField
-            label=word(FlowText::SpeakTextLabel)
-            results=results
-            initial=p.text
-            placeholder=word(FlowText::SpeakTextExample)
-            optional=false
-            write=text_write
-        />
         <label class="node-editor__field">
             <span class="node-editor__label">{move || t(FlowText::SpeakRoomLabel)}</span>
             <select class="field speak-room" on:change=on_room>
@@ -590,6 +605,270 @@ fn speak_fields(form: Form, id: String, p: nidoo_core::flow::SpeakParams) -> imp
                 }}
             </select>
         </label>
+    }
+}
+
+/// Sets an Ask card's result name from what was typed: empty clears the name and the default
+/// that needs it; a name that is not a valid result name is refused and nothing changes (the
+/// card shows its own translated message).
+fn apply_ask_name(p: &mut nidoo_core::flow::AskParams, raw: &str) -> Result<(), String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        p.name = None;
+        p.default = None;
+        return Ok(());
+    }
+    if !is_valid_name(name) {
+        return Err(format!("{name:?}"));
+    }
+    p.name = Some(name.to_owned());
+    Ok(())
+}
+
+/// The comma-separated words typed for an answer: trimmed, empties dropped.
+fn ask_words(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn ask_words_text(words: &[String]) -> String {
+    words.join(", ")
+}
+
+fn ask_update(form: Form, id: &str, change: impl FnOnce(&mut nidoo_core::flow::AskParams)) {
+    form.update(id, |n| {
+        if let NodeKind::Ask(ref mut p) = n.kind {
+            change(p);
+        }
+    });
+}
+
+fn answer_row(
+    form: Form,
+    id: String,
+    index: usize,
+    count: usize,
+    bump: Callback<usize>,
+) -> impl IntoView {
+    let t = use_flow_text();
+    let (label, words) = form
+        .editor
+        .draft
+        .with_untracked(|f| match f.node(&id).map(|n| &n.kind) {
+            Some(NodeKind::Ask(p)) => p
+                .answers
+                .get(index)
+                .map(|a| (a.label.clone(), ask_words_text(&a.words))),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let label_id = id.clone();
+    let on_label = move |ev: web_sys::Event| {
+        let value = event_target_value(&ev);
+        ask_update(form, &label_id, |p| {
+            if let Some(a) = p.answers.get_mut(index) {
+                a.label = value.trim().to_owned();
+            }
+        });
+    };
+    let words_id = id.clone();
+    let on_words = move |ev: web_sys::Event| {
+        let value = event_target_value(&ev);
+        ask_update(form, &words_id, |p| {
+            if let Some(a) = p.answers.get_mut(index) {
+                a.words = ask_words(&value);
+            }
+        });
+    };
+    let up_id = id.clone();
+    let up = move |_: web_sys::MouseEvent| {
+        form.editor
+            .edit(|f| move_answer(f, &up_id, index, index - 1));
+        bump.run(0);
+    };
+    let down_id = id.clone();
+    let down = move |_: web_sys::MouseEvent| {
+        form.editor
+            .edit(|f| move_answer(f, &down_id, index, index + 1));
+        bump.run(0);
+    };
+    let delete_id = id;
+    let delete = move |_: web_sys::MouseEvent| {
+        let removed = form.editor.edit(|f| delete_answer(f, &delete_id, index));
+        bump.run(removed);
+    };
+    view! {
+        <fieldset class="rule-row">
+            <legend class="node-editor__label">
+                {index + 1}
+            </legend>
+            <input
+                type="text"
+                class="field"
+                spellcheck="false"
+                autocomplete="off"
+                prop:value=label
+                on:input=on_label
+            />
+            <label class="node-editor__field">
+                <span class="node-editor__label">{move || t(FlowText::AskWordsLabel)}</span>
+                <input
+                    type="text"
+                    class="field"
+                    spellcheck="false"
+                    autocomplete="off"
+                    prop:value=words
+                    on:input=on_words
+                />
+            </label>
+            <span class="rule-row__buttons">
+                <button
+                    type="button"
+                    class="btn btn--ghost"
+                    aria-label=move || t(FlowText::MoveRuleUp)
+                    disabled=index == 0
+                    on:click=up
+                >
+                    "↑"
+                </button>
+                <button
+                    type="button"
+                    class="btn btn--ghost"
+                    aria-label=move || t(FlowText::MoveRuleDown)
+                    disabled={index + 1 >= count}
+                    on:click=down
+                >
+                    "↓"
+                </button>
+                <button
+                    type="button"
+                    class="btn btn--ghost"
+                    aria-label=move || t(FlowText::DeleteRule)
+                    title=move || t(FlowText::DeleteRule)
+                    disabled={count <= 1}
+                    on:click=delete
+                >
+                    "✕"
+                </button>
+            </span>
+        </fieldset>
+    }
+}
+
+/// The `ask` editor: the question, the room, one row per answer, then the number it may keep.
+fn ask_fields(form: Form, id: String, p: nidoo_core::flow::AskParams) -> impl IntoView {
+    let t = use_flow_text();
+    let draft = form.editor.draft;
+    let text_id = id.clone();
+    let text_write = Callback::new(move |value: Option<String>| {
+        ask_update(form, &text_id, |p| p.text = value.unwrap_or_default());
+    });
+    let room_id = id.clone();
+    let room_write = Callback::new(move |room: Option<String>| {
+        ask_update(form, &room_id, |p| p.room = room);
+    });
+    let results = Signal::from(result_names(draft));
+    // Rows are rebuilt when the answers change in number or order, not on every keystroke.
+    let version = RwSignal::new(0_u32);
+    let bump = Callback::new(move |_: usize| version.update(|v| *v += 1));
+    let count = Signal::derive({
+        let id = id.clone();
+        move || {
+            draft.with(|f| match f.node(&id).map(|n| &n.kind) {
+                Some(NodeKind::Ask(p)) => p.answers.len(),
+                _ => 0,
+            })
+        }
+    });
+    let rows = {
+        let id = id.clone();
+        move || {
+            version.track();
+            let n = count.get_untracked();
+            (0..n)
+                .map(|i| answer_row(form, id.clone(), i, n, bump))
+                .collect_view()
+        }
+    };
+    let add_id = id.clone();
+    let add = move |_: web_sys::MouseEvent| {
+        let n = count.get_untracked() + 1;
+        let answer = AskAnswer {
+            label: n.to_string(),
+            words: Vec::new(),
+        };
+        form.editor.edit(|f| add_answer(f, &add_id, answer));
+        bump.run(0);
+    };
+    let name_error = RwSignal::new(false);
+    let has_name = RwSignal::new(p.name.is_some());
+    let name_id = id.clone();
+    let on_name = move |ev: web_sys::Event| {
+        let raw = event_target_value(&ev);
+        let mut outcome = Ok(());
+        ask_update(form, &name_id, |p| outcome = apply_ask_name(p, &raw));
+        name_error.set(outcome.is_err());
+        if outcome.is_ok() {
+            has_name.set(!raw.trim().is_empty());
+        }
+    };
+    let default_id = id;
+    let on_default = move |ev: web_sys::Event| {
+        let value = event_target_value(&ev);
+        ask_update(form, &default_id, |p| {
+            p.default = parse_decimal(value.trim());
+        });
+    };
+    let name = p.name.clone().unwrap_or_default();
+    let default = p.default.map(|d| d.to_string()).unwrap_or_default();
+    view! {
+        <TemplateField
+            label=word(FlowText::AskTextLabel)
+            results=results
+            initial=p.text
+            placeholder=word(FlowText::DefaultAskText)
+            optional=false
+            write=text_write
+        />
+        {room_field(p.room, room_write)}
+        <div class="node-editor__field">
+            <span class="node-editor__label">{move || t(FlowText::AskAnswersLabel)}</span>
+            {rows}
+            <Show when=move || { count.get() < ASK_MAX_ANSWERS }>
+                <button type="button" class="btn btn--ghost" on:click=add.clone()>
+                    {move || format!("+ {}", t(FlowText::AskAddAnswer))}
+                </button>
+            </Show>
+        </div>
+        <label class="node-editor__field">
+            <span class="node-editor__label">{move || t(FlowText::AskNameLabel)}</span>
+            <input
+                type="text"
+                class="field"
+                spellcheck="false"
+                autocomplete="off"
+                prop:value=name
+                on:input=on_name
+            />
+            <Show when=move || name_error.get()>
+                <span class="node-editor__error">{move || t(FlowText::MathNameInvalid)}</span>
+            </Show>
+        </label>
+        <Show when=move || has_name.get()>
+            <label class="node-editor__field">
+                <span class="node-editor__label">{move || t(FlowText::AskDefaultLabel)}</span>
+                <input
+                    type="number"
+                    step="any"
+                    class="field"
+                    prop:value=default.clone()
+                    on:input=on_default.clone()
+                />
+            </label>
+        </Show>
     }
 }
 
@@ -1445,7 +1724,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
         NodeKind::Notify(p) => notify_fields(form, id, p).into_any(),
         NodeKind::Speak(p) => speak_fields(form, id, p).into_any(),
-        NodeKind::Ask(_) => ().into_any(),
+        NodeKind::Ask(p) => ask_fields(form, id, p).into_any(),
         NodeKind::Switch(p) => switch_fields(form, id, p).into_any(),
         NodeKind::TimeBetween(p) => time_fields(form, id, p).into_any(),
         NodeKind::Delay(p) => {
@@ -2356,6 +2635,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn ask_name_is_checked_and_empty_clears_the_default() {
+        let mut p = nidoo_core::flow::AskParams::default();
+        assert!(apply_ask_name(&mut p, "Temp").is_err());
+        assert_eq!(p.name, None);
+        assert!(apply_ask_name(&mut p, " temp ").is_ok());
+        assert_eq!(p.name.as_deref(), Some("temp"));
+        p.default = Some(21.0);
+        assert!(apply_ask_name(&mut p, "").is_ok());
+        assert_eq!((p.name, p.default), (None, None));
+    }
+
+    #[test]
+    fn ask_words_are_split_trimmed_and_cleaned() {
+        assert_eq!(ask_words(" yes , sure,, "), vec!["yes", "sure"]);
+        assert!(ask_words("  ").is_empty());
+        assert_eq!(ask_words_text(&["a".into(), "b".into()]), "a, b");
+    }
 
     #[test]
     fn manual_kind_round_trips_its_value() {

@@ -723,7 +723,7 @@ mod tests {
         );
         let anywhere =
             r#"{"id":"a","type":"ask","params":{"text":"Q","answers":[{"label":"Yes"}]}}"#;
-        assert_eq!(text(anywhere), "Ask \"Q\" everywhere: Yes / no answer");
+        assert_eq!(text(anywhere), "Ask \"Q\" — All rooms: Yes / no answer");
         assert_eq!(role(&node(ask).kind), Role::Action);
     }
 
