@@ -12,6 +12,7 @@ pub mod group;
 pub mod hold;
 pub mod http;
 pub mod input;
+pub mod level;
 pub mod listen;
 pub mod mixer;
 pub mod mqtt;
