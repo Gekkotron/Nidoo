@@ -9,7 +9,9 @@ request in French, as you would type it in the [Assistant](assistant.md):
 
 > Hey Jarvis… allume la lumière du salon.
 
-The satellite's light comes on while it listens. The music in that room goes
+A short two-note chime tells you it heard the wake word, and the satellite's
+light comes on while it listens (a muted satellite stays silent, chime
+included; a follow-up question listens without one). The music in that room goes
 quiet as soon as it hears the wake word and comes back once the house has
 answered; the other rooms are not touched. The house does what you asked and
 answers on the satellite you spoke to. When the answer is a question ("which
