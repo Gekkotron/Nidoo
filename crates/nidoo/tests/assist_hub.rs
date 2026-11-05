@@ -663,3 +663,106 @@ async fn a_refusal_is_told_in_french_and_kept_in_english_in_the_trace() {
         turn.trace.actions[0].result
     );
 }
+
+const SHUTTER_FIXTURE: &str = "cover__0x847127fffe08106c__cover.json";
+const SHUTTER_TOPIC: &str = "nidoo/cover/0x847127fffe08106c/cover/config";
+const SHUTTER_STATE_TOPIC: &str = "zigbee2mqtt/rooms/living/shutter_south";
+const SHUTTER_COMMAND_TOPIC: &str = "zigbee2mqtt/rooms/living/shutter_south/set";
+
+fn set_shutter(hub: &Hub, position: u8) {
+    let state = if position == 0 { "CLOSE" } else { "OPEN" };
+    hub.ingest(
+        SHUTTER_STATE_TOPIC,
+        format!(r#"{{"position":{position},"state":"{state}"}}"#).as_bytes(),
+    );
+}
+
+/// The house, plus the living room's shutter, fully open.
+async fn shutter_house() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+    let (hub, rx) = house().await;
+    hub.ingest(SHUTTER_TOPIC, &fixture(SHUTTER_FIXTURE));
+    place(&hub, "0x847127fffe08106c", "living").await;
+    set_shutter(&hub, 100);
+    (hub, rx)
+}
+
+/// Plays the broker for the shutter: logs every publish and echoes the shutter's new position.
+fn shutter_echo(
+    mut rx: mpsc::Receiver<Publish>,
+    hub: Arc<Hub>,
+) -> Arc<Mutex<Vec<(String, String)>>> {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&log);
+    tokio::spawn(async move {
+        while let Some(publish) = rx.recv().await {
+            sink.lock()
+                .unwrap()
+                .push((publish.topic.clone(), publish.payload.clone()));
+            if publish.topic == SHUTTER_COMMAND_TOPIC {
+                let v = serde_json::from_str::<serde_json::Value>(&publish.payload)
+                    .unwrap_or(serde_json::Value::Null);
+                let position = match (v["state"].as_str(), v["position"].as_u64()) {
+                    (_, Some(p)) => p as u8,
+                    (Some("CLOSE"), _) => 0,
+                    _ if publish.payload.contains("CLOSE") => 0,
+                    _ => 100,
+                };
+                set_shutter(&hub, position);
+            }
+        }
+    });
+    log
+}
+
+fn shutter_payloads(log: &Mutex<Vec<(String, String)>>) -> Vec<String> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|(t, _)| t == SHUTTER_COMMAND_TOPIC)
+        .map(|(_, p)| p.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn shutters_close_and_skip_already_closed() {
+    let (hub, rx) = shutter_house().await;
+    let log = shutter_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "ferme les volets du salon").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert!(turn.reply.contains("fermé"), "{}", turn.reply);
+    assert_eq!(shutter_payloads(&log).len(), 1, "{:?}", log.lock().unwrap());
+    assert_eq!(turn.trace.actions.len(), 1);
+    assert_eq!(turn.trace.actions[0].result, "ok");
+
+    log.lock().unwrap().clear();
+    let turn = say(&hub, "ferme les volets du salon").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted);
+    assert!(turn.reply.contains("déjà"), "{}", turn.reply);
+    assert_eq!(turn.trace.actions[0].result, "skipped");
+    assert!(shutter_payloads(&log).is_empty());
+}
+
+#[tokio::test]
+async fn shutter_position_publishes_the_position() {
+    let (hub, rx) = shutter_house().await;
+    let log = shutter_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "ouvre les volets du salon à 30 %").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert!(turn.reply.contains("à 30 %"), "{}", turn.reply);
+    let sent = shutter_payloads(&log);
+    assert_eq!(sent.len(), 1);
+    let v: serde_json::Value = serde_json::from_str(&sent[0]).expect("json payload");
+    assert_eq!(v["position"], 30, "{}", sent[0]);
+}
+
+#[tokio::test]
+async fn simulated_shutters_publish_nothing() {
+    let (hub, mut rx) = shutter_house().await;
+    drain(&mut rx);
+    let turn = hub
+        .assist(simulated("ferme tous les volets"))
+        .await
+        .expect("assist");
+    assert!(turn.reply.starts_with("Simulation :"), "{}", turn.reply);
+    assert!(drain(&mut rx).is_empty());
+}
