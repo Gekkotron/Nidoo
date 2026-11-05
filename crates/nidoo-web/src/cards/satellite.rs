@@ -5,21 +5,16 @@
 //! short sentence on that satellite only; while it waits for approval it shows that and an
 //! Allow button instead.
 
-use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
-use leptos::task::spawn_local;
-use nidoo_api::{EntityView, SoundSpeakRequest};
-use nidoo_core::model::{Availability, Command, EntityState, SOUND_DEVICE_PREFIX, StateValue};
+use nidoo_api::EntityView;
+use nidoo_core::model::{Availability, Command, EntityState, StateValue};
 
 use super::Sender;
 use crate::components::card_frame::{CardFrame, open_entity};
 use crate::house::House;
-use crate::i18n::{SoundText, speaker_test, use_lang, use_sound_text};
+use crate::i18n::{SoundText, use_lang, use_sound_text};
 use crate::icons::{SPEAKER, SPEAKER_OFF, SPEECH_BUBBLE};
-use crate::screens::sound_settings::{Satellite, satellite_of};
-
-/// How long a failed test's reason stays on the card.
-const ERROR_MS: u32 = 5_000;
+use crate::screens::sound_settings::{Satellite, satellite_of, say_test, test_request};
 
 /// `entity` with the state `value`, for the optimistic write.
 fn guess(entity: &EntityView, value: StateValue) -> EntityState {
@@ -45,10 +40,6 @@ fn on_off(on: bool) -> Command {
 pub fn SatelliteCard(entity: EntityView) -> impl IntoView {
     let house = expect_context::<House>();
     let device = entity.device_id.clone().unwrap_or_default();
-    let sid = device
-        .strip_prefix(SOUND_DEVICE_PREFIX)
-        .unwrap_or(&device)
-        .to_owned();
     let satellite = Memo::new({
         let device = device.clone();
         move |_| house.entities.with(|m| satellite_of(m, &device))
@@ -61,7 +52,7 @@ pub fn SatelliteCard(entity: EntityView) -> impl IntoView {
         let Some(sat) = satellite.get() else {
             return ().into_any();
         };
-        view! { <SatelliteFace entity=entity.clone() sat=sat sid=sid.clone() error=error shown=shown on_click=on_click /> }
+        view! { <SatelliteFace entity=entity.clone() sat=sat error=error shown=shown on_click=on_click /> }
             .into_any()
     }
 }
@@ -70,7 +61,6 @@ pub fn SatelliteCard(entity: EntityView) -> impl IntoView {
 fn SatelliteFace(
     entity: EntityView,
     sat: Satellite,
-    sid: String,
     error: RwSignal<Option<String>>,
     shown: StoredValue<u32>,
     on_click: Callback<()>,
@@ -84,7 +74,6 @@ fn SatelliteFace(
         frame.state.availability = Availability::Offline;
     }
     let pending = sender.pending(&frame.id);
-    let name = sat.name.clone();
 
     let body = if sat.is_allowed() {
         let volume = sat.volume.clone().map(|volume| {
@@ -141,26 +130,10 @@ fn SatelliteFace(
                 ></button>
             }
         });
+        let tested = sat.clone();
         let on_speak = move |_| {
-            let req = SoundSpeakRequest {
-                text: speaker_test(lang(), &name),
-                satellite: Some(sid.clone()),
-                ..Default::default()
-            };
-            spawn_local(async move {
-                if let Err(err) = crate::api::tts::sound_speak(&req).await {
-                    let Some(mine) = shown.try_update_value(|n| {
-                        *n = n.wrapping_add(1);
-                        *n
-                    }) else {
-                        return;
-                    };
-                    error.try_set(Some(err.error));
-                    TimeoutFuture::new(ERROR_MS).await;
-                    if shown.try_get_value() == Some(mine) {
-                        error.try_set(None);
-                    }
-                }
+            say_test(test_request(&tested, lang()), shown, move |reason| {
+                error.try_set(reason);
             });
         };
         view! {

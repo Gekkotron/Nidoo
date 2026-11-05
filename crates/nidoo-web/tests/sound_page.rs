@@ -492,3 +492,73 @@ async fn the_say_box_shows_why_it_failed() {
     );
     assert_eq!(input.value(), "Hello", "the text stays to try again");
 }
+
+#[wasm_bindgen_test]
+async fn each_allowed_row_has_a_test_button_that_speaks_on_that_satellite() {
+    let stub = FetchStub::install();
+    stub.reply("POST", SPEAK, 202, r#"{"players":1}"#);
+    let m = mount("/settings/sound", two_satellites());
+    settle().await;
+    // Rows by name: Bedroom (waiting, so no button), then Kitchen speaker.
+    let rows = all(&m.host, ".sound-row");
+    assert!(
+        rows[0]
+            .query_selector(".satellite__speak")
+            .unwrap()
+            .is_none()
+    );
+    let speak: web_sys::HtmlElement = rows[1]
+        .query_selector(".satellite__speak")
+        .unwrap()
+        .expect("test button")
+        .unchecked_into();
+    speak.click();
+    settle().await;
+    let sent = spoken(&stub);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["satellite"], "aaaaaaaaaaaa");
+    assert_eq!(sent[0]["text"], "Speaker test: Kitchen speaker");
+    assert_eq!(sent[0]["room"], Value::Null);
+}
+
+#[wasm_bindgen_test]
+async fn a_failed_row_test_shows_the_reason_under_that_row() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        SPEAK,
+        409,
+        r#"{"error":"this satellite cannot speak now"}"#,
+    );
+    let mut entities = two_satellites();
+    entities.extend(satellite(
+        "nidoo_sound_cccccccccccc",
+        "Office",
+        "kitchen",
+        true,
+        true,
+        Availability::Online,
+    ));
+    let m = mount("/settings/sound", entities);
+    settle().await;
+    // Rows by name: Bedroom, Kitchen speaker, Office.
+    let rows = all(&m.host, ".sound-row");
+    let speak: web_sys::HtmlElement = rows[2]
+        .query_selector(".satellite__speak")
+        .unwrap()
+        .expect("test button")
+        .unchecked_into();
+    speak.click();
+    settle().await;
+    let rows = all(&m.host, ".sound-row");
+    let reason = |row: &web_sys::HtmlElement| {
+        row.query_selector(".satellite__error")
+            .unwrap()
+            .and_then(|e| e.text_content())
+    };
+    assert_eq!(reason(&rows[1]), None);
+    assert_eq!(
+        reason(&rows[2]).as_deref(),
+        Some("this satellite cannot speak now")
+    );
+}
