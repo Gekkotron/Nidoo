@@ -1,0 +1,35 @@
+# Throwaway spike: can "Hey Jarvis" be spotted on a Mac CPU? See
+# docs/superpowers/plans/2026-11-05-mac-satellite-wake-spike-notes.md.
+[package]
+name = "wake-spike"
+version = "0.0.0"
+edition = "2024"
+authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
+license = "Apache-2.0"
+publish = false
+
+# Not part of the repository workspace: macOS-only, never built by CI.
+[workspace]
+
+[features]
+# Two engines, never in one binary: each links its own onnxruntime.
+kws = ["dep:sherpa-onnx"]
+oww = ["dep:ort", "dep:ndarray"]
+
+[[bin]]
+name = "wake-spike"
+path = "src/main.rs"
+required-features = ["kws"]
+
+[[bin]]
+name = "oww-spike"
+path = "src/bin/oww.rs"
+required-features = ["oww"]
+
+[dependencies]
+sherpa-onnx = { version = "=2.0.1", optional = true }
+ort = { version = "=2.0.0-rc.10", optional = true }
+ndarray = { version = "0.16", optional = true }
+hound = "3.5"
+cpal = "0.16"
+anyhow = "1"
