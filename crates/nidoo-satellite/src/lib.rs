@@ -6,3 +6,4 @@ pub mod playout;
 pub mod sendspin;
 pub mod store;
 pub mod voice;
+pub mod wake_head;
