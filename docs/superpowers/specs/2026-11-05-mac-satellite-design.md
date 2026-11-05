@@ -1,6 +1,7 @@
 # Mac satellite: a menu-bar app that makes a Mac one of the house satellites
 
-Date: 2026-11-05. Status: design, approved 2026-11-05. Builds on
+Date: 2026-11-05. Status: design, approved 2026-11-05; amended the same day
+with **Train Hey Jarvis** (goal 8) after the wake-word spike. Builds on
 [satellites + nidoo-sound](2026-11-04-satellite-sound-design.md),
 [speech on the satellites](2026-11-04-satellite-speech-design.md) and
 [speech in](2026-11-04-speech-in-design.md). The board it imitates is
@@ -44,6 +45,7 @@ in Nidoo. Nothing on the hub or in `nidoo-sound` is meant to change for it.
    - **Set voice key…** — reads the 64-hex `voice_key` from the clipboard
      (the line copied from the hub's **Create key**, with or without the
      `voice_key: "…"` wrapper), validates it and stores it;
+   - **Train Hey Jarvis…** — teaches the wake word the owner's voice (goal 8);
    - **Start at login** — a checkbox;
    - **Quit** — the Mac leaves the house: no music, no voice.
 4. **Icon states.**
@@ -59,7 +61,20 @@ in Nidoo. Nothing on the hub or in `nidoo-sound` is meant to change for it.
    name.
 6. **Volume and mute** come from Nidoo like any satellite (Sendspin
    commands), applied to the app's own playback, not the Mac's system volume.
-7. **Docs.** A user page (next to `docs/users/talk-to-a-satellite.md` and the
+8. **Train Hey Jarvis.** The stock `hey_jarvis` model misses a
+   French-accented "Hey Jarvis" (spike: 2/9), while a small personal model
+   trained on the owner's own tries catches it (9/9 live). From the menu:
+   - the status line guides: "Say Hey Jarvis — 4 of 15", then "Now talk
+     normally — 30 s", then a few seconds of training, then done;
+   - the app learns from those tries, the owner's normal talk, and extra
+     French and English talk the Mac speaks to itself with its built-in
+     voices (nothing is played aloud);
+   - only the trained file is kept, in the app's store, `0600`; the
+     recordings are discarded after training and never leave the Mac;
+   - before any training, the stock model at threshold 0.5; after, the
+     personal model at 0.9 (both adjustable without a rebuild);
+   - running it again replaces the trained model; Cancel keeps the old one.
+9. **Docs.** A user page (next to `docs/users/talk-to-a-satellite.md` and the
    sound page) on building, installing and setting up the Mac satellite, and a
    pointer from `satellite/README.md`.
 
@@ -106,6 +121,10 @@ in Nidoo. Nothing on the hub or in `nidoo-sound` is meant to change for it.
   open equivalent that runs on a Mac CPU (openWakeWord `hey_jarvis` ONNX, or
   sherpa-onnx, already a hub dependency). Spike it first and record the
   result; the detection threshold must be adjustable without a rebuild.
+  Spike result: openWakeWord through `ort`, plus the personal head of goal 8
+  (`docs/superpowers/plans/2026-11-05-mac-satellite-wake-spike-notes.md`).
+- The voice-training audio is the owner's personal data: never logged,
+  never written to the repo, never sent to the hub.
 - Shared cargo target under `$DEV_SCRATCH`; no per-repo cargo config.
 - Attribution "Gekkotron" in any byline or bundle metadata.
 
@@ -118,6 +137,8 @@ in Nidoo. Nothing on the hub or in `nidoo-sound` is meant to change for it.
 - Gray icon when the hub cannot be reached.
 - Setup like a board: Allow it and give it a room in Nidoo; key from the hub's
   **Create key**.
+- **Train Hey Jarvis** in the menu, as goal 8 describes (owner said yes after
+  the spike showed the stock model misses their accent).
 
 ## My calls (not discussed; change them if wrong)
 

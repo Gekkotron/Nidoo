@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A menu-bar Mac app, "Nidoo Satellite", that is a full house satellite: synchronized Sendspin music, "Hey Jarvis" voice over the signed UDP protocol, a Listening toggle and Quit.
+**Goal:** A menu-bar Mac app, "Nidoo Satellite", that is a full house satellite: synchronized Sendspin music, "Hey Jarvis" voice over the signed UDP protocol (with **Train Hey Jarvis** for the owner's own voice), a Listening toggle and Quit.
 
 **Architecture:** All protocol and decision logic lives in a platform-neutral library crate `crates/nidoo-satellite` (in the workspace, tested on Linux CI, end-to-end against the real `nidoo-sound` player code and a fake hub socket). The voice datagrams move out of the hub into a tiny shared crate `crates/nidoo-voice`. The macOS shell (`satellite/mac/`, its own Cargo workspace, not built by CI) only adds the microphone and speaker (`cpal`), the wake-word engine, the menu-bar icon (`tray-icon`) and the `.app` bundle.
 
@@ -20,6 +20,7 @@
 - Stored in `~/Library/Application Support/Nidoo Satellite/`, files mode `0600`. The voice key is never logged.
 - Player name is the Mac's computer name. Bundle id `io.github.gekkotron.nidoo-satellite`. Attribution "Gekkotron".
 - The repo is public and generic: no owner rooms, hosts, IPs or names in tracked files.
+- Wake word: openWakeWord through `ort` (spike notes). Stock `hey_jarvis` at **0.5**; personal head (`head.bin` in the store dir) at **0.9** when present. Training audio and features stay in memory, are dropped after training, and never leave the Mac.
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` stay green on Linux. Run cargo with `CARGO_PROFILE_DEV_DEBUG=0`. No per-repo cargo config.
 
 ## Review Focus
@@ -29,6 +30,7 @@
 3. **Junk on the clipboard for "Set voice key…".** Expected: refused with a clear status, and the old key is kept. Test: Task 3 (`parse_voice_key_*`, `set_voice_key_keeps_old_on_junk`).
 4. **Replayed, foreign or stale hub datagrams** (another sid, `hub_ctr` not rising, Stop for another session). Expected: ignored. Test: Task 4 (`ignores_*`).
 5. **Late, overlapping or missing audio chunks, a stream end mid-buffer, volume 0.** Expected: silence, never noise or a stale replay. Test: Task 6 (`late_chunks_are_dropped`, `gap_plays_silence`, `stream_end_clears`).
+6. **Training cancelled, quit, or too few tries heard.** Expected: the previous head (or the stock model) stays in use, no partial `head.bin`. Tests: Task 7b (`too_few_tries_fails`, `head_file_written_atomically`) and Task 7 (`training_cancel_restores_listening`).
 
 ---
 
@@ -53,6 +55,8 @@ git commit -m "spike(satellite-mac): wake word on a Mac CPU"
 ```
 
 **GATE:** if no candidate passes, stop here and report to the owner (spec: voice is the point; no music-only v1 is assumed).
+
+**Result (2026-11-05):** the stock models fail the owner's French accent; a personal head on openWakeWord's embeddings passes (9/9 live). The owner approved **Train Hey Jarvis** (spec goal 8) → Task 7b.
 
 ---
 
@@ -242,12 +246,13 @@ Handshake (mirror of `nidoo_sound::player::handshake`): send cleartext `client/i
 - Produces:
   - `pub trait WakeDetector: Send { fn push(&mut self, samples_16k: &[i16]) -> bool; fn reset(&mut self); }`
   - `pub trait MicSwitch: Send { fn set(&mut self, on: bool) -> anyhow::Result<()>; }`. The shell opens or closes the real input stream. An `Err` means mic access is missing.
-  - `pub enum Control { SetListening(bool), SetVoiceKey(String), Quit }`
+  - `pub enum Control { SetListening(bool), SetVoiceKey(String), TrainWake, CancelTraining, Quit }`
+  - `pub trait Trainer: Send { fn start(&mut self); fn push(&mut self, samples_16k: &[i16]) -> TrainProgress; fn cancel(&mut self); }` (`TrainProgress` from Task 7b). The shell's trainer saves the head and makes the detector reload it.
   - `pub enum IconState { Gray, Ready, Listening, MicOff }`
   - `pub struct UiState { pub icon: IconState, pub status: String, pub listening: bool }`
   - `pub struct Config { pub store_dir: PathBuf, pub name: String, pub voice_port: u16 /* 4961 */, pub sendspin_port: u16 /* 0 = any */, pub advertise: bool }`
   - `pub struct Handles { pub playout: SharedPlayout, pub control: mpsc::Sender<Control>, pub ui: watch::Receiver<UiState> }`
-  - `pub async fn start(cfg: Config, mic: Box<dyn MicSwitch>, mic_rx: mpsc::Receiver<Vec<i16>>, detector: Box<dyn WakeDetector>) -> anyhow::Result<Handles>`
+  - `pub async fn start(cfg: Config, mic: Box<dyn MicSwitch>, mic_rx: mpsc::Receiver<Vec<i16>>, detector: Box<dyn WakeDetector>, trainer: Box<dyn Trainer>) -> anyhow::Result<Handles>`
 
 Decisions in `brain.rs`:
 - **Mic.** The mic is wanted when `listening && voice key set && greeted`.
@@ -256,6 +261,7 @@ Decisions in `brain.rs`:
 - **Wake word.** Set wake-muted, send Wake, pause the detector, and route mic samples to `VoiceLink::audio`.
 - **Window close** (Stop, timeout or listening off). Stop streaming, `detector.reset()` and resume it. Release wake-mute no earlier than 1 s after the wake (board rule).
 - **Listen.** Open a follow-up window, without wake-mute.
+- **Training.** `TrainWake` (ignored while a voice window is open) opens the mic even when not greeted or Listening is off, routes samples to the `Trainer` instead of the detector, and shows its progress as the status line (`TrainProgress::status()`). No voice window can open meanwhile. `Done`, `Failed` or `CancelTraining` return to the normal mic rule; `Failed` leaves its reason in the status line until the next change.
 
 - [ ] **Step 1: Failing brain tests**
 
@@ -266,6 +272,8 @@ Decisions in `brain.rs`:
 #[test] fn listening_off_mid_window_ends_it()       // → End datagram, mic off, wake-mute released (after the 1 s floor), icon MicOff
 #[test] fn listen_opens_follow_up_without_mute()
 #[test] fn mic_error_shows_access_needed()
+#[test] fn training_opens_mic_and_pauses_wake()      // not greeted, listening off → TrainWake → mic on, detector not fed, status from TrainProgress
+#[test] fn training_cancel_restores_listening()      // CancelTraining → trainer.cancel(), mic back to the normal rule
 ```
 
 - [ ] **Step 2: Failing e2e** in `tests/voice_e2e.rs`. It uses a fake hub (a tokio `UdpSocket` speaking `nidoo_voice`), a `FakeDetector` that fires when it sees the sample value `12345`, a recording `MicSwitch`, `advertise: false`, and `nidoo_sound::player::run_player` connected to the Sendspin port.
@@ -286,6 +294,42 @@ Decisions in `brain.rs`:
 
 ---
 
+### Task 7b: Personal wake head (training logic, CI-tested)
+
+Pure Rust in `nidoo-satellite`, no ONNX: the Mac shell computes the openWakeWord features (Task 8) and this module labels, trains and saves. Values are the spike's (`satellite/mac/spike/src/bin/personal.rs`).
+
+**Files:**
+- Create: `crates/nidoo-satellite/src/wake_head.rs` (tests inside)
+
+**Interfaces:**
+- Produces:
+  - `pub const FEATURES: usize = 16 * 96;` `pub const HOP_S: f32 = 0.08;`
+  - `pub struct Head { mean: Vec<f32>, std: Vec<f32>, w: Vec<f32>, b: f32 }` with `pub fn prob(&self, x: &[f32]) -> f32`, `pub fn to_bytes(&self) -> Vec<u8>` (mean, std, w, then b; f32 LE) and `pub fn from_bytes(&[u8]) -> Result<Head, HeadError>` (wrong length → error)
+  - `pub fn train(pos: &[Vec<f32>], neg: &[Vec<f32>]) -> Head` (standardize, class-balanced logistic regression, L2 1e-2, lr 0.5, 400 full-batch steps)
+  - `pub fn save_head(dir: &Path, head: &Head) -> io::Result<()>` (write `head.bin.tmp` mode 0600, then rename to `head.bin`)
+  - `pub enum TrainProgress { Saying { heard: usize, of: usize }, Talking { secs_left: u32 }, Training, Done(Head), Failed(String) }` with `pub fn status(&self) -> String` ("Say Hey Jarvis — 4 of 15", "Now talk normally — 23 s", "Training…", "Hey Jarvis trained", the failure reason)
+  - `pub struct Enrolment` — `new(tries: usize /* 15 */, talk_s: u32 /* 30 */, max_saying_s: u32 /* 120 */)`, `push(&mut self, level_db: f32, features: &[f32]) -> TrainProgress` once per 80 ms step, `add_negatives(&mut self, Vec<Vec<f32>>)` for the shell's synthetic talk, `finish(&mut self) -> TrainProgress` (trains)
+- Labeling (spike rules): a try is a burst above **−35 dBFS**, gaps ≤ 0.4 s merged, length **0.3–1.3 s**; positive windows **0.16–0.8 s** after its end; during Saying, negatives are windows ≥ 1.6 s after a try ends and ≥ 0.5 s before the next starts; every Talking window is negative.
+
+- [ ] **Step 1: Failing tests**
+
+```rust
+#[test] fn segments_tries_by_level()            // level trace with 3 bursts of 0.6 s → Saying{heard: 3}, positives at end+0.16..0.8
+#[test] fn ignores_too_short_or_too_long_bursts() // 0.1 s click and 2 s sentence → not counted
+#[test] fn moves_to_talking_then_training()     // 15 tries → Talking{30}; 30 s later → Training
+#[test] fn too_few_tries_fails()                // 120 s with 4 tries → Failed("Heard only 4 of 15 — try again")
+#[test] fn train_separates_two_clusters()       // two gaussian clusters in FEATURES dims → prob > 0.9 / < 0.1
+#[test] fn head_bytes_roundtrip_and_wrong_size_rejected()
+#[test] fn head_file_written_atomically()       // tempdir: head.bin present with mode 0600, no head.bin.tmp left
+```
+
+- [ ] **Step 2:** Run `cargo test -p nidoo-satellite wake_head`. Expected: FAIL.
+- [ ] **Step 3:** Implement.
+- [ ] **Step 4:** Run the tests and `cargo clippy -p nidoo-satellite --all-targets -- -D warnings`. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(satellite): personal wake head training`.
+
+---
+
 ### Task 8: The macOS app (`satellite/mac/`)
 
 **Files:**
@@ -299,11 +343,13 @@ Decisions in `brain.rs`:
 
 - [ ] **Step 0: `main.rs`.** Build a tokio runtime on a background thread and call `start` with `Config { store_dir: ~/Library/Application Support/Nidoo Satellite, name: the Mac's computer name (`scutil --get ComputerName`, falling back to the hostname), voice_port: 4961, sendspin_port: 0, advertise: true }`. The menu event loop runs on the main thread.
 - [ ] **Step 1: `audio.rs`.** Use a `cpal` output stream on the default device whose callback calls `playout.lock().fill(...)` with the device's output-latency-corrected time, and outputs silence if the lock is busy. Reopen the stream when the default device changes. The input stream is opened and closed through `MicSwitch`, and resamples to 16 kHz mono i16 into `mic_rx`.
-- [ ] **Step 2: `wake.rs`.** Implement `WakeDetector` with the Task 1 engine. On first run, download the model files (URLs and SHA-256 from the spike notes) into the store dir and verify them. While downloading, the status line says so. The threshold comes from `Settings.wake_threshold`, or the spike's value when unset.
+- [ ] **Step 2: `wake.rs`.** Implement `WakeDetector` with the Task 1 engine (streaming exactly as `satellite/mac/spike/src/bin/oww.rs`). On first run, download the model files (URLs and SHA-256 from the spike notes) into the store dir and verify them. While downloading, the status line says so. If `head.bin` exists it replaces the stock classifier at `Settings.personal_threshold` (default 0.9); otherwise the stock classifier at `Settings.wake_threshold` (default 0.5). It reloads the head when the trainer signals a new one.
+- [ ] **Step 2b: `train.rs`.** Implement `Trainer`: the same feature pipeline feeds `Enrolment` (level in dBFS per 80 ms step). On `start`, generate synthetic negatives in a background thread: `say -v <voice> -o <tmp>.wav --data-format=LEI16@16000 "<sentence>"` for each installed French and English voice (`say -v '?'`) over a fixed list of ~20 generic everyday sentences in the source (no names), features computed, temp files deleted; nothing is played aloud. `Done(head)` → `save_head`, then signal the detector. Audio and features are dropped after `finish` or `cancel`.
 - [ ] **Step 3: `menu.rs`.** Use `tray-icon`, with no Dock icon. Items:
   - a status line (disabled item showing `UiState.status`)
   - **Listening** (checkbox)
   - **Set voice key…**: reads the clipboard and sends `Control::SetVoiceKey`
+  - **Train Hey Jarvis…** (becomes **Cancel training** while it runs): `Control::TrainWake` / `Control::CancelTraining`
   - **Start at login** (checkbox)
   - **Quit**
 
@@ -328,6 +374,7 @@ Decisions in `brain.rs`:
   7. Turning Wi-Fi off makes the icon gray in ≤ 15 s; turning it back on returns to normal by itself.
   8. Quit removes the satellite from the music.
   9. After a restart, the same satellite comes back (no new entry in Nidoo).
+  10. Train Hey Jarvis: the status line counts the tries, asks for 30 s of talk, then says trained; afterwards a natural-accent "Hey Jarvis" wakes it, and 5 min of normal talk or TV triggers nothing.
 - [ ] **Step 7: Commit** `feat(satellite-mac): menu-bar app`.
 
 ---
@@ -335,7 +382,7 @@ Decisions in `brain.rs`:
 ### Task 9: Docs
 
 **Files:**
-- Create: `docs/users/mac-satellite.md`. Covers build (`satellite/mac/build-app.sh --install`), first launch (mic and Local Network prompts, again possibly after a rebuild), Set voice key, Allow plus room, the menu, the gray icon, the orange mic dot, Start at login, and the privacy section (same rules as the board).
+- Create: `docs/users/mac-satellite.md`. Covers build (`satellite/mac/build-app.sh --install`), first launch (mic and Local Network prompts, again possibly after a rebuild), Set voice key, Allow plus room, Train Hey Jarvis (when and how, what is kept), the menu, the gray icon, the orange mic dot, Start at login, and the privacy section (same rules as the board).
 - Modify: `satellite/README.md` (a pointer to the Mac satellite), `docs/users/talk-to-a-satellite.md` and `docs/users/sound.md` (one line each linking the new page).
 
 - [ ] **Step 1:** Write the pages in the style of `talk-to-a-satellite.md`, with no owner-specific names.
