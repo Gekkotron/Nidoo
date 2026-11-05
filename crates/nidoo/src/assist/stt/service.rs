@@ -406,6 +406,7 @@ impl Voice {
     async fn run(&mut self, sid: &str, output: Output) {
         match output {
             Output::Hold => self.hold(sid, HOLD_MS),
+            Output::Answer(_) => {}
             Output::Release => {
                 self.hold(sid, 0);
                 self.rooms.done(sid);
