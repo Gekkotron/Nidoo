@@ -20,7 +20,7 @@ pub const ENERGY_ROLES: &[&str] = &[
 pub const LIGHT_ON_PRESETS: &[&str] = &["white", "warm", "red", "green", "blue"];
 
 /// Valid `showAs` values: what a switch entity drives. Absent means a plain switch.
-pub const SHOW_AS: &[&str] = &["light", "door", "siren", "chime", "plug"];
+pub const SHOW_AS: &[&str] = &["light", "door", "siren", "chime", "plug", "tv"];
 
 /// The retired flag a light-typed switch used to carry; read on decode, written next to
 /// `showAs: "light"` until the app reads `showAs` (device sheet spec §10, step 4).

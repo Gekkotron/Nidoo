@@ -179,6 +179,9 @@ pub const TRASH: &str = svg!(
 pub const PLUG: &str = svg!(
     r#"<path d="M9 3v5"/><path d="M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>"#
 );
+const TV: &str = svg!(
+    r#"<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/>"#
+);
 pub const PLAY: &str = svg!(r#"<path d="M7 4.5v15l12-7.5z"/>"#);
 const SIREN: &str = svg!(
     r#"<path d="M7 18v-6a5 5 0 0 1 10 0v6"/><path d="M5 18h14v3H5z"/><path d="M12 2v2M4.2 5.2l1.4 1.4M19.8 5.2l-1.4 1.4"/>"#
@@ -400,6 +403,7 @@ pub fn entity_icon(entity: &nidoo_api::EntityView) -> &'static str {
         Some(SwitchType::Siren) => SIREN,
         Some(SwitchType::Chime) => CHIME,
         Some(SwitchType::Plug) => PLUG,
+        Some(SwitchType::Tv) => TV,
         _ => kind_icon(entity.kind, entity.device_class.as_deref()),
     }
 }
@@ -582,11 +586,12 @@ mod tests {
 
     #[test]
     fn entity_icon_follows_the_switch_type() {
-        use super::{CHIME, DOOR, LIGHT, SIREN, SWITCH, entity_icon};
+        use super::{CHIME, DOOR, LIGHT, SIREN, SWITCH, TV, entity_icon};
         assert_eq!(entity_icon(&switch(Some("door"), Kind::Switch)), DOOR);
         assert_eq!(entity_icon(&switch(Some("siren"), Kind::Switch)), SIREN);
         assert_eq!(entity_icon(&switch(Some("chime"), Kind::Switch)), CHIME);
         assert_eq!(entity_icon(&switch(Some("plug"), Kind::Switch)), PLUG);
+        assert_eq!(entity_icon(&switch(Some("tv"), Kind::Switch)), TV);
         assert_eq!(entity_icon(&switch(None, Kind::Switch)), SWITCH);
         let mut light_typed = switch(Some("light"), Kind::Switch);
         light_typed.kind = Kind::Light;

@@ -199,6 +199,7 @@ pub fn switch_type_word(lang: Lang, t: SwitchType) -> &'static str {
         SwitchType::Siren => "Sirène",
         SwitchType::Chime => "Carillon",
         SwitchType::Plug => "Prise",
+        SwitchType::Tv => "Télé",
     };
     pick(lang, t.label(), fr)
 }
@@ -357,6 +358,10 @@ mod tests {
         assert_eq!(
             search_words(Kind::Switch, Some(SwitchType::Plug)),
             ["plug", "prise"]
+        );
+        assert_eq!(
+            search_words(Kind::Switch, Some(SwitchType::Tv)),
+            ["tv", "télé"]
         );
     }
 }

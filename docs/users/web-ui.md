@@ -259,7 +259,7 @@ Every device card has the same frame: an icon tile, the room (left out under a r
 - **Water heater**: a tank picture next to the temperature, an activity chip (the average heating power when the device reports it, else the mode) and the cold-water inlet temperature; ⋯ opens the sheet with the target and the mode, when the heater supports them.
 - **Cover**: open, stop and close buttons, a position slider and a "Moving" badge while it moves.
 - **Lock**: the state in words and one button that does the opposite; it asks first before it unlocks.
-- **Door opener**, **Chime** and **Siren** (a switch with its **Show as** type set in the sheet): the opener has one **Open** button that asks first by default, the chime one **Play** button, and the siren a toggle that reads "Ringing" while on and asks before ringing.
+- **Door opener**, **Chime** and **Siren** (a switch with its **Show as** type set in the sheet): the opener has one **Open** button that asks first by default, the chime one **Play** button, and the siren a toggle that reads "Ringing" while on and asks before ringing. A switch shown as a plug or a TV is a plain on/off card with its own icon.
 - **Alarm panel**: the state, one button per arming mode and Disarm, with an inline code field when the panel asks for one.
 - **Binary sensor**: a state word, with the icon tinted while it is on.
 - **Number**, **Select** and **Button**: a slider over the range, a dropdown over the options, one wide press button.

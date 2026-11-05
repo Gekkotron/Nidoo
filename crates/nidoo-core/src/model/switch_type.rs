@@ -12,17 +12,19 @@ pub enum SwitchType {
     Siren,
     Chime,
     Plug,
+    Tv,
 }
 
 impl SwitchType {
     /// Every type, in the order the selector shows them.
-    pub const ALL: [SwitchType; 6] = [
+    pub const ALL: [SwitchType; 7] = [
         SwitchType::Switch,
         SwitchType::Light,
         SwitchType::Door,
         SwitchType::Siren,
         SwitchType::Chime,
         SwitchType::Plug,
+        SwitchType::Tv,
     ];
 
     /// The type of an entity, `None` unless its protocol kind is a switch. A value this hub does
@@ -49,6 +51,7 @@ impl SwitchType {
             SwitchType::Siren => Some("siren"),
             SwitchType::Chime => Some("chime"),
             SwitchType::Plug => Some("plug"),
+            SwitchType::Tv => Some("tv"),
         }
     }
 
@@ -60,6 +63,7 @@ impl SwitchType {
             SwitchType::Siren => "Siren",
             SwitchType::Chime => "Chime",
             SwitchType::Plug => "Plug",
+            SwitchType::Tv => "TV",
         }
     }
 
@@ -106,7 +110,8 @@ mod tests {
                 SwitchType::Door,
                 SwitchType::Siren,
                 SwitchType::Chime,
-                SwitchType::Plug
+                SwitchType::Plug,
+                SwitchType::Tv
             ]
         );
         assert_eq!(
@@ -125,12 +130,21 @@ mod tests {
                 Some("door"),
                 Some("siren"),
                 Some("chime"),
-                Some("plug")
+                Some("plug"),
+                Some("tv")
             ]
         );
         assert_eq!(
             SwitchType::ALL.map(SwitchType::label),
-            ["Switch", "Light", "Door opener", "Siren", "Chime", "Plug"]
+            [
+                "Switch",
+                "Light",
+                "Door opener",
+                "Siren",
+                "Chime",
+                "Plug",
+                "TV"
+            ]
         );
     }
 
