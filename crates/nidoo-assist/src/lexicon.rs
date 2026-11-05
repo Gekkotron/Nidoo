@@ -31,7 +31,11 @@ pub enum Class {
     Open,
     /// "ferme": closes a shutter.
     Close,
-    /// A device this version does not handle (curtains, plugs, sirens...).
+    /// A word for a television ("télé", "tv").
+    Tv,
+    /// A word for a plug ("prise").
+    Plug,
+    /// A device this version does not handle (curtains, sirens...).
     OtherDevice,
     /// "ne ... pas": never act on a negated order.
     Negation,
@@ -191,20 +195,19 @@ const TABLE: &[(Class, &[&str])] = &[
         &[
             "rideau",
             "rideaux",
-            "prise",
-            "prises",
             "sirene",
             "sirenes",
             "ventilateur",
             "ventilateurs",
             "alarme",
             "alarmes",
-            "tele",
-            "teles",
-            "television",
-            "televisions",
         ],
     ),
+    (
+        Class::Tv,
+        &["tele", "teles", "television", "televisions", "tv", "tvs"],
+    ),
+    (Class::Plug, &["prise", "prises"]),
     (Class::Negation, &["ne", "n", "pas", "jamais"]),
     (
         Class::Statement,
@@ -359,6 +362,8 @@ fn fuzzy(class: Class) -> bool {
             | Class::Temperature
             | Class::Degree
             | Class::OtherDevice
+            | Class::Tv
+            | Class::Plug
     )
 }
 

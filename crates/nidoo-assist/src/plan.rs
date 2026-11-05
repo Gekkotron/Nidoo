@@ -2,10 +2,10 @@
 
 use nidoo_api::EntityView;
 use nidoo_api::search::fold;
-use nidoo_api::{Category, CategoryAction, Target, category_members};
+use nidoo_api::{Category, CategoryAction, Target, category_members, commandable};
 use nidoo_climate::doc::{Setpoint, ZoneState};
 use nidoo_climate::view::ZoneView;
-use nidoo_core::model::{Command, EntityCategory, Kind, StateValue};
+use nidoo_core::model::{Command, EntityCategory, Kind, StateValue, SwitchType};
 
 use crate::house::House;
 use crate::intent::{Change, Intent, parse};
@@ -25,6 +25,7 @@ pub struct Request {
     pub area: Option<String>,
     pub lights: Option<Vec<String>>,
     pub covers: Option<Vec<String>>,
+    pub switches: Option<Vec<String>>,
     pub confirmed: bool,
 }
 
@@ -35,6 +36,7 @@ impl Request {
             area: None,
             lights: None,
             covers: None,
+            switches: None,
             confirmed: false,
         }
     }
@@ -54,6 +56,11 @@ pub enum Action {
     },
     /// A shutter: open, close or a position.
     Cover {
+        entity: String,
+        command: Command,
+    },
+    /// A TV or plug: turn on or off.
+    Switch {
         entity: String,
         command: Command,
     },
@@ -80,6 +87,13 @@ pub enum Done {
         position: Option<u8>,
         names: Vec<String>,
         unable: Vec<String>,
+    },
+    /// TVs or plugs (`what`) of a room, or of the whole house (`area: None`).
+    Switches {
+        what: SwitchType,
+        area: Option<String>,
+        on: bool,
+        names: Vec<String>,
     },
 }
 
@@ -177,6 +191,13 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
             names,
             room,
         } => covers(req, *open, *position, *all, names, room, house),
+        Intent::Switches {
+            what,
+            on,
+            all,
+            names,
+            room,
+        } => switches(req, *what, *on, *all, names, room, house),
         Intent::CoverPositionHint => answer(
             "Pour une position, dites par exemple « ouvre les volets à 30 % ».".into(),
             Trace {
@@ -522,6 +543,168 @@ fn covers(
             position,
             names: acted,
             unable,
+        },
+        trace,
+    }
+}
+
+/// The TVs or plugs (by their "Show as" type) that may be commanded; nothing else is ever one.
+fn switch_members<'a>(
+    what: SwitchType,
+    area: Option<&str>,
+    house: &House<'a>,
+) -> Vec<&'a EntityView> {
+    house
+        .entities
+        .iter()
+        .filter(|e| {
+            commandable(e)
+                && SwitchType::of(e.protocol_kind, &e.ui) == Some(what)
+                && area.is_none_or(|a| e.area == a)
+        })
+        .collect()
+}
+
+/// TVs or plugs: planned like shutters, on or off.
+fn switches(
+    req: &Request,
+    what: SwitchType,
+    on: bool,
+    all: bool,
+    names: &[String],
+    room: &[String],
+    house: &House,
+) -> Plan {
+    let (noun, intent) = match what {
+        SwitchType::Tv => ("télé", "tv"),
+        _ => ("prise", "plugs"),
+    };
+    let mut trace = Trace {
+        intent: Some(format!("{intent}_{}", if on { "on" } else { "off" })),
+        ..Default::default()
+    };
+    // Words that name no device but do name a room are the room.
+    let (names, room) = if room.is_empty()
+        && !names.is_empty()
+        && !switch_members(what, None, house)
+            .iter()
+            .any(|s| named(s, names))
+        && matches!(
+            resolve_room(house, names),
+            RoomMatch::One(_) | RoomMatch::Many(_)
+        ) {
+        (&[][..], names)
+    } else if names.is_empty()
+        && !room.is_empty()
+        && matches!(resolve_room(house, room), RoomMatch::Unknown)
+        && switch_members(what, None, house)
+            .iter()
+            .any(|s| named(s, room))
+    {
+        // And the other way: "éteins la prise cafetière" names a device, not a room.
+        (room, &[][..])
+    } else {
+        (names, room)
+    };
+    // "de la maison", "partout": the whole house, unless a room is called that.
+    let house_said = !room.is_empty()
+        && room
+            .iter()
+            .all(|w| matches!(fold(w).as_str(), "maison" | "partout"))
+        && matches!(resolve_room(house, room), RoomMatch::Unknown);
+    let whole_house =
+        ((all && room.is_empty()) || house_said) && names.is_empty() && req.area.is_none();
+    let (area, chosen) = if whole_house {
+        trace.room_how = Some("toute la maison".into());
+        let members = switch_members(what, None, house);
+        if members.is_empty() {
+            return answer(format!("Pas de {noun} dans la maison."), trace);
+        }
+        (None, members)
+    } else {
+        let candidates: Vec<&EntityView> = switch_members(what, None, house)
+            .into_iter()
+            .filter(|s| names.is_empty() || named(s, names))
+            .collect();
+        let none = if names.is_empty() {
+            format!("Pas de {noun} dans la maison.")
+        } else {
+            format!("Je ne trouve pas de {noun} « {} ».", names.join(" "))
+        };
+        let (area, how) = match pick_room(req, room, &areas_of(&candidates, house), none, house) {
+            Ok(found) => found,
+            Err(plan) => return (*plan).with_trace(trace),
+        };
+        let area_name = house.area_name(&area).to_string();
+        trace.room = Some(area.clone());
+        trace.room_how = Some(how);
+        let members = switch_members(what, Some(&area), house);
+        if members.is_empty() {
+            return answer(format!("Pas de {noun} {}.", dans(&area_name)), trace);
+        }
+        // Words of the room's own name were part of the room phrase.
+        let mut area_words = name_words(&area_name);
+        area_words.extend(name_words(&area));
+        let names: Vec<String> = names
+            .iter()
+            .filter(|n| !area_words.contains(&fold(n)))
+            .cloned()
+            .collect();
+        let chosen: Vec<&EntityView> = match &req.switches {
+            Some(ids) => members
+                .iter()
+                .copied()
+                .filter(|s| ids.contains(&s.id))
+                .collect(),
+            None if names.is_empty() => members.clone(),
+            None => members
+                .iter()
+                .copied()
+                .filter(|s| named(s, &names))
+                .collect(),
+        };
+        if chosen.is_empty() {
+            let choices = members
+                .iter()
+                .take(MAX_CHOICES)
+                .map(|s| {
+                    let mut next = req.clone();
+                    next.area = Some(area.clone());
+                    next.switches = Some(vec![s.id.clone()]);
+                    (s.name.clone(), next)
+                })
+                .collect();
+            return Plan::Ask {
+                question: format!("Quelle {noun} {} ?", de(&area_name)),
+                choices,
+                trace,
+            };
+        }
+        (Some(area), chosen)
+    };
+    let command = if on {
+        Command::TurnOn {
+            brightness: None,
+            color: None,
+            effect: None,
+        }
+    } else {
+        Command::TurnOff
+    };
+    trace.entities = chosen.iter().map(|s| s.id.clone()).collect();
+    Plan::Act {
+        actions: chosen
+            .iter()
+            .map(|s| Action::Switch {
+                entity: s.id.clone(),
+                command: command.clone(),
+            })
+            .collect(),
+        done: Done::Switches {
+            what,
+            area,
+            on,
+            names: chosen.iter().map(|s| s.name.clone()).collect(),
         },
         trace,
     }
@@ -1933,5 +2116,202 @@ mod tests {
         let f = salon_with(19.0, 19.0, &[]);
         let got = plan("monte un peu le chauffage du salon", &f.house());
         assert_eq!(setpoint_of(&got), ("salon".into(), 19.5));
+    }
+    fn switches_of(plan: &Plan) -> Vec<(String, Command)> {
+        match plan {
+            Plan::Act { actions, .. } => actions
+                .iter()
+                .map(|a| match a {
+                    Action::Switch { entity, command } => (entity.clone(), command.clone()),
+                    other => panic!("not a switch: {other:?}"),
+                })
+                .collect(),
+            other => panic!("not an act: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn one_tv_turns_on() {
+        let plan = p("allume la télé");
+        assert_eq!(switches_of(&plan), [("switch_tv".to_string(), on())]);
+        assert!(matches!(
+            plan,
+            Plan::Act {
+                done: Done::Switches { what: SwitchType::Tv, area: Some(a), on: true, .. },
+                ..
+            } if a == "salon"
+        ));
+        let off = switches_of(&p("éteins la télé du salon"));
+        assert_eq!(off, [("switch_tv".to_string(), Command::TurnOff)]);
+    }
+
+    #[test]
+    fn a_plug_by_room_and_by_name() {
+        let by_room = switches_of(&p("éteins la prise du bureau"));
+        assert_eq!(
+            by_room,
+            [("switch_prise_bureau".to_string(), Command::TurnOff)]
+        );
+        assert_eq!(
+            switches_of(&p("allume la prise bureau")),
+            [("switch_prise_bureau".to_string(), on())]
+        );
+        let by_name = p("éteins la prise chargeur");
+        assert_eq!(
+            switches_of(&by_name),
+            [("switch_prise_tom".to_string(), Command::TurnOff)]
+        );
+    }
+
+    #[test]
+    fn all_the_plugs_of_the_house() {
+        let plan = p("éteins toutes les prises");
+        assert_eq!(
+            ids(&switches_of(&plan)),
+            ["switch_prise_bureau", "switch_prise_tom"]
+        );
+        assert!(matches!(
+            plan,
+            Plan::Act {
+                done: Done::Switches {
+                    area: None,
+                    on: false,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert_eq!(
+            ids(&switches_of(&p("allume les 2 prises du bureau"))),
+            ["switch_prise_bureau"]
+        );
+    }
+
+    #[test]
+    fn which_plug_and_which_room() {
+        assert_eq!(labels(&p("éteins la prise")), ["Bureau", "Chambre Tom"]);
+        let mut f = fixture::house();
+        f.entities.push(fixture::switch(
+            "switch_prise_bureau_2",
+            "Chauffage appoint",
+            "bureau",
+            Some("plug"),
+        ));
+        let h = f.house();
+        let asked = plan("éteins la prise grille du bureau", &h);
+        let Plan::Ask {
+            question, choices, ..
+        } = &asked
+        else {
+            panic!("{asked:?}")
+        };
+        assert_eq!(question, "Quelle prise du Bureau ?");
+        assert_eq!(
+            choices.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(),
+            ["Cafetière", "Chauffage appoint"]
+        );
+        let picked = plan_request(&choices[1].1, &h);
+        assert_eq!(
+            switches_of(&picked),
+            [("switch_prise_bureau_2".to_string(), Command::TurnOff)]
+        );
+    }
+
+    #[test]
+    fn tv_or_plug_not_found() {
+        assert_eq!(
+            reply_of(&p("éteins la prise du garage")),
+            "Pas de prise dans le Garage."
+        );
+        let by_name = Request::new(Intent::Switches {
+            what: SwitchType::Plug,
+            on: false,
+            all: false,
+            names: vec!["grille".into()],
+            room: vec![],
+        });
+        assert_eq!(
+            reply_of(&plan_request(&by_name, &fixture::house().house())),
+            "Je ne trouve pas de prise « grille »."
+        );
+        let mut f = fixture::house();
+        f.entities.retain(|e| e.id != "switch_tv");
+        assert_eq!(
+            reply_of(&plan("allume la télé", &f.house())),
+            "Pas de télé dans la maison."
+        );
+        assert_eq!(
+            reply_of(&plan("éteins toutes les télés", &f.house())),
+            "Pas de télé dans la maison."
+        );
+    }
+
+    #[test]
+    fn untyped_and_siren_switches_are_never_chosen() {
+        for sentence in [
+            "éteins toutes les prises",
+            "éteins les prises du bureau",
+            "éteins la prise interrupteur",
+            "éteins tout",
+            "éteins le salon",
+        ] {
+            let plan = p(sentence);
+            if let Plan::Act { actions, .. } = &plan {
+                assert!(
+                    actions
+                        .iter()
+                        .all(|a| !matches!(a, Action::Switch { entity, .. }
+                            if entity == "switch_interrupteur" || entity == "switch_sirene")),
+                    "{sentence}"
+                );
+            }
+        }
+        assert_eq!(
+            reply_of(&p("éteins la prise interrupteur")),
+            "Je ne connais pas de pièce « interrupteur »."
+        );
+        assert!(matches!(
+            p("éteins la prise sirène"),
+            Plan::NotUnderstood { .. }
+        ));
+        assert_eq!(
+            reply_of(&p("éteins la prise du garage")),
+            "Pas de prise dans le Garage."
+        );
+    }
+
+    #[test]
+    fn groups_and_virtual_switches_are_never_chosen() {
+        let mut f = fixture::house();
+        f.entities.push(fixture::switch(
+            "group_prises",
+            "Prises",
+            "bureau",
+            Some("plug"),
+        ));
+        f.entities.push(fixture::switch(
+            "virtual_prise",
+            "Virtuelle",
+            "bureau",
+            Some("plug"),
+        ));
+        let got = switches_of(&plan("éteins toutes les prises", &f.house()));
+        assert_eq!(ids(&got), ["switch_prise_bureau", "switch_prise_tom"]);
+    }
+
+    #[test]
+    fn turning_off_a_room_stays_lights_only() {
+        for sentence in [
+            "éteins le salon",
+            "éteins tout dans le salon",
+            "éteins le bureau",
+        ] {
+            if let Plan::Act { actions, .. } = p(sentence) {
+                assert!(
+                    actions.iter().all(|a| matches!(a, Action::Light { .. })),
+                    "{sentence}"
+                );
+            }
+        }
     }
 }

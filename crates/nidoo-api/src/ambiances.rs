@@ -270,9 +270,25 @@ fn validate_climate(c: &ClimateAction) -> Result<(), String> {
 /// Cover classes that are window coverings; garages, gates, doors and dampers never belong.
 const WINDOW_COVERINGS: [&str; 6] = ["shutter", "blind", "curtain", "shade", "awning", "window"];
 
+/// Whether an entity may be commanded as a member of a category or of an assistant order: a
+/// primary, enabled entity that is not part of a device, a group (hub or Zigbee2MQTT), a
+/// hub-owned virtual entity or the Zigbee2MQTT bridge. A hidden entity still belongs: hiding only
+/// removes a card.
+pub fn commandable(e: &EntityView) -> bool {
+    e.category == EntityCategory::Primary
+        && e.enabled_by_default
+        && e.part_of.is_none()
+        && !e.id.starts_with("group_")
+        && !e.id.starts_with("virtual_")
+        && !e.capabilities.z2m_group
+        && !e
+            .device_id
+            .as_deref()
+            .is_some_and(|d| d.starts_with("zigbee2mqtt_bridge_"))
+}
+
 /// The entities a category action targets, offline ones included (the UI counts them).
-/// A hidden entity still belongs: hiding only removes a card. Groups (hub and Zigbee2MQTT),
-/// hub-owned virtual entities and the Zigbee2MQTT bridge never belong.
+/// See [`commandable`] for which entities never belong.
 pub fn category_members<'a>(
     action: &CategoryAction,
     entities: &'a [EntityView],
@@ -280,16 +296,7 @@ pub fn category_members<'a>(
     entities
         .iter()
         .filter(|e| {
-            e.category == EntityCategory::Primary
-                && e.enabled_by_default
-                && e.part_of.is_none()
-                && !e.id.starts_with("group_")
-                && !e.id.starts_with("virtual_")
-                && !e.capabilities.z2m_group
-                && !e
-                    .device_id
-                    .as_deref()
-                    .is_some_and(|d| d.starts_with("zigbee2mqtt_bridge_"))
+            commandable(e)
                 && !action.except.contains(&e.id)
                 && action.area.as_ref().is_none_or(|a| &e.area == a)
                 && in_category(action.what, e)

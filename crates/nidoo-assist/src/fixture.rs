@@ -111,6 +111,14 @@ pub fn cover(id: &str, name: &str, area: &str, can_position: bool) -> EntityView
     e
 }
 
+/// A switch, off, shown as `show_as` (`tv`, `plug`, `siren`...); `None` is a plain switch.
+pub fn switch(id: &str, name: &str, area: &str, show_as: Option<&str>) -> EntityView {
+    let mut e = entity(id, name, Kind::Switch, area);
+    e.ui.show_as = show_as.map(str::to_string);
+    e.state.value = StateValue::OnOff(false);
+    e
+}
+
 pub fn thermometer(id: &str, area: &str, value: f64) -> EntityView {
     let mut e = entity(id, "Température", Kind::Sensor, area);
     e.device_class = Some("temperature".into());
@@ -175,9 +183,9 @@ pub fn zone(
     }
 }
 
-/// Salon (4 lights, a hidden one, plus a group; two shutters with a position), Salon TV, Bureau
-/// (a thermometer, no heating), Chambre Léa (heated, an open/close-only shutter) and Chambre Tom
-/// (heated), Garage (nothing).
+/// Salon (4 lights, a hidden one, plus a group; two shutters with a position; a TV), Salon TV,
+/// Bureau (a thermometer, no heating; a plug and a plain switch), Chambre Léa (heated, an
+/// open/close-only shutter) and Chambre Tom (heated; a plug), Garage (a siren switch).
 pub fn house() -> Fixture {
     let mut hidden = light("light_ambiance_tv", "Ambiance TV", "salon", false);
     hidden.ui.hidden = true;
@@ -210,6 +218,11 @@ pub fn house() -> Fixture {
             cover("cover_baie", "Baie", "salon", true),
             cover("cover_fenetre", "Fenêtre", "salon", true),
             cover("cover_lea", "Volet", "chambre_lea", false),
+            switch("switch_tv", "Écran", "salon", Some("tv")),
+            switch("switch_prise_bureau", "Cafetière", "bureau", Some("plug")),
+            switch("switch_prise_tom", "Chargeur", "chambre_tom", Some("plug")),
+            switch("switch_interrupteur", "Interrupteur", "bureau", None),
+            switch("switch_sirene", "Sirène", "garage", Some("siren")),
             thermometer("sensor_salon_temperature", "salon", 18.2),
             thermometer("sensor_bureau_temperature", "bureau", 20.1),
             thermometer("sensor_lea_temperature", "chambre_lea", 16.5),

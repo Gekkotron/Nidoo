@@ -29,8 +29,8 @@ pub use alerts::{AlertAction, AlertChannel, AlertSeverity, AlertView, parse_hist
 pub use ambiances::{
     AMBIANCE_ICONS, ActionReport, Ambiance, AmbianceAction, AmbianceView, ApplyReport, Category,
     CategoryAction, CategoryPlan, ClimateAction, DeviceAction, FlowAction, FlowDo, Outcome,
-    Problem, Target, already_there, category_members, is_valid_ambiance_id, plan_category,
-    validate_ambiance,
+    Problem, Target, already_there, category_members, commandable, is_valid_ambiance_id,
+    plan_category, validate_ambiance,
 };
 pub use cameras::{CameraInfo, CamerasView};
 pub use dashboards::{

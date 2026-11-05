@@ -776,3 +776,100 @@ async fn open_raises_a_half_open_shutter() {
     assert_eq!(turn.trace.actions[0].result, "ok", "{}", turn.reply);
     assert_eq!(shutter_payloads(&log).len(), 1);
 }
+
+const PLUG_FIXTURE: &str = "switch__0x00124b0024bc601e__switch.json";
+const PLUG_TOPIC: &str = "nidoo/switch/0x00124b0024bc601e/switch/config";
+const PLUG_STATE_TOPIC: &str = "zigbee2mqtt/rooms/garage/watering_stove";
+const PLUG_COMMAND_TOPIC: &str = "zigbee2mqtt/rooms/garage/watering_stove/set";
+const PLAIN_FIXTURE: &str = "switch__0x00124b0024beb326__switch.json";
+const PLAIN_TOPIC: &str = "nidoo/switch/0x00124b0024beb326/switch/config";
+const PLAIN_COMMAND_TOPIC: &str = "zigbee2mqtt/rooms/bedroom3/heater/set";
+
+fn set_plug(hub: &Hub, on: bool) {
+    let state = if on { "ON" } else { "OFF" };
+    hub.ingest(
+        PLUG_STATE_TOPIC,
+        format!(r#"{{"state":"{state}"}}"#).as_bytes(),
+    );
+}
+
+/// The house, plus a switch shown as a plug in the Bureau (on) and a plain switch there.
+async fn plug_house(show_plug: bool) -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+    let (hub, rx) = house().await;
+    hub.ingest(PLUG_TOPIC, &fixture(PLUG_FIXTURE));
+    let plug = place(&hub, "0x00124b0024bc601e", "office").await;
+    if show_plug {
+        let mut patch = serde_json::Map::new();
+        patch.insert("showAs".to_owned(), serde_json::Value::from("plug"));
+        hub.set_override(&plug, &patch).await.expect("show as");
+    }
+    hub.ingest(PLAIN_TOPIC, &fixture(PLAIN_FIXTURE));
+    place(&hub, "0x00124b0024beb326", "office").await;
+    set_plug(&hub, true);
+    (hub, rx)
+}
+
+/// Plays the broker: logs every publish topic and echoes the plug's new state.
+fn plug_echo(mut rx: mpsc::Receiver<Publish>, hub: Arc<Hub>) -> Arc<Mutex<Vec<String>>> {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&log);
+    tokio::spawn(async move {
+        while let Some(publish) = rx.recv().await {
+            sink.lock().unwrap().push(publish.topic.clone());
+            if publish.topic == PLUG_COMMAND_TOPIC {
+                set_plug(
+                    &hub,
+                    publish.payload.contains("ON") && !publish.payload.contains("OFF"),
+                );
+            }
+        }
+    });
+    log
+}
+
+fn sent_to(log: &Mutex<Vec<String>>, topic: &str) -> usize {
+    log.lock().unwrap().iter().filter(|t| *t == topic).count()
+}
+
+#[tokio::test]
+async fn a_plug_turns_off_and_skips_when_already_off() {
+    let (hub, rx) = plug_house(true).await;
+    let log = plug_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "éteins la prise du bureau").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(turn.trace.actions[0].result, "ok", "{}", turn.reply);
+    assert!(turn.reply.contains("éteinte"), "{}", turn.reply);
+    assert!(turn.reply.contains("Bureau"), "{}", turn.reply);
+    assert_eq!(sent_to(&log, PLUG_COMMAND_TOPIC), 1);
+    assert_eq!(sent_to(&log, PLAIN_COMMAND_TOPIC), 0);
+
+    let turn = say(&hub, "éteins la prise du bureau").await;
+    assert_eq!(turn.trace.actions[0].result, "skipped", "{}", turn.reply);
+    assert!(turn.reply.contains("déjà"), "{}", turn.reply);
+    assert_eq!(sent_to(&log, PLUG_COMMAND_TOPIC), 1);
+}
+
+#[tokio::test]
+async fn simulated_plugs_publish_nothing() {
+    let (hub, mut rx) = plug_house(true).await;
+    drain(&mut rx);
+    let turn = hub
+        .assist(simulated("éteins toutes les prises"))
+        .await
+        .expect("assist");
+    assert!(turn.reply.starts_with("Simulation :"), "{}", turn.reply);
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn a_switch_not_shown_as_a_plug_is_untouched() {
+    let (hub, rx) = plug_house(false).await;
+    let log = plug_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "éteins toutes les prises").await;
+    assert_ne!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(turn.reply, "Pas de prise dans la maison.");
+    let turn = say(&hub, "éteins la prise du bureau").await;
+    assert_eq!(turn.reply, "Pas de prise dans le Bureau.");
+    assert_eq!(sent_to(&log, PLUG_COMMAND_TOPIC), 0);
+    assert_eq!(sent_to(&log, PLAIN_COMMAND_TOPIC), 0);
+}

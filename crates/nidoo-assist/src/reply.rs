@@ -3,8 +3,12 @@
 
 use nidoo_api::search::fold;
 
+use nidoo_core::model::SwitchType;
+
 use crate::house::House;
+use crate::lexicon::{Class, class};
 use crate::plan::Done;
+use crate::room::name_words;
 
 /// What happened to one action, in the plan's order.
 #[derive(Clone, Debug, PartialEq)]
@@ -171,12 +175,64 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
             unable,
             results,
         ),
+        Done::Switches {
+            what,
+            area,
+            on,
+            names,
+        } => switches(
+            *what,
+            area.as_deref().map(|a| house.area_name(a)),
+            *on,
+            names,
+            results,
+        ),
     };
     if simulate {
         format!("Simulation : {text}")
     } else {
         text
     }
+}
+
+/// One device, labelled by its kind word and its name: « Volet « Baie » », without repeating
+/// the kind word when the name starts with one (« « Volet tv » ») and as the bare name when the
+/// name is only that word (« Volet »). `same` tells a folded word that stands for the kind word
+/// and has its gender, since the reply's verb agrees with the kind word.
+fn device_label(kind: &str, same: impl Fn(&str) -> bool, name: &str) -> String {
+    let words = name_words(name);
+    if words.first().is_some_and(|w| same(w)) {
+        if words.len() == 1 {
+            let mut chars = name.trim().chars();
+            return match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            };
+        }
+        return format!("« {name} »");
+    }
+    format!("{kind} « {name} »")
+}
+
+/// A light word that is feminine like « Lumière » (« allumée » agrees with it): « Lampe »,
+/// not « Plafonnier ».
+fn feminine_light(word: &str) -> bool {
+    matches!(
+        word,
+        "lumiere"
+            | "lumieres"
+            | "lampe"
+            | "lampes"
+            | "led"
+            | "leds"
+            | "ampoule"
+            | "ampoules"
+            | "guirlande"
+            | "guirlandes"
+            | "applique"
+            | "appliques"
+            | "veilleuse"
+    )
 }
 
 fn lights(area: &str, on: bool, names: &[String], results: &[ActionResult]) -> String {
@@ -206,10 +262,11 @@ fn lights(area: &str, on: bool, names: &[String], results: &[ActionResult]) -> S
     };
     if n == 1 {
         let name = &names[0];
+        let label = device_label("Lumière", feminine_light, name);
         return match failed.first() {
             Some((_, why)) => format!("« {name} » n'a pas répondu {} : {why}.", dans(area)),
-            None if skipped == 1 => format!("Lumière « {name} » déjà {verb_f} {}.", dans(area)),
-            None => format!("Lumière « {name} » {verb_f} {}.", dans(area)),
+            None if skipped == 1 => format!("{label} déjà {verb_f} {}.", dans(area)),
+            None => format!("{label} {verb_f} {}.", dans(area)),
         };
     }
     if !failed.is_empty() && failed.len() == n {
@@ -266,10 +323,11 @@ fn covers(
         .count();
     let mut text = if n == 1 {
         let name = &names[0];
+        let label = device_label("Volet", |w| class(w) == Some(Class::Cover), name);
         match failed.first() {
             Some((_, why)) => format!("« {name} » n'a pas répondu{place} : {why}."),
-            None if skipped == 1 => format!("Volet « {name} » déjà {one}{place}."),
-            None => format!("Volet « {name} » {one}{place}."),
+            None if skipped == 1 => format!("{label} déjà {one}{place}."),
+            None => format!("{label} {one}{place}."),
         }
     } else if !failed.is_empty() && failed.len() == n {
         let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
@@ -294,6 +352,69 @@ fn covers(
     if !unable.is_empty() {
         text.push(' ');
         text.push_str(&cannot(unable, open, position));
+    }
+    text
+}
+
+/// TVs or plugs of a room (`area`) or of the whole house (`None`), shaped like the shutters'
+/// reply. Both words are feminine.
+fn switches(
+    what: SwitchType,
+    area: Option<&str>,
+    on: bool,
+    names: &[String],
+    results: &[ActionResult],
+) -> String {
+    let n = names.len();
+    let (kind, kind_class, plural) = match what {
+        SwitchType::Tv => ("Télé", Class::Tv, "télés"),
+        _ => ("Prise", Class::Plug, "prises"),
+    };
+    let (one, many) = if on {
+        ("allumée", "allumées")
+    } else {
+        ("éteinte", "éteintes")
+    };
+    let place = area.map(|a| format!(" {}", dans(a))).unwrap_or_default();
+    let failed: Vec<(&str, &str)> = names
+        .iter()
+        .zip(results)
+        .filter_map(|(name, r)| match r {
+            ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
+            ActionResult::Offline => Some((name.as_str(), "hors ligne")),
+            _ => None,
+        })
+        .collect();
+    let skipped = results
+        .iter()
+        .filter(|r| **r == ActionResult::Skipped)
+        .count();
+    if n == 1 {
+        let name = &names[0];
+        let label = device_label(kind, |w| class(w) == Some(kind_class), name);
+        return match failed.first() {
+            Some((_, why)) => format!("« {name} » n'a pas répondu{place} : {why}."),
+            None if skipped == 1 => format!("{label} déjà {one}{place}."),
+            None => format!("{label} {one}{place}."),
+        };
+    }
+    if !failed.is_empty() && failed.len() == n {
+        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
+        return format!("Rien n'a répondu{place} : {}.", list.join(", "));
+    }
+    let already = if skipped == n { "déjà " } else { "" };
+    let mut text = match area {
+        Some(a) => format!("{a} : {plural} {already}{many} ({n} {plural})."),
+        None => format!("Toutes les {plural} {already}{many} ({n} {plural})."),
+    };
+    if !failed.is_empty() {
+        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
+        let verb = if failed.len() == 1 { "n'a" } else { "n'ont" };
+        text.push_str(&format!(
+            " {} sur {n} {verb} pas répondu : {}.",
+            failed.len(),
+            list.join(", ")
+        ));
     }
     text
 }
@@ -436,6 +557,160 @@ mod tests {
         assert_eq!(
             said(&d, &[ActionResult::Ok]),
             "Volet « Baie » ouvert à 30 %. Volet ne sait pas se mettre à une position."
+        );
+    }
+
+    fn switches_done(what: SwitchType, area: Option<&str>, on: bool, names: &[&str]) -> Done {
+        Done::Switches {
+            what,
+            area: area.map(str::to_string),
+            on,
+            names: names.iter().map(|n| n.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn switches_reply_shapes() {
+        use ActionResult::{Failed, Offline, Ok, Skipped};
+        use SwitchType::{Plug, Tv};
+        assert_eq!(
+            said(&switches_done(Tv, Some("salon"), true, &["Écran"]), &[Ok]),
+            "Télé « Écran » allumée dans le Salon."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Plug, Some("bureau"), false, &["Cafetière"]),
+                &[Skipped]
+            ),
+            "Prise « Cafetière » déjà éteinte dans le Bureau."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Plug, Some("bureau"), false, &["Cafetière", "Chargeur"]),
+                &[Ok, Ok]
+            ),
+            "Bureau : prises éteintes (2 prises)."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Plug, None, false, &["Cafetière", "Chargeur", "Lampe"]),
+                &[Ok, Ok, Ok]
+            ),
+            "Toutes les prises éteintes (3 prises)."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Tv, None, true, &["Écran", "Projecteur"]),
+                &[Ok, Ok]
+            ),
+            "Toutes les télés allumées (2 télés)."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Tv, None, true, &["Écran", "Projecteur"]),
+                &[Skipped, Skipped]
+            ),
+            "Toutes les télés déjà allumées (2 télés)."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Plug, None, false, &["Cafetière", "Chargeur", "Lampe"]),
+                &[Ok, Offline, Ok]
+            ),
+            "Toutes les prises éteintes (3 prises). 1 sur 3 n'a pas répondu : Chargeur."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Plug, Some("bureau"), false, &["Cafetière"]),
+                &[Failed("refusé".into())]
+            ),
+            "« Cafetière » n'a pas répondu dans le Bureau : refusé."
+        );
+        assert_eq!(
+            said(
+                &switches_done(Plug, Some("bureau"), false, &["Cafetière", "Chargeur"]),
+                &[Offline, Offline]
+            ),
+            "Rien n'a répondu dans le Bureau : Cafetière, Chargeur."
+        );
+    }
+
+    #[test]
+    fn a_name_that_is_only_the_kind_word_is_not_repeated() {
+        use ActionResult::Ok;
+        assert_eq!(
+            said(
+                &covers_done(Some("bureau"), true, Some(40), &["Volet"]),
+                &[Ok]
+            ),
+            "Volet ouvert à 40 % dans le Bureau."
+        );
+        assert_eq!(
+            said(&lights_done(true, &["Lampe"]), &[Ok]),
+            "Lampe allumée dans le Salon."
+        );
+        assert_eq!(
+            said(
+                &switches_done(SwitchType::Plug, Some("bureau"), true, &["prise"]),
+                &[Ok]
+            ),
+            "Prise allumée dans le Bureau."
+        );
+    }
+
+    #[test]
+    fn a_masculine_light_word_keeps_lumiere_for_the_agreement() {
+        use ActionResult::Ok;
+        assert_eq!(
+            said(&lights_done(true, &["Plafonnier"]), &[Ok]),
+            "Lumière « Plafonnier » allumée dans le Salon."
+        );
+        assert_eq!(
+            said(&lights_done(false, &["Éclairage salon"]), &[Ok]),
+            "Lumière « Éclairage salon » éteinte dans le Salon."
+        );
+    }
+
+    #[test]
+    fn a_name_starting_with_the_kind_word_drops_the_prefix() {
+        use ActionResult::Ok;
+        assert_eq!(
+            said(
+                &covers_done(Some("salon"), false, None, &["Volet tv"]),
+                &[Ok]
+            ),
+            "« Volet tv » fermé dans le Salon."
+        );
+        assert_eq!(
+            said(&lights_done(true, &["Lampe table"]), &[Ok]),
+            "« Lampe table » allumée dans le Salon."
+        );
+        assert_eq!(
+            said(
+                &switches_done(SwitchType::Plug, Some("bureau"), true, &["Prise bureau"]),
+                &[Ok]
+            ),
+            "« Prise bureau » allumée dans le Bureau."
+        );
+        assert_eq!(
+            said(
+                &switches_done(SwitchType::Tv, Some("salon"), true, &["TV salon"]),
+                &[Ok]
+            ),
+            "« TV salon » allumée dans le Salon."
+        );
+    }
+
+    #[test]
+    fn any_other_name_keeps_the_kind_word() {
+        use ActionResult::Ok;
+        assert_eq!(
+            said(&covers_done(Some("salon"), false, None, &["Baie"]), &[Ok]),
+            "Volet « Baie » fermé dans le Salon."
+        );
+        assert_eq!(
+            said(&lights_done(true, &["Éclat"]), &[Ok]),
+            "Lumière « Éclat » allumée dans le Salon."
         );
     }
 
