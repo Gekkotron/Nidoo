@@ -12,6 +12,8 @@ enum Expect {
     Ask(&'static [&'static str]),
     /// Every shutter listed, in order, sent the same command.
     Covers(Command, &'static [&'static str]),
+    /// Every TV or plug listed, in order, sent the same command.
+    Switches(Command, &'static [&'static str]),
     NotUnderstood,
 }
 
@@ -141,6 +143,53 @@ const ROWS: &[(&str, Expect)] = &[
     ("ne ferme pas les volets", NotUnderstood),
     ("ferme les rideaux du salon", NotUnderstood),
     ("monte le salon", NotUnderstood),
+    (
+        "allume la télé",
+        Switches(
+            Command::TurnOn {
+                brightness: None,
+                color: None,
+                effect: None,
+            },
+            &["switch_tv"],
+        ),
+    ),
+    (
+        "éteins la télé du salon",
+        Switches(Command::TurnOff, &["switch_tv"]),
+    ),
+    (
+        "éteins les télés",
+        Switches(Command::TurnOff, &["switch_tv"]),
+    ),
+    (
+        "éteins la prise du bureau",
+        Switches(Command::TurnOff, &["switch_prise_bureau"]),
+    ),
+    (
+        "éteins toutes les prises",
+        Switches(
+            Command::TurnOff,
+            &["switch_prise_bureau", "switch_prise_tom"],
+        ),
+    ),
+    ("éteins les prises", Ask(&["Bureau", "Chambre Tom"])),
+    (
+        "éteins la prise du garage",
+        Answer("Pas de prise dans le Garage."),
+    ),
+    (
+        "éteins la prise cafetière",
+        Switches(Command::TurnOff, &["switch_prise_bureau"]),
+    ),
+    ("éteins la prise de la sirène", NotUnderstood),
+    ("allume la télé et la prise", NotUnderstood),
+    ("allume la prise du bureau à 50 %", NotUnderstood),
+    ("la télé est allumée", NotUnderstood),
+    (
+        "allume la lumière du salon tv",
+        Answer("Pas de lumière dans le Salon TV."),
+    ),
 ];
 
 #[test]
@@ -155,7 +204,7 @@ fn regression_table() {
                 fn command(a: &Action) -> Option<(&str, Command)> {
                     match a {
                         Action::Light { entity, command } => Some((entity, command.clone())),
-                        Action::Setpoint { .. } | Action::Cover { .. } => None,
+                        Action::Setpoint { .. } | Action::Cover { .. } | Action::Switch { .. } => None,
                     }
                 }
                 let want = if *on {
@@ -193,6 +242,12 @@ fn regression_table() {
                 actions.len() == ids.len()
                     && actions.iter().zip(ids.iter()).all(|(a, id)| {
                         matches!(a, Action::Cover { entity, command } if entity == id && command == want)
+                    })
+            }
+            (Switches(want, ids), Plan::Act { actions, .. }) => {
+                actions.len() == ids.len()
+                    && actions.iter().zip(ids.iter()).all(|(a, id)| {
+                        matches!(a, Action::Switch { entity, command } if entity == id && command == want)
                     })
             }
             (Answer(text), Plan::Answer { reply, .. }) => reply == text,

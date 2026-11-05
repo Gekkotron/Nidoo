@@ -1,7 +1,7 @@
 ---
 title: Assistant
 sidebar_position: 19
-description: Short French sentences typed on the Assistant page switch lights, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
+description: Short French sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
 ---
 
 The **Assistant** understands short French sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page.
@@ -41,12 +41,24 @@ The setpoint holds until the zone's next scheduled change, at most the zone's ma
 
 "Volet", "store" and "volet roulant" all work; "monte" / "remonte" open and "baisse" / "descends" close. A position is the percentage open, 0 closed and 100 open, as the shutter's card shows it, and goes with an open verb only: « ferme les volets à 30 % » is ambiguous, so the assistant answers with an example instead of moving anything. A shutter that only opens and closes is named in the reply as unable to take a position; the others still move. Shutters already where they are asked to be are left alone, an offline one gets no command and the reply says it did not answer. The reply comes as soon as each shutter starts moving.
 
+**TVs and plugs**, on or off, for a room, a named one or the whole house:
+
+| Sentence | Does |
+|---|---|
+| « allume la télé », « éteins la télé du salon » | turns the TV on or off |
+| « éteins toutes les télés » | every TV in the house |
+| « éteins la prise du bureau », « allume la prise bureau » | the plugs of the Bureau |
+| « éteins toutes les prises » | every plug in the house, no question |
+| « allume les 2 prises du bureau » | the plugs of the Bureau |
+
+"Télé", "télévision" and "TV" are TVs, "prise" is a plug. Only a switch whose **Show as** type is **TV** or **Plug** is used: set it once in the device's settings. A plain switch, a siren, a door opener, a chime, a group or a hub-made virtual switch is never touched, whatever its name. With no room and no "toutes", the assistant asks "Dans quelle pièce ?"; with several plugs in the room and a name that fits none, it asks which one. Devices already on or off as asked are left alone, an offline one gets no command and the reply says it did not answer. A sentence with a lights word still means lights: « éteins le salon » never turns off a TV or a plug.
+
 **Temperatures**: « quelle température fait-il dans le salon ? », « il fait combien au bureau ? », « il fait combien dehors ? ». A room's temperature is its climate zone's reading, else its thermometer; outdoors is the climate engine's outdoor sensor, else the weather. An old reading is said with its age.
 
 ## Safety
 
 - **A statement or a question is not an order.** "Il fait 18 degrés au salon", "la lumière du salon est allumée ?" or "qui a éteint le salon ?" never act (a temperature question is answered). A polite request still is one: « peux-tu allumer la lumière du salon ? ».
-- **Not sure, no action.** Two opposite orders ("allume et éteins"), a negation ("n'éteins pas"), a percentage that is not a shutter position ("mets le salon à 50 %") or a device it does not handle yet (curtains, plugs) give "Je n'ai pas compris", with a few example sentences built from your rooms.
+- **Not sure, no action.** Two opposite orders ("allume et éteins"), a negation ("n'éteins pas"), a percentage that is not a shutter position ("mets le salon à 50 %") or a device it does not handle yet (curtains, sirens) give "Je n'ai pas compris", with a few example sentences built from your rooms.
 - **Ambiguous room, a question.** "La chambre" with two bedrooms asks "Dans quelle pièce ?" with the rooms as buttons. You can also type the answer ("Léa").
 - **Unusual setpoint, a confirmation.** A setpoint outside **16–23 °C**, or more than **3 °C** away from the room's current temperature, is asked first: "Passer le Salon à 25 °C ?" with **Oui** / **Non** (typing "oui" or "non" works too). A yes applies exactly the value asked about. The 16–23 °C range is set by `assist_min_c` and `assist_max_c` in the [home settings](../reference/http-api.md#home-settings).
 - **Out of the device's range, a refusal.** A value the heaters cannot take is refused with their range, never clamped silently.

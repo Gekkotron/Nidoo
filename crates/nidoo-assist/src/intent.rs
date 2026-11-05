@@ -2,6 +2,7 @@
 
 use crate::lexicon::{Class, class};
 use crate::text::{Word, number_text};
+use nidoo_core::model::SwitchType;
 
 /// What the sentence asks, with the words left that may name a room or a light.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +39,15 @@ pub enum Intent {
     CoverPositionHint,
     /// A shutter position outside 0–100 %.
     CoverPositionRange,
+    /// TVs or plugs on or off: `what` is `SwitchType::Tv` or `SwitchType::Plug` only; `all`:
+    /// "tous" / "toutes" was said; `names` and `room` split like lights.
+    Switches {
+        what: SwitchType,
+        on: bool,
+        all: bool,
+        names: Vec<String>,
+        room: Vec<String>,
+    },
 }
 
 /// A setpoint change: a value, or a step from the current setpoint.
@@ -127,7 +137,10 @@ fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
                 Role::Amount
             } else if matches!(
                 after,
-                Some(Tok::Known(Class::Light | Class::LightNamed | Class::Cover, _))
+                Some(Tok::Known(
+                    Class::Light | Class::LightNamed | Class::Cover | Class::Tv | Class::Plug,
+                    _
+                ))
             ) {
                 Role::Count
             } else {
@@ -142,7 +155,30 @@ fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
 /// statement or question that is not a polite request ("il fait 18 degrés", "qui a éteint")
 /// all give `None` (a temperature question is read, never acted on).
 pub fn parse(words: &[Word]) -> Option<Intent> {
-    let toks = tag(words);
+    let mut toks = tag(words);
+    // A light, shutter, heating or temperature word decides the sentence: a TV or plug word is
+    // then part of a name ("la lumière du salon tv", "le volet tv").
+    let decided = toks.iter().any(|t| {
+        matches!(
+            t,
+            Tok::Known(
+                Class::Light
+                    | Class::LightNamed
+                    | Class::Cover
+                    | Class::Heating
+                    | Class::Temperature
+                    | Class::Degree,
+                _
+            )
+        )
+    });
+    if decided {
+        for t in &mut toks {
+            if let Tok::Known(Class::Tv | Class::Plug, w) = t {
+                *t = Tok::Free(std::mem::take(w));
+            }
+        }
+    }
     let has = |c: Class| {
         toks.iter()
             .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
@@ -174,6 +210,15 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
             None
         } else {
             covers(&toks, &roles(&toks), &has)
+        };
+    }
+    if has(Class::Tv) || has(Class::Plug) {
+        // "les télés du salon allumées ?": a question mark keeps a past participle a question.
+        let asked = has(Class::Question) && !has(Class::Request);
+        return if blocked || asked {
+            None
+        } else {
+            switches(&toks, &roles(&toks), &has)
         };
     }
     let (on, off, set) = (has(Class::On), has(Class::Off), has(Class::Set));
@@ -325,6 +370,35 @@ fn covers(toks: &[Tok], roles: &[Option<Role>], has: &dyn Fn(Class) -> bool) -> 
     Some(Intent::Covers {
         open,
         position,
+        all: has(Class::All),
+        names,
+        room,
+    })
+}
+
+/// TVs or plugs: one on verb or one off verb, never both or neither, and never both a TV and a
+/// plug word. Any value (a number after "à" or "de", a signed number), "mets" or a raise or
+/// lower verb is not understood: switching while ignoring a value would be a guess. The device
+/// words are not names; names and room words split like lights.
+fn switches(toks: &[Tok], roles: &[Option<Role>], has: &dyn Fn(Class) -> bool) -> Option<Intent> {
+    let (tv, plug) = (has(Class::Tv), has(Class::Plug));
+    let (on, off) = (has(Class::On), has(Class::Off));
+    if tv == plug
+        || on == off
+        || has(Class::Set)
+        || has(Class::Raise)
+        || has(Class::Lower)
+        || toks.iter().any(|t| matches!(t, Tok::Signed(_)))
+        || roles
+            .iter()
+            .any(|r| matches!(r, Some(Role::AfterA | Role::Amount)))
+    {
+        return None;
+    }
+    let (names, room) = split_names(toks, roles);
+    Some(Intent::Switches {
+        what: if tv { SwitchType::Tv } else { SwitchType::Plug },
+        on,
         all: has(Class::All),
         names,
         room,
@@ -553,7 +627,6 @@ mod tests {
     #[test]
     fn other_devices_are_none() {
         assert_eq!(p("ferme les rideaux du salon"), None);
-        assert_eq!(p("éteins la prise du bureau"), None);
     }
 
     fn covers(
@@ -676,6 +749,110 @@ mod tests {
         assert_eq!(p("ferme la lumière du salon"), None);
         assert_eq!(p("ouvre le chauffage"), None);
         assert_eq!(p("ferme le salon"), None);
+    }
+
+    fn switches(
+        what: SwitchType,
+        on: bool,
+        all: bool,
+        names: &[&str],
+        room: &[&str],
+    ) -> Option<Intent> {
+        Some(Intent::Switches {
+            what,
+            on,
+            all,
+            names: v(names),
+            room: v(room),
+        })
+    }
+
+    #[test]
+    fn tv_on_off() {
+        use SwitchType::Tv;
+        assert_eq!(p("allume la télé"), switches(Tv, true, false, &[], &[]));
+        assert_eq!(
+            p("éteins la télé du salon"),
+            switches(Tv, false, false, &[], &["salon"])
+        );
+        assert_eq!(p("éteins les télés"), switches(Tv, false, false, &[], &[]));
+        assert_eq!(
+            p("peux-tu allumer la télévision du salon"),
+            switches(Tv, true, false, &[], &["salon"])
+        );
+        assert_eq!(
+            p("coupe la tv du salon"),
+            switches(Tv, false, false, &[], &["salon"])
+        );
+    }
+
+    #[test]
+    fn plug_on_off_names_and_all() {
+        use SwitchType::Plug;
+        assert_eq!(
+            p("éteins la prise du bureau"),
+            switches(Plug, false, false, &[], &["bureau"])
+        );
+        assert_eq!(
+            p("allume la prise bureau"),
+            switches(Plug, true, false, &[], &["bureau"])
+        );
+        assert_eq!(
+            p("éteins toutes les prises"),
+            switches(Plug, false, true, &[], &[])
+        );
+        assert_eq!(
+            p("allume les 2 prises du bureau"),
+            switches(Plug, true, false, &[], &["bureau"])
+        );
+        assert_eq!(
+            p("allume la prise cafetière du bureau"),
+            switches(Plug, true, false, &["cafetiere"], &["bureau"])
+        );
+    }
+
+    #[test]
+    fn switches_never_guessed() {
+        assert_eq!(p("allume la télé et la prise"), None);
+        assert_eq!(p("allume et éteins la prise du bureau"), None);
+        assert_eq!(p("la prise du bureau"), None);
+        assert_eq!(p("ouvre la prise du bureau"), None);
+        assert_eq!(p("monte la télé"), None);
+        assert_eq!(p("mets la télé à 20"), None);
+        assert_eq!(p("allume la prise du bureau à 50 %"), None);
+        assert_eq!(p("allume la prise à 3"), None);
+        assert_eq!(p("allume la prise de 2"), None);
+        assert_eq!(p("n'éteins pas la télé"), None);
+        assert_eq!(p("la télé est allumée"), None);
+        assert_eq!(p("la télé du salon allumée ?"), None);
+        assert_eq!(p("qui a éteint la prise du bureau"), None);
+        assert_eq!(p("éteins le rideau de la télé"), None);
+    }
+
+    #[test]
+    fn a_light_cover_or_heating_word_keeps_tv_and_plug_as_names() {
+        assert_eq!(
+            p("allume la lumière du salon tv"),
+            lights(true, false, &[], &["salon", "tv"])
+        );
+        assert_eq!(
+            p("ferme le volet tv"),
+            covers(false, None, false, &[], &["tv"])
+        );
+        assert_eq!(
+            p("allume la lampe tv du salon"),
+            lights(true, false, &["lampe", "tv"], &["salon"])
+        );
+        assert_eq!(
+            p("allume la lumière de la prise"),
+            lights(true, false, &[], &["prise"])
+        );
+        assert_eq!(
+            p("allume le chauffage du salon tv"),
+            Some(Intent::HeatingNoValue {
+                room: v(&["salon", "tv"])
+            })
+        );
     }
 
     #[test]
