@@ -14,11 +14,14 @@ use sha2::{Digest, Sha256};
 
 pub const DEFAULT_VOLUME: u8 = 30;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PlayerPrefs {
     pub client_id: String,
     pub name: String,
+    /// The Music volume (0–100).
     pub volume: u8,
+    /// The Speech volume (0–100): answers and announcements.
+    pub speech_volume: u8,
     pub muted: bool,
     /// Approved by the operator: only allowed players get audio.
     pub allowed: bool,
@@ -30,9 +33,39 @@ pub fn short_id(client_id: &str) -> String {
     digest[..6].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize)]
 struct File {
     players: Vec<PlayerPrefs>,
+}
+
+/// A player as read from disk: files written before the Speech volume existed lack it.
+#[derive(Deserialize)]
+struct StoredPrefs {
+    client_id: String,
+    name: String,
+    volume: u8,
+    speech_volume: Option<u8>,
+    muted: bool,
+    allowed: bool,
+}
+
+impl From<StoredPrefs> for PlayerPrefs {
+    /// A missing Speech volume starts equal to the Music volume.
+    fn from(s: StoredPrefs) -> Self {
+        Self {
+            speech_volume: s.speech_volume.unwrap_or(s.volume),
+            client_id: s.client_id,
+            name: s.name,
+            volume: s.volume,
+            muted: s.muted,
+            allowed: s.allowed,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct StoredFile {
+    players: Vec<StoredPrefs>,
 }
 
 #[derive(Debug)]
@@ -46,10 +79,11 @@ impl StateStore {
     /// error (the file is left untouched, never reset).
     pub fn load(path: PathBuf) -> anyhow::Result<Self> {
         let players = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<File>(&bytes)
+            Ok(bytes) => serde_json::from_slice::<StoredFile>(&bytes)
                 .with_context(|| format!("{} is not a valid players file", path.display()))?
                 .players
                 .into_iter()
+                .map(PlayerPrefs::from)
                 .map(|p| (p.client_id.clone(), p))
                 .collect(),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
@@ -89,6 +123,7 @@ impl StateStore {
                         client_id: client_id.to_owned(),
                         name: name.to_owned(),
                         volume: DEFAULT_VOLUME,
+                        speech_volume: DEFAULT_VOLUME,
                         muted: false,
                         allowed: false,
                     },
@@ -172,6 +207,7 @@ mod tests {
         let (_d, mut s) = store();
         let p = s.observe(ID, "Kitchen").clone();
         assert_eq!((p.volume, p.muted, p.allowed), (30, false, false));
+        assert_eq!(p.speech_volume, DEFAULT_VOLUME);
         assert_eq!(p.name, "Kitchen");
         assert_eq!(s.get(ID), Some(&p));
         assert_eq!(s.by_short(&short_id(ID)), Some(&p));
@@ -201,15 +237,33 @@ mod tests {
         let p = s
             .update(&short_id(ID), |p| {
                 p.volume = 55;
+                p.speech_volume = 80;
                 p.muted = true;
                 p.allowed = true;
             })
             .unwrap()
             .unwrap();
         assert_eq!((p.volume, p.muted, p.allowed), (55, true, true));
+        assert_eq!(p.speech_volume, 80);
         let again = StateStore::load(d.path().join("sound/players.json")).unwrap();
         assert_eq!(again.get(ID), Some(&p));
         assert_eq!(again.all().count(), 1);
+    }
+
+    #[test]
+    fn old_file_speech_equals_volume() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("players.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"players":[{{"client_id":"{ID}","name":"Kitchen","volume":55,"muted":false,"allowed":true}}]}}"#
+            ),
+        )
+        .unwrap();
+        let s = StateStore::load(path).unwrap();
+        let p = s.get(ID).unwrap();
+        assert_eq!((p.volume, p.speech_volume), (55, 55));
     }
 
     #[test]

@@ -60,9 +60,18 @@ pub fn discovery_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(Strin
             "number",
             "volume",
             with(
-                base("Volume", "volume"),
+                base("Music volume", "volume"),
                 json!({"command_topic": command("volume"), "min": 0, "max": 100, "step": 1,
                        "mode": "slider", "icon": "mdi:volume-high"}),
+            ),
+        ),
+        (
+            "number",
+            "speech",
+            with(
+                base("Speech volume", "speech"),
+                json!({"command_topic": command("speech"), "min": 0, "max": 100, "step": 1,
+                       "mode": "slider", "icon": "mdi:account-voice"}),
             ),
         ),
         (
@@ -121,6 +130,10 @@ pub fn state_messages(
     let sid = short_id(&p.client_id);
     vec![
         (format!("{TOPIC_ROOT}/{sid}/volume"), p.volume.to_string()),
+        (
+            format!("{TOPIC_ROOT}/{sid}/speech"),
+            p.speech_volume.to_string(),
+        ),
         (format!("{TOPIC_ROOT}/{sid}/mute"), on_off(p.muted).into()),
         (
             format!("{TOPIC_ROOT}/{sid}/allowed"),
@@ -147,7 +160,7 @@ pub fn removal_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(String,
         .collect()
 }
 
-/// A command from `nidoo-sound/<sid>/<volume|mute|allowed|remove>/set`; `remove` takes any
+/// A command from `nidoo-sound/<sid>/<volume|speech|mute|allowed|remove>/set`; `remove` takes any
 /// payload.
 pub fn parse_command(topic: &str, payload: &[u8]) -> Option<Control> {
     let mut parts = topic.split('/');
@@ -163,14 +176,16 @@ pub fn parse_command(topic: &str, payload: &[u8]) -> Option<Control> {
         _ => None,
     };
     match object {
-        "volume" => {
+        "volume" | "speech" => {
             let v: f64 = text.parse().ok()?;
             if !v.is_finite() {
                 return None;
             }
-            Some(Control::SetVolume {
-                short_id,
-                volume: v.round().clamp(0.0, 100.0) as u8,
+            let volume = v.round().clamp(0.0, 100.0) as u8;
+            Some(if object == "volume" {
+                Control::SetVolume { short_id, volume }
+            } else {
+                Control::SetSpeech { short_id, volume }
             })
         }
         "mute" => Some(Control::SetMute {
@@ -365,6 +380,7 @@ mod tests {
             client_id: ID.into(),
             name: "Kitchen satellite".into(),
             volume: 45,
+            speech_volume: 45,
             muted: false,
             allowed: true,
         }
@@ -390,6 +406,11 @@ mod tests {
                 (
                     Kind::Number,
                     format!("nidoo_sound_{sid}_volume"),
+                    EntityCategory::Primary
+                ),
+                (
+                    Kind::Number,
+                    format!("nidoo_sound_{sid}_speech"),
                     EntityCategory::Primary
                 ),
                 (
@@ -462,6 +483,49 @@ mod tests {
         assert!(msgs.contains(&(format!("nidoo-sound/{sid}/mute"), "ON".into())));
         assert!(msgs.contains(&(format!("nidoo-sound/{sid}/allowed"), "ON".into())));
         assert!(msgs.contains(&(format!("nidoo-sound/{sid}/connected"), "OFF".into())));
+    }
+
+    #[test]
+    fn speech_command_parses() {
+        let t = "nidoo-sound/abc/speech/set";
+        assert_eq!(
+            parse_command(t, b"72.6"),
+            Some(Control::SetSpeech {
+                short_id: "abc".into(),
+                volume: 73
+            })
+        );
+        assert_eq!(parse_command(t, b"nan"), None);
+    }
+
+    #[test]
+    fn speech_entity_is_published() {
+        let sid = short_id(ID);
+        let mut p = prefs();
+        p.speech_volume = 62;
+        let configs: Vec<serde_json::Value> = discovery_messages(&p, "homeassistant")
+            .iter()
+            .map(|(_, payload)| serde_json::from_str(payload).unwrap())
+            .collect();
+        let find = |uid: String| configs.iter().find(|c| c["unique_id"] == uid).unwrap();
+        let speech = find(format!("nidoo_sound_{sid}_speech"));
+        assert_eq!(speech["name"], "Speech volume");
+        assert_eq!(
+            speech["command_topic"],
+            format!("nidoo-sound/{sid}/speech/set")
+        );
+        assert_eq!(
+            find(format!("nidoo_sound_{sid}_volume"))["name"],
+            "Music volume"
+        );
+        assert!(
+            state_messages(&p, false, None)
+                .contains(&(format!("nidoo-sound/{sid}/speech"), "62".into()))
+        );
+        assert!(
+            removal_messages(&p, "homeassistant")
+                .contains(&(format!("nidoo-sound/{sid}/speech"), String::new()))
+        );
     }
 
     #[test]
