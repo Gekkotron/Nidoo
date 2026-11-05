@@ -37,9 +37,23 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 /// Changes asked for from Nidoo (MQTT commands).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Control {
-    SetVolume { short_id: String, volume: u8 },
-    SetMute { short_id: String, muted: bool },
-    SetAllowed { short_id: String, allowed: bool },
+    SetVolume {
+        short_id: String,
+        volume: u8,
+    },
+    SetMute {
+        short_id: String,
+        muted: bool,
+    },
+    SetAllowed {
+        short_id: String,
+        allowed: bool,
+    },
+    /// Forget the satellite: its prefs and its retained messages. A board still on the
+    /// network comes back as a new one, waiting for approval.
+    Remove {
+        short_id: String,
+    },
 }
 
 impl Control {
@@ -47,7 +61,8 @@ impl Control {
         match self {
             Control::SetVolume { short_id, .. }
             | Control::SetMute { short_id, .. }
-            | Control::SetAllowed { short_id, .. } => short_id,
+            | Control::SetAllowed { short_id, .. }
+            | Control::Remove { short_id } => short_id,
         }
     }
 
@@ -56,6 +71,7 @@ impl Control {
             Control::SetVolume { volume, .. } => p.volume = volume.min(100),
             Control::SetMute { muted, .. } => p.muted = muted,
             Control::SetAllowed { allowed, .. } => p.allowed = allowed,
+            Control::Remove { .. } => {}
         }
     }
 }
@@ -70,6 +86,8 @@ pub enum Published {
         /// Its IPv4 address while connected.
         address: Option<Ipv4Addr>,
     },
+    /// A forgotten satellite: its retained messages are cleared.
+    Removed { prefs: PlayerPrefs },
     /// A sentence finished playing (`played`), or was dropped.
     Spoken { id: String, played: bool },
 }
@@ -581,6 +599,10 @@ impl Group {
 
     async fn on_control(&mut self, control: Control, publish: &mpsc::Sender<Published>) {
         let short = control.short_id().to_owned();
+        if matches!(control, Control::Remove { .. }) {
+            self.remove(&short, publish).await;
+            return;
+        }
         let prefs = match self.store.update(&short, |p| control.apply(p)) {
             Ok(Some(p)) => p,
             Ok(None) => {
@@ -617,9 +639,40 @@ impl Group {
                     }
                     link.send(PlayerCmd::Activate { playback: false }).await;
                 }
+                Control::Remove { .. } => {}
             }
         }
         self.publish(publish, &prefs.client_id).await;
+    }
+
+    /// Forgets satellite `short`: drops its prefs, closes its connection (its later events
+    /// find no prefs and publish nothing) and has its retained messages cleared. A board still
+    /// on the network reconnects as a new satellite, waiting for approval.
+    async fn remove(&mut self, short: &str, publish: &mpsc::Sender<Published>) {
+        let prefs = match self.store.remove(short) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                tracing::warn!(short_id = %short, "remove for an unknown satellite");
+                return;
+            }
+            Err(e) => {
+                tracing::error!(error = %format!("{e:#}"), "saving player prefs");
+                return;
+            }
+        };
+        tracing::info!(client_id = %prefs.client_id, name = %prefs.name, "satellite removed");
+        for link in self.links_mut() {
+            if !link.connected || link.client_id.as_deref() != Some(prefs.client_id.as_str()) {
+                continue;
+            }
+            if link.streaming {
+                link.send(PlayerCmd::StreamEnd).await;
+                link.streaming = false;
+            }
+            link.connected = false;
+            link.send(PlayerCmd::Close).await;
+        }
+        publish.send(Published::Removed { prefs }).await.ok();
     }
 
     async fn on_input(&mut self, event: InputEvent) {
@@ -893,6 +946,7 @@ mod tests {
     use crate::pacer::{CHUNK_BYTES, CHUNK_US};
     use crate::player::PlayerInfo;
     use crate::proto::messages::PCM_48K_STEREO_16;
+    use crate::state::DEFAULT_VOLUME;
     use std::time::Duration;
 
     const WAIT: Duration = Duration::from_secs(2);
@@ -1146,6 +1200,19 @@ mod tests {
                     && s == short
                 {
                     return (prefs, connected, address);
+                }
+            }
+        }
+
+        /// The prefs of the next satellite forgotten.
+        async fn removed(&mut self) -> PlayerPrefs {
+            loop {
+                let msg = tokio::time::timeout(WAIT, self.published.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                if let Published::Removed { prefs } = msg {
+                    return prefs;
                 }
             }
         }
@@ -1433,6 +1500,68 @@ mod tests {
             PlayerCmd::Activate { .. }
         ));
         while !h.published_for(&short_id("A")).await.1 {}
+    }
+
+    #[tokio::test]
+    async fn removing_an_offline_player_forgets_it() {
+        let mut h = Harness::start_with(&[("A", 64, true, true), ("B", 30, false, true)]).await;
+        h.control
+            .send(Control::Remove {
+                short_id: short_id("A"),
+            })
+            .await
+            .unwrap();
+        assert_eq!(h.removed().await.client_id, "A");
+        let saved = StateStore::load(h._dir.path().join("players.json")).unwrap();
+        assert_eq!(saved.get("A"), None);
+        assert!(saved.get("B").is_some());
+    }
+
+    #[tokio::test]
+    async fn removing_a_connected_player_closes_it_and_it_comes_back_as_new() {
+        let mut h = Harness::start_with(&[("A", 64, false, true)]).await;
+        let (mut p, playback) = h.ready_player("a", "A").await;
+        assert!(playback);
+        h.play().await;
+        assert!(matches!(p.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.control
+            .send(Control::Remove {
+                short_id: short_id("A"),
+            })
+            .await
+            .unwrap();
+        assert_eq!(h.removed().await.client_id, "A");
+        let got = p.drain().await;
+        assert!(got.contains(&PlayerCmd::StreamEnd), "{got:?}");
+        assert!(got.contains(&PlayerCmd::Close), "{got:?}");
+        // Its reconnect loop brings it back: a new satellite, waiting for approval.
+        let mut again = h.accepted("a-again").await;
+        again.connected("A").await;
+        assert_eq!(
+            again.control_cmd().await,
+            PlayerCmd::Activate { playback: false }
+        );
+        assert_eq!(again.control_cmd().await, PlayerCmd::Volume(DEFAULT_VOLUME));
+        loop {
+            let (prefs, connected) = h.published_for(&short_id("A")).await;
+            if connected {
+                assert!(!prefs.allowed);
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn removing_an_unknown_player_publishes_nothing() {
+        let mut h = Harness::start().await;
+        h.control
+            .send(Control::Remove {
+                short_id: "000000000000".into(),
+            })
+            .await
+            .unwrap();
+        let got = tokio::time::timeout(Duration::from_millis(200), h.published.recv()).await;
+        assert!(got.is_err(), "{got:?}");
     }
 
     #[tokio::test]

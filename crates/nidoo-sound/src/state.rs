@@ -121,6 +121,17 @@ impl StateStore {
         Ok(Some(p))
     }
 
+    /// Forgets one player and saves: it comes back as new (volume 30, not allowed) the next
+    /// time it connects. `None` for an unknown short id.
+    pub fn remove(&mut self, short: &str) -> anyhow::Result<Option<PlayerPrefs>> {
+        let Some(client_id) = self.by_short(short).map(|p| p.client_id.clone()) else {
+            return Ok(None);
+        };
+        let gone = self.players.remove(&client_id);
+        self.save()?;
+        Ok(gone)
+    }
+
     fn save(&self) -> anyhow::Result<()> {
         let dir = self
             .path
@@ -205,6 +216,39 @@ mod tests {
     fn update_of_unknown_player_is_none() {
         let (_d, mut s) = store();
         assert_eq!(s.update("000000000000", |p| p.volume = 1).unwrap(), None);
+    }
+
+    #[test]
+    fn remove_forgets_the_player_and_saves() {
+        let (d, mut s) = store();
+        s.observe(ID, "Kitchen");
+        s.observe("other", "Office");
+        let gone = s.remove(&short_id(ID)).unwrap().expect("removed");
+        assert_eq!(gone.client_id, ID);
+        assert_eq!(s.get(ID), None);
+        let again = StateStore::load(d.path().join("sound/players.json")).unwrap();
+        assert_eq!(again.get(ID), None);
+        assert!(again.get("other").is_some());
+    }
+
+    #[test]
+    fn a_removed_player_comes_back_as_new() {
+        let (_d, mut s) = store();
+        s.observe(ID, "Kitchen");
+        s.update(&short_id(ID), |p| {
+            p.allowed = true;
+            p.volume = 80;
+        })
+        .unwrap();
+        s.remove(&short_id(ID)).unwrap();
+        let p = s.observe(ID, "Kitchen");
+        assert_eq!((p.volume, p.allowed), (DEFAULT_VOLUME, false));
+    }
+
+    #[test]
+    fn remove_of_unknown_player_is_none() {
+        let (_d, mut s) = store();
+        assert_eq!(s.remove("000000000000").unwrap(), None);
     }
 
     #[test]

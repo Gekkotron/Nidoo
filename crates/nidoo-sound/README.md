@@ -57,6 +57,12 @@ Per satellite (`<sid>` = first 12 hex characters of SHA-256 of its Sendspin
 
 Availability: `nidoo-sound/status` (`online`, last will `offline`).
 
+Remove: `nidoo-sound/<sid>/remove/set` (any payload, not retained) forgets the
+satellite: it is dropped from `players.json`, its connection is closed and
+every topic above is cleared with an empty retained payload (discovery first,
+so the hub drops the entities). A board still on the network reconnects as a
+new satellite, not allowed.
+
 Speech: the hub publishes `nidoo-sound/speak` (not retained) as
 `{"id", "url", "players": ["<sid>", …]}`. The service fetches `hub_url + url`
 (a WAV, at most 60 s), and plays it on those players over the music, which is

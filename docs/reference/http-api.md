@@ -366,6 +366,7 @@ The speaker satellites of the `nidoo-sound` service (see [Sound](../users/sound.
 | Route | Behaviour |
 | --- | --- |
 | `POST /api/v1/sound/speak` | `{text, room?, satellite?, language?, voice?}`; says the sentence on the satellites of one room (`room`, an area id or name), on one satellite (`satellite`, its short id: the device id without `nidoo_sound_`), or on every satellite when both are left out. Returns `{players}` (`202`), the number of satellites it was sent to. Only satellites whose Allowed and Connected are both on, while the `nidoo-sound` service runs, are counted; a muted one is counted and stays silent. The speech is made as for `POST /api/v1/assist/speech`, then sent on `nidoo-sound/speak`. `422` when `room` and `satellite` are both set, for an unknown room, and for a text the speech refuses; `409` when speech is not set up, has no language ready, or no satellite can speak there. |
+| `DELETE /api/v1/sound/satellites/{id}` | Removes satellite `id` (its short id: the device id without `nidoo_sound_`): publishes `nidoo-sound/<id>/remove/set`, so `nidoo-sound` forgets its saved settings and clears its retained discovery and state messages (the hub drops its entities as they go), and clears the overrides (room, name) of its entities. `202`. A board still on the network comes back as a new satellite waiting for approval. `404` for an unknown satellite; `409` while the `nidoo-sound` service is offline (the command is not retained); `503` while the broker link is down. |
 
 ## Errors
 

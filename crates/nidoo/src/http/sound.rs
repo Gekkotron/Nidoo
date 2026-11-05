@@ -1,21 +1,24 @@
 //! `POST /api/v1/sound/speak`: say a sentence on the speaker satellites.
+//! `DELETE /api/v1/sound/satellites/{id}`: forget a satellite (by short id).
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::post;
+use axum::routing::{delete, post};
 use nidoo_api::{SoundSpeakReply, SoundSpeakRequest};
 
 use super::api::HttpError;
 use crate::hub::Hub;
-use crate::sound::{SpeakError, SpeakTarget};
+use crate::sound::{RemoveError, SpeakError, SpeakTarget};
 
 pub(super) fn routes() -> Router<Arc<Hub>> {
-    Router::new().route("/sound/speak", post(speak))
+    Router::new()
+        .route("/sound/speak", post(speak))
+        .route("/sound/satellites/{id}", delete(remove))
 }
 
 impl From<SpeakError> for HttpError {
@@ -32,6 +35,28 @@ impl From<SpeakError> for HttpError {
             SpeakError::Publish(err) => err.into(),
         }
     }
+}
+
+impl From<RemoveError> for HttpError {
+    fn from(err: RemoveError) -> Self {
+        match err {
+            RemoveError::UnknownSatellite(_) => {
+                HttpError::new(StatusCode::NOT_FOUND, err.to_string())
+            }
+            RemoveError::ServiceOffline => HttpError::new(StatusCode::CONFLICT, err.to_string()),
+            RemoveError::Publish(err) => err.into(),
+        }
+    }
+}
+
+/// 202: `nidoo-sound` clears the satellite's retained messages, and the hub drops its
+/// entities as they go.
+async fn remove(
+    State(hub): State<Arc<Hub>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, HttpError> {
+    hub.remove_satellite(&id).await?;
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn speak(
