@@ -33,6 +33,9 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// answers our `client/time` at least every 10 s).
 const SILENCE: Duration = Duration::from_secs(35);
 
+/// The pause after a failed `accept`.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
+
 /// Aborts the task when dropped, so nothing outlives `serve`.
 struct Owned(JoinHandle<()>);
 
@@ -58,7 +61,16 @@ pub async fn serve(
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let (tcp, peer) = accepted.context("accepting")?;
+                let (tcp, peer) = match accepted {
+                    Ok(a) => a,
+                    Err(e) => {
+                        // One failed accept (EMFILE, ECONNABORTED…) must not end the
+                        // server and the music with it; pause so it cannot spin.
+                        tracing::warn!(error = %e, "accepting a Sendspin connection");
+                        tokio::time::sleep(ACCEPT_RETRY).await;
+                        continue;
+                    }
+                };
                 let up_tx = up_tx.clone();
                 upgrades.retain(|u| !u.0.is_finished());
                 upgrades.push(Owned(tokio::spawn(async move {

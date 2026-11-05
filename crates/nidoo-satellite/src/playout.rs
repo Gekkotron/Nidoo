@@ -8,6 +8,9 @@
 use std::sync::{Arc, Mutex};
 
 const RATE: i64 = 48_000;
+/// The most audio held (10 s): `nidoo-sound` sends about 5 s ahead, so only a
+/// playout nothing drains (no output device) ever reaches it.
+const MAX_FRAMES: i64 = 10 * RATE;
 
 /// A playout shared between the network task and the audio callback.
 pub type SharedPlayout = Arc<Mutex<Playout>>;
@@ -82,6 +85,24 @@ impl Playout {
         kept.push((start, frames));
         kept.sort_by_key(|(s, _)| *s);
         self.chunks = kept;
+        self.cap();
+    }
+
+    /// Drops the oldest audio beyond `MAX_FRAMES`.
+    fn cap(&mut self) {
+        let mut held: i64 = self.chunks.iter().map(|(_, f)| f.len() as i64).sum();
+        while held > MAX_FRAMES {
+            let (s, f) = &mut self.chunks[0];
+            let over = held - MAX_FRAMES;
+            if f.len() as i64 <= over {
+                held -= f.len() as i64;
+                self.chunks.remove(0);
+            } else {
+                f.drain(..over as usize);
+                *s += over;
+                held = MAX_FRAMES;
+            }
+        }
     }
 
     /// Drops everything queued (stream end, new stream, disconnect).
@@ -265,5 +286,20 @@ mod tests {
                 .chunks(4)
                 .all(|f| f == [0.5, -0.5, 0.0, 0.0])
         );
+    }
+
+    #[test]
+    fn holds_at_most_the_cap_when_nothing_plays() {
+        // No speaker drains it (the output device failed): 60 s of 20 ms chunks.
+        let mut p = Playout::default();
+        for i in 0..3_000 {
+            p.push(1_000_000 + i * 20_000, &pcm(960, HALF, HALF));
+        }
+        let held: usize = p.chunks.iter().map(|(_, f)| f.len()).sum();
+        assert!(held <= MAX_FRAMES as usize, "{held} frames held");
+        // The newest audio is the one kept.
+        let newest = 1_000_000 + 2_999 * 20_000;
+        let out = fill(&mut p, 960, 2, newest);
+        assert!(out.iter().all(|&s| s == 0.5), "the last chunk still plays");
     }
 }
