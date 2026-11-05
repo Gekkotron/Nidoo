@@ -322,6 +322,8 @@ pub struct Hub {
     history: OnceLock<Arc<History>>,
     tts: OnceLock<Arc<crate::assist::tts::Tts>>,
     stt: OnceLock<Arc<crate::assist::stt::Stt>>,
+    /// The voice service's way in for questions the hub asks out loud.
+    pub(crate) voice_asks: OnceLock<tokio::sync::mpsc::Sender<crate::assist::stt::ask::AskRequest>>,
     /// `nidoo-sound`'s "sentence played" reports, for the voice service.
     spoken: broadcast::Sender<crate::sound::Spoken>,
     /// The setup context, set once at startup in Run mode; the settings MCP tools use it.
@@ -472,6 +474,7 @@ impl Hub {
             history: OnceLock::new(),
             tts: OnceLock::new(),
             stt: OnceLock::new(),
+            voice_asks: OnceLock::new(),
             spoken: broadcast::channel(64).0,
             setup: OnceLock::new(),
         })

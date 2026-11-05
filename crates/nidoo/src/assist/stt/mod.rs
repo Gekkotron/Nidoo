@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use nidoo_api::{DownloadView, EngineState, STT_MODEL_ID, SttSettings, SttStatus};
 use tokio::sync::watch;
 
+pub mod ask;
 pub mod engine;
 pub mod guard;
 pub mod models;
