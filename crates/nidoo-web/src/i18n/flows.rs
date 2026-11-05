@@ -87,6 +87,19 @@ pub enum FlowText {
     SpeakTextLabel,
     SpeakTextExample,
     SpeakRoomLabel,
+    Ask,
+    AskSub,
+    DefaultAskText,
+    AskTextLabel,
+    AskAnswersLabel,
+    AskAddAnswer,
+    AskWordsLabel,
+    AskNameLabel,
+    AskDefaultLabel,
+    AskNoAnswer,
+    AskEverywhere,
+    DefaultAnswerYes,
+    DefaultAnswerNo,
     DisableSelfSub,
     EnableFlow,
     EnableFlowSub,
@@ -374,6 +387,19 @@ impl FlowText {
         FlowText::SpeakTextLabel,
         FlowText::SpeakTextExample,
         FlowText::SpeakRoomLabel,
+        FlowText::Ask,
+        FlowText::AskSub,
+        FlowText::DefaultAskText,
+        FlowText::AskTextLabel,
+        FlowText::AskAnswersLabel,
+        FlowText::AskAddAnswer,
+        FlowText::AskWordsLabel,
+        FlowText::AskNameLabel,
+        FlowText::AskDefaultLabel,
+        FlowText::AskNoAnswer,
+        FlowText::AskEverywhere,
+        FlowText::DefaultAnswerYes,
+        FlowText::DefaultAnswerNo,
         FlowText::DisableSelfSub,
         FlowText::EnableFlow,
         FlowText::EnableFlowSub,
@@ -713,6 +739,22 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::SpeakTextLabel => ("Sentence", "Phrase"),
         T::SpeakTextExample => ("Dinner is ready", "Le dîner est prêt"),
         T::SpeakRoomLabel => ("Room", "Pièce"),
+        T::Ask => ("Ask", "Demander"),
+        T::AskSub => (
+            "Asks out loud and waits for the answer",
+            "Pose la question à voix haute et attend la réponse",
+        ),
+        T::DefaultAskText => ("Shall I turn the heating up?", "Je monte le chauffage ?"),
+        T::AskTextLabel => ("Question", "Question"),
+        T::AskAnswersLabel => ("Answers", "Réponses"),
+        T::AskAddAnswer => ("Add an answer", "Ajouter une réponse"),
+        T::AskWordsLabel => ("Also accepts", "Accepte aussi"),
+        T::AskNameLabel => ("Keep the number as", "Garder le nombre sous"),
+        T::AskDefaultLabel => ("If no number", "Sans nombre"),
+        T::AskNoAnswer => ("No answer", "Pas de réponse"),
+        T::AskEverywhere => ("everywhere", "partout"),
+        T::DefaultAnswerYes => ("Yes", "Oui"),
+        T::DefaultAnswerNo => ("No", "Non"),
         T::SectionWhen => ("WHEN · TRIGGER", "Déclencheurs"),
         T::SectionAnd => ("AND · CHECK", "Conditions"),
         T::SectionThen => ("THEN · ACTION", "Actions"),
@@ -1226,6 +1268,38 @@ pub fn speak(lang: Lang, text: &str, room: Option<&str>) -> String {
     )
 }
 
+/// `Ask "Heat up?" in Kitchen: Yes / No / no answer` / `Demande « Chauffer ? » dans Cuisine : Oui
+/// / Non / pas de réponse`; `room` is the room's name, or `None` for everywhere.
+pub fn ask_card(lang: Lang, text: &str, room: Option<&str>, answers: &[&str]) -> String {
+    let (en_room, fr_room) = match room {
+        Some(r) => (format!("in {r}"), format!("dans {r}")),
+        None => (
+            flow_text(Lang::En, FlowText::AskEverywhere).to_owned(),
+            flow_text(Lang::Fr, FlowText::AskEverywhere).to_owned(),
+        ),
+    };
+    let mut parts: Vec<&str> = answers.to_vec();
+    parts.push(match lang {
+        Lang::En => "no answer",
+        Lang::Fr => "pas de réponse",
+    });
+    let list = parts.join(" / ");
+    let quoted = text.trim();
+    pick(
+        lang,
+        if quoted.is_empty() {
+            format!("Ask {en_room}: {list}")
+        } else {
+            format!("Ask \"{text}\" {en_room}: {list}")
+        },
+        if quoted.is_empty() {
+            format!("Demande {fr_room}{NBSP}: {list}")
+        } else {
+            format!("Demande «{NBSP}{text}{NBSP}» {fr_room}{NBSP}: {list}")
+        },
+    )
+}
+
 /// `Notify "Door open"` / `Notifier « Porte ouverte »`; no title reads "Notify" / "Notifier".
 pub fn notify(lang: Lang, title: &str) -> String {
     if title.trim().is_empty() {
@@ -1634,6 +1708,7 @@ mod tests {
         FlowText::ColourCyan,
         FlowText::ColourMagenta,
         FlowText::DefaultNotifyTitle,
+        FlowText::AskTextLabel,
         FlowText::Auto,
         FlowText::NodeSignal,
         FlowText::Minutes,
@@ -1643,6 +1718,26 @@ mod tests {
         FlowText::SevInfo,
         FlowText::NodeAction,
     ];
+
+    #[test]
+    fn ask_sentences() {
+        assert_eq!(
+            ask_card(Lang::En, "Heat up?", Some("Kitchen"), &["Yes", "No"]),
+            "Ask \"Heat up?\" in Kitchen: Yes / No / no answer"
+        );
+        assert_eq!(
+            ask_card(Lang::Fr, "Chauffer ?", Some("Cuisine"), &["Oui", "Non"]),
+            "Demande «\u{a0}Chauffer ?\u{a0}» dans Cuisine\u{a0}: Oui / Non / pas de réponse"
+        );
+        assert_eq!(
+            ask_card(Lang::En, "Heat up?", None, &["Yes"]),
+            "Ask \"Heat up?\" everywhere: Yes / no answer"
+        );
+        assert_eq!(
+            ask_card(Lang::Fr, "Q", None, &[]),
+            "Demande «\u{a0}Q\u{a0}» partout\u{a0}: pas de réponse"
+        );
+    }
 
     #[test]
     fn speak_sentences() {

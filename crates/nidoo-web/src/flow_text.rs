@@ -396,17 +396,14 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
                 template::parse(&p.title).map_or_else(|_| p.title.clone(), |t| t.label(&name));
             t::notify(lang, &title)
         }
-        NodeKind::Speak(nidoo_core::flow::SpeakParams { text, room })
-        | NodeKind::Ask(nidoo_core::flow::AskParams { text, room, .. }) => {
-            let name = |id: &str| ctx.entities.get(id).map(|e| entity_title(lang, e));
-            let text = template::parse(text).map_or_else(|_| text.clone(), |t| t.label(&name));
-            let room = room.as_deref().map(|id| {
-                ctx.areas
-                    .iter()
-                    .find(|a| a.id == id)
-                    .map_or_else(|| id.to_owned(), |a| a.name.clone())
-            });
+        NodeKind::Speak(nidoo_core::flow::SpeakParams { text, room }) => {
+            let (text, room) = spoken_text_and_room(text, room.as_deref(), ctx);
             t::speak(lang, &text, room.as_deref())
+        }
+        NodeKind::Ask(p) => {
+            let (text, room) = spoken_text_and_room(&p.text, p.room.as_deref(), ctx);
+            let labels: Vec<&str> = p.answers.iter().map(|a| a.label.as_str()).collect();
+            t::ask_card(lang, &text, room.as_deref(), &labels)
         }
         NodeKind::FlowEnable(p) => {
             let target = match &p.flow {
@@ -420,6 +417,19 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             t::flow_switch(lang, p.enabled, &target)
         }
     }
+}
+
+/// A spoken text with its placeholders worded, and the room's name when it has one.
+fn spoken_text_and_room(text: &str, room: Option<&str>, ctx: &Ctx) -> (String, Option<String>) {
+    let name = |id: &str| ctx.entities.get(id).map(|e| entity_title(ctx.lang, e));
+    let text = template::parse(text).map_or_else(|_| text.to_owned(), |t| t.label(&name));
+    let room = room.map(|id| {
+        ctx.areas
+            .iter()
+            .find(|a| a.id == id)
+            .map_or_else(|| id.to_owned(), |a| a.name.clone())
+    });
+    (text, room)
 }
 
 /// The short label beside the pin `port` of a card: a switch rule as "< 18 lx", "18–22 lx" or
@@ -473,6 +483,17 @@ pub fn exit_label(lang: Lang, kind: &NodeKind, port: &str, ctx: &Ctx) -> String 
                 }
             };
             format!("{sign} {}", words(&rule.value))
+        }
+        NodeKind::Ask(p) => {
+            if port == nidoo_core::flow::ASK_NONE_PORT {
+                return flow_text(lang, FlowText::AskNoAnswer).to_owned();
+            }
+            port.parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|i| p.answers.get(i))
+                .map(|a| a.label.clone())
+                .unwrap_or_default()
         }
         NodeKind::TimeBetween(p) => match port {
             "in" => format!("{}–{}", p.from, p.to),
@@ -687,6 +708,33 @@ mod tests {
         assert_eq!(text_in(Lang::Fr, time), "Entre 07:00 et 22:30");
         assert_eq!(role(&node(switch).kind), Role::Check);
         assert_eq!(role(&node(time).kind), Role::Check);
+    }
+
+    #[test]
+    fn ask_sentence_en_fr() {
+        let ask = r#"{"id":"a","type":"ask","params":{"text":"Heat up?","room":"salon","answers":[{"label":"Oui"},{"label":"Non"}]}}"#;
+        assert_eq!(
+            text(ask),
+            "Ask \"Heat up?\" in Salon: Oui / Non / no answer"
+        );
+        assert_eq!(
+            text_in(Lang::Fr, ask),
+            "Demande «\u{a0}Heat up?\u{a0}» dans Salon\u{a0}: Oui / Non / pas de réponse"
+        );
+        let anywhere =
+            r#"{"id":"a","type":"ask","params":{"text":"Q","answers":[{"label":"Yes"}]}}"#;
+        assert_eq!(text(anywhere), "Ask \"Q\" everywhere: Yes / no answer");
+        assert_eq!(role(&node(ask).kind), Role::Action);
+    }
+
+    #[test]
+    fn ask_exit_labels() {
+        let ask = r#"{"id":"a","type":"ask","params":{"text":"Q","answers":[{"label":"Oui"},{"label":"Non"}]}}"#;
+        assert_eq!(label(Lang::En, ask, "1"), "Oui");
+        assert_eq!(label(Lang::En, ask, "2"), "Non");
+        assert_eq!(label(Lang::En, ask, "none"), "No answer");
+        assert_eq!(label(Lang::Fr, ask, "none"), "Pas de réponse");
+        assert_eq!(label(Lang::En, ask, "3"), "");
     }
 
     fn label(lang: Lang, json: &str, port: &str) -> String {

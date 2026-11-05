@@ -2,10 +2,10 @@
 
 use nidoo_core::flow::TriggerSignalParams;
 use nidoo_core::flow::{
-    CommandParams, DelayParams, FlowEnableParams, IfParams, LimitParams, MathParams, Node,
-    NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SpeakParams, SunWhich, SwitchParams,
-    SwitchRule, TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams,
-    TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
+    AskAnswer, AskParams, CommandParams, DelayParams, FlowEnableParams, IfParams, LimitParams,
+    MathParams, Node, NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SpeakParams,
+    SunWhich, SwitchParams, SwitchRule, TimeBetweenParams, TriggerManualParams,
+    TriggerOffPeakParams, TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
 };
 use nidoo_core::model::Command;
 use serde_json::Value;
@@ -229,6 +229,23 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             }),
             Some(FlowText::Speak),
             FlowText::SpeakSub,
+        ),
+        (
+            Group::Then,
+            NodeKind::Ask(AskParams {
+                // Defaults written into the stored flow: the language active now.
+                text: flow_text(ctx.lang, FlowText::DefaultAskText).into(),
+                answers: [FlowText::DefaultAnswerYes, FlowText::DefaultAnswerNo]
+                    .into_iter()
+                    .map(|t| AskAnswer {
+                        label: flow_text(ctx.lang, t).into(),
+                        words: Vec::new(),
+                    })
+                    .collect(),
+                ..Default::default()
+            }),
+            Some(FlowText::Ask),
+            FlowText::AskSub,
         ),
         (
             Group::Flow,
@@ -525,6 +542,7 @@ mod tests {
                 (Group::And, "Time of day"),
                 (Group::Then, "Notify"),
                 (Group::Then, "Speak"),
+                (Group::Then, "Ask"),
                 (Group::Wait, "Wait"),
                 (Group::Wait, "Limit"),
                 (Group::Flow, "Disable this flow"),
@@ -547,6 +565,7 @@ mod tests {
                 Some("Inside or outside two times"),
                 Some("A push to your phone"),
                 Some("Said out loud on the speakers"),
+                Some("Asks out loud and waits for the answer"),
                 Some("A fixed or random delay"),
                 Some("Lets only so many runs through"),
                 Some("Stops it from running again"),
@@ -563,7 +582,12 @@ mod tests {
             &got[11].kind,
             NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
         ));
-        assert!(matches!(&got[12].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+        assert!(matches!(
+            &got[12].kind,
+            NodeKind::Ask(p) if p.answers.len() == 2 && p.room.is_none()
+                && p.answers[0].label == "Yes" && p.answers[1].label == "No"
+        ));
+        assert!(matches!(&got[13].kind, NodeKind::Delay(p) if p.for_ == "5m"));
         assert!(matches!(
             &got[7].kind,
             NodeKind::Switch(p) if p.otherwise && p.entity.is_none()
