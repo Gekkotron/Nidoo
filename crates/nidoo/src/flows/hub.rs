@@ -451,6 +451,7 @@ impl Hub {
             let texts = match &node.kind {
                 NodeKind::Notify(params) => vec![Some(&params.title), params.body.as_ref()],
                 NodeKind::Speak(params) => vec![Some(&params.text)],
+                NodeKind::Ask(params) => vec![Some(&params.text)],
                 _ => Vec::new(),
             };
             // `validate` already refused a text that does not parse.
@@ -489,6 +490,7 @@ impl Hub {
                 | NodeKind::Limit(_)
                 | NodeKind::Notify(_)
                 | NodeKind::Speak(_)
+                | NodeKind::Ask(_)
                 | NodeKind::TimeBetween(_)
                 | NodeKind::TriggerSchedule(_)
                 | NodeKind::TriggerSun(_)

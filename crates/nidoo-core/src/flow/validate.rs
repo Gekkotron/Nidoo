@@ -1,6 +1,9 @@
 //! Structural validation of a flow.
 
-use super::{Flow, MathParams, NodeKind, command_with_number, math_names, template};
+use super::{
+    ASK_MAX_ANSWERS, Flow, MathParams, NodeKind, command_with_number, is_valid_name, math_names,
+    template,
+};
 
 /// Why a flow is not structurally valid.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -54,7 +57,29 @@ pub enum FlowError {
     #[error("node `{node}`: {reason}")]
     BadSpeak { node: String, reason: String },
     #[error("node `{node}`: {reason}")]
+    BadAsk { node: String, reason: String },
+    #[error("node `{node}`: {reason}")]
     BadMath { node: String, reason: String },
+}
+
+/// Trims, lowercases and strips accents, so labels that sound alike compare equal.
+/// Task 2 replaces this with `answer::normalize`.
+fn fold(text: &str) -> String {
+    text.trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => 'a',
+            'ç' => 'c',
+            'è' | 'é' | 'ê' | 'ë' => 'e',
+            'ì' | 'í' | 'î' | 'ï' => 'i',
+            'ñ' => 'n',
+            'ò' | 'ó' | 'ô' | 'ö' | 'õ' => 'o',
+            'ù' | 'ú' | 'û' | 'ü' => 'u',
+            'ý' | 'ÿ' => 'y',
+            other => other,
+        })
+        .collect()
 }
 
 /// The push channels. Mirrors `nidoo_push::normalize::CHANNELS` (`nidoo-push` depends on this
@@ -211,6 +236,38 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                 }
                 if let Err(err) = template::parse(&p.text) {
                     return Err(bad(format!("text: {err}")));
+                }
+            }
+            NodeKind::Ask(p) => {
+                let bad = |reason: String| FlowError::BadAsk {
+                    node: node.id.clone(),
+                    reason,
+                };
+                if p.text.trim().is_empty() {
+                    return Err(bad("text must not be empty".to_owned()));
+                }
+                if let Err(err) = template::parse(&p.text) {
+                    return Err(bad(format!("text: {err}")));
+                }
+                if p.answers.is_empty() || p.answers.len() > ASK_MAX_ANSWERS {
+                    return Err(bad(format!("an ask needs 1 to {ASK_MAX_ANSWERS} answers")));
+                }
+                let mut labels = std::collections::HashSet::new();
+                for answer in &p.answers {
+                    let label = fold(&answer.label);
+                    if label.is_empty() {
+                        return Err(bad("answer label must not be empty".to_owned()));
+                    }
+                    if !labels.insert(label) {
+                        return Err(bad(format!("duplicate answer `{}`", answer.label.trim())));
+                    }
+                }
+                match (&p.name, p.default) {
+                    (Some(name), _) if !is_valid_name(name) => {
+                        return Err(bad(format!("name: `{name}` is not a valid name")));
+                    }
+                    (None, Some(_)) => return Err(bad("default needs a name".to_owned())),
+                    _ => {}
                 }
             }
             NodeKind::TriggerSun(p) => {
@@ -402,6 +459,7 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                         "if" => "an if",
                         "switch" => "a switch",
                         "time.between" => "a time.between",
+                        "ask" => "an ask",
                         other => unreachable!("{other} has no ports"),
                     },
                 });
@@ -950,6 +1008,83 @@ mod tests {
             "{err}"
         );
         assert!(validate(&speak_flow(r#"{"text":"Dinner","room":"kitchen"}"#)).is_ok());
+    }
+
+    fn ask_flow(params: &str) -> Flow {
+        let mut f = schedule_flow("*/10 * * * *", "act");
+        f.nodes.push(
+            serde_json::from_str(&format!(r#"{{"id":"n","type":"ask","params":{params}}}"#))
+                .unwrap(),
+        );
+        f
+    }
+
+    fn bad_ask(params: &str, prefix: &str) {
+        let err = validate(&ask_flow(params)).unwrap_err();
+        assert!(
+            matches!(&err, FlowError::BadAsk { node, reason } if node == "n" && reason.contains(prefix)),
+            "{params}: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_bad_ask_params() {
+        bad_ask(
+            r#"{"text":" ","answers":[{"label":"Oui"}]}"#,
+            "text must not be empty",
+        );
+        let err =
+            validate(&ask_flow(r#"{"text":"T {x","answers":[{"label":"Oui"}]}"#)).unwrap_err();
+        assert!(
+            matches!(&err, FlowError::BadAsk { reason, .. } if reason.starts_with("text:")),
+            "{err}"
+        );
+        bad_ask(r#"{"text":"T","answers":[]}"#, "1 to 6 answers");
+        let seven = vec![r#"{"label":"A"}"#; 7].join(",");
+        bad_ask(
+            &format!(r#"{{"text":"T","answers":[{seven}]}}"#),
+            "1 to 6 answers",
+        );
+        bad_ask(
+            r#"{"text":"T","answers":[{"label":"Oui"},{"label":" oui "}]}"#,
+            "duplicate answer",
+        );
+        bad_ask(
+            r#"{"text":"T","answers":[{"label":"Éte"},{"label":"ete"}]}"#,
+            "duplicate answer",
+        );
+        bad_ask(
+            r#"{"text":"T","answers":[{"label":""}]}"#,
+            "answer label must not be empty",
+        );
+        bad_ask(
+            r#"{"text":"T","answers":[{"label":"Oui"}],"name":"Temp"}"#,
+            "name:",
+        );
+        bad_ask(
+            r#"{"text":"T","answers":[{"label":"Oui"}],"default":21}"#,
+            "default needs a name",
+        );
+        assert!(
+            validate(&ask_flow(
+                r#"{"text":"T","answers":[{"label":"Oui"},{"label":"Non"}],"name":"temp"}"#
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_refuses_an_ask_edge_past_its_answers() {
+        let mut f =
+            ask_flow(r#"{"text":"T","answers":[{"label":"A"},{"label":"B"},{"label":"C"}]}"#);
+        f.edges.push(Edge {
+            from: "n".into(),
+            to: "act".into(),
+            port: Some("4".into()),
+        });
+        assert!(matches!(validate(&f), Err(FlowError::UnknownPort { .. })));
+        f.edges.last_mut().unwrap().port = Some("none".into());
+        assert!(validate(&f).is_ok());
     }
 
     #[test]

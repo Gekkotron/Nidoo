@@ -24,12 +24,13 @@ pub use math::{
     MAX_TABLE_POINTS, fit_to_entity, is_valid_name, parse_formula,
 };
 pub use model::{
-    CommandParams, DelayParams, Edge, Flow, FlowEnableParams, FlowMode, IfParams, LimitParams,
-    MAX_AVERAGE_SECS, MAX_LIMIT, MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind,
-    NotifyParams, OffPeakEdge, Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams,
-    SwitchRule, TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams,
-    TriggerScheduleParams, TriggerSignalParams, TriggerSilentParams, TriggerStateParams,
-    TriggerSunParams, command_with_number, math_names, uses_sun_or_is_dark,
+    ASK_MAX_ANSWERS, ASK_NONE_PORT, AskAnswer, AskParams, CommandParams, DelayParams, Edge, Flow,
+    FlowEnableParams, FlowMode, IfParams, LimitParams, MAX_AVERAGE_SECS, MAX_LIMIT,
+    MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind, NotifyParams, OffPeakEdge,
+    Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams, SwitchRule, TimeBetweenParams,
+    TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams, TriggerSignalParams,
+    TriggerSilentParams, TriggerStateParams, TriggerSunParams, command_with_number, math_names,
+    uses_sun_or_is_dark,
 };
 pub use scalar::{CompareError, Scalar, compare};
 pub use schedule::{Schedule, ScheduleError};
