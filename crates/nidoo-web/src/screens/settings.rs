@@ -19,12 +19,14 @@ use crate::i18n::setup::{SetupText, setup_text};
 use crate::i18n::{Key, Lang, text, use_lang};
 use crate::nav::BackLink;
 use crate::screens::alarm_settings::{AlarmSettingsPage, settings_status};
+use crate::screens::assist_settings::AssistVoicePage;
 use crate::screens::assist_status;
 use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
 use crate::screens::network_settings::{NetworkSettingsPage, watched_label};
 use crate::screens::sound_settings::{self, SoundSettingsPage};
+use crate::screens::speech_input::AssistListeningPage;
 use crate::screens::system_settings::{self, SystemSettingsPage};
 use crate::setup::connection::{DatabaseForm, MqttForm};
 use crate::setup::services::basic::WeatherForm;
@@ -633,6 +635,8 @@ pub fn SettingsScreen() -> impl IntoView {
         }
     };
     let origin = origin();
+    // The Assistant page's gear opens `/settings#assistant`: bring that group into view.
+    Effect::new(move |_| scroll_to_hash());
 
     view! {
         <div class="sheet settings">
@@ -684,6 +688,20 @@ pub fn SettingsScreen() -> impl IntoView {
     }
 }
 
+/// Scrolls the element the address's `#id` names into view, when there is one.
+fn scroll_to_hash() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let id = window.location().hash().unwrap_or_default();
+    let Some(id) = id.strip_prefix('#').filter(|id| !id.is_empty()) else {
+        return;
+    };
+    if let Some(el) = window.document().and_then(|d| d.get_element_by_id(id)) {
+        el.scroll_into_view();
+    }
+}
+
 /// A Settings sub-page (`/settings/:page`), with a Back link to where it was opened from.
 #[component]
 pub fn SettingsPageScreen() -> impl IntoView {
@@ -723,11 +741,9 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::NetworkPresence) => {
                     view! { <NetworkSettingsPage /> }.into_any()
                 }
-                Some(SettingsPage::AssistantVoice | SettingsPage::AssistantListening) => {
-                    view! {
-                        <p class="settings__empty">{move || settings_text(lang(), T::NoSuchPage)}</p>
-                    }
-                        .into_any()
+                Some(SettingsPage::AssistantVoice) => view! { <AssistVoicePage /> }.into_any(),
+                Some(SettingsPage::AssistantListening) => {
+                    view! { <AssistListeningPage /> }.into_any()
                 }
                 Some(SettingsPage::Sound) => view! { <SoundSettingsPage /> }.into_any(),
                 Some(SettingsPage::System) => view! { <SystemSettingsPage /> }.into_any(),

@@ -31,6 +31,19 @@ async fn assistant_route_renders() {
 }
 
 #[wasm_bindgen_test]
+async fn the_gear_opens_the_assistant_group_in_settings() {
+    let stub = FetchStub::install();
+    stub.reply("GET", TURNS, 200, r#"{"turns":[],"kept":false}"#);
+    let m = mount();
+    wait_for(&m.host, ".assist__settings").await;
+    let gear = find(&m.host, ".assist__settings").unwrap();
+    assert_eq!(
+        gear.get_attribute("href").as_deref(),
+        Some("/settings#assistant")
+    );
+}
+
+#[wasm_bindgen_test]
 async fn sending_shows_reply() {
     let stub = FetchStub::install();
     stub.reply("GET", TURNS, 200, r#"{"turns":[],"kept":true}"#);

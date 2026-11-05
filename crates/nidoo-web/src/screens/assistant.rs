@@ -570,7 +570,7 @@ pub fn AssistantScreen() -> impl IntoView {
                         </Show>
                         <a
                             class="assist__settings"
-                            href="/assistant/settings"
+                            href="/settings#assistant"
                             aria-label=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
                             title=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
                             inner_html=GEAR

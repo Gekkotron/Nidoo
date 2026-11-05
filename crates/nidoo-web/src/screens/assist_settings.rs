@@ -1,5 +1,6 @@
-//! `/assistant/settings`: the languages the hub speaks (tabs, in `assist_languages`), the
-//! installed models, and adding a model with the Hugging Face token folded in.
+//! Settings → Assistant → Voice (`/settings/assistant-voice`): the languages the hub speaks (tabs,
+//! in `assist_languages`), the installed models, and adding a model with the Hugging Face token
+//! folded in. The old `/assistant/settings` address redirects here.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -147,9 +148,25 @@ fn language_names(codes: &[String], lang: Lang) -> String {
         .join(", ")
 }
 
-/// The speech settings screen.
+/// The old `/assistant/settings` address: replaced by Settings → Assistant → Voice, so a bookmark
+/// still lands there and Back does not bounce off it.
 #[component]
-pub fn AssistSettingsScreen() -> impl IntoView {
+pub fn AssistSettingsRedirect() -> impl IntoView {
+    let navigate = leptos_router::hooks::use_navigate();
+    Effect::new(move |_| {
+        navigate(
+            "/settings/assistant-voice",
+            leptos_router::NavigateOptions {
+                replace: true,
+                ..Default::default()
+            },
+        );
+    });
+}
+
+/// Settings → Assistant → Voice, inside the Settings sub-page frame (its title and Back).
+#[component]
+pub fn AssistVoicePage() -> impl IntoView {
     let lang = use_lang();
     let t = use_assist_settings_text();
     let toasts = use_context::<Toasts>();
@@ -388,13 +405,6 @@ pub fn AssistSettingsScreen() -> impl IntoView {
 
     view! {
         <div class="assist-set">
-            <a class="assist-set__back" href="/assistant">
-                <span aria-hidden="true">"←"</span>
-                " "
-                {move || t(T::Back)}
-            </a>
-            <h1 class="assist-set__title">{move || t(T::Title)}</h1>
-
             <Show when=move || load_failed.get()>
                 <p class="assist-set__error">{move || t(T::CouldNotLoad)}</p>
             </Show>
@@ -403,8 +413,6 @@ pub fn AssistSettingsScreen() -> impl IntoView {
             </Show>
 
             <LanguagesCard status=status models=models reload=reload_cb />
-
-            <crate::screens::speech_input::SpeechInputSection />
 
             // ---- Installed models ----
             <section class="assist-set__card">
