@@ -25,6 +25,19 @@ pub enum Intent {
         room: Vec<String>,
         outdoor: bool,
     },
+    /// Shutters: `position` is the % open asked ("à 30 %"), only with an open verb; `all`:
+    /// "tous" / "toutes" was said; `names` and `room` split like lights.
+    Covers {
+        open: bool,
+        position: Option<u8>,
+        all: bool,
+        names: Vec<String>,
+        room: Vec<String>,
+    },
+    /// "ferme les volets à 30 %": a position with a close verb is ambiguous; answered with a hint.
+    CoverPositionHint,
+    /// A shutter position outside 0–100 %.
+    CoverPositionRange,
 }
 
 /// A setpoint change: a value, or a step from the current setpoint.
@@ -114,7 +127,7 @@ fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
                 Role::Amount
             } else if matches!(
                 after,
-                Some(Tok::Known(Class::Light | Class::LightNamed, _))
+                Some(Tok::Known(Class::Light | Class::LightNamed | Class::Cover, _))
             ) {
                 Role::Count
             } else {
@@ -134,7 +147,13 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
         toks.iter()
             .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
     };
-    if has(Class::Percent) || has(Class::OtherDevice) || has(Class::Negation) {
+    let cover = has(Class::Cover);
+    // A percentage only ever means a shutter position; "ouvre" / "ferme" only ever a shutter.
+    if (has(Class::Percent) && !cover)
+        || has(Class::OtherDevice)
+        || has(Class::Negation)
+        || ((has(Class::Open) || has(Class::Close)) && !cover)
+    {
         return None;
     }
     // "à -2": a signed value after "à" is neither a setpoint nor a change.
@@ -148,6 +167,13 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
         .any(|t| matches!(t, Tok::Known(Class::Question, w) if w != "?"));
     let describes = has(Class::Statement) || has(Class::Fait) || question_word;
     let blocked = describes && !has(Class::Request);
+    if cover {
+        return if blocked {
+            None
+        } else {
+            covers(&toks, &roles(&toks), &has)
+        };
+    }
     let (on, off, set) = (has(Class::On), has(Class::Off), has(Class::Set));
     let (raise, lower) = (has(Class::Raise), has(Class::Lower));
     if (on && off) || (raise && lower) {
@@ -251,10 +277,74 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     None
 }
 
+/// Shutters: an open verb ("ouvre", "monte") or a close verb ("ferme", "baisse"), never both
+/// or neither, and never with a light, heating or switch word. A position is "à N %" right after
+/// the open verb's object; any other number or percentage is not understood. Names and room words
+/// split like lights.
+fn covers(toks: &[Tok], roles: &[Option<Role>], has: &dyn Fn(Class) -> bool) -> Option<Intent> {
+    let other = [
+        Class::Light,
+        Class::LightNamed,
+        Class::Heating,
+        Class::Temperature,
+        Class::Degree,
+        Class::On,
+        Class::Off,
+        Class::Set,
+    ];
+    if other.into_iter().any(has) || toks.iter().any(|t| matches!(t, Tok::Signed(_))) {
+        return None;
+    }
+    let open = has(Class::Open) || has(Class::Raise);
+    let close = has(Class::Close) || has(Class::Lower);
+    if open == close {
+        return None;
+    }
+    // "à N %": the number after "à" with the percent sign right after it.
+    let mut position = None;
+    for (i, t) in toks.iter().enumerate() {
+        if let (Tok::Number(n), Some(Role::AfterA)) = (t, roles[i]) {
+            if !matches!(toks.get(i + 1), Some(Tok::Known(Class::Percent, _))) {
+                return None;
+            }
+            position = Some(*n);
+        }
+    }
+    if has(Class::Percent) && position.is_none() {
+        return None;
+    }
+    let position = match position {
+        Some(_) if close => return Some(Intent::CoverPositionHint),
+        Some(n) if !(0.0..=100.0).contains(&n) => return Some(Intent::CoverPositionRange),
+        Some(n) => Some(n.round() as u8),
+        None => None,
+    };
+    let (names, room) = split_names(toks, roles);
+    Some(Intent::Covers {
+        open,
+        position,
+        all: has(Class::All),
+        names,
+        room,
+    })
+}
+
 /// Lights: named-light words are names; other free words (and name numbers) before the first
 /// linker are names too ("la led du salon"), the ones after it name the room. Without a linker
 /// every free word names the room. A count ("les 3 lumières") is dropped.
 fn lights(toks: &[Tok], roles: &[Option<Role>], on: bool, all: bool) -> Intent {
+    let (names, room) = split_names(toks, roles);
+    Intent::Lights {
+        on,
+        all,
+        names,
+        room,
+    }
+}
+
+/// Named-light words and the free words (and name numbers) before the first linker are names;
+/// the ones after it name the room. Without a linker every free word names the room.
+fn split_names(toks: &[Tok], roles: &[Option<Role>]) -> (Vec<String>, Vec<String>) {
     let linker = toks
         .iter()
         .position(|t| matches!(t, Tok::Known(Class::Linker, _)));
@@ -275,12 +365,7 @@ fn lights(toks: &[Tok], roles: &[Option<Role>], on: bool, all: bool) -> Intent {
             _ => room.push(word),
         }
     }
-    Intent::Lights {
-        on,
-        all,
-        names,
-        room,
-    }
+    (names, room)
 }
 
 #[cfg(test)]
@@ -465,8 +550,112 @@ mod tests {
 
     #[test]
     fn other_devices_are_none() {
-        assert_eq!(p("ferme les volets du salon"), None);
+        assert_eq!(p("ferme les rideaux du salon"), None);
         assert_eq!(p("éteins la prise du bureau"), None);
+    }
+
+    fn covers(
+        open: bool,
+        position: Option<u8>,
+        all: bool,
+        names: &[&str],
+        room: &[&str],
+    ) -> Option<Intent> {
+        Some(Intent::Covers {
+            open,
+            position,
+            all,
+            names: v(names),
+            room: v(room),
+        })
+    }
+
+    #[test]
+    fn shutter_open_close() {
+        assert_eq!(
+            p("ouvre les volets du salon"),
+            covers(true, None, false, &[], &["salon"])
+        );
+        assert_eq!(
+            p("ferme les volets du salon"),
+            covers(false, None, false, &[], &["salon"])
+        );
+        assert_eq!(
+            p("baisse les stores du bureau"),
+            covers(false, None, false, &[], &["bureau"])
+        );
+        assert_eq!(
+            p("remonte les volets roulants du salon"),
+            covers(true, None, false, &[], &["salon"])
+        );
+        assert_eq!(
+            p("peux-tu fermer les volets du salon"),
+            covers(false, None, false, &[], &["salon"])
+        );
+    }
+
+    #[test]
+    fn shutter_position() {
+        assert_eq!(
+            p("ouvre les volets du salon à 30 %"),
+            covers(true, Some(30), false, &[], &["salon"])
+        );
+        assert_eq!(
+            p("ouvre les volets à 30 pour cent"),
+            covers(true, Some(30), false, &[], &[])
+        );
+        assert_eq!(
+            p("ferme les volets à 30 %"),
+            Some(Intent::CoverPositionHint)
+        );
+        assert_eq!(
+            p("ouvre les volets à 130 %"),
+            Some(Intent::CoverPositionRange)
+        );
+        assert_eq!(p("ouvre les volets à 30"), None);
+        assert_eq!(p("ouvre les volets 30 %"), None);
+    }
+
+    #[test]
+    fn shutter_all_and_names() {
+        assert_eq!(
+            p("ferme tous les volets"),
+            covers(false, None, true, &[], &[])
+        );
+        assert_eq!(
+            p("ouvre tous les volets du salon"),
+            covers(true, None, true, &[], &["salon"])
+        );
+        assert_eq!(
+            p("ferme le volet baie du salon"),
+            covers(false, None, false, &["baie"], &["salon"])
+        );
+        assert_eq!(
+            p("ferme les 2 volets du salon"),
+            covers(false, None, false, &[], &["salon"])
+        );
+    }
+
+    #[test]
+    fn shutter_never_guessed() {
+        assert_eq!(p("ne ferme pas les volets"), None);
+        assert_eq!(p("les volets sont fermés"), None);
+        assert_eq!(p("ferme les rideaux"), None);
+        assert_eq!(p("ouvre et ferme les volets"), None);
+        assert_eq!(p("les volets du salon"), None);
+    }
+
+    #[test]
+    fn raise_without_shutter_noun_stays_not_understood() {
+        assert_eq!(p("monte le salon"), None);
+        assert_eq!(p("baisse le salon"), None);
+    }
+
+    #[test]
+    fn close_verb_on_a_light_is_not_understood() {
+        assert_eq!(p("ferme la lumière du salon"), None);
+        assert_eq!(p("ouvre le chauffage"), None);
+        assert_eq!(p("ferme le salon"), None);
     }
 
     #[test]

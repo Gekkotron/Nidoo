@@ -25,7 +25,13 @@ pub enum Class {
     Fait,
     /// "un peu", "légèrement".
     Little,
-    /// A device this version does not handle (shutters, plugs, sirens...).
+    /// A word for shutters ("volet", "store"; "roulant" of "volet roulant").
+    Cover,
+    /// "ouvre": opens a shutter.
+    Open,
+    /// "ferme": closes a shutter.
+    Close,
+    /// A device this version does not handle (curtains, plugs, sirens...).
     OtherDevice,
     /// "ne ... pas": never act on a negated order.
     Negation,
@@ -155,6 +161,18 @@ const TABLE: &[(Class, &[&str])] = &[
             "consigne",
         ],
     ),
+    (
+        Class::Cover,
+        &["volet", "volets", "store", "stores", "roulant", "roulants"],
+    ),
+    (
+        Class::Open,
+        &["ouvre", "ouvrir", "ouvres", "ouvrez", "rouvre", "rouvrir"],
+    ),
+    (
+        Class::Close,
+        &["ferme", "fermer", "fermes", "fermez", "referme", "refermer"],
+    ),
     (Class::Temperature, &["temperature", "temperatures"]),
     (Class::Degree, &["degre", "degres", "°"]),
     (Class::Percent, &["%", "pourcent", "pourcents"]),
@@ -169,10 +187,6 @@ const TABLE: &[(Class, &[&str])] = &[
     (
         Class::OtherDevice,
         &[
-            "volet",
-            "volets",
-            "store",
-            "stores",
             "rideau",
             "rideaux",
             "prise",

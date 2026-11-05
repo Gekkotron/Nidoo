@@ -154,6 +154,10 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
         Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
+        // Planned in the next step; not understood until then.
+        Intent::Covers { .. } | Intent::CoverPositionHint | Intent::CoverPositionRange => {
+            not_understood(house)
+        }
     }
 }
 
