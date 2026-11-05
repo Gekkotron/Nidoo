@@ -49,6 +49,8 @@ pub struct UiState {
     pub icon: IconState,
     pub status: String,
     pub listening: bool,
+    /// "Train Hey Jarvis" is running (the menu offers Cancel).
+    pub training: bool,
 }
 
 /// What the I/O side does for the brain.
@@ -279,6 +281,7 @@ impl Brain {
             icon,
             status,
             listening: self.listening,
+            training: self.training.is_some(),
         }
     }
 
@@ -767,6 +770,7 @@ mod tests {
         assert_eq!(r.log().trainer_pushes, 1);
         assert_eq!(r.brain.ui(t).status, "Say Hey Jarvis — 1 of 15");
         assert_eq!(r.brain.ui(t).icon, IconState::Listening, "the mic is hot");
+        assert!(r.brain.ui(t).training);
 
         // No voice window opens meanwhile.
         r.brain.set_listening(true, t);
@@ -780,6 +784,7 @@ mod tests {
             "back to the normal rule: greeted and listening"
         );
         assert_eq!(r.brain.ui(t).status, "Heard only 1 of 15 — try again");
+        assert!(!r.brain.ui(t).training);
         assert_eq!(r.log().detector_resets, 1);
         r.brain.on_mic(&[WAKE], t);
         assert_eq!(r.log().detector_pushes, 1, "the detector is fed again");

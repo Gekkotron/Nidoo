@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>nidoo-satellite-mac</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.gekkotron.nidoo-satellite</string>
+    <key>CFBundleName</key>
+    <string>Nidoo Satellite</string>
+    <key>CFBundleDisplayName</key>
+    <string>Nidoo Satellite</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Gekkotron</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Listens for “Hey Jarvis” and sends your request to your Nidoo hub.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Plays the house music and talks to your Nidoo hub on this network.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_sendspin._tcp</string>
+    </array>
+</dict>
+</plist>

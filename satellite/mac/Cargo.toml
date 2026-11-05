@@ -1,0 +1,32 @@
+# The macOS menu-bar shell around crates/nidoo-satellite: microphone, speaker,
+# wake word, tray icon and the .app bundle (build-app.sh). macOS only; not part of
+# the repository workspace and never built by CI.
+[package]
+name = "nidoo-satellite-mac"
+description = "Nidoo Satellite: a Mac in the menu bar as one of the house satellites"
+version = "0.1.0"
+edition = "2024"
+authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "nidoo-satellite-mac"
+path = "src/main.rs"
+
+[dependencies]
+nidoo-satellite = { path = "../../crates/nidoo-satellite" }
+anyhow = "1"
+arboard = { version = "3.7", default-features = false }
+cpal = "0.16"
+hound = "3.5"
+ort = "=2.0.0-rc.10"
+sha2 = "0.11"
+tao = "0.37"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tray-icon = "0.26"
+ureq = "3"
