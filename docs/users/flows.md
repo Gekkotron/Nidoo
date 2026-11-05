@@ -49,6 +49,7 @@ The parameters of each node are in [Flow nodes](../reference/flow-nodes.md).
   - `command` sends a command to an entity.
   - `notify` sends a phone push notification.
   - `speak` says a sentence out loud on the speaker satellites of one room, or of every room (see [Sound satellites](sound.md#speak-in-a-room)).
+  - `ask` asks a question out loud and branches on the answer (see [Ask a question](#ask-a-question)).
   - `flow.enable` enables or disables a flow, its own by default.
 - **Waits** pause the run:
   - `delay` waits for `for`, for example `90s`, `5m` or `1h30m`. With an optional `up_to` it waits a random time between the two.
@@ -224,6 +225,50 @@ A result can be used by other cards of the same run:
 A result lasts for one run. A card that reads a result must sit after the card that computes it, on the same path; otherwise the run stops with `no result desired in this run`.
 
 To remember a value between runs, save it to a [virtual number](groups-and-virtual-entities.md) and read that number back as an input on the next run, for example `{ "name": "prev", "entity": "virtual_heater_target" }`. The formula can then smooth the new value with the previous one.
+
+## Ask a question
+
+An `ask` card speaks a question on a satellite and waits for the answer. Say the heating should go up when someone comes home, but only if they want it. A flow that starts on the front-door trigger can ask in the living room, "Shall I turn the heating up?", with two answers, **Yes** and **No**. The card has one exit per answer, in order, plus a **no answer** exit:
+
+- Yes leads to a `command` card that raises the climate target.
+- No leads nowhere, or to a `notify` card.
+- No answer leads to whatever should happen when nobody replies, often nothing.
+
+Each answer has a label, which is spoken back and matched against what was heard, and optional **Also accepts** words, comma-separated, for other ways of saying it (`yes`, `sure`, `okay`). When two answers could match, the longest phrase wins, so "yes but no thanks" goes to the answer that holds "no thanks", not to Yes. A leading article such as "un" or "one" is not read as a number.
+
+An answer can also carry a number: "set it to 21". Give **Keep the number as** a name (lowercase letters, digits and `_`, starting with a letter, as for a [math](#compute-a-value) result) and later cards use it like a math result, for example a `command` with `"value_from": "temp"`. **If no number** is the value used when the answer holds none. It only appears when a name is set; clearing the name clears it too.
+
+```json
+{
+  "id": "heat_on_arrival", "name": "Heat on arrival", "enabled": true, "mode": "single",
+  "nodes": [
+    { "id": "home", "type": "trigger.state", "params": { "entity": "sensor_front_door" } },
+    { "id": "ask", "type": "ask", "params": {
+        "text": "Shall I turn the heating up?",
+        "room": "living_room",
+        "answers": [ { "label": "Yes", "words": ["sure", "okay"] }, { "label": "No" } ],
+        "name": "temp", "default": 21 } },
+    { "id": "set", "type": "command", "params": {
+        "entity": "climate_living_room",
+        "command": { "type": "set_temperature", "temperature": 21 },
+        "value_from": "temp" } }
+  ],
+  "edges": [
+    { "from": "home", "to": "ask" },
+    { "from": "ask", "port": "1", "to": "set" }
+  ]
+}
+```
+
+Exits are the ports `1` to `6` in the order of the answers, then `none`. Leave an exit unwired to do nothing on it.
+
+How it behaves:
+
+- Only satellites that both speak and listen are asked, and a satellite busy in an Assist exchange is skipped. With no **Room**, any such satellite of the house may be asked.
+- Silence leaves by `none` at once. An answer that was heard but matches nothing gets **one** retry on the satellite that heard it, then leaves by `none`.
+- The whole step takes 45 seconds at most.
+- With no speech input, or no satellite to ask on, the card leaves by `none` and the run log says why. It is not a failed step.
+- It needs [speech input](sound.md#talk-to-a-satellite) on a satellite with a microphone.
 
 ## Rooms
 
