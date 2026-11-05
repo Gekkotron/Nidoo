@@ -335,7 +335,7 @@ pub fn node_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Command(_) => NODE_PLAY,
         NodeKind::FlowEnable(_) => NODE_SWITCH,
         NodeKind::Notify(_) => CHANNEL_ALARM,
-        NodeKind::Speak(_) => SPEAKER,
+        NodeKind::Speak(_) | NodeKind::Ask(_) => SPEAKER,
         NodeKind::Math(_) => NODE_MATH,
     }
 }

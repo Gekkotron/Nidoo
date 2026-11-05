@@ -1450,6 +1450,7 @@ async fn run_node(
                 Err(rejected) => failed(rejected.reason),
             }
         }
+        NodeKind::Ask(_) => failed("ask is not implemented yet".to_owned()),
         NodeKind::Speak(params) => {
             let text = fill_text(hub, results, trigger, speech_lang(hub), &params.text);
             let target = match &params.room {

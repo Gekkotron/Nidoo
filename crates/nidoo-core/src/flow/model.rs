@@ -180,6 +180,9 @@ pub enum NodeKind {
     /// Says a sentence on the speaker satellites of one room, or of every room.
     #[serde(rename = "speak")]
     Speak(SpeakParams),
+    /// Says a question on the satellites and branches on the spoken answer.
+    #[serde(rename = "ask")]
+    Ask(AskParams),
     /// Branches on the first matching rule (or every matching rule) over an entity's value.
     #[serde(rename = "switch")]
     Switch(SwitchParams),
@@ -210,6 +213,7 @@ impl NodeKind {
             NodeKind::FlowEnable(_) => "flow.enable",
             NodeKind::Notify(_) => "notify",
             NodeKind::Speak(_) => "speak",
+            NodeKind::Ask(_) => "ask",
             NodeKind::Switch(_) => "switch",
             NodeKind::TimeBetween(_) => "time.between",
             NodeKind::Math(_) => "math",
@@ -231,7 +235,7 @@ impl NodeKind {
     }
 
     /// The named output ports: `true` and `false` for `if`; `1` to `n` (then `otherwise` when
-    /// set) for `switch`; `in` and `out` for `time.between`; none for the others (which have one
+    /// set) for `switch`; `in` and `out` for `time.between`; `1` to `n` then `none` for `ask`; none for the others (which have one
     /// unnamed output).
     pub fn ports(&self) -> Vec<String> {
         match self {
@@ -244,6 +248,11 @@ impl NodeKind {
                 ports
             }
             NodeKind::TimeBetween(_) => vec!["in".into(), "out".into()],
+            NodeKind::Ask(p) => {
+                let mut ports: Vec<String> = (1..=p.answers.len()).map(|i| i.to_string()).collect();
+                ports.push(ASK_NONE_PORT.into());
+                ports
+            }
             _ => Vec::new(),
         }
     }
@@ -609,6 +618,45 @@ pub struct SpeakParams {
     pub room: Option<String>,
 }
 
+/// The port an `ask` card leaves by when nobody answered or the answer matched nothing.
+pub const ASK_NONE_PORT: &str = "none";
+
+/// The most answers an `ask` card takes.
+pub const ASK_MAX_ANSWERS: usize = 6;
+
+/// One answer of an `ask` card.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct AskAnswer {
+    /// The answer's name, spoken back and matched against what was heard; not empty.
+    pub label: String,
+    /// Other words that also mean this answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<String>,
+}
+
+/// Params of `ask`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct AskParams {
+    /// The question to say; required, not empty. Takes `{entity_id}` placeholders.
+    pub text: String,
+    /// The room (an area id; a room name is resolved when the flow is saved). Absent means
+    /// every room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<String>,
+    /// One to six answers; the card leaves by port `1` to `n` in this order, or `none`.
+    pub answers: Vec<AskAnswer>,
+    /// Names a number said in the answer, for later cards (same form as a math name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The value of `name` when the answer holds no number; needs `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<f64>,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
+}
+
 /// Params of `delay`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -696,13 +744,14 @@ pub struct MathParams {
     pub extra: BTreeMap<String, Value>,
 }
 
-/// The names of the flow's math cards. Two cards may share a name (branches computing the same
-/// result).
+/// The names of math results, from math cards and ask cards. Two cards may share a name
+/// (branches computing the same result).
 pub fn math_names(flow: &Flow) -> BTreeSet<&str> {
     flow.nodes
         .iter()
         .filter_map(|node| match &node.kind {
             NodeKind::Math(p) => Some(p.name.as_str()),
+            NodeKind::Ask(p) => p.name.as_deref(),
             _ => None,
         })
         .collect()
@@ -781,6 +830,32 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn ask_node_round_trips_and_lists_ports() {
+        let json = r#"{"id":"q","type":"ask","params":{"text":"Je chauffe ?","room":"sejour","answers":[{"label":"Oui"},{"label":"Seulement en haut","words":["en haut"]},{"label":"Non"}],"name":"temp","default":21.0}}"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        assert_eq!(node.kind.type_name(), "ask");
+        assert_eq!(node.kind.ports(), vec!["1", "2", "3", "none"]);
+        assert_eq!(
+            serde_json::to_value(&node).unwrap(),
+            serde_json::from_str::<Value>(json).unwrap()
+        );
+    }
+
+    #[test]
+    fn math_names_include_ask_names() {
+        let flow: Flow = serde_json::from_value(json!({
+            "id": "f", "name": "f",
+            "nodes": [
+                {"id": "m", "type": "math", "params": {"inputs": [], "formula": "1", "name": "a"}},
+                {"id": "q", "type": "ask", "params": {"text": "T", "answers": [{"label": "Oui"}], "name": "temp"}},
+                {"id": "r", "type": "ask", "params": {"text": "T", "answers": [{"label": "Oui"}]}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(math_names(&flow), BTreeSet::from(["a", "temp"]));
+    }
 
     #[test]
     fn if_without_field_serialises_as_before() {
