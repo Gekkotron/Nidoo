@@ -62,26 +62,6 @@ pub enum FlowError {
     BadMath { node: String, reason: String },
 }
 
-/// Trims, lowercases and strips accents, so labels that sound alike compare equal.
-/// Task 2 replaces this with `answer::normalize`.
-fn fold(text: &str) -> String {
-    text.trim()
-        .chars()
-        .flat_map(char::to_lowercase)
-        .map(|c| match c {
-            'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' => 'a',
-            'ç' => 'c',
-            'è' | 'é' | 'ê' | 'ë' => 'e',
-            'ì' | 'í' | 'î' | 'ï' => 'i',
-            'ñ' => 'n',
-            'ò' | 'ó' | 'ô' | 'ö' | 'õ' => 'o',
-            'ù' | 'ú' | 'û' | 'ü' => 'u',
-            'ý' | 'ÿ' => 'y',
-            other => other,
-        })
-        .collect()
-}
-
 /// The push channels. Mirrors `nidoo_push::normalize::CHANNELS` (`nidoo-push` depends on this
 /// crate); a test in `nidoo` keeps the two equal.
 pub const NOTIFY_CHANNELS: [&str; 7] = [
@@ -254,7 +234,7 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                 }
                 let mut labels = std::collections::HashSet::new();
                 for answer in &p.answers {
-                    let label = fold(&answer.label);
+                    let label = super::answer::normalize(&answer.label);
                     if label.is_empty() {
                         return Err(bad("answer label must not be empty".to_owned()));
                     }
@@ -1040,7 +1020,7 @@ mod tests {
             "{err}"
         );
         bad_ask(r#"{"text":"T","answers":[]}"#, "1 to 6 answers");
-        let seven = vec![r#"{"label":"A"}"#; 7].join(",");
+        let seven = [r#"{"label":"A"}"#; 7].join(",");
         bad_ask(
             &format!(r#"{{"text":"T","answers":[{seven}]}}"#),
             "1 to 6 answers",
