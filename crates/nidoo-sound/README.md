@@ -9,6 +9,30 @@ User guide: `docs/users/sound.md`; satellites: `satellite/README.md`.
 nidoo-sound run [--config nidoo-sound.toml]
 ```
 
+## Supported features
+
+| Feature | Supported | Details |
+|---|---|---|
+| Synchronised playback | yes | One PCM input played on every approved satellite on one shared clock |
+| Music input | PCM only | Raw s16le, 48 kHz, stereo on TCP `input_port`; one sender at a time, a new one replaces it without a break; `idle_stop_ms` of silence stops playback |
+| Finding satellites | yes | mDNS `_sendspin._tcp`; the server connects and reconnects every 2 s |
+| Players that connect themselves | yes | `ws://<host>:<listen_port>/sendspin` (a browser player, for example); they reconnect on their own |
+| Approval | yes | A new satellite plays nothing until Allowed is switched on |
+| Volume and mute | yes | Per satellite, saved in `players.json`, sent only when the player lists the command |
+| Remove a satellite | yes | `nidoo-sound/<sid>/remove/set`: forgotten and its MQTT topics cleared; a board still on the network comes back as new |
+| Speech over the music | yes | `nidoo-sound/speak`: a WAV of at most 60 s fetched from the hub, music turned down by 15 dB; one at a time, 4 waiting, dropped after 45 s |
+| Hold the music | yes | `nidoo-sound/hold`: silence instead of music on some satellites for at most 60 s, speech still heard |
+| Played report | yes | `nidoo-sound/spoken` once a sentence's last sample plays, or at once when it is dropped |
+| Satellite address | yes | Diagnostic sensor, the IPv4 address while connected |
+| Hardware check | yes | `nidoo-sound tone` (hidden): a 440 Hz tone, volume, mute and unmute on every player found |
+| Several music sources, or music per room | no | One input, played in every room |
+| FLAC or other codecs | no | PCM only |
+| Pairing | no | Unpaired access only (Sentinel PSK) |
+| Advertising `_sendspin-server._tcp` | no | Players that only dial advertised servers do not find it |
+| Controller, metadata, artwork, visualizer roles; `group/update` | no | |
+
+The protocol details are in [Protocol and known deviations](#protocol-and-known-deviations).
+
 ## Configuration
 
 Defaults, then the hub's broker, then the TOML file (`nidoo-sound.toml` if
