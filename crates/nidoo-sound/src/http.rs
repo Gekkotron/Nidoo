@@ -3,9 +3,16 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use serde::Serialize;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, put};
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
-use crate::group::Published;
+use crate::group::{Control, Published};
 use crate::state::{PlayerPrefs, short_id};
 
 /// One approved satellite, as the API shows it.
@@ -68,6 +75,71 @@ impl Satellites {
             .get(id)
             .is_some_and(|(prefs, _)| prefs.allowed)
     }
+}
+
+/// Body of `PUT /players/{id}`: either field, or both.
+#[derive(Deserialize)]
+struct Change {
+    volume: Option<u8>,
+    muted: Option<bool>,
+}
+
+type ApiState = (Satellites, mpsc::Sender<Control>);
+
+fn error(status: StatusCode, text: impl Into<String>) -> Response {
+    (status, Json(serde_json::json!({ "error": text.into() }))).into_response()
+}
+
+/// `GET /players` and `PUT /players/{id}`. A PUT is turned into the same
+/// `Control` commands the MQTT link sends.
+pub fn router(satellites: Satellites, control: mpsc::Sender<Control>) -> Router {
+    Router::new()
+        .route("/players", get(list_players))
+        .route("/players/{id}", put(change_player))
+        .with_state((satellites, control))
+}
+
+async fn list_players(State((satellites, _)): State<ApiState>) -> Json<Vec<SatelliteView>> {
+    Json(satellites.list())
+}
+
+async fn change_player(
+    State((satellites, control)): State<ApiState>,
+    Path(id): Path<String>,
+    body: Result<Json<Change>, JsonRejection>,
+) -> Response {
+    if !satellites.is_approved(&id) {
+        return error(StatusCode::NOT_FOUND, format!("no approved speaker {id}"));
+    }
+    let change = match body {
+        Ok(Json(change)) => change,
+        Err(rejection) => return error(StatusCode::BAD_REQUEST, rejection.body_text()),
+    };
+    if change.volume.is_none() && change.muted.is_none() {
+        return error(StatusCode::BAD_REQUEST, "nothing to change");
+    }
+    if change.volume.is_some_and(|v| v > 100) {
+        return error(StatusCode::BAD_REQUEST, "volume must be 0-100");
+    }
+    let mut commands = Vec::with_capacity(2);
+    if let Some(volume) = change.volume {
+        commands.push(Control::SetVolume {
+            short_id: id.clone(),
+            volume,
+        });
+    }
+    if let Some(muted) = change.muted {
+        commands.push(Control::SetMute {
+            short_id: id,
+            muted,
+        });
+    }
+    for command in commands {
+        if control.send(command).await.is_err() {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "nidoo-sound is stopping");
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[cfg(test)]
@@ -138,5 +210,104 @@ mod tests {
         s.apply(&player(off, true));
         assert!(s.list().is_empty());
         assert!(!s.is_approved(&short_id("kitchen-id")));
+    }
+
+    async fn serve(router: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    /// Kitchen approved, Garage not; returns the base URL and the control receiver.
+    async fn fixture() -> (String, mpsc::Receiver<Control>) {
+        let s = Satellites::default();
+        s.apply(&player(prefs("kitchen-id", "Kitchen", true), true));
+        s.apply(&player(prefs("garage-id", "Garage", false), true));
+        let (tx, rx) = mpsc::channel(8);
+        (serve(router(s, tx)).await, rx)
+    }
+
+    #[tokio::test]
+    async fn get_players_lists_approved() {
+        let (base, _rx) = fixture().await;
+        let res = reqwest::get(format!("{base}/players")).await.unwrap();
+        assert_eq!(res.status(), 200);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["name"], "Kitchen");
+        assert_eq!(body[0]["id"], short_id("kitchen-id"));
+        assert_eq!(body[0]["volume"], 45);
+        assert_eq!(body[0]["muted"], false);
+        assert_eq!(body[0]["connected"], true);
+    }
+
+    async fn put(base: &str, id: &str, body: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .put(format!("{base}/players/{id}"))
+            .header("content-type", "application/json")
+            .body(body.to_owned())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn put_volume_sends_control() {
+        let (base, mut rx) = fixture().await;
+        let id = short_id("kitchen-id");
+        assert_eq!(put(&base, &id, r#"{"volume":100}"#).await.status(), 204);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetVolume {
+                short_id: id,
+                volume: 100
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn put_both_sends_two_controls() {
+        let (base, mut rx) = fixture().await;
+        let id = short_id("kitchen-id");
+        let res = put(&base, &id, r#"{"volume":20,"muted":true}"#).await;
+        assert_eq!(res.status(), 204);
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetVolume {
+                short_id: id.clone(),
+                volume: 20
+            })
+        );
+        assert_eq!(
+            rx.try_recv(),
+            Ok(Control::SetMute {
+                short_id: id,
+                muted: true
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn put_rejects_bad_bodies() {
+        let (base, mut rx) = fixture().await;
+        let id = short_id("kitchen-id");
+        for body in [r#"{"volume":101}"#, "{}", r#"{"volume":"loud"}"#] {
+            let res = put(&base, &id, body).await;
+            assert_eq!(res.status(), 400, "{body}");
+            let json: serde_json::Value = res.json().await.unwrap();
+            assert!(json["error"].is_string(), "{body}");
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn put_unknown_or_unapproved_is_404() {
+        let (base, mut rx) = fixture().await;
+        let res = put(&base, "ffffffffffff", r#"{"volume":10}"#).await;
+        assert_eq!(res.status(), 404);
+        let garage = short_id("garage-id");
+        assert_eq!(put(&base, &garage, r#"{"volume":10}"#).await.status(), 404);
+        assert!(rx.try_recv().is_err());
     }
 }
