@@ -6,8 +6,10 @@
 //!   sensor folds into the cover of its device when both read the same `state_topic` and the
 //!   sensor's `value_template` reads exactly one JSON field that the cover's template also reads.
 //!   A binary sensor with `device_class: moving` on a device with exactly one cover folds too.
-//! - A speaker satellite (device id starting with [`SOUND_DEVICE_PREFIX`]) with exactly one
-//!   number, its volume, folds its switches (Mute, Allowed) and binary sensors (Connected) into it.
+//! - A speaker satellite (device id starting with [`SOUND_DEVICE_PREFIX`]) is anchored on its
+//!   Music volume, the number whose unique id ends in `_volume` (or its only number when none
+//!   does). Its other numbers (Speech volume), switches (Mute, Allowed), binary sensors
+//!   (Connected) and sensors fold into it.
 //! - Hub groups never fold: they all share the hub's one `nidoo_group` device, so a single light
 //!   group would otherwise swallow every number or select group.
 //!
@@ -36,11 +38,11 @@ pub(super) fn compute(entities: &BTreeMap<String, Entity>) -> BTreeMap<String, S
             part_of.insert(entity.unique_id.clone(), (*light).to_owned());
         }
     }
-    let number_of = single_per_device(entities, Kind::Number);
+    let volume_of = sound_volumes(entities);
     for entity in entities.values() {
         if !matches!(
             entity.kind,
-            Kind::Switch | Kind::BinarySensor | Kind::Sensor
+            Kind::Number | Kind::Switch | Kind::BinarySensor | Kind::Sensor
         ) {
             continue;
         }
@@ -50,7 +52,9 @@ pub(super) fn compute(entities: &BTreeMap<String, Entity>) -> BTreeMap<String, S
         if !device_id.starts_with(SOUND_DEVICE_PREFIX) {
             continue;
         }
-        if let Some(volume) = number_of.get(device_id) {
+        if let Some(volume) = volume_of.get(device_id)
+            && *volume != entity.unique_id
+        {
             part_of.insert(entity.unique_id.clone(), (*volume).to_owned());
         }
     }
@@ -84,6 +88,22 @@ pub(super) fn compute(entities: &BTreeMap<String, Entity>) -> BTreeMap<String, S
 /// folds into an owner, so skipping them here also keeps group owners out.
 fn folds(entity: &Entity) -> bool {
     entity.device_id.as_deref() != Some(GROUPS_DEVICE)
+}
+
+/// `device_id → unique_id` of each satellite's anchor number: the one whose unique id ends in
+/// `_volume`, else the device's only number.
+fn sound_volumes(entities: &BTreeMap<String, Entity>) -> BTreeMap<&str, &str> {
+    let mut volumes = single_per_device(entities, Kind::Number);
+    volumes.retain(|device, _| device.starts_with(SOUND_DEVICE_PREFIX));
+    for entity in entities.values().filter(|e| e.kind == Kind::Number) {
+        if let Some(device_id) = entity.device_id.as_deref()
+            && device_id.starts_with(SOUND_DEVICE_PREFIX)
+            && entity.unique_id.ends_with("_volume")
+        {
+            volumes.insert(device_id, &entity.unique_id);
+        }
+    }
+    volumes
 }
 
 /// `device_id → unique_id` for the devices holding exactly one entity of `kind`.

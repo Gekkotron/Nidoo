@@ -32,15 +32,24 @@ pub struct Satellite {
     pub area: String,
     pub allowed: Option<EntityView>,
     pub mute: Option<EntityView>,
+    /// Music volume: the satellite's identity (its `_volume` entity).
     pub volume: Option<EntityView>,
+    /// Speech volume, the second slider.
+    pub speech: Option<EntityView>,
     pub connected: Option<EntityView>,
 }
 
 impl Satellite {
     fn entities(&self) -> impl Iterator<Item = &EntityView> {
-        [&self.allowed, &self.mute, &self.volume, &self.connected]
-            .into_iter()
-            .flatten()
+        [
+            &self.allowed,
+            &self.mute,
+            &self.volume,
+            &self.speech,
+            &self.connected,
+        ]
+        .into_iter()
+        .flatten()
     }
 
     /// True while the sound service is publishing: every entity of the satellite is online.
@@ -117,12 +126,14 @@ fn gather<'a>(entities: impl Iterator<Item = &'a EntityView>) -> Vec<Satellite> 
                 allowed: None,
                 mute: None,
                 volume: None,
+                speech: None,
                 connected: None,
             });
         let slot = [
             ("_allowed", &mut sat.allowed),
             ("_mute", &mut sat.mute),
             ("_volume", &mut sat.volume),
+            ("_speech", &mut sat.speech),
             ("_connected", &mut sat.connected),
         ]
         .into_iter()
@@ -461,7 +472,8 @@ fn SatelliteRow(
     let allowed = toggle(&satellite.allowed, SoundText::Allowed);
     let mute = toggle(&satellite.mute, SoundText::Mute);
 
-    let volume = satellite.volume.clone().map(|entity| {
+    let slider = |entity: &Option<EntityView>, label: SoundText| {
+        let entity = entity.clone()?;
         let caps = &entity.capabilities;
         let (min, max, step) = (
             caps.min.unwrap_or(0.0),
@@ -485,9 +497,9 @@ fn SatelliteRow(
                 );
             }
         };
-        view! {
+        Some(view! {
             <label class="override__flag sound-volume">
-                <span class="override__label">{move || t(SoundText::Volume)}</span>
+                <span class="override__label">{move || t(label)}</span>
                 <input
                     class="slider"
                     type="range"
@@ -498,8 +510,10 @@ fn SatelliteRow(
                     on:change=on_change
                 />
             </label>
-        }
-    });
+        })
+    };
+    let music = slider(&satellite.volume, SoundText::Music);
+    let speech = slider(&satellite.speech, SoundText::Speech);
 
     view! {
         <li class="alarm-row sound-row">
@@ -520,7 +534,7 @@ fn SatelliteRow(
                 {remove_button}
             </div>
             {asking}
-            <div class="alarm-row__body">{allowed} {mute} {volume} {room_picker}</div>
+            <div class="alarm-row__body">{allowed} {mute} {music} {speech} {room_picker}</div>
             {move || failed().map(|e| view! { <p class="satellite__error" role="alert">{e}</p> })}
         </li>
     }
@@ -717,6 +731,7 @@ mod tests {
         let d = Some((device, name));
         vec![
             entity(&format!("{device}_volume"), d, StateValue::Number(30.0)),
+            entity(&format!("{device}_speech"), d, StateValue::Number(40.0)),
             entity(&format!("{device}_mute"), d, StateValue::OnOff(false)),
             entity(&format!("{device}_allowed"), d, StateValue::OnOff(allowed)),
             entity(&format!("{device}_connected"), d, StateValue::OnOff(true)),
@@ -739,6 +754,15 @@ mod tests {
         let office = &found[1];
         assert!(office.allowed.is_some() && office.mute.is_some());
         assert!(office.volume.is_some() && office.connected.is_some());
+        assert!(office.speech.is_some());
+        assert_eq!(
+            office.volume.as_ref().map(|e| e.id.as_str()),
+            Some("nidoo_sound_aaa_volume")
+        );
+        assert_eq!(
+            office.speech.as_ref().map(|e| e.id.as_str()),
+            Some("nidoo_sound_aaa_speech")
+        );
         assert!(!office.is_allowed());
         assert!(found[0].is_allowed() && found[0].is_connected());
     }
@@ -876,6 +900,7 @@ mod tests {
                 "nidoo_sound_aaa_allowed",
                 "nidoo_sound_aaa_connected",
                 "nidoo_sound_aaa_mute",
+                "nidoo_sound_aaa_speech",
                 "nidoo_sound_aaa_volume",
             ]
         );

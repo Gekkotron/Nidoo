@@ -443,6 +443,53 @@ fn sound_satellite_controls_fold_into_volume() {
 }
 
 #[test]
+fn satellite_with_speech_still_folds() {
+    // A satellite now has two numbers, Music (`_volume`, the anchor) and Speech: both the
+    // switches and the second number fold into the `_volume` card.
+    let mut registry = Registry::new(config());
+    for (component, object, extra) in [
+        ("number", "speech", Some("speech")),
+        ("number", "volume", Some("volume")),
+        ("switch", "mute", Some("mute")),
+        ("switch", "allowed", Some("allowed")),
+        ("binary_sensor", "connected", None),
+    ] {
+        let mut v = json!({
+            "name": object,
+            "unique_id": format!("nidoo_sound_x_{object}"),
+            "state_topic": format!("test/nidoo_sound_x/{object}"),
+            "device": { "identifiers": ["nidoo_sound_x"], "name": "nidoo_sound_x" },
+        });
+        if let (Some(v), Some(object)) = (v.as_object_mut(), extra) {
+            v.insert(
+                "command_topic".into(),
+                json!(format!("test/nidoo_sound_x/{object}/set")),
+            );
+        }
+        feed(
+            &mut registry,
+            &format!("nidoo/{component}/nidoo_sound_x/{object}/config"),
+            v.to_string().into_bytes(),
+        );
+    }
+    for id in [
+        "nidoo_sound_x_speech",
+        "nidoo_sound_x_mute",
+        "nidoo_sound_x_allowed",
+        "nidoo_sound_x_connected",
+    ] {
+        let folded = registry.entity(id).expect("satellite entity");
+        assert_eq!(
+            folded.part_of.as_deref(),
+            Some("nidoo_sound_x_volume"),
+            "{id}"
+        );
+    }
+    let volume = registry.entity("nidoo_sound_x_volume").expect("volume");
+    assert_eq!(volume.part_of, None);
+}
+
+#[test]
 fn groups_never_fold_into_each_other() {
     // Every group is on the hub's one `nidoo_group` device: with a single light group, a number
     // group must stay a card of its own.
