@@ -9,3 +9,7 @@ pub mod sendspin;
 pub mod store;
 pub mod voice;
 pub mod wake_head;
+
+pub use brain::{IconState, Trainer, UiState, WakeDetector};
+pub use playout::SharedPlayout;
+pub use run::{Config, Control, Handles, MicSwitch, start};

@@ -61,8 +61,10 @@ pub struct Settings {
     pub voice_key: Option<Key>,
     /// The microphone switch.
     pub listening: bool,
-    /// Overrides the wake-word threshold when set.
+    /// Overrides the stock wake-word threshold (0.5) when set.
     pub wake_threshold: Option<f32>,
+    /// Overrides the personal head's threshold (0.9) when set.
+    pub personal_threshold: Option<f32>,
 }
 
 impl Default for Settings {
@@ -71,6 +73,7 @@ impl Default for Settings {
             voice_key: None,
             listening: true,
             wake_threshold: None,
+            personal_threshold: None,
         }
     }
 }
@@ -84,6 +87,8 @@ struct SettingsFile {
     listening: bool,
     #[serde(default)]
     wake_threshold: Option<f32>,
+    #[serde(default)]
+    personal_threshold: Option<f32>,
 }
 
 fn yes() -> bool {
@@ -206,6 +211,7 @@ fn read_settings(path: &Path) -> anyhow::Result<Settings> {
         voice_key: file.voice_key.as_deref().and_then(Key::from_hex),
         listening: file.listening,
         wake_threshold: file.wake_threshold,
+        personal_threshold: file.personal_threshold,
     })
 }
 
@@ -215,6 +221,7 @@ fn write_settings(path: &Path, settings: &Settings) -> anyhow::Result<()> {
         voice_key: settings.voice_key.as_ref().map(Key::to_hex),
         listening: settings.listening,
         wake_threshold: settings.wake_threshold,
+        personal_threshold: settings.personal_threshold,
     };
     let body = serde_json::to_vec_pretty(&file)?;
     write_private_atomic(path, &body).with_context(|| format!("writing {}", path.display()))
@@ -334,5 +341,22 @@ mod tests {
         store.set_voice_key(HEX).unwrap();
         let shown = format!("{store:?}");
         assert!(!shown.contains(HEX), "{shown}");
+    }
+
+    #[test]
+    fn thresholds_are_read_from_the_file_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(SETTINGS),
+            r#"{"wake_threshold": 0.6, "personal_threshold": 0.95}"#,
+        )
+        .unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        assert_eq!(store.settings().wake_threshold, Some(0.6));
+        assert_eq!(store.settings().personal_threshold, Some(0.95));
+        assert!(store.settings().listening, "absent means on");
+        store.set_listening(false).unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        assert_eq!(store.settings().personal_threshold, Some(0.95));
     }
 }
