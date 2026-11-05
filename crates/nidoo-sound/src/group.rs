@@ -18,7 +18,8 @@ use crate::clock::Clock;
 use crate::discover::{Discovered, DiscoveryEvent};
 use crate::hold::{HoldRequest, Holds};
 use crate::input::InputEvent;
-use crate::mixer::{FADE_FRAMES, SpeechMixer, fade_in};
+use crate::level::{Levels, split};
+use crate::mixer::{FADE_FRAMES, SpeechMixer, fade_in, scale};
 use crate::pacer::{CHUNK_BYTES, CHUNK_US, Pacer};
 use crate::player::{PlayerCmd, PlayerEvent, run_player};
 use crate::proto::messages::PCM_48K_STEREO_16;
@@ -185,6 +186,10 @@ struct Link {
     /// Values we commanded and have not seen echoed yet: earlier reports
     /// are stale and must not overwrite the saved prefs.
     expect_volume: Option<u8>,
+    /// The device volume last sent to the player (kept after its echo).
+    sent_volume: Option<u8>,
+    /// Device volume and sample gains from its saved Music and Speech settings.
+    levels: Levels,
     expect_mute: Option<bool>,
     /// Its music was held for the last chunk sent.
     held: bool,
@@ -209,6 +214,12 @@ impl Link {
             min_buffer_us: 0,
             output_delay_us: 0,
             expect_volume: None,
+            sent_volume: None,
+            levels: Levels {
+                device: 0,
+                music_gain: 1.0,
+                speech_gain: 1.0,
+            },
             expect_mute: None,
             held: false,
             fade_from: None,
@@ -219,6 +230,18 @@ impl Link {
     /// This player's short id, once it said hello.
     fn short_id(&self) -> Option<String> {
         self.client_id.as_deref().map(short_id)
+    }
+
+    /// Takes the levels of `prefs`; commands the device volume when it is not the one
+    /// last sent (`force`: whatever was sent, as on connect).
+    async fn set_levels(&mut self, prefs: &PlayerPrefs, force: bool) {
+        self.levels = split(prefs.volume, prefs.speech_volume);
+        let device = self.levels.device;
+        if force || self.sent_volume != Some(device) {
+            self.send(PlayerCmd::Volume(device)).await;
+            self.sent_volume = Some(device);
+            self.expect_volume = Some(device);
+        }
     }
 
     fn next_ts(&self) -> Option<i64> {
@@ -524,8 +547,7 @@ impl Group {
                     playback: prefs.allowed,
                 })
                 .await;
-                link.send(PlayerCmd::Volume(prefs.volume)).await;
-                link.expect_volume = Some(prefs.volume);
+                link.set_levels(&prefs, true).await;
                 link.send(PlayerCmd::Mute(prefs.muted)).await;
                 link.expect_mute = Some(prefs.muted);
                 if playing && prefs.allowed {
@@ -552,23 +574,39 @@ impl Group {
                 link.min_buffer_us = i64::from(min_buffer_ms.unwrap_or(0)) * 1_000;
                 link.output_delay_us = i64::from(output_delay_ms.unwrap_or(0)) * 1_000;
                 let settable = |c: &str| supported_commands.iter().any(|s| s == c);
+                let device = split(saved.volume, saved.speech_volume).device;
                 let volume = fresh(&mut link.expect_volume, volume, settable("volume"))
-                    .filter(|&v| v != saved.volume);
+                    .filter(|&v| v != device);
                 let muted = fresh(&mut link.expect_mute, muted, settable("mute"))
                     .filter(|&m| m != saved.muted);
                 if volume.is_none() && muted.is_none() {
                     return;
                 }
+                // The device now has `v`: both settings move with it, keeping their gap.
                 let updated = self.store.update(&short_id(&client_id), |p| {
                     if let Some(v) = volume {
-                        p.volume = v;
+                        let delta = i16::from(v) - i16::from(device);
+                        let shift = |x: u8| (i16::from(x) + delta).clamp(0, 100) as u8;
+                        p.volume = shift(p.volume);
+                        p.speech_volume = shift(p.speech_volume);
                     }
                     if let Some(m) = muted {
                         p.muted = m;
                     }
                 });
-                if let Err(e) = updated {
-                    tracing::error!(error = %format!("{e:#}"), "saving player prefs");
+                match updated {
+                    Ok(Some(p)) => {
+                        if let Some(link) = self.link_for(&client_id) {
+                            link.levels = split(p.volume, p.speech_volume);
+                            if let Some(v) = volume {
+                                link.sent_volume = Some(v);
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::error!(error = %format!("{e:#}"), "saving player prefs");
+                    }
                 }
                 self.publish(publish, &client_id).await;
             }
@@ -624,12 +662,9 @@ impl Group {
         let playing = self.playing;
         if let Some(link) = self.link_for(&prefs.client_id) {
             match control {
-                Control::SetVolume { .. } => {
-                    link.send(PlayerCmd::Volume(prefs.volume)).await;
-                    link.expect_volume = Some(prefs.volume);
+                Control::SetVolume { .. } | Control::SetSpeech { .. } => {
+                    link.set_levels(&prefs, false).await;
                 }
-                // Saved and published only; the player side comes with the levels.
-                Control::SetSpeech { .. } => {}
                 Control::SetMute { .. } => {
                     link.send(PlayerCmd::Mute(prefs.muted)).await;
                     link.expect_mute = Some(prefs.muted);
@@ -823,12 +858,23 @@ impl Group {
             let end = self.mixer.end_us().unwrap_or(i64::MIN);
             let mut ts = self.speech_clock.unwrap_or(now + lead);
             while ts - lead <= now && ts < end {
-                let data = self
-                    .mixer
-                    .mix_chunk(ts, None)
-                    .unwrap_or_else(|| bytes::Bytes::from(vec![0; CHUNK_BYTES]));
+                // One mix per distinct pair of gains.
+                let mut mixed: Vec<((u32, u32), bytes::Bytes)> = Vec::new();
                 for link in self.links().filter(|l| l.streaming && is_target(l)) {
-                    link.audio(ts, data.clone());
+                    let gains = (link.levels.music_gain, link.levels.speech_gain);
+                    let key = (gains.0.to_bits(), gains.1.to_bits());
+                    let data = match mixed.iter().find(|(k, _)| *k == key) {
+                        Some((_, d)) => d.clone(),
+                        None => {
+                            let d = self
+                                .mixer
+                                .mix_chunk(ts, None, gains)
+                                .unwrap_or_else(|| bytes::Bytes::from(vec![0; CHUNK_BYTES]));
+                            mixed.push((key, d.clone()));
+                            d
+                        }
+                    };
+                    link.audio(ts, data);
                 }
                 ts += CHUNK_US;
             }
@@ -918,10 +964,17 @@ fn music_for(
             None => music.clone(),
         }
     };
-    if target {
-        mixer.mix_chunk(ts, Some(&base)).unwrap_or(base)
+    let gains = (link.levels.music_gain, link.levels.speech_gain);
+    let mixed = if target {
+        mixer.mix_chunk(ts, Some(&base), gains)
     } else {
-        base
+        None
+    };
+    match mixed {
+        Some(chunk) => chunk,
+        // Not mixed (or no sentence here): the music alone, at its own level.
+        None if gains.0 == 1.0 || held => base,
+        None => scale(&base, gains.0),
     }
 }
 
@@ -1061,6 +1114,25 @@ mod tests {
         }
 
         async fn start_buffered(prefs: &[(&str, u8, bool, bool)], buffer_us: i64) -> Harness {
+            Self::start_full(prefs, &[], buffer_us).await
+        }
+
+        /// Players saved with their own Speech volume: `(id, music, speech)`.
+        async fn start_levels(levels: &[(&str, u8, u8)]) -> Harness {
+            let prefs: Vec<_> = levels
+                .iter()
+                .map(|&(id, m, _)| (id, m, false, true))
+                .collect();
+            let speech: Vec<_> = levels.iter().map(|&(id, _, sp)| (id, sp)).collect();
+            Self::start_full(&prefs, &speech, 0).await
+        }
+
+        /// `speech` overrides a player's Speech volume (default: its volume).
+        async fn start_full(
+            prefs: &[(&str, u8, bool, bool)],
+            speech: &[(&str, u8)],
+            buffer_us: i64,
+        ) -> Harness {
             let dir = tempfile::tempdir().unwrap();
             let mut store = StateStore::load(dir.path().join("players.json")).unwrap();
             for &(id, volume, muted, allowed) in prefs {
@@ -1068,6 +1140,10 @@ mod tests {
                 store
                     .update(&short_id(id), |p| {
                         p.volume = volume;
+                        p.speech_volume = speech
+                            .iter()
+                            .find(|(i, _)| *i == id)
+                            .map_or(volume, |&(_, v)| v);
                         p.muted = muted;
                         p.allowed = allowed;
                     })
@@ -2062,5 +2138,162 @@ mod tests {
             assert_eq!(address, None, "no address while not connected");
         };
         assert_eq!(address, Some("192.0.2.20".parse().unwrap()));
+    }
+
+    /// Connects `client_id` and consumes the connect commands; returns the Volume sent.
+    async fn connect_levels(h: &mut Harness, instance: &str, client_id: &str) -> (Fake, u8) {
+        let mut p = h.player(instance).await;
+        p.connected(client_id).await;
+        assert!(matches!(p.control_cmd().await, PlayerCmd::Activate { .. }));
+        let PlayerCmd::Volume(v) = p.control_cmd().await else {
+            panic!("expected Volume")
+        };
+        assert!(matches!(p.control_cmd().await, PlayerCmd::Mute(_)));
+        loop {
+            if h.published_for(&short_id(client_id)).await.1 {
+                break;
+            }
+        }
+        (p, v)
+    }
+
+    fn volumes_of(cmds: &[PlayerCmd]) -> Vec<u8> {
+        cmds.iter()
+            .filter_map(|c| match c {
+                PlayerCmd::Volume(v) => Some(*v),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn connect_sends_the_louder_setting() {
+        let mut h = Harness::start_levels(&[("A", 30, 80)]).await;
+        let (_p, v) = connect_levels(&mut h, "a", "A").await;
+        assert_eq!(v, 80);
+    }
+
+    #[tokio::test]
+    async fn quieter_change_sends_no_volume() {
+        let mut h = Harness::start_levels(&[("A", 30, 80)]).await;
+        let (mut p, _) = connect_levels(&mut h, "a", "A").await;
+        h.control
+            .send(Control::SetVolume {
+                short_id: short_id("A"),
+                volume: 20,
+            })
+            .await
+            .unwrap();
+        loop {
+            let (prefs, _) = h.published_for(&short_id("A")).await;
+            if prefs.volume == 20 {
+                assert_eq!(prefs.speech_volume, 80);
+                break;
+            }
+        }
+        assert_eq!(volumes_of(&p.drain().await), Vec::<u8>::new());
+    }
+
+    #[tokio::test]
+    async fn louder_change_sends_volume() {
+        let mut h = Harness::start_levels(&[("A", 30, 80)]).await;
+        let (mut p, _) = connect_levels(&mut h, "a", "A").await;
+        h.control
+            .send(Control::SetSpeech {
+                short_id: short_id("A"),
+                volume: 90,
+            })
+            .await
+            .unwrap();
+        assert_eq!(p.control_cmd().await, PlayerCmd::Volume(90));
+    }
+
+    #[tokio::test]
+    async fn echo_of_max_is_not_a_change() {
+        let mut h = Harness::start_levels(&[("A", 30, 80)]).await;
+        let (p, _) = connect_levels(&mut h, "a", "A").await;
+        p.state("A", 80, false).await;
+        let more = tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                if let Some(Published::Player { .. }) = h.published.recv().await {
+                    return;
+                }
+            }
+        })
+        .await;
+        assert!(more.is_err(), "nothing published");
+        let saved = StateStore::load(h._dir.path().join("players.json")).unwrap();
+        let prefs = saved.get("A").unwrap();
+        assert_eq!((prefs.volume, prefs.speech_volume), (30, 80));
+    }
+
+    #[tokio::test]
+    async fn device_change_keeps_the_gap() {
+        // (music, speech, reported device volume) -> (music, speech)
+        let cases = [
+            ((30, 80, 70), (20, 70)),
+            ((50, 50, 60), (60, 60)),
+            ((10, 40, 100), (70, 100)),
+            ((10, 40, 5), (0, 5)),
+        ];
+        for ((m, sp, report), (want_m, want_sp)) in cases {
+            let mut h = Harness::start_levels(&[("A", m, sp)]).await;
+            let (p, sent) = connect_levels(&mut h, "a", "A").await;
+            p.state("A", sent, false).await;
+            p.state("A", report, false).await;
+            loop {
+                let (prefs, _) = h.published_for(&short_id("A")).await;
+                if prefs.volume != m || prefs.speech_volume != sp {
+                    assert_eq!(
+                        (prefs.volume, prefs.speech_volume),
+                        (want_m, want_sp),
+                        "from {m}/{sp} reported {report}"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn music_is_scaled_for_a_speech_louder_player() {
+        let mut h = Harness::start_levels(&[("A", 30, 80)]).await;
+        let (mut a, _) = connect_levels(&mut h, "a", "A").await;
+        a.drain().await;
+        h.play().await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.clock.advance(1_000_000);
+        let got = audio_of(&a.drain().await);
+        let want = (257.0 * crate::level::split(30, 80).music_gain).round() as i16;
+        assert_ne!(want, 257);
+        assert!(!got.is_empty());
+        let mut scaled = 0;
+        for (_, d) in &got {
+            for b in d.as_chunks::<2>().0 {
+                let v = i16::from_le_bytes(*b);
+                assert!(v == 0 || v == want, "{v} vs {want}");
+                scaled += usize::from(v == want);
+            }
+        }
+        assert!(scaled > 0);
+    }
+
+    #[tokio::test]
+    async fn speech_only_targets_get_their_own_gain() {
+        let mut h = Harness::start_levels(&[("A", 50, 50), ("B", 90, 40), ("C", 50, 50)]).await;
+        let (mut a, _) = connect_levels(&mut h, "a", "A").await;
+        let (mut b, _) = connect_levels(&mut h, "b", "B").await;
+        let (mut c, _) = connect_levels(&mut h, "c", "C").await;
+        h.say(speech_for(&["A", "B", "C"], 8_000, CHUNK_FRAMES))
+            .await;
+        h.clock.advance(1_000_000);
+        let got_a = audio_of(&a.drain().await);
+        let got_b = audio_of(&b.drain().await);
+        let got_c = audio_of(&c.drain().await);
+        assert!(got_a.iter().any(|(_, d)| has_sample(d, 8_000)));
+        let quiet = (8_000.0 * crate::level::split(90, 40).speech_gain).round() as i16;
+        assert!(got_b.iter().any(|(_, d)| has_sample(d, quiet)));
+        assert!(!got_b.iter().any(|(_, d)| has_sample(d, 8_000)));
+        assert_eq!(got_a, got_c, "equal pairs get identical bytes");
     }
 }

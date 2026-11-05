@@ -87,8 +87,15 @@ impl SpeechMixer {
     }
 
     /// The chunk at `timestamp_us` for the sentence's satellites, `None` when
-    /// it does not overlap the window. `music` absent is silence.
-    pub fn mix_chunk(&self, timestamp_us: i64, music: Option<&[u8]>) -> Option<Bytes> {
+    /// it does not overlap the window. `music` absent is silence. `gains` are
+    /// the satellite's `(music, speech)` levels, applied per sample.
+    pub fn mix_chunk(
+        &self,
+        timestamp_us: i64,
+        music: Option<&[u8]>,
+        gains: (f32, f32),
+    ) -> Option<Bytes> {
+        let (music_level, speech_level) = gains;
         let (speech, start) = self.current.as_ref()?;
         let window = window_frames(speech) as i64;
         // Frame of the window where this chunk begins (48 frames per ms).
@@ -115,7 +122,7 @@ impl SpeechMixer {
                 } else {
                     0.0
                 };
-                let v = (m * gain + sp)
+                let v = (m * music_level * gain + sp * speech_level)
                     .round()
                     .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
                 out.extend_from_slice(&v.to_le_bytes());
@@ -146,6 +153,16 @@ pub fn fade_in(chunk: &[u8], from_frame: usize) -> Bytes {
             let v = f32::from(i16::from_le_bytes([sample[0], sample[1]])) * gain;
             out.extend_from_slice(&(v.round() as i16).to_le_bytes());
         }
+    }
+    Bytes::from(out)
+}
+
+/// `chunk` with every sample multiplied by `gain`.
+pub fn scale(chunk: &[u8], gain: f32) -> Bytes {
+    let mut out = Vec::with_capacity(chunk.len());
+    for sample in chunk.as_chunks::<2>().0 {
+        let v = f32::from(i16::from_le_bytes(*sample)) * gain;
+        out.extend_from_slice(&(v.round() as i16).to_le_bytes());
     }
     Bytes::from(out)
 }
@@ -215,13 +232,18 @@ mod tests {
     #[test]
     fn before_the_window_music_is_untouched() {
         let music = constant(10_000, CHUNK_FRAMES);
-        assert_eq!(playing().mix_chunk(START - CHUNK_US, Some(&music)), None);
+        assert_eq!(
+            playing().mix_chunk(START - CHUNK_US, Some(&music), (1.0, 1.0)),
+            None
+        );
     }
 
     #[test]
     fn under_speech_music_is_ducked_and_speech_added() {
         let music = constant(10_000, CHUNK_FRAMES);
-        let chunk = playing().mix_chunk(SPEECH_AT, Some(&music)).unwrap();
+        let chunk = playing()
+            .mix_chunk(SPEECH_AT, Some(&music), (1.0, 1.0))
+            .unwrap();
         assert_eq!(chunk.len(), CHUNK_BYTES);
         assert!(
             samples(&chunk).iter().all(|&s| s == 9_778),
@@ -233,7 +255,9 @@ mod tests {
     #[test]
     fn fade_starts_at_full_music() {
         let music = constant(10_000, CHUNK_FRAMES);
-        let chunk = playing().mix_chunk(START, Some(&music)).unwrap();
+        let chunk = playing()
+            .mix_chunk(START, Some(&music), (1.0, 1.0))
+            .unwrap();
         assert_eq!(&samples(&chunk)[..2], [10_000, 10_000]);
         // ...and is going down by the end of that first chunk.
         assert!(samples(&chunk)[CHUNK_FRAMES * 2 - 1] < 10_000);
@@ -244,7 +268,7 @@ mod tests {
         let mut m = playing();
         let end = m.end_us().unwrap();
         assert_eq!(end, START + 320_000);
-        assert_eq!(m.mix_chunk(end, None), None);
+        assert_eq!(m.mix_chunk(end, None, (1.0, 1.0)), None);
         assert!(!m.finish_if_done(end - 1));
         assert!(m.finish_if_done(end));
         assert!(!m.is_playing());
@@ -253,7 +277,7 @@ mod tests {
 
     #[test]
     fn speech_alone_without_music() {
-        let chunk = playing().mix_chunk(SPEECH_AT, None).unwrap();
+        let chunk = playing().mix_chunk(SPEECH_AT, None, (1.0, 1.0)).unwrap();
         assert!(samples(&chunk).iter().all(|&s| s == 8_000));
     }
 
@@ -268,7 +292,7 @@ mod tests {
         m.start_next(START);
         let music = constant(32_000, CHUNK_FRAMES);
         // 32 000 × 0.17783 + 30 000 > i16::MAX.
-        let chunk = m.mix_chunk(SPEECH_AT, Some(&music)).unwrap();
+        let chunk = m.mix_chunk(SPEECH_AT, Some(&music), (1.0, 1.0)).unwrap();
         assert!(samples(&chunk).iter().all(|&s| s == i16::MAX));
     }
 
@@ -298,7 +322,7 @@ mod tests {
         let m = SpeechMixer::new();
         assert!(!m.is_playing());
         assert_eq!(m.end_us(), None);
-        assert_eq!(m.mix_chunk(START, None), None);
+        assert_eq!(m.mix_chunk(START, None, (1.0, 1.0)), None);
         assert_eq!(FRAME_BYTES, 4);
     }
 
@@ -332,5 +356,23 @@ mod tests {
         m.start_next(0);
         assert_eq!(m.speech_end_us(), Some(1_150_000));
         assert_eq!(m.current_id(), Some("s"));
+    }
+
+    #[test]
+    fn gains_scale_music_and_speech() {
+        let mut m = SpeechMixer::new();
+        m.push(Speech {
+            id: "s".into(),
+            players: vec!["a".into()],
+            pcm: Bytes::from(constant(1_000, CHUNK_FRAMES)),
+        });
+        m.start_next(START);
+        let music = constant(1_000, CHUNK_FRAMES);
+        let chunk = m.mix_chunk(SPEECH_AT, Some(&music), (0.5, 2.0)).unwrap();
+        let expected = (1_000.0 * 0.5 * DUCK_GAIN + 2_000.0f32).round() as i16;
+        assert!(samples(&chunk).iter().all(|&s| s == expected), "{expected}");
+        let unity = m.mix_chunk(SPEECH_AT, Some(&music), (1.0, 1.0)).unwrap();
+        let today = (1_000.0 * DUCK_GAIN + 1_000.0f32).round() as i16;
+        assert!(samples(&unity).iter().all(|&s| s == today));
     }
 }
