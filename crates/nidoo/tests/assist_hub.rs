@@ -766,3 +766,13 @@ async fn simulated_shutters_publish_nothing() {
     assert!(turn.reply.starts_with("Simulation :"), "{}", turn.reply);
     assert!(drain(&mut rx).is_empty());
 }
+
+#[tokio::test]
+async fn open_raises_a_half_open_shutter() {
+    let (hub, rx) = shutter_house().await;
+    set_shutter(&hub, 30);
+    let log = shutter_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "ouvre les volets du salon").await;
+    assert_eq!(turn.trace.actions[0].result, "ok", "{}", turn.reply);
+    assert_eq!(shutter_payloads(&log).len(), 1);
+}

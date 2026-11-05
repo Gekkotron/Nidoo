@@ -168,7 +168,9 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     let describes = has(Class::Statement) || has(Class::Fait) || question_word;
     let blocked = describes && !has(Class::Request);
     if cover {
-        return if blocked {
+        // "les volets du salon fermés ?": a question mark keeps a past participle a question.
+        let asked = has(Class::Question) && !has(Class::Request);
+        return if blocked || asked {
             None
         } else {
             covers(&toks, &roles(&toks), &has)
@@ -643,6 +645,24 @@ mod tests {
         assert_eq!(p("ferme les rideaux"), None);
         assert_eq!(p("ouvre et ferme les volets"), None);
         assert_eq!(p("les volets du salon"), None);
+    }
+
+    #[test]
+    fn a_shutter_question_is_not_an_order() {
+        // "fermés" folds to "fermes", a close verb: the question mark keeps it a question.
+        assert_eq!(p("les volets du salon fermés ?"), None);
+        assert_eq!(
+            p("peux-tu fermer les volets du salon ?"),
+            covers(false, None, false, &[], &["salon"])
+        );
+    }
+
+    #[test]
+    fn remonter_opens() {
+        assert_eq!(
+            p("peux-tu remonter les volets du salon"),
+            covers(true, None, false, &[], &["salon"])
+        );
     }
 
     #[test]

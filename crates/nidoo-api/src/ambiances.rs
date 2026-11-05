@@ -387,12 +387,20 @@ pub fn already_there(view: &EntityView, cmd: &Command) -> bool {
             StateValue::Light(l) => l.on && l.brightness.is_some_and(|cur| cur.abs_diff(*b) <= 5),
             _ => false,
         },
+        // A known position wins: a half-open shutter is "open" by its state word, yet an open
+        // order still has to raise it fully.
         Command::Close => match value {
-            StateValue::Cover(c) => c.position == Some(0) || c.state.as_deref() == Some("closed"),
+            StateValue::Cover(c) => match c.position {
+                Some(p) => p == 0,
+                None => c.state.as_deref() == Some("closed"),
+            },
             _ => false,
         },
         Command::Open => match value {
-            StateValue::Cover(c) => c.position == Some(100) || c.state.as_deref() == Some("open"),
+            StateValue::Cover(c) => match c.position {
+                Some(p) => p == 100,
+                None => c.state.as_deref() == Some("open"),
+            },
             _ => false,
         },
         Command::SetPosition { position } => {
@@ -849,6 +857,10 @@ mod tests {
         assert!(!already_there(&cover(None, Some(50)), &Command::Close));
         assert!(already_there(&cover(None, Some(100)), &Command::Open));
         assert!(already_there(&cover(Some("open"), None), &Command::Open));
+        // A known position wins over the open/closed word: half-open is neither.
+        assert!(!already_there(&cover(Some("open"), Some(30)), &Command::Open));
+        assert!(!already_there(&cover(Some("closed"), Some(30)), &Command::Close));
+        assert!(already_there(&cover(Some("open"), Some(100)), &Command::Open));
         assert!(already_there(
             &cover(None, Some(40)),
             &Command::SetPosition { position: 40 }

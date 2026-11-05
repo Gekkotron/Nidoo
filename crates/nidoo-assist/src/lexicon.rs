@@ -88,6 +88,8 @@ const TABLE: &[(Class, &[&str])] = &[
             "montes",
             "montez",
             "remonte",
+            "remonter",
+            "remontez",
             "augmente",
             "augmenter",
             "augmentes",

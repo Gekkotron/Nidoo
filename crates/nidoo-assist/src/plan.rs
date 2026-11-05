@@ -419,7 +419,14 @@ fn covers(
     } else {
         (names, room)
     };
-    let whole_house = all && room.is_empty() && names.is_empty() && req.area.is_none();
+    // "de la maison", "partout": the whole house, unless a room is called that.
+    let house_said = !room.is_empty()
+        && room
+            .iter()
+            .all(|w| matches!(fold(w).as_str(), "maison" | "partout"))
+        && matches!(resolve_room(house, room), RoomMatch::Unknown);
+    let whole_house =
+        ((all && room.is_empty()) || house_said) && names.is_empty() && req.area.is_none();
     let (area, members) = if whole_house {
         trace.room_how = Some("toute la maison".into());
         let members = cover_members(None, house);
@@ -1227,6 +1234,29 @@ mod tests {
         ));
         let open = covers_of(&p("ouvre tous les volets"));
         assert!(open.iter().all(|(_, c)| *c == Command::Open));
+    }
+
+    #[test]
+    fn the_house_said_is_the_whole_house() {
+        for sentence in [
+            "ferme tous les volets de la maison",
+            "ferme les volets de toute la maison",
+            "ferme les volets partout",
+        ] {
+            let plan = p(sentence);
+            assert_eq!(
+                ids(&covers_of(&plan)),
+                ["cover_baie", "cover_fenetre", "cover_lea"],
+                "{sentence}"
+            );
+            assert!(matches!(
+                plan,
+                Plan::Act {
+                    done: Done::Covers { area: None, .. },
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]
