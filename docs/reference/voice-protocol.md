@@ -1,7 +1,7 @@
 ---
 title: Voice protocol
 sidebar_position: 8
-description: The signed UDP messages between a speaker satellite and the hub: layout, replay rules and test vectors.
+description: "The signed UDP messages between a speaker satellite and the hub: layout, replay rules and test vectors."
 ---
 
 # Voice protocol (satellite ↔ hub)

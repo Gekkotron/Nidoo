@@ -120,6 +120,9 @@ the container (the satellites' settings stay in `data/sound/`).
    Setting the room on its own page works too: the satellite's name opens its
    **Volume** page, and the Volume's room is the satellite's room.
 
+A Mac can be a satellite too, with no hardware: see
+[A Mac as a satellite](mac-satellite.md).
+
 ## Remove a satellite
 
 Every satellite in **Settings → Assistant → Sound** has a trash button, connected or not.

@@ -12,6 +12,9 @@ git-ignored `secrets.yaml`.
 ESPHome is pinned to **2026.10.2**: its Sendspin component must speak the same
 protocol version as `nidoo-sound`, so the two are updated together.
 
+A Mac can join the house as a satellite too, with no board: the menu-bar app in
+[`mac/`](mac/) (see `docs/users/mac-satellite.md`).
+
 ## Parts
 
 - Seeed Studio **XIAO ESP32S3** (8 MB flash, 8 MB PSRAM). Not the XIAO
