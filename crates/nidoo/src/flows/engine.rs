@@ -17,13 +17,15 @@ use std::sync::Arc;
 use chrono::Timelike;
 
 use nidoo_api::{RunStatus, StepOutcome, StepView, TriggerInfo, WsEvent};
+use nidoo_core::flow::answer::{first_number, match_answer, not_understood};
 use nidoo_core::flow::math::{fit_to_entity, parse_formula};
 use nidoo_core::flow::sun::is_dark_with_offset;
 use nidoo_core::flow::template::{Lang, render};
 use nidoo_core::flow::{
-    Flow, FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar,
-    Schedule, command_with_number, compare, field_scalar, format_duration, headline_scalar,
-    in_time_range, parse_clock, parse_duration, pick_duration, switch_exits, window,
+    ASK_NONE_PORT, AskParams, Flow, FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op,
+    Reading, Scalar, Schedule, command_with_number, compare, field_scalar, format_duration,
+    headline_scalar, in_time_range, parse_clock, parse_duration, pick_duration, switch_exits,
+    window,
 };
 use nidoo_core::history::buckets::{Sample, readings_mean};
 use nidoo_core::model::{Command, StateValue};
@@ -34,6 +36,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use super::EngineRequest;
 use super::schedule::{Armed, Now, now_in, rearm, timer_clock};
 use super::sun::{ArmedSun, next_sun_fire};
+use crate::assist::stt::ask::AskOutcome;
 use crate::clock;
 use crate::home::OffPeakNow;
 use crate::hub::{Hub, StateTouched};
@@ -1174,7 +1177,7 @@ pub(super) async fn execute(
         .await;
         let branching = matches!(
             node.kind,
-            NodeKind::If(_) | NodeKind::Switch(_) | NodeKind::TimeBetween(_)
+            NodeKind::If(_) | NodeKind::Switch(_) | NodeKind::TimeBetween(_) | NodeKind::Ask(_)
         );
         let shown = (branching && outcome == StepOutcome::Ok).then(|| ports.clone());
         if !hub.record_step(&flow.id, &run_id, step(&node.id, outcome, detail, shown)) {
@@ -1450,7 +1453,7 @@ async fn run_node(
                 Err(rejected) => failed(rejected.reason),
             }
         }
-        NodeKind::Ask(_) => failed("ask is not implemented yet".to_owned()),
+        NodeKind::Ask(params) => run_ask(hub, results, trigger, params).await,
         NodeKind::Speak(params) => {
             let text = fill_text(hub, results, trigger, speech_lang(hub), &params.text);
             let target = match &params.room {
@@ -1606,6 +1609,62 @@ fn result_of(results: &BTreeMap<String, f64>, name: &str) -> Result<f64, String>
         .get(name)
         .copied()
         .ok_or_else(|| format!("no result {name} in this run"))
+}
+
+/// Runs an ask card: says the question, listens, and picks the output port of the answer
+/// heard. A heard answer that matches nothing gets one retry on the satellite that heard it.
+/// Every way of not getting an answer leaves by `none` with the step Ok.
+async fn run_ask(
+    hub: &Hub,
+    results: &mut BTreeMap<String, f64>,
+    trigger: Option<&TriggerInfo>,
+    params: &AskParams,
+) -> (StepOutcome, String, Vec<String>) {
+    let none = |detail: String| (StepOutcome::Ok, detail, vec![ASK_NONE_PORT.to_owned()]);
+    let lang = speech_lang(hub);
+    let text = fill_text(hub, results, trigger, lang, &params.text);
+    let target = match &params.room {
+        Some(room) => SpeakTarget::Room(room.clone()),
+        None => SpeakTarget::All,
+    };
+    let (sid, first) = match hub.ask_aloud(target, &text).await {
+        AskOutcome::Heard { sid, text } => (sid, text),
+        AskOutcome::Silence => return none(format!("asked \"{text}\" → no answer")),
+        AskOutcome::NoSatellite(reason) => return none(format!("ask: {reason}")),
+        AskOutcome::Off => return none("ask: speech input is off".to_owned()),
+    };
+    let mut heard = vec![first];
+    let mut found = match_answer(&params.answers, &heard[0]);
+    if found.is_none() {
+        let again = format!("{} {text}", not_understood(lang));
+        if let AskOutcome::Heard { text: second, .. } =
+            hub.ask_aloud(SpeakTarget::Satellite(sid), &again).await
+        {
+            found = match_answer(&params.answers, &second);
+            heard.push(second);
+        }
+    }
+    let said = heard
+        .iter()
+        .map(|h| format!("\"{h}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let Some(index) = found else {
+        return none(format!("asked \"{text}\" → heard {said} → none"));
+    };
+    let number = heard
+        .last()
+        .and_then(|h| first_number(h))
+        .or(params.default);
+    let mut detail = format!(
+        "asked \"{text}\" → heard {said} → {}",
+        params.answers[index].label
+    );
+    if let (Some(name), Some(n)) = (&params.name, number) {
+        results.insert(name.clone(), n);
+        detail.push_str(&format!(" ({})", number_text(n)));
+    }
+    (StepOutcome::Ok, detail, vec![(index + 1).to_string()])
 }
 
 /// A number as shown in a step detail: at most 2 decimals, trailing zeros trimmed.
