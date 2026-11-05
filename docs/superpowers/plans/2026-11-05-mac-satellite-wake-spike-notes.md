@@ -59,6 +59,40 @@ real voice at cutoff 0.85 (speech-in spike).
 - Synthetic English pronunciation: **passes** (5/5 near, far and music, 0
   false triggers in ordinary talk, RTF 0.022 < 0.2).
 - French-accented pronunciation: **inconclusive** from TTS.
-- **Live check with the owner's voice: pending.** Run
-  `oww-spike <model dir> 0.5 --live`, say "Hey Jarvis" 10× at the desk and 5×
-  from ~3 m, then talk normally for a minute.
+- **Live check, stock model (MacBook Pro built-in mic).** The owner says
+  "Hey Jarvis" with a French accent. Natural tries scored 0.47, 0.40, 0.31,
+  0.00 (first take) and 0.12–0.54 (9 tries, second take): 2/9 at 0.5.
+  Said the English way: 0.30–0.97, 3/7 at 0.5. Normal talk: 0.00.
+- sherpa-onnx KWS on the owner's natural tries: 0 detections, even at
+  threshold 0.05 with 8 spellings.
+- 48 → 16 kHz conversion ruled out: a 3-sample average and `afconvert`
+  give the same scores (0.995–0.999) on five English voices.
+- **Stock model: gate not met for a French-accented speaker.**
+
+## Personal head (`src/bin/personal.rs`)
+
+openWakeWord's own models are a small head on the frozen 16×96 embedding
+window. A personal head (logistic regression on the standardized 1536
+features, class-balanced, L2 1e-2, 400 full-batch steps) was trained on
+the owner's tries: positive windows 0.16–0.8 s after each try ends,
+negatives everywhere else at least 1.6 s from a try (TTS talk, the
+owner's talk, silence).
+
+- 5-fold cross-validation (18 tries: 12 natural, 6 English-style; 9.1 min
+  negatives): held-out tries 18/18 at 0.9 (scores 0.99–1.00). False
+  triggers 6 at 0.5, 2 at 0.7, 1 at 0.8, **0 at 0.9**. The worst negative
+  was the planted near-miss line at 0.82 and the owner's own talk at 0.79.
+- Unseen voices (French TTS "Djarvisse" and English voices over music):
+  21/36 at 0.9, so it partly carries to other speakers.
+- **Live, owner, head trained on all 18 tries, threshold 0.9: 9/9 tries
+  detected (0.99–1.00).** Training on the Mac CPU takes seconds.
+- Not yet measured live: tries from across the room, and false triggers
+  over a long stretch of the owner's own talk, TV or music (each live run
+  from the agent session stopped after about 20 s).
+
+## Gate
+
+**Passes with a personal head; fails with the stock model alone** for this
+French-accented speaker. A personal head needs enrolment in the app (the
+voice data is the owner's and is never committed); that is a spec change
+for the owner to approve.

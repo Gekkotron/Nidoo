@@ -33,3 +33,8 @@ ndarray = { version = "0.16", optional = true }
 hound = "3.5"
 cpal = "0.16"
 anyhow = "1"
+
+[[bin]]
+name = "oww-personal"
+path = "src/bin/personal.rs"
+required-features = ["oww"]
