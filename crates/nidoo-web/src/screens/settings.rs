@@ -19,6 +19,7 @@ use crate::i18n::setup::{SetupText, setup_text};
 use crate::i18n::{Key, Lang, text, use_lang};
 use crate::nav::BackLink;
 use crate::screens::alarm_settings::{AlarmSettingsPage, settings_status};
+use crate::screens::assist_status;
 use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
@@ -291,6 +292,8 @@ pub enum SettingsPage {
     Push,
     Alarm,
     NetworkPresence,
+    AssistantVoice,
+    AssistantListening,
     Sound,
     System,
     Appearance,
@@ -303,7 +306,7 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 16] = [
+    pub const ALL: [SettingsPage; 18] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
@@ -312,6 +315,8 @@ impl SettingsPage {
         SettingsPage::Push,
         SettingsPage::Alarm,
         SettingsPage::NetworkPresence,
+        SettingsPage::AssistantVoice,
+        SettingsPage::AssistantListening,
         SettingsPage::Sound,
         SettingsPage::System,
         SettingsPage::Appearance,
@@ -332,6 +337,8 @@ impl SettingsPage {
             SettingsPage::Push => "push-notifications",
             SettingsPage::Alarm => "alarm",
             SettingsPage::NetworkPresence => "network-presence",
+            SettingsPage::AssistantVoice => "assistant-voice",
+            SettingsPage::AssistantListening => "assistant-listening",
             SettingsPage::Sound => "sound",
             SettingsPage::System => "system",
             SettingsPage::Appearance => "appearance",
@@ -358,6 +365,8 @@ impl SettingsPage {
             SettingsPage::Push => Key::PushNotifications,
             SettingsPage::Alarm => Key::Alarm,
             SettingsPage::NetworkPresence => Key::NetworkPresence,
+            SettingsPage::AssistantVoice => Key::AssistantVoice,
+            SettingsPage::AssistantListening => Key::AssistantListening,
             SettingsPage::Sound => Key::Sound,
             SettingsPage::System => Key::System,
             SettingsPage::Appearance => Key::Appearance,
@@ -385,6 +394,8 @@ impl SettingsPage {
                 SettingsPage::Push => T::HintPush,
                 SettingsPage::Alarm => T::HintAlarm,
                 SettingsPage::NetworkPresence => T::HintNetworkPresence,
+                SettingsPage::AssistantVoice => T::HintAssistantVoice,
+                SettingsPage::AssistantListening => T::HintAssistantListening,
                 SettingsPage::Sound => T::HintSound,
                 SettingsPage::System => T::HintSystem,
                 SettingsPage::Appearance => T::HintAppearance,
@@ -413,6 +424,8 @@ impl SettingsPage {
             SettingsPage::Push => (icons::BELL, "rose"),
             SettingsPage::Alarm => (icons::SHIELD, "mint"),
             SettingsPage::NetworkPresence => (icons::WIFI, "cyan"),
+            SettingsPage::AssistantVoice => (icons::SPEECH, "cyan"),
+            SettingsPage::AssistantListening => (icons::MIC, "violet"),
             SettingsPage::Sound => (icons::SPEAKER, "rose"),
             SettingsPage::System => (icons::PULSE, "mint"),
             SettingsPage::Appearance => (icons::SUN_MOON, "violet"),
@@ -424,7 +437,8 @@ impl SettingsPage {
         }
     }
 
-    /// The list section the page sits in: the house itself, or the hub and what it connects to.
+    /// The list section the page sits in: the house itself, the assistant's speech and sound, or
+    /// the hub and what it connects to.
     fn group(self) -> T {
         match self {
             SettingsPage::Home
@@ -434,8 +448,10 @@ impl SettingsPage {
             | SettingsPage::Cameras
             | SettingsPage::Push
             | SettingsPage::Alarm
-            | SettingsPage::NetworkPresence
-            | SettingsPage::Sound => T::GroupHouse,
+            | SettingsPage::NetworkPresence => T::GroupHouse,
+            SettingsPage::AssistantVoice
+            | SettingsPage::AssistantListening
+            | SettingsPage::Sound => T::GroupAssistant,
             SettingsPage::System
             | SettingsPage::Appearance
             | SettingsPage::Zigbee2mqtt
@@ -520,6 +536,20 @@ pub fn SettingsScreen() -> impl IntoView {
             }
         });
     });
+    let tts = RwSignal::new(None::<nidoo_api::TtsStatus>);
+    let stt = RwSignal::new(None::<nidoo_api::SttStatus>);
+    Effect::new(move |_| {
+        spawn_local(async move {
+            if let Ok(v) = crate::api::tts::get_status().await {
+                tts.try_set(Some(v));
+            }
+        });
+        spawn_local(async move {
+            if let Ok(v) = crate::api::stt::get_status().await {
+                stt.try_set(Some(v));
+            }
+        });
+    });
     let system = RwSignal::new(None::<nidoo_api::SystemView>);
     Effect::new(move |_| {
         spawn_local(async move {
@@ -541,6 +571,12 @@ pub fn SettingsScreen() -> impl IntoView {
             .unwrap_or_default(),
         SettingsPage::NetworkPresence => watches
             .with(|w| w.as_ref().map(|w| watched_label(w, lang())))
+            .unwrap_or_default(),
+        SettingsPage::AssistantVoice => tts
+            .with(|s| s.as_ref().map(|s| assist_status::tts_row_status(s, lang())))
+            .unwrap_or_default(),
+        SettingsPage::AssistantListening => stt
+            .with(|s| s.as_ref().map(|s| assist_status::stt_row_status(s, lang())))
             .unwrap_or_default(),
         SettingsPage::Sound => house
             .entities
@@ -582,8 +618,9 @@ pub fn SettingsScreen() -> impl IntoView {
         }
     };
     let group = move |key: T| {
+        let id = (key == T::GroupAssistant).then_some("assistant");
         view! {
-            <section class="settings__group">
+            <section class="settings__group" id=id>
                 <h2 class="settings__group-title">{move || settings_text(lang(), key)}</h2>
                 <ul class="settings__list">
                     {SettingsPage::ALL
@@ -642,7 +679,7 @@ pub fn SettingsScreen() -> impl IntoView {
                     {move || setup_text(lang(), SetupText::RunSetupAgain)}
                 </A>
             </header>
-            <div class="settings__groups">{group(T::GroupHouse)} {group(T::GroupHub)}</div>
+            <div class="settings__groups">{group(T::GroupHouse)} {group(T::GroupAssistant)} {group(T::GroupHub)}</div>
         </div>
     }
 }
@@ -685,6 +722,12 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::Alarm) => view! { <AlarmSettingsPage /> }.into_any(),
                 Some(SettingsPage::NetworkPresence) => {
                     view! { <NetworkSettingsPage /> }.into_any()
+                }
+                Some(SettingsPage::AssistantVoice | SettingsPage::AssistantListening) => {
+                    view! {
+                        <p class="settings__empty">{move || settings_text(lang(), T::NoSuchPage)}</p>
+                    }
+                        .into_any()
                 }
                 Some(SettingsPage::Sound) => view! { <SoundSettingsPage /> }.into_any(),
                 Some(SettingsPage::System) => view! { <SystemSettingsPage /> }.into_any(),
@@ -1066,8 +1109,37 @@ mod tests {
             .iter()
             .filter(|p| p.group() == T::GroupHub)
             .count();
-        assert_eq!(house + hub, SettingsPage::ALL.len());
-        assert!(house > 0 && hub > 0);
+        let assistant = SettingsPage::ALL
+            .iter()
+            .filter(|p| p.group() == T::GroupAssistant)
+            .count();
+        assert_eq!(house + assistant + hub, SettingsPage::ALL.len());
+        assert!(house > 0 && assistant > 0 && hub > 0);
+    }
+
+    #[test]
+    fn assistant_pages_sit_in_the_assistant_group() {
+        for p in [
+            SettingsPage::AssistantVoice,
+            SettingsPage::AssistantListening,
+            SettingsPage::Sound,
+        ] {
+            assert_eq!(p.group(), T::GroupAssistant);
+        }
+        assert_eq!(
+            SettingsPage::from_slug("assistant-voice"),
+            Some(SettingsPage::AssistantVoice)
+        );
+        assert_eq!(
+            SettingsPage::from_slug("assistant-listening"),
+            Some(SettingsPage::AssistantListening)
+        );
+        assert_eq!(SettingsPage::from_slug("sound"), Some(SettingsPage::Sound));
+        assert_eq!(SettingsPage::AssistantVoice.title(Lang::Fr), "Voix");
+        assert_eq!(
+            SettingsPage::AssistantListening.title(Lang::En),
+            "Listening"
+        );
     }
 
     #[test]

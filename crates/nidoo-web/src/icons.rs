@@ -490,6 +490,11 @@ pub const COPY: &str = svg!(
     r#"<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6A2.5 2.5 0 0 0 13 3.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>"#
 );
 
+/// A microphone: speech input.
+pub const MIC: &str = svg!(
+    r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/>"#
+);
+
 /// A speech bubble: the assistant.
 pub const SPEECH: &str = svg!(
     r#"<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z"/><path d="M8.5 9.5h.01"/><path d="M12 9.5h.01"/><path d="M15.5 9.5h.01"/>"#

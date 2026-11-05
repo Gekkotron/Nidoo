@@ -3,6 +3,7 @@ pub mod alert_detail;
 pub mod alerts;
 pub mod assist_languages;
 pub mod assist_settings;
+pub mod assist_status;
 pub mod assistant;
 pub mod climate;
 pub mod dashboard;
