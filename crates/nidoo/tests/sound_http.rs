@@ -1,4 +1,4 @@
-//! `POST /api/v1/sound/speak` against a hub without a broker and the fake tone synthesiser.
+//! `POST /api/v1/sound/speak` and `DELETE /api/v1/sound/satellites/{id}` against a hub without a broker and the fake tone synthesiser.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,6 +21,7 @@ struct Rig {
     addr: SocketAddr,
     client: reqwest::Client,
     rx: mpsc::Receiver<Publish>,
+    hub: Arc<Hub>,
 }
 
 impl Rig {
@@ -126,6 +127,7 @@ fn satellite(hub: &Hub, sid: &str, area: &str) {
             "state_topic": format!("nidoo-sound/{sid}/{object}"),
             "payload_on": "ON",
             "payload_off": "OFF",
+            "availability_topic": "nidoo-sound/status",
             "device": { "identifiers": [device], "name": sid },
         });
         if component != "binary_sensor" {
@@ -166,12 +168,19 @@ async fn rig(tts: bool) -> Rig {
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(axum::serve(listener, router(hub, nidoo::setup::SetupCtx::inert())).into_future());
+    tokio::spawn(
+        axum::serve(
+            listener,
+            router(hub.clone(), nidoo::setup::SetupCtx::inert()),
+        )
+        .into_future(),
+    );
     let rig = Rig {
         _dir: dir,
         addr,
         client: reqwest::Client::new(),
         rx,
+        hub,
     };
     if tts {
         rig.make_tts_ready().await;
@@ -242,4 +251,65 @@ async fn speak_route_publishes_the_speak_message() {
     let sent = r.published("nidoo-sound/speak");
     let payload: Value = serde_json::from_str(&sent[0].payload).unwrap();
     assert_eq!(payload["players"], json!(["a", "b"]));
+}
+
+#[tokio::test]
+async fn remove_route_asks_the_sound_service_and_clears_the_rooms() {
+    let mut r = rig(false).await;
+    r.published("");
+    let (s, v) = r
+        .send(reqwest::Method::DELETE, "/sound/satellites/a", Value::Null)
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let all: Vec<Publish> = std::iter::from_fn(|| r.rx.try_recv().ok()).collect();
+    let sent: Vec<&Publish> = all
+        .iter()
+        .filter(|p| p.topic == "nidoo-sound/a/remove/set")
+        .collect();
+    assert_eq!(sent.len(), 1, "{all:?}");
+    assert!(!sent[0].retain);
+    // Its rooms go too: a board that comes back starts like a first install.
+    let mut cleared = Vec::new();
+    for p in &all {
+        if p.topic.starts_with("nidoo/ui/nidoo_sound_") {
+            assert!(p.retain && p.payload.is_empty(), "{p:?}");
+            cleared.push(p.topic.clone());
+        }
+    }
+    cleared.sort();
+    assert_eq!(
+        cleared,
+        [
+            "nidoo/ui/nidoo_sound_a_allowed",
+            "nidoo/ui/nidoo_sound_a_connected",
+            "nidoo/ui/nidoo_sound_a_mute",
+            "nidoo/ui/nidoo_sound_a_volume",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn remove_route_unknown_satellite_is_404() {
+    let mut r = rig(false).await;
+    let (s, v) = r
+        .send(
+            reqwest::Method::DELETE,
+            "/sound/satellites/zzz",
+            Value::Null,
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+    assert!(r.published("nidoo-sound/zzz/remove/set").is_empty());
+}
+
+#[tokio::test]
+async fn remove_route_needs_the_sound_service() {
+    let mut r = rig(false).await;
+    r.hub.ingest("nidoo-sound/status", b"offline");
+    let (s, v) = r
+        .send(reqwest::Method::DELETE, "/sound/satellites/a", Value::Null)
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"], "the sound service is offline");
+    assert!(r.published("nidoo-sound/a/remove/set").is_empty());
 }

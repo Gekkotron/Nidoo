@@ -137,7 +137,18 @@ pub fn state_messages(
     ]
 }
 
-/// A command from `nidoo-sound/<sid>/<volume|mute|allowed>/set`.
+/// Empty retained payloads on every topic of one satellite: its discovery configs first (the
+/// hub drops the entities), then its state values.
+pub fn removal_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(String, String)> {
+    discovery_messages(p, discovery_prefix)
+        .into_iter()
+        .chain(state_messages(p, false, None))
+        .map(|(topic, _)| (topic, String::new()))
+        .collect()
+}
+
+/// A command from `nidoo-sound/<sid>/<volume|mute|allowed|remove>/set`; `remove` takes any
+/// payload.
 pub fn parse_command(topic: &str, payload: &[u8]) -> Option<Control> {
     let mut parts = topic.split('/');
     let (root, sid, object, set) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
@@ -170,6 +181,7 @@ pub fn parse_command(topic: &str, payload: &[u8]) -> Option<Control> {
             short_id,
             allowed: switch()?,
         }),
+        "remove" => Some(Control::Remove { short_id }),
         _ => None,
     }
 }
@@ -282,6 +294,15 @@ pub async fn run_mqtt(
                 let (short_id, prefs, connected, address) = match msg {
                     Some(Published::Player { short_id, prefs, connected, address }) => {
                         (short_id, prefs, connected, address)
+                    }
+                    Some(Published::Removed { prefs }) => {
+                        let sid = short_id(&prefs.client_id);
+                        for (topic, payload) in removal_messages(&prefs, discovery_prefix) {
+                            client.publish(topic, QoS::AtLeastOnce, true, payload).await?;
+                        }
+                        known.remove(&sid);
+                        announced.remove(&prefs.client_id);
+                        continue;
                     }
                     Some(Published::Spoken { id, played }) => {
                         let payload = json!({"id": id, "played": played}).to_string();
@@ -548,6 +569,52 @@ mod tests {
             })
         );
         assert_eq!(route(HOLD_TOPIC, b"nope", ha), Incoming::Ignored);
+    }
+
+    #[test]
+    fn removal_clears_every_retained_topic_discovery_first() {
+        let p = prefs();
+        let msgs = removal_messages(&p, "homeassistant");
+        let discovery: Vec<String> = discovery_messages(&p, "homeassistant")
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let state: Vec<String> = state_messages(&p, true, None)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
+        let topics: Vec<String> = msgs.iter().map(|(t, _)| t.clone()).collect();
+        assert_eq!(topics, [discovery, state].concat());
+        assert!(msgs.iter().all(|(_, payload)| payload.is_empty()));
+    }
+
+    #[test]
+    fn an_empty_discovery_payload_removes_the_entity_in_the_hub() {
+        for (topic, payload) in removal_messages(&prefs(), "homeassistant") {
+            let TopicClass::Discovery(t) = classify(&topic, &["homeassistant".into()], &[]) else {
+                continue;
+            };
+            assert!(
+                matches!(parse(&t, payload.as_bytes(), &topic), Ok(Parsed::Removed)),
+                "{topic}"
+            );
+        }
+    }
+
+    #[test]
+    fn remove_command_parses() {
+        assert_eq!(
+            parse_command("nidoo-sound/0123456789ab/remove/set", b"PRESS"),
+            Some(Control::Remove {
+                short_id: "0123456789ab".into()
+            })
+        );
+        assert_eq!(
+            parse_command("nidoo-sound/0123456789ab/remove/set", b""),
+            Some(Control::Remove {
+                short_id: "0123456789ab".into()
+            })
+        );
     }
 
     #[test]

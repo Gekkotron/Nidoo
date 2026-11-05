@@ -21,6 +21,23 @@ pub const HOLD_TOPIC: &str = "nidoo-sound/hold";
 /// `nidoo-sound` reports a sentence finished playing (or was dropped); not retained.
 pub const SPOKEN_TOPIC: &str = "nidoo-sound/spoken";
 
+/// The command topic that makes `nidoo-sound` forget satellite `sid`: its saved prefs and its
+/// retained messages (the hub then drops its entities). Not retained.
+pub fn remove_topic(sid: &str) -> String {
+    format!("nidoo-sound/{sid}/remove/set")
+}
+
+/// Why a satellite was not removed.
+#[derive(Debug, thiserror::Error)]
+pub enum RemoveError {
+    #[error("unknown satellite `{0}`")]
+    UnknownSatellite(String),
+    #[error("the sound service is offline")]
+    ServiceOffline,
+    #[error(transparent)]
+    Publish(HubError),
+}
+
 /// A [`SPOKEN_TOPIC`] report.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct Spoken {
@@ -171,6 +188,49 @@ pub fn voice_satellites(reg: &Registry) -> Vec<(String, std::net::Ipv4Addr)> {
 }
 
 impl Hub {
+    /// Asks `nidoo-sound` to forget satellite `sid` and clears the overrides (room, name) of
+    /// its entities, so a board that comes back starts like a first install. Refused while the
+    /// sound service is offline: the command is not retained and would be lost.
+    pub async fn remove_satellite(&self, sid: &str) -> Result<(), RemoveError> {
+        let device = format!("{SOUND_DEVICE_PREFIX}{sid}");
+        let (entities, offline) = {
+            let reg = self.read();
+            let entities: Vec<(String, bool)> = reg
+                .entities()
+                .filter(|e| e.device_id.as_deref() == Some(device.as_str()))
+                .map(|e| {
+                    (
+                        e.unique_id.clone(),
+                        reg.raw_override(&e.unique_id).is_some(),
+                    )
+                })
+                .collect();
+            let offline = entities.iter().any(|(id, _)| {
+                reg.state(id)
+                    .is_some_and(|s| s.availability == Availability::Offline)
+            });
+            (entities, offline)
+        };
+        if entities.is_empty() {
+            return Err(RemoveError::UnknownSatellite(sid.to_owned()));
+        }
+        if offline {
+            return Err(RemoveError::ServiceOffline);
+        }
+        self.publish(Publish {
+            topic: remove_topic(sid),
+            payload: "PRESS".to_owned(),
+            retain: false,
+        })
+        .map_err(RemoveError::Publish)?;
+        for (id, _) in entities.iter().filter(|(_, has)| *has) {
+            if let Err(err) = self.clear_override(id).await {
+                tracing::warn!(%id, %err, "clearing a removed satellite's override");
+            }
+        }
+        Ok(())
+    }
+
     /// Says `text` on the satellites of `target`; the number of satellites it was sent to.
     pub async fn speak_in(
         &self,
