@@ -11,15 +11,41 @@ same time: standing between two rooms you hear one sound, not an echo.
 
 Each satellite shows up in Nidoo as a device with:
 
-- **Volume** (0–100) and **Mute**, usable from dashboards, flows, the Android
-  app and the assistants like any other control;
+- **Music volume** and **Speech volume** (both 0–100) and **Mute**, usable
+  from dashboards, flows, the Android app and the assistants like any other
+  control (see [Music and Speech volume](#music-and-speech-volume));
 - **Allowed**: a new satellite plays nothing until you switch it on (in
   **Settings → Assistant → Sound**);
 - **Connected** (diagnostic): whether the satellite is online.
 
-Volume, mute and Allowed are remembered: they survive a satellite reboot, a
+The volumes, mute and Allowed are remembered: they survive a satellite reboot, a
 `nidoo-sound` restart and a hub restart. Restarting or rebuilding the hub does
 not interrupt the music.
+
+## Music and Speech volume
+
+A satellite has two volume settings, **Music** and **Speech**, so that a
+spoken reply can be louder (or quieter) than the music. The satellite itself
+has one volume: it plays at the louder of the two settings, and `nidoo-sound`
+turns the other one down in the audio it sends.
+
+- Moving the slider that is currently the louder one acts at once. Moving the
+  quieter one is heard after a few seconds, because the audio already sent
+  ahead of the satellite has to play out first.
+- **Speech at 0 is silent**, like Music at 0: spoken replies are not heard on
+  that satellite.
+- **Mute** silences both.
+- Speech starts equal to Music, for satellites that already exist when you
+  upgrade and for new ones.
+- A volume change made on the satellite itself moves both settings and keeps
+  the gap between them.
+- Only the ESP32 satellite (ESPHome 2026.10.2) and the [Mac
+  satellite](mac-satellite.md) are tuned for this. Another Sendspin player
+  keeps Speech above Music but not the exact gap.
+
+To set Speech by ear, press the speech-bubble test button on the satellite's
+card (or in **Settings → Assistant → Sound**) and move the **Speech** slider
+until the sentence sounds right.
 
 ## How the music gets there
 
@@ -113,12 +139,12 @@ the container (the satellites' settings stay in `data/sound/`).
    name, marked "Waiting for approval", with **Allowed** off.
 3. Switch **Allowed** on there, or with **Allow** on its card on Home. If
    music is playing, the satellite joins in sync. The same page has each
-   satellite's **Mute** and **Volume**; on Home, the satellite is one card
-   with its volume, mute and test button.
+   satellite's **Mute**, **Music** and **Speech** volume; on Home, the
+   satellite is one card with its music volume, mute and test button.
 4. Pick its **Room** on the same page. The picker moves every entity of the
    satellite at once; the satellite then shows in that room and speaks there.
    Setting the room on its own page works too: the satellite's name opens its
-   **Volume** page, and the Volume's room is the satellite's room.
+   **Music volume** page, and its room is the satellite's room.
 
 A Mac can be a satellite too, with no hardware: see
 [A Mac as a satellite](mac-satellite.md).
@@ -127,7 +153,7 @@ A Mac can be a satellite too, with no hardware: see
 
 Every satellite in **Settings → Assistant → Sound** has a trash button, connected or not.
 Press it, then **Remove** to confirm (or **Cancel**). `nidoo-sound` forgets
-the satellite: its volume, mute and Allowed, and the broker messages that made
+the satellite: its volumes, mute and Allowed, and the broker messages that made
 it a device in Nidoo. Its card, controls and room go at once, with no restart.
 
 Use it for a board you replaced, reflashed under a new name, or gave away. A
@@ -190,9 +216,9 @@ house answers on it while the room's music is held. See
   sends to port 4953.
 - **Satellites found on their own** over mDNS, and **players that connect
   themselves** (a web player) on port 8927.
-- **Per satellite:** Allowed (approval), Volume, Mute, Room, a Connected and
+- **Per satellite:** Allowed (approval), Music and Speech volume, Mute, Room, a Connected and
   an Address sensor, and **Remove** (see [Remove a satellite](#remove-a-satellite)).
-  Volume, mute and Allowed are remembered across restarts.
+  Volumes, mute and Allowed are remembered across restarts.
 - **Speech** on one satellite, one room or every room, over the music, which
   is turned down while the sentence plays (see [Speak in a room](#speak-in-a-room)).
 - **Talking to a satellite**: the room's music is held while it listens (see
