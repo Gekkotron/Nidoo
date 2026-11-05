@@ -391,16 +391,18 @@ impl Hub {
         }
     }
 
-    /// Resolves the room of every `speak` node to an area id (a name is accepted, as for
+    /// Resolves the room of every `speak` and `ask` node to an area id (a name is accepted, as for
     /// `flow.area`) and refuses one the house does not have.
     fn check_speak_rooms(&self, flow: &mut Flow) -> Result<(), HubError> {
         let reg = self.read();
         let areas = reg.effective_areas();
         for node in &mut flow.nodes {
-            let NodeKind::Speak(params) = &mut node.kind else {
-                continue;
+            let room = match &mut node.kind {
+                NodeKind::Speak(params) => &mut params.room,
+                NodeKind::Ask(params) => &mut params.room,
+                _ => continue,
             };
-            let Some(raw) = params.room.clone() else {
+            let Some(raw) = room.clone() else {
                 continue;
             };
             let resolved = reg.resolve_area(&raw);
@@ -413,7 +415,7 @@ impl Hub {
                     node.id
                 )));
             }
-            params.room = Some(resolved);
+            *room = Some(resolved);
         }
         Ok(())
     }
@@ -447,6 +449,15 @@ impl Hub {
                         node.id
                     )));
                 }
+            }
+            if let NodeKind::Ask(params) = &node.kind
+                && let Some(name) = &params.name
+                && reg.entity(name).is_some()
+            {
+                return Err(HubError::InvalidFlow(format!(
+                    "node `{}`: result name `{name}` is an entity id",
+                    node.id
+                )));
             }
             let texts = match &node.kind {
                 NodeKind::Notify(params) => vec![Some(&params.title), params.body.as_ref()],

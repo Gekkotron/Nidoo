@@ -2845,3 +2845,210 @@ async fn speak_step_without_speech_fails() {
     assert_eq!(step.outcome, StepOutcome::Failed, "{run:?}");
     assert_eq!(step.detail, "speech is not set up on this hub");
 }
+
+// ---- ask ----
+
+use nidoo::assist::stt::ask::{AskOutcome, AskRequest};
+use nidoo::sound::SpeakTarget;
+
+fn ask_node(params: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "id": "q", "type": "ask", "params": params })
+}
+
+fn yes_no(extra: serde_json::Value) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "text": "Warm it up?",
+        "answers": [{ "label": "oui" }, { "label": "non" }]
+    });
+    for (key, value) in extra.as_object().expect("object") {
+        params[key] = value.clone();
+    }
+    ask_node(params)
+}
+
+/// A fake voice service: answers each question from `script` and records `(target, text)`.
+fn fake_voice(hub: &Hub, script: Vec<AskOutcome>) -> Arc<Mutex<Vec<(SpeakTarget, String)>>> {
+    let (tx, mut rx) = mpsc::channel::<AskRequest>(4);
+    hub.set_voice_asks(tx);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&log);
+    tokio::spawn(async move {
+        let mut script = script.into_iter();
+        while let Some(request) = rx.recv().await {
+            sink.lock()
+                .expect("log")
+                .push((request.target, request.text));
+            let _ = request
+                .reply
+                .send(script.next().unwrap_or(AskOutcome::Silence));
+        }
+    });
+    log
+}
+
+fn heard(text: &str) -> AskOutcome {
+    AskOutcome::Heard {
+        sid: "a".to_owned(),
+        text: text.to_owned(),
+    }
+}
+
+/// Runs a flow `trigger → ask → (port 1) set` and returns the run.
+async fn run_ask_flow(hub: &Hub, node: serde_json::Value, after: serde_json::Value) -> RunView {
+    let json = serde_json::json!({
+        "id": "asker", "name": "asker", "enabled": true, "mode": "single",
+        "nodes": [
+            { "id": "t", "type": "trigger.state", "params": { "entity": MOTION_ID } },
+            node,
+            after
+        ],
+        "edges": [
+            { "from": "t", "to": "q" },
+            { "from": "q", "port": "1", "to": "set" }
+        ]
+    })
+    .to_string();
+    hub.ingest("nidoo/automation/asker", json.as_bytes());
+    settle().await;
+    let mut events = hub.subscribe();
+    hub.run_flow("asker").expect("run");
+    next_run(&mut events, |run| run.status != RunStatus::Running).await
+}
+
+fn set_target() -> serde_json::Value {
+    serde_json::json!({ "id": "set", "type": "command", "params": {
+        "entity": TARGET_ID, "value_from": "temp", "command": { "type": "set_number", "value": 0 } } })
+}
+
+fn ask_ports(run: &RunView) -> Vec<String> {
+    let step = run.steps.iter().find(|s| s.node == "q").expect("ask step");
+    step.ports.clone().unwrap_or_default()
+}
+
+#[tokio::test]
+async fn set_flow_resolves_the_ask_room_and_refuses_an_unknown_one() {
+    let (hub, _publisher) = hub_with_entities();
+    rooms_with_satellites(&hub);
+    let node = yes_no(serde_json::json!({ "room": "Séjour" }));
+    let flow = Flow::decode(chain_json("asker", true, vec![node]).as_bytes()).expect("flow");
+    let saved = hub.set_flow(flow).await.expect("saved").flow;
+    let ask = saved
+        .definition
+        .nodes
+        .iter()
+        .find(|n| n.id == "q")
+        .expect("node");
+    assert!(
+        matches!(&ask.kind, NodeKind::Ask(p) if p.room.as_deref() == Some("sejour")),
+        "{:?}",
+        ask.kind
+    );
+
+    let node = yes_no(serde_json::json!({ "room": "attic" }));
+    let flow = Flow::decode(chain_json("ghost", true, vec![node]).as_bytes()).expect("flow");
+    match hub.set_flow(flow).await {
+        Err(HubError::InvalidFlow(reason)) => assert!(reason.contains("attic"), "{reason}"),
+        other => panic!("expected InvalidFlow, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn set_flow_refuses_an_ask_name_that_is_an_entity() {
+    let (hub, _publisher, _engine) = math_hub().await;
+    let node = yes_no(serde_json::json!({ "name": TARGET_ID }));
+    let flow = Flow::decode(chain_json("asker", true, vec![node]).as_bytes()).expect("flow");
+    match hub.set_flow(flow).await {
+        Err(HubError::InvalidFlow(reason)) => assert!(reason.contains("entity"), "{reason}"),
+        other => panic!("expected InvalidFlow, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn ask_yes_takes_port_1() {
+    let (hub, _publisher, _engine) = engine_hub();
+    let log = fake_voice(&hub, vec![heard("oui")]);
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert_eq!(ask_ports(&run), ["1"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert_eq!(step.outcome, StepOutcome::Ok);
+    assert_eq!(step.detail, "asked \"Warm it up?\" → heard \"oui\" → oui");
+    let log = log.lock().expect("log");
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].0, SpeakTarget::All);
+}
+
+#[tokio::test]
+async fn ask_number_feeds_value_from() {
+    let (hub, publisher, _engine) = math_hub().await;
+    let sent = math_echo(publisher, Arc::clone(&hub), &[]);
+    fake_voice(&hub, vec![heard("oui à 21")]);
+    let run = run_ask_flow(
+        &hub,
+        yes_no(serde_json::json!({ "name": "temp" })),
+        set_target(),
+    )
+    .await;
+    assert_eq!(ask_ports(&run), ["1"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert!(step.detail.ends_with("→ oui (21)"), "{}", step.detail);
+    assert_eq!(sent_to(&sent, TARGET_TOPIC), ["21"]);
+}
+
+#[tokio::test]
+async fn ask_default_used_without_number() {
+    let (hub, publisher, _engine) = math_hub().await;
+    let sent = math_echo(publisher, Arc::clone(&hub), &[]);
+    fake_voice(&hub, vec![heard("oui")]);
+    let run = run_ask_flow(
+        &hub,
+        yes_no(serde_json::json!({ "name": "temp", "default": 20.0 })),
+        set_target(),
+    )
+    .await;
+    assert_eq!(ask_ports(&run), ["1"], "{run:?}");
+    assert_eq!(sent_to(&sent, TARGET_TOPIC), ["20"]);
+}
+
+#[tokio::test]
+async fn ask_retries_once_then_none() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (hub, _publisher, _engine) = engine_hub();
+    hub.set_tts(common::speech::ready_tts(dir.path().join("tts")).await);
+    let log = fake_voice(&hub, vec![heard("bof"), heard("toujours bof")]);
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert_eq!(ask_ports(&run), ["none"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert_eq!(step.outcome, StepOutcome::Ok);
+    assert_eq!(
+        step.detail,
+        "asked \"Warm it up?\" → heard \"bof\", \"toujours bof\" → none"
+    );
+    let log = log.lock().expect("log");
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[1].0, SpeakTarget::Satellite("a".to_owned()));
+    assert!(log[1].1.starts_with("Je n'ai pas compris."), "{}", log[1].1);
+}
+
+#[tokio::test]
+async fn ask_silence_goes_none() {
+    let (hub, _publisher, _engine) = engine_hub();
+    fake_voice(&hub, vec![AskOutcome::Silence]);
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert_eq!(ask_ports(&run), ["none"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert_eq!(step.detail, "asked \"Warm it up?\" → no answer");
+}
+
+#[tokio::test]
+async fn ask_without_voice_goes_none() {
+    let (hub, _publisher, _engine) = engine_hub();
+    let run = run_ask_flow(&hub, yes_no(serde_json::json!({})), turn("set", "turn_on")).await;
+    assert_eq!(ask_ports(&run), ["none"], "{run:?}");
+    let step = run.steps.iter().find(|s| s.node == "q").expect("step");
+    assert_eq!(step.outcome, StepOutcome::Ok);
+    assert!(
+        step.detail.contains("speech input is off"),
+        "{}",
+        step.detail
+    );
+}
