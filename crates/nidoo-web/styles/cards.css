@@ -675,3 +675,156 @@
 .sound-room-field .select {
   min-width: 10ch;
 }
+
+/* Media player (design B): cover left, the song and its controls right. Tinted with the
+   cover's colour when the player sends one (`--media-tint`); the darkening is the Night
+   background in both themes, so a tinted card stays dark with white text in Ivoire too. */
+.media {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.media__cover {
+  flex: 0 0 auto;
+  width: 100px;
+  height: 100px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.media__cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media__placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--muted);
+}
+
+.media__placeholder svg {
+  width: 40px;
+  height: 40px;
+}
+
+.media__info {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.media__title,
+.media__byline {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media__title {
+  font-weight: 650;
+  font-size: 16px;
+}
+
+.media__byline {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.media__controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.media__skip,
+.media__play {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.media__skip {
+  width: 32px;
+  height: 32px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+}
+
+.media__skip svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* A fixed amber in both themes, with a dark icon and a soft glow. */
+.media__play {
+  width: 40px;
+  height: 40px;
+  background: #ffc457;
+  color: #1b1405;
+  box-shadow: 0 0 14px rgb(255 196 87 / 45%);
+}
+
+.media__play svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.media__progress {
+  height: 3px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 15%, transparent);
+}
+
+.media__progress-done {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  transition: width 1s linear;
+}
+
+.card--tinted {
+  --ink: #f4f6ff;
+  --muted: rgb(244 246 255 / 70%);
+  border-color: color-mix(in srgb, var(--media-tint) 60%, white);
+  background: linear-gradient(
+    135deg,
+    var(--media-tint),
+    color-mix(in srgb, var(--media-tint) 55%, #0b1020)
+  );
+  color: var(--ink);
+  transition: background 0.6s ease, border-color 0.6s ease;
+}
+
+.card--tinted .media__cover {
+  box-shadow: 0 0 22px color-mix(in srgb, var(--media-tint) 70%, transparent);
+}
+
+/* On a tint the amber button gets a thin dark ring, so it never blends into a warm cover. */
+.card--tinted .media__play {
+  outline: 1px solid rgb(0 0 0 / 45%);
+}
+
+@media (max-width: 480px) {
+  .media__cover {
+    width: 76px;
+    height: 76px;
+  }
+}

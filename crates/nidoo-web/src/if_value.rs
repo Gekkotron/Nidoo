@@ -193,6 +193,7 @@ fn word_context(kind: Kind) -> StateCtx {
         Kind::AlarmPanel => StateCtx::Alarm,
         Kind::Climate | Kind::WaterHeater => StateCtx::Hvac,
         Kind::Vacuum => StateCtx::Vacuum,
+        Kind::MediaPlayer => StateCtx::Media,
         Kind::Generic => StateCtx::Choice,
         _ => StateCtx::Other,
     }

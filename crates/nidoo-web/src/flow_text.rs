@@ -105,6 +105,7 @@ fn state_ctx(e: &EntityView) -> StateCtx {
         Kind::Climate | Kind::WaterHeater => StateCtx::Hvac,
         Kind::AlarmPanel => StateCtx::Alarm,
         Kind::Vacuum => StateCtx::Vacuum,
+        Kind::MediaPlayer => StateCtx::Media,
         Kind::BinarySensor => StateCtx::BinarySensor(e.device_class.clone()),
         Kind::Generic if e.component == "lock" => StateCtx::Lock,
         _ => StateCtx::Choice,

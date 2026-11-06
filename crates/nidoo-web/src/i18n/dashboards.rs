@@ -101,6 +101,7 @@ pub enum DashText {
     SectionClimate,
     SectionSensors,
     SectionWaterHeaters,
+    SectionMediaPlayers,
     SectionLocks,
     SectionCameras,
     SectionRoomGroups,
@@ -162,6 +163,7 @@ pub fn dash_text(lang: Lang, k: DashText) -> &'static str {
         T::SectionClimate => ("CLIMATE", "CLIMAT"),
         T::SectionSensors => ("SENSORS", "CAPTEURS"),
         T::SectionWaterHeaters => ("WATER HEATERS", "CHAUFFE-EAU"),
+        T::SectionMediaPlayers => ("MUSIC", "MUSIQUE"),
         T::SectionLocks => ("LOCKS", "SERRURES"),
         T::SectionCameras => ("CAMERAS", "CAMÉRAS"),
         T::SectionRoomGroups => ("ROOM GROUPS", "PIÈCES"),
@@ -196,6 +198,7 @@ pub fn widget_kind_word(lang: Lang, kind: nidoo_core::dashboard::WidgetKind) -> 
         K::HistoryChart => ("History chart", "Graphique d'historique"),
         K::Camera => ("Camera", "Caméra"),
         K::WaterHeater => ("Water heater", "Chauffe-eau"),
+        K::MediaPlayer => ("Media player", "Lecteur"),
     };
     match lang {
         Lang::En => en,
@@ -331,6 +334,7 @@ mod tests {
             T::SectionClimate,
             T::SectionSensors,
             T::SectionWaterHeaters,
+            T::SectionMediaPlayers,
             T::SectionLocks,
             T::SectionRoomGroups,
             T::SectionFlowButtons,

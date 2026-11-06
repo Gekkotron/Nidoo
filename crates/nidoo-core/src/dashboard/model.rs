@@ -56,6 +56,8 @@ pub enum WidgetKind {
     HistoryChart,
     Camera,
     WaterHeater,
+    /// A media player card: two columns wide.
+    MediaPlayer,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,6 +175,7 @@ pub fn allowed_spans(kind: WidgetKind) -> &'static [Span] {
         WidgetKind::RoomGroup => &[X1x1, X2x1, X2x2],
         WidgetKind::HistoryChart => &[X2x1, X2x2, X1x2],
         WidgetKind::Camera => &[X2x1, X2x2, X1x2, X4x2, X6x3],
+        WidgetKind::MediaPlayer => &[X2x1, X2x2],
     }
 }
 

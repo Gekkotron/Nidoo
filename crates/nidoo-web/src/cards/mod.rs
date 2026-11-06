@@ -11,6 +11,7 @@ pub mod generic;
 pub mod group;
 pub mod light;
 pub mod lock;
+pub mod media_player;
 pub mod number;
 pub mod satellite;
 pub mod select;

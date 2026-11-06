@@ -17,6 +17,8 @@ pub enum StateCtx {
     /// Climate and water-heater modes.
     Hvac,
     Vacuum,
+    /// A media player's playing / paused / idle.
+    Media,
     Presence,
     /// A binary sensor's `on`/`off`, worded by its device class.
     BinarySensor(Option<String>),
@@ -40,6 +42,7 @@ pub fn state_word(lang: Lang, ctx: StateCtx, raw: &str) -> String {
         StateCtx::Alarm => alarm(raw),
         StateCtx::Hvac => hvac(raw),
         StateCtx::Vacuum => vacuum(raw),
+        StateCtx::Media => media(raw),
         StateCtx::Presence => presence(raw),
         StateCtx::Other => None,
     };
@@ -125,6 +128,15 @@ fn vacuum(raw: &str) -> Option<Words> {
         "paused" => (None, "En pause"),
         "idle" => (None, "Inactif"),
         "error" => (None, "Erreur"),
+        _ => return None,
+    })
+}
+
+fn media(raw: &str) -> Option<Words> {
+    Some(match raw {
+        "playing" => (None, "Lecture"),
+        "paused" => (None, "En pause"),
+        "idle" => (None, "Inactif"),
         _ => return None,
     })
 }

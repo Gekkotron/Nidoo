@@ -170,7 +170,8 @@ pub fn validate_widget(w: &Widget) -> Result<(), String> {
         | WidgetKind::Climate
         | WidgetKind::Lock
         | WidgetKind::Sensor
-        | WidgetKind::WaterHeater => matches!(w.config, WidgetConfig::Entity { .. }),
+        | WidgetKind::WaterHeater
+        | WidgetKind::MediaPlayer => matches!(w.config, WidgetConfig::Entity { .. }),
         WidgetKind::Camera => match &w.config {
             WidgetConfig::Cameras { cameras, .. } => return validate_cameras(cameras),
             _ => false,

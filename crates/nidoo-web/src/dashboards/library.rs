@@ -68,6 +68,7 @@ pub enum Section {
     Climates,
     Sensors,
     WaterHeaters,
+    MediaPlayers,
     Locks,
     Cameras,
     Rooms,
@@ -86,6 +87,7 @@ impl Section {
                 Self::Climates => DashText::SectionClimate,
                 Self::Sensors => DashText::SectionSensors,
                 Self::WaterHeaters => DashText::SectionWaterHeaters,
+                Self::MediaPlayers => DashText::SectionMediaPlayers,
                 Self::Locks => DashText::SectionLocks,
                 Self::Cameras => DashText::SectionCameras,
                 Self::Rooms => DashText::SectionRoomGroups,
@@ -104,6 +106,7 @@ impl Section {
             Self::Climates => "climates",
             Self::Sensors => "sensors",
             Self::WaterHeaters => "water-heaters",
+            Self::MediaPlayers => "media",
             Self::Locks => "locks",
             Self::Cameras => "cameras",
             Self::Rooms => "rooms",
@@ -236,6 +239,7 @@ pub fn entries(
             Kind::Climate => Some((Section::Climates, WidgetKind::Climate)),
             Kind::Sensor => Some((Section::Sensors, WidgetKind::Sensor)),
             Kind::WaterHeater => Some((Section::WaterHeaters, WidgetKind::WaterHeater)),
+            Kind::MediaPlayer => Some((Section::MediaPlayers, WidgetKind::MediaPlayer)),
             Kind::Generic if e.component == "lock" => Some((Section::Locks, WidgetKind::Lock)),
             _ => None,
         };
@@ -776,6 +780,16 @@ mod tests {
             &locks[0].config,
             WidgetConfig::Entity { entity_id, .. } if entity_id == "lock.front"
         ));
+    }
+
+    #[test]
+    fn media_players_get_their_own_wide_section() {
+        let got = run("", &house(vec![ent("music", "Music", Kind::MediaPlayer)]));
+        let players = of(&got, Section::MediaPlayers);
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[0].kind, WidgetKind::MediaPlayer);
+        let config = players[0].config.clone();
+        assert_eq!(initial_span(WidgetKind::MediaPlayer, &config), Span::X2x1);
     }
 
     #[test]

@@ -513,3 +513,125 @@ async fn focus_stays_on_the_ring_across_a_remount() {
         "focus is on the new ring"
     );
 }
+
+fn player(state: &str, color: Option<&str>) -> EntityView {
+    let idle = state == "idle";
+    let mut e = entity(
+        "music_player",
+        Kind::MediaPlayer,
+        StateValue::MediaPlayer(nidoo_core::model::MediaPlayerState {
+            state: Some(state.into()),
+            title: (!idle).then(|| "Get Lucky".into()),
+            artist: (!idle).then(|| "Daft Punk".into()),
+            album: (!idle).then(|| "Random Access Memories".into()),
+            image_url: (!idle).then(|| "https://img.example/cover.jpg".into()),
+            color: color.map(Into::into),
+            duration_s: (!idle).then_some(248.0),
+            position_s: (!idle).then_some(30.0),
+            position_at_ms: None,
+        }),
+    );
+    e.capabilities.media_features = ["play", "pause", "next", "previous", "play_media"]
+        .iter()
+        .map(|f| (*f).to_string())
+        .collect();
+    e
+}
+
+fn tinted(host: &web_sys::Element) -> bool {
+    host.query_selector(".card")
+        .unwrap()
+        .and_then(|card| card.get_attribute("style"))
+        .is_some_and(|style| style.contains("--media-tint"))
+}
+
+#[wasm_bindgen_test]
+async fn media_card_playing_shows_cover_title_and_pause() {
+    let host = mount(player("playing", Some("#3d2466")), None);
+    tick().await;
+    assert!(has(&host, ".card--wide"));
+    assert!(has(&host, "img[src=\"https://img.example/cover.jpg\"]"));
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Get Lucky"), "{text}");
+    assert!(
+        text.contains("Daft Punk · Random Access Memories"),
+        "{text}"
+    );
+    assert!(has(&host, "button[aria-label=\"Pause\"]"));
+    assert!(has(&host, "button[aria-label=\"Next\"]"));
+    assert!(has(&host, "button[aria-label=\"Previous\"]"));
+    assert!(has(&host, ".media__progress"));
+    assert!(tinted(&host));
+}
+
+#[wasm_bindgen_test]
+async fn media_card_paused_shows_play() {
+    let host = mount(player("paused", Some("#3d2466")), None);
+    tick().await;
+    assert!(has(&host, "button[aria-label=\"Play\"]"));
+    assert!(!has(&host, "button[aria-label=\"Pause\"]"));
+}
+
+#[wasm_bindgen_test]
+async fn media_card_idle_shows_the_placeholder_and_play() {
+    let host = mount(player("idle", None), None);
+    tick().await;
+    assert!(has(&host, ".media__placeholder"));
+    assert!(!has(&host, "img"));
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Nothing playing"), "{text}");
+    assert!(text.contains("Play some music"), "{text}");
+    assert!(has(&host, "button[aria-label=\"Play\"]"));
+    assert!(!has(&host, ".media__progress"));
+}
+
+#[wasm_bindgen_test]
+async fn media_card_without_color_is_plain() {
+    let host = mount(player("playing", None), None);
+    tick().await;
+    assert!(!tinted(&host));
+}
+
+#[wasm_bindgen_test]
+async fn media_card_hides_buttons_the_player_lacks() {
+    let mut e = player("playing", None);
+    e.capabilities.media_features = vec!["play".into(), "pause".into()];
+    let host = mount(e, None);
+    tick().await;
+    assert!(has(&host, "button[aria-label=\"Pause\"]"));
+    assert!(!has(&host, "button[aria-label=\"Next\"]"));
+    assert!(!has(&host, "button[aria-label=\"Previous\"]"));
+}
+
+#[wasm_bindgen_test]
+async fn media_card_offline() {
+    let mut e = player("playing", Some("#3d2466"));
+    e.state.availability = nidoo_core::model::Availability::Offline;
+    let host = mount(e, None);
+    tick().await;
+    assert!(has(&host, ".card--offline"));
+}
+
+#[wasm_bindgen_test]
+async fn media_card_follows_the_language() {
+    let lang = RwSignal::new(nidoo_web::i18n::Lang::Fr);
+    let document = web_sys::window().unwrap().document().unwrap();
+    let host = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&host).unwrap();
+    std::mem::forget(leptos::mount::mount_to(
+        host.clone().unchecked_into(),
+        move || {
+            provide_context(House::new());
+            provide_context(Toasts::new());
+            provide_context(Pending::new());
+            provide_context(lang);
+            view! { <Router>{card_for(player("idle", None))}</Router> }
+        },
+    ));
+    tick().await;
+    assert!(host.text_content().unwrap().contains("Rien ne joue"));
+    assert!(has(&host, "button[aria-label=\"Lecture\"]"));
+    lang.set(nidoo_web::i18n::Lang::En);
+    tick().await;
+    assert!(host.text_content().unwrap().contains("Nothing playing"));
+}

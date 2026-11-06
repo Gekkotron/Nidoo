@@ -6942,6 +6942,11 @@ html:has(.flow-canvas-screen) {
   --node-accent: var(--accent-rose);
 }
 
+.dashboard-library__header--media,
+.dashboard-library__item--media {
+  --node-accent: var(--accent-violet);
+}
+
 .dashboard-library__header--sensors,
 .dashboard-library__item--sensors,
 .dashboard-library__header--history,

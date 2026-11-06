@@ -16,6 +16,14 @@ pub enum DeviceText {
     PressAll,
     /// Vacuum action: make the robot beep.
     Locate,
+    /// Media player buttons and texts.
+    MediaPlay,
+    MediaPause,
+    MediaNext,
+    MediaPrevious,
+    PlayByName,
+    NothingPlaying,
+    PlaySomeMusic,
     /// Button card.
     Press,
     /// Chime card.
@@ -247,6 +255,13 @@ pub fn device_text(lang: Lang, k: DeviceText) -> &'static str {
         T::Save => ("Save", "Enregistrer"),
         T::PressAll => ("Press all", "Tout appuyer"),
         T::Locate => ("Locate", "Localiser"),
+        T::MediaPlay => ("Play", "Lecture"),
+        T::MediaPause => ("Pause", "Pause"),
+        T::MediaNext => ("Next", "Suivant"),
+        T::MediaPrevious => ("Previous", "Précédent"),
+        T::PlayByName => ("Play by name", "Jouer un titre"),
+        T::NothingPlaying => ("Nothing playing", "Rien ne joue"),
+        T::PlaySomeMusic => ("Play some music", "Lancer de la musique"),
         T::Press => ("Press", "Appuyer"),
         T::Play => ("Play", "Sonner"),
         T::Open => ("Open", "Ouvrir"),
