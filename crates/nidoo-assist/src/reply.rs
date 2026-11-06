@@ -9,7 +9,7 @@ use crate::house::House;
 use crate::intent::MediaIntent;
 use crate::lexicon::{Class, class};
 use crate::plan::Done;
-use crate::room::name_words;
+use crate::room::{name_words, named_after_person};
 
 /// What happened to one action, in the plan's order.
 #[derive(Clone, Debug, PartialEq)]
@@ -48,7 +48,9 @@ enum Gender {
     Feminine,
     /// Starts with a vowel: `l'`.
     Elided,
-    /// Not a common room word (a person's name): no article.
+    /// A room named after its person: `la chambre de Léa`.
+    Person,
+    /// Not a common room word, yet not a bedroom ("Toilettes"): no article.
     Bare,
 }
 
@@ -123,17 +125,29 @@ fn gender(name: &str) -> Gender {
         Gender::Masculine
     } else if first.starts_with(['a', 'e', 'i', 'o', 'u', 'y']) {
         Gender::Elided
+    } else if named_after_person(name) {
+        Gender::Person
     } else {
         Gender::Bare
     }
 }
 
-/// `le Salon`, `la Chambre Léa`, `l'Entrée`, `Léa`.
+/// The room as a sentence starts it: `Salon`, `Chambre de Léa` for a room named after its
+/// person.
+pub fn room(name: &str) -> String {
+    match gender(name) {
+        Gender::Person => format!("Chambre de {name}"),
+        _ => name.to_string(),
+    }
+}
+
+/// `le Salon`, `la Chambre Léa`, `l'Entrée`, `la chambre de Léa`.
 pub fn le(name: &str) -> String {
     match gender(name) {
         Gender::Masculine => format!("le {name}"),
         Gender::Feminine => format!("la {name}"),
         Gender::Elided => format!("l'{name}"),
+        Gender::Person => format!("la chambre de {name}"),
         Gender::Bare => name.to_string(),
     }
 }
@@ -143,19 +157,20 @@ pub fn dans(name: &str) -> String {
     format!("dans {}", le(name))
 }
 
-/// `du Salon`, `de la Chambre Léa`, `de l'Entrée`, `de Léa`.
+/// `du Salon`, `de la Chambre Léa`, `de l'Entrée`, `de la chambre de Léa`.
 pub fn de(name: &str) -> String {
     match gender(name) {
         Gender::Masculine => format!("du {name}"),
         Gender::Feminine => format!("de la {name}"),
         Gender::Elided => format!("de l'{name}"),
+        Gender::Person => format!("de la chambre de {name}"),
         Gender::Bare => format!("de {name}"),
     }
 }
 
-/// The masculine or feminine form, after the room's gender.
+/// The masculine or feminine form, after the room's gender ("chambre" for a person's room).
 pub fn agree<'a>(name: &str, masculine: &'a str, feminine: &'a str) -> &'a str {
-    if gender(name) == Gender::Feminine {
+    if matches!(gender(name), Gender::Feminine | Gender::Person) {
         feminine
     } else {
         masculine
@@ -348,9 +363,9 @@ fn lights(area: &str, on: bool, names: &[String], results: &[ActionResult]) -> S
     }
     let verb = agree(area, verb_m, verb_f);
     let mut text = if skipped == n {
-        format!("{area} déjà {verb} ({count}).")
+        format!("{} déjà {verb} ({count}).", room(area))
     } else {
-        format!("{area} {verb} ({count}).")
+        format!("{} {verb} ({count}).", room(area))
     };
     if !failed.is_empty() {
         let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
@@ -514,14 +529,19 @@ fn setpoint(area: &str, from: Option<f64>, to: f64, results: &[ActionResult]) ->
             de(area),
             temp(to)
         ),
-        Some(ActionResult::Skipped) => format!("{area} déjà à {}.", temp(to)),
+        Some(ActionResult::Skipped) => format!("{} déjà à {}.", room(area), temp(to)),
         _ => {
             let verb = agree(area, "réglé", "réglée");
             match from {
                 Some(from) if from != to => {
-                    format!("{area} {verb} à {} (avant {}).", temp(to), temp(from))
+                    format!(
+                        "{} {verb} à {} (avant {}).",
+                        room(area),
+                        temp(to),
+                        temp(from)
+                    )
                 }
-                _ => format!("{area} {verb} à {}.", temp(to)),
+                _ => format!("{} {verb} à {}.", room(area), temp(to)),
             }
         }
     }
@@ -803,6 +823,35 @@ mod tests {
         assert_eq!(de("Salon"), "du Salon");
         assert_eq!(de("Chambre Tom"), "de la Chambre Tom");
         assert_eq!(le("Bureau"), "le Bureau");
+    }
+
+    #[test]
+    fn a_room_named_after_its_person_is_their_bedroom() {
+        assert_eq!(le("Léa"), "la chambre de Léa");
+        assert_eq!(de("Léa"), "de la chambre de Léa");
+        assert_eq!(dans("Léa"), "dans la chambre de Léa");
+        assert_eq!(room("Léa"), "Chambre de Léa");
+        assert_eq!(agree("Léa", "réglé", "réglée"), "réglée");
+        // Room words, another kind of room and the unassigned area keep their own name.
+        assert_eq!(room("Salon"), "Salon");
+        assert_eq!(room("Chambre Léa"), "Chambre Léa");
+        assert_eq!(le("Toilettes"), "Toilettes");
+        assert!(!le("Unassigned").contains("chambre"));
+    }
+
+    #[test]
+    fn replies_name_a_person_room_as_their_bedroom() {
+        let f = fixture::person_rooms();
+        let h = f.house();
+        let d = Done::Setpoint {
+            zone: "lea".into(),
+            from: Some(17.5),
+            to: 19.0,
+        };
+        assert_eq!(
+            done(&d, &[ActionResult::Ok], &h, false),
+            "Chambre de Léa réglée à 19 °C (avant 17,5 °C)."
+        );
     }
 
     #[test]

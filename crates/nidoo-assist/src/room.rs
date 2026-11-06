@@ -26,6 +26,16 @@ fn is_bedroom_word(w: &str) -> bool {
     BEDROOM.contains(&w)
 }
 
+/// Whether a room is named after its person ("Léa"): no bedroom word, nothing that says it is
+/// another kind of room, and not the unassigned area. Such a room is "la chambre de Léa".
+pub(crate) fn named_after_person(name: &str) -> bool {
+    let words = name_words(name);
+    !words.is_empty()
+        && fold(name) != fold(UNASSIGNED_AREA)
+        && !not_bedroom(&words)
+        && !words.iter().any(|w| is_bedroom_word(w))
+}
+
 /// The significant folded words of a name: linkers and noise dropped ("Chambre de Léa" →
 /// `chambre`, `lea`).
 pub fn name_words(name: &str) -> Vec<String> {
