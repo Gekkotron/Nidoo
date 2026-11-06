@@ -32,7 +32,8 @@ fi
 # Nidoo stays generic: the music server it was first tried with is never named
 # (the word is encoded so this script does not name it either).
 player=$(printf '%s' 'cGluc29u' | base64 -d)
-named=$(scan -n -i -w "$player" -- . ':!docs/superpowers')
+# Everywhere, docs/superpowers included: its specs and plans are tracked text too.
+named=$(scan -n -i -w "$player" -- .)
 if [ -n "$named" ]; then
   echo "A music server is named; Nidoo is generic, say \"a media player\":"
   printf '%s\n' "$named"

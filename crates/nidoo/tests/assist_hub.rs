@@ -947,6 +947,20 @@ async fn feed_satellite(hub: &Hub, sid: &str, area: &str) {
         config.to_string().as_bytes(),
     );
     hub.ingest(&format!("nidoo-sound/{sid}/volume"), b"40");
+    // The Mute switch, as nidoo-sound publishes it: the hub folds it into the Music volume.
+    let mute = serde_json::json!({
+        "name": "Mute",
+        "unique_id": format!("nidoo_sound_{sid}_mute"),
+        "state_topic": format!("nidoo-sound/{sid}/mute"),
+        "command_topic": format!("nidoo-sound/{sid}/mute/set"),
+        "payload_on": "ON", "payload_off": "OFF", "device_class": "mute",
+        "device": {"identifiers": [format!("nidoo_sound_{sid}")], "name": "Satellite"}
+    });
+    hub.ingest(
+        &format!("nidoo/switch/nidoo_sound_{sid}/mute/config"),
+        mute.to_string().as_bytes(),
+    );
+    hub.ingest(&format!("nidoo-sound/{sid}/mute"), b"OFF");
     place(hub, &format!("nidoo_sound_{sid}_volume"), area).await;
 }
 
@@ -1026,4 +1040,33 @@ async fn simulated_media_turn_sends_nothing() {
             .iter()
             .all(|p| !p.topic.starts_with("music/"))
     );
+}
+
+#[tokio::test]
+async fn coupe_le_son_mutes_the_satellite_that_heard_it() {
+    let (hub, mut rx) = house().await;
+    feed_satellite(&hub, "0123456789ab", "office").await;
+    drain(&mut rx);
+    let echo = {
+        let hub = Arc::clone(&hub);
+        tokio::spawn(async move {
+            let published = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+                .await
+                .expect("a publish within 2 s")
+                .expect("a publish");
+            hub.ingest(
+                "nidoo-sound/0123456789ab/mute",
+                published.payload.as_bytes(),
+            );
+            published
+        })
+    };
+    let turn = hub
+        .assist(heard("0123456789ab", "coupe le son"))
+        .await
+        .expect("assist");
+    let published = echo.await.expect("echo");
+    assert_eq!(published.topic, "nidoo-sound/0123456789ab/mute/set");
+    assert_eq!(published.payload, "ON");
+    assert_eq!(turn.reply, "Son coupé dans le Bureau.", "{turn:?}");
 }
