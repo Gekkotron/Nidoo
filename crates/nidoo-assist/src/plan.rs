@@ -284,7 +284,7 @@ fn ask_room(req: &Request, areas: &[String], house: &House, trace: Trace) -> Pla
         .map(|id| {
             let mut next = req.clone();
             next.area = Some(id.clone());
-            (house.area_name(id).to_string(), next)
+            (crate::reply::room(house.area_name(id)), next)
         })
         .collect();
     Plan::Ask {
@@ -2193,7 +2193,7 @@ mod tests {
         // A bare "chambre" asks among the rooms that may be bedrooms: never the Salon.
         assert_eq!(
             labels(&p("augmente le chauffage dans la chambre")),
-            ["Léa", "Tom"]
+            ["Chambre de Léa", "Chambre de Tom"]
         );
         assert_eq!(
             reply_of(&p("augmente le chauffage dans la chambre du salon")),

@@ -10,7 +10,7 @@ It runs in the hub with fixed rules, no language model: the same sentence always
 
 ## What it understands
 
-Rooms are your own rooms, by name ("salon", "la chambre de Léa", "chez Léa", "Léa"). Accents, capitals and a one-letter typo in a long word don't matter.
+Rooms are your own rooms, by name ("salon", "la chambre de Léa", "chez Léa", "Léa"). Accents, capitals and a one-letter typo in a long word don't matter. A room named after its person ("Léa") is called "la chambre de Léa" in the replies, the room buttons and the examples.
 
 **Lights**, on or off, for a room or for named lights in it:
 

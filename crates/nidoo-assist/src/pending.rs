@@ -298,6 +298,22 @@ mod tests {
     }
 
     #[test]
+    fn examples_say_chambre_de_for_a_person_room() {
+        let f = fixture::person_rooms();
+        let ex = examples(&f.house());
+        assert!(ex.iter().any(|e| e.contains("la chambre de Léa")), "{ex:?}");
+        for e in &ex {
+            assert!(
+                !matches!(
+                    crate::plan::plan(e, &f.house()),
+                    crate::plan::Plan::NotUnderstood { .. }
+                ),
+                "{e}"
+            );
+        }
+    }
+
+    #[test]
     fn empty_house_has_no_examples() {
         let mut f = fixture::house();
         f.areas.clear();
