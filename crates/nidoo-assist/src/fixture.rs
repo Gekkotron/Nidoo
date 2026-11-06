@@ -7,7 +7,7 @@ use nidoo_climate::doc::{Decision, Setpoint, Source, ZoneSettings, ZoneState};
 use nidoo_climate::view::{LearnStatus, ZoneView};
 use nidoo_core::model::{
     Availability, Capabilities, CoverState, EntityCategory, EntityState, Kind, LightState,
-    StateValue,
+    MediaPlayerState, StateValue,
 };
 
 use crate::house::{HeatRange, House};
@@ -115,6 +115,38 @@ pub fn cover(id: &str, name: &str, area: &str, can_position: bool) -> EntityView
 pub fn switch(id: &str, name: &str, area: &str, show_as: Option<&str>) -> EntityView {
     let mut e = entity(id, name, Kind::Switch, area);
     e.ui.show_as = show_as.map(str::to_string);
+    e.state.value = StateValue::OnOff(false);
+    e
+}
+
+/// A media player with every feature, playing "Get Lucky" by "Daft Punk".
+pub fn media_player(id: &str, name: &str, area: &str) -> EntityView {
+    let mut e = entity(id, name, Kind::MediaPlayer, area);
+    e.capabilities.media_features = ["play", "pause", "next", "previous", "play_media"]
+        .iter()
+        .map(|f| (*f).to_string())
+        .collect();
+    e.state.value = StateValue::MediaPlayer(MediaPlayerState {
+        state: Some("playing".into()),
+        title: Some("Get Lucky".into()),
+        artist: Some("Daft Punk".into()),
+        ..Default::default()
+    });
+    e
+}
+
+/// A satellite's music volume (`device_class: volume`), at `level`.
+pub fn speaker_volume(id: &str, area: &str, level: f64) -> EntityView {
+    let mut e = entity(id, "Volume musique", Kind::Number, area);
+    e.device_class = Some("volume".into());
+    e.state.value = StateValue::Number(level);
+    e
+}
+
+/// A satellite's mute switch (`device_class: mute`), not muted.
+pub fn speaker_mute(id: &str, area: &str) -> EntityView {
+    let mut e = entity(id, "Muet", Kind::Switch, area);
+    e.device_class = Some("mute".into());
     e.state.value = StateValue::OnOff(false);
     e
 }
@@ -230,6 +262,10 @@ pub fn house() -> Fixture {
             climate("climate_salon", "salon"),
             climate("climate_lea", "chambre_lea"),
             climate("climate_tom", "chambre_tom"),
+            media_player("player_music", "Musique", "salon"),
+            speaker_volume("number_salon_volume", "salon", 40.0),
+            speaker_mute("switch_salon_mute", "salon"),
+            speaker_volume("number_bureau_volume", "bureau", 30.0),
         ],
         zones: vec![
             zone(
@@ -262,6 +298,14 @@ pub fn house() -> Fixture {
         range: HeatRange::default(),
         now: NOW,
     }
+}
+
+/// [`house`] with a second player, in the office.
+pub fn two_players() -> Fixture {
+    let mut f = house();
+    f.entities
+        .push(media_player("player_bureau", "Musique bureau", "bureau"));
+    f
 }
 
 /// [`house`] with the bedrooms named after their person only: area `lea` "Léa" and `tom`
