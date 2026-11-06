@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::flow::Scalar;
 use crate::model::{Capabilities, Command, Kind};
-use crate::state::{ALARM_STATES, COVER_STATES, VACUUM_STATES};
+use crate::state::{ALARM_STATES, COVER_STATES, MEDIA_STATES, VACUUM_STATES};
 use crate::types::{Shape, type_def};
 
 /// What an entity can be told: a command template plus the inputs it takes.
@@ -100,7 +100,7 @@ pub fn reports(kind: Kind, component: &str, caps: &Capabilities, unit: Option<&s
         Kind::Light | Kind::Switch | Kind::BinarySensor => on_off(),
         Kind::Cover => fixed_words(COVER_STATES),
         Kind::Vacuum => fixed_words(VACUUM_STATES),
-        Kind::MediaPlayer => Reports::Nothing,
+        Kind::MediaPlayer => fixed_words(MEDIA_STATES),
         Kind::Climate | Kind::WaterHeater => words(&caps.hvac_modes),
         Kind::Select => words(&caps.options),
         Kind::AlarmPanel => {
@@ -341,7 +341,26 @@ pub fn actions(kind: Kind, component: &str, caps: &Capabilities) -> Vec<Action> 
             }))
             .collect(),
         Kind::Generic => generic(component, caps),
-        Kind::Sensor | Kind::BinarySensor | Kind::MediaPlayer => Vec::new(),
+        Kind::MediaPlayer => caps
+            .media_features
+            .iter()
+            .map(|feature| match feature.as_str() {
+                "play_media" => Action {
+                    command: Command::PlayMedia {
+                        query: String::new(),
+                    },
+                    params: vec![Param::Text {
+                        key: "query".to_owned(),
+                        secret: false,
+                        optional: false,
+                    }],
+                },
+                action => bare(Command::MediaAction {
+                    action: action.to_owned(),
+                }),
+            })
+            .collect(),
+        Kind::Sensor | Kind::BinarySensor => Vec::new(),
     }
 }
 
@@ -609,6 +628,60 @@ mod tests {
         assert_eq!(
             reports(Kind::Button, "button", &Capabilities::default(), None),
             Reports::Nothing
+        );
+    }
+
+    #[test]
+    fn media_player_reports_its_three_states() {
+        assert_eq!(
+            reports(
+                Kind::MediaPlayer,
+                "media_player",
+                &Capabilities::default(),
+                None
+            ),
+            Reports::Values {
+                values: ["playing", "paused", "idle"]
+                    .iter()
+                    .map(|w| Scalar::Text((*w).to_owned()))
+                    .collect()
+            }
+        );
+    }
+
+    #[test]
+    fn media_player_actions_follow_features() {
+        let caps = Capabilities {
+            media_features: ["play", "next", "play_media"]
+                .iter()
+                .map(|f| (*f).to_owned())
+                .collect(),
+            ..Default::default()
+        };
+        let list = actions(Kind::MediaPlayer, "media_player", &caps);
+        let commands: Vec<_> = list.iter().map(|a| a.command.clone()).collect();
+        assert_eq!(
+            commands,
+            vec![
+                Command::MediaAction {
+                    action: "play".into()
+                },
+                Command::MediaAction {
+                    action: "next".into()
+                },
+                Command::PlayMedia {
+                    query: String::new()
+                },
+            ]
+        );
+        assert!(list[0].params.is_empty());
+        assert_eq!(
+            list[2].params,
+            vec![Param::Text {
+                key: "query".into(),
+                secret: false,
+                optional: false
+            }]
         );
     }
 }

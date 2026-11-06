@@ -20,7 +20,8 @@ pub(super) fn map(m: &Mapper<'_>) -> Result<Vec<Publish>, CommandError> {
         Kind::Button => button(m),
         Kind::AlarmPanel => alarm(m),
         Kind::Vacuum => vacuum(m),
-        Kind::Sensor | Kind::BinarySensor | Kind::MediaPlayer => Err(m.unsupported()),
+        Kind::MediaPlayer => media_player(m),
+        Kind::Sensor | Kind::BinarySensor => Err(m.unsupported()),
         Kind::Generic => match crate::types::type_def(&m.entity.component) {
             Some(def) => crate::types::command::map(m, def),
             None => Err(m.unsupported()),
@@ -415,4 +416,33 @@ fn vacuum(m: &Mapper<'_>) -> Result<Vec<Publish>, CommandError> {
         _ => return Err(m.unsupported()),
     };
     Ok(vec![publish])
+}
+
+/// The media player contract: one JSON object on `command_topic`, for a command the player
+/// lists in `supported_features`.
+fn media_player(m: &Mapper<'_>) -> Result<Vec<Publish>, CommandError> {
+    let features = &m.entity.capabilities.media_features;
+    let supported = |feature: &str| features.iter().any(|f| f == feature);
+    let payload = match m.command {
+        Command::MediaAction { action }
+            if matches!(action.as_str(), "play" | "pause" | "next" | "previous")
+                && supported(action) =>
+        {
+            json!({ "command": action })
+        }
+        Command::PlayMedia { query } if supported("play_media") => {
+            let query = query.trim();
+            if query.is_empty() {
+                return Err(CommandError::OutOfRange("the query is empty".to_owned()));
+            }
+            json!({ "command": "play_media", "query": query })
+        }
+        _ => return Err(m.unsupported()),
+    };
+    Ok(vec![m.publish(
+        "command_topic",
+        None,
+        &payload.to_string(),
+        &[],
+    )?])
 }

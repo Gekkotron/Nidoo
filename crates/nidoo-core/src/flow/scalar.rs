@@ -32,8 +32,7 @@ impl Scalar {
             StateValue::WaterHeater(heater) => heater.mode.clone().map(Scalar::Text),
             // Needs the type table: see `Scalar::of_generic`.
             StateValue::Generic(_) => None,
-            // Task 2 gives it its headline.
-            StateValue::MediaPlayer(_) => None,
+            StateValue::MediaPlayer(player) => player.state.clone().map(Scalar::Text),
             StateValue::Unknown => None,
         }
     }

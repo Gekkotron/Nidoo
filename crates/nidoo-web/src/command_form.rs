@@ -41,6 +41,7 @@ pub fn command_key(c: &Command) -> String {
         Command::SetFanMode { mode } => format!("fan:{mode}"),
         Command::SetFanSpeed { speed } => format!("speed:{speed}"),
         Command::VacuumAction { action } => format!("vacuum:{action}"),
+        Command::MediaAction { action } => format!("media:{action}"),
         Command::Arm { mode, .. } => format!("arm:{mode:?}"),
         // An on/off or choice control is one choice per value; a number or text control is
         // one choice whose value is an input.
@@ -83,6 +84,9 @@ pub fn command_label(lang: Lang, c: &Command) -> String {
         Command::SetFanMode { mode } => fan_mode_action(lang, &word(mode)),
         Command::SetFanSpeed { speed } => fan_speed_action(lang, &word(speed)),
         Command::VacuumAction { action } => vacuum_action_label(lang, action),
+        // Task 8 translates them.
+        Command::MediaAction { action } => word(action),
+        Command::PlayMedia { .. } => word("play_media"),
         Command::Arm { mode, .. } => arm_action(lang, *mode),
         Command::Control { control, value } => match (control.as_str(), value) {
             ("locked", Some(Value::Bool(true))) => flow(FlowText::Lock),

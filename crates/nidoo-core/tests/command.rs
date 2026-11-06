@@ -1211,3 +1211,117 @@ fn inverted_switch_sends_the_opposite_word() {
         vec![publish(topic, "ON")]
     );
 }
+
+fn player(features: Option<&[&str]>) -> Entity {
+    let mut config = json!({
+        "name": "Music",
+        "unique_id": "music_player",
+        "state_topic": "music/player/state",
+        "command_topic": "music/player/set",
+    });
+    if let Some(features) = features {
+        config["supported_features"] = json!(features);
+    }
+    common::entity("media_player", config)
+}
+
+fn media(action: &str) -> Command {
+    Command::MediaAction {
+        action: action.to_owned(),
+    }
+}
+
+#[test]
+fn media_actions_publish_json_commands() {
+    let player = player(None);
+    for action in ["play", "pause", "next", "previous"] {
+        let publishes = ok(&player, &media(action));
+        assert_eq!(publishes.len(), 1, "{action}");
+        assert_eq!(publishes[0].topic, "music/player/set");
+        assert!(!publishes[0].retain);
+        assert_eq!(json_payload(&publishes[0]), json!({"command": action}));
+    }
+}
+
+#[test]
+fn play_media_publishes_the_query_as_heard() {
+    let player = player(Some(&["play", "play_media"]));
+    let publishes = ok(
+        &player,
+        &Command::PlayMedia {
+            query: " du Daft Punk ".to_owned(),
+        },
+    );
+    assert_eq!(
+        json_payload(&publishes[0]),
+        json!({"command": "play_media", "query": "du Daft Punk"})
+    );
+}
+
+#[test]
+fn media_command_outside_supported_features_is_unsupported() {
+    let player = player(Some(&["play", "pause"]));
+    let state = EntityState::default();
+    assert!(matches!(
+        err(&player, &state, &media("next")),
+        CommandError::Unsupported { .. }
+    ));
+    assert!(matches!(
+        err(
+            &player,
+            &state,
+            &Command::PlayMedia {
+                query: "x".to_owned()
+            }
+        ),
+        CommandError::Unsupported { .. }
+    ));
+    assert!(matches!(
+        err(&player, &state, &media("stop")),
+        CommandError::Unsupported { .. }
+    ));
+}
+
+#[test]
+fn play_media_needs_words() {
+    let player = player(Some(&["play_media"]));
+    assert!(matches!(
+        err(
+            &player,
+            &EntityState::default(),
+            &Command::PlayMedia {
+                query: "  ".to_owned()
+            }
+        ),
+        CommandError::OutOfRange(_)
+    ));
+}
+
+#[test]
+fn media_player_refuses_other_commands() {
+    assert!(matches!(
+        err(
+            &player(None),
+            &EntityState::default(),
+            &turn_on(None, None, None)
+        ),
+        CommandError::Unsupported { .. }
+    ));
+}
+
+#[test]
+fn media_features_follow_supported_features_in_order() {
+    let player = player(Some(&["play_media", "play", "shuffle"]));
+    assert_eq!(
+        player.capabilities.media_features,
+        common::strings(&["play", "play_media"])
+    );
+}
+
+#[test]
+fn media_features_default_without_the_key() {
+    assert_eq!(
+        player(None).capabilities.media_features,
+        common::strings(&["play", "pause", "next", "previous"])
+    );
+}
