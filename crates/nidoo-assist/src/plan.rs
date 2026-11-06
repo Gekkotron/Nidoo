@@ -205,6 +205,12 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
                 ..Default::default()
             },
         ),
+        // Planned in the next commit.
+        Intent::Media(_)
+        | Intent::Volume { .. }
+        | Intent::Mute { .. }
+        | Intent::MediaHint
+        | Intent::VolumeRange => not_understood(house),
         Intent::CoverPositionRange => answer(
             "La position va de 0 à 100 %.".into(),
             Trace {

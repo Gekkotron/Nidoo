@@ -2,6 +2,7 @@
 
 use crate::lexicon::{Class, class};
 use crate::text::{Word, number_text};
+use nidoo_api::search::fold;
 use nidoo_core::model::SwitchType;
 
 /// What the sentence asks, with the words left that may name a room or a light.
@@ -48,7 +49,47 @@ pub enum Intent {
         names: Vec<String>,
         room: Vec<String>,
     },
+    /// The music: pause, play, skip, ask or search.
+    Media(MediaIntent),
+    /// A speaker's music volume, in points of 0–100; `room`: the words that may name the room.
+    Volume {
+        change: Change,
+        room: Vec<String>,
+    },
+    /// Mute (`on`) or unmute the speakers; `room` as for the volume.
+    Mute {
+        on: bool,
+        room: Vec<String>,
+    },
+    /// "mets de la musique classique": a name after "mets"; answered with the "joue" hint.
+    MediaHint,
+    /// A volume outside 0–100 %.
+    VolumeRange,
 }
+
+/// What is asked of the music player.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MediaIntent {
+    Pause,
+    /// `resume`: "reprends la musique", answered as a resume.
+    Play {
+        resume: bool,
+    },
+    Next,
+    Previous,
+    /// "c'est quoi cette chanson ?": read, never acted on.
+    NowPlaying,
+    /// The words after "joue", as typed.
+    PlayMedia {
+        query: String,
+    },
+}
+
+/// The volume step of a bare "monte / baisse le son", in points.
+pub const VOLUME_STEP: f64 = 10.0;
+
+/// The volume step of "un peu".
+pub const VOLUME_LITTLE: f64 = 5.0;
 
 /// A setpoint change: a value, or a step from the current setpoint.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -178,6 +219,21 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
                 *t = Tok::Free(std::mem::take(w));
             }
         }
+    }
+    // "le son" is the speakers' sound; "son bureau" is a possessive, a free word as before.
+    for i in 0..toks.len() {
+        if matches!(&toks[i], Tok::Known(Class::Sound, w) if w == "son") {
+            let article = i.checked_sub(1).is_some_and(|j| {
+                matches!(&toks[j], Tok::Known(Class::Noise | Class::Linker, w)
+                    if matches!(w.as_str(), "le" | "du" | "au" | "de" | "l"))
+            });
+            if !article {
+                toks[i] = Tok::Free("son".into());
+            }
+        }
+    }
+    if let Some(intent) = media(&toks) {
+        return Some(intent);
     }
     let has = |c: Class| {
         toks.iter()
@@ -322,6 +378,233 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
         return Some(lights(&toks, &roles, on, has(Class::All)));
     }
     None
+}
+
+/// Music and volume: only with a music word ("musique", "le son", "pause", "suivante" …) and
+/// never with a light, shutter, heating, TV, plug or other device word or a negation, so every
+/// house sentence parses as before. `None` hands the sentence back to the house intents.
+fn media(toks: &[Tok]) -> Option<Intent> {
+    let has = |c: Class| {
+        toks.iter()
+            .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
+    };
+    let back = has(Class::Back)
+        && toks
+            .iter()
+            .any(|t| matches!(t, Tok::Free(w) if w == "arriere"));
+    let music = has(Class::Media) || has(Class::Listen);
+    let sound = has(Class::Sound);
+    let worded = music
+        || sound
+        || has(Class::Pause)
+        || has(Class::Next)
+        || has(Class::Previous)
+        || has(Class::Stop)
+        || back;
+    let blockers = [
+        Class::Light,
+        Class::LightNamed,
+        Class::Cover,
+        Class::Heating,
+        Class::Temperature,
+        Class::Degree,
+        Class::Tv,
+        Class::Plug,
+        Class::OtherDevice,
+        Class::Negation,
+    ];
+    if !worded || blockers.into_iter().any(has) {
+        return None;
+    }
+    let verbs = [
+        Class::On,
+        Class::Off,
+        Class::Set,
+        Class::Raise,
+        Class::Lower,
+        Class::Resume,
+        Class::Launch,
+        Class::Stop,
+        Class::Pause,
+    ];
+    let verb = verbs.into_iter().any(has);
+    if music && (has(Class::Question) || has(Class::Statement)) && !verb {
+        return Some(Intent::Media(MediaIntent::NowPlaying));
+    }
+    // "j'ai mis pause" describes; only a polite request is an order.
+    if has(Class::Statement) && !has(Class::Request) {
+        return None;
+    }
+    let (next, previous) = (has(Class::Next), has(Class::Previous) || back);
+    if next || previous {
+        let intent = if next {
+            MediaIntent::Next
+        } else {
+            MediaIntent::Previous
+        };
+        return (next != previous).then_some(Intent::Media(intent));
+    }
+    let off = has(Class::Off);
+    if has(Class::Pause) || ((has(Class::Stop) || off) && has(Class::Media)) {
+        return Some(Intent::Media(MediaIntent::Pause));
+    }
+    let roles = roles(toks);
+    let number_with = |role: Role| {
+        toks.iter().zip(&roles).find_map(|(t, r)| match (t, r) {
+            (Tok::Number(n), Some(r)) if *r == role => Some(*n),
+            _ => None,
+        })
+    };
+    let room: Vec<String> = toks
+        .iter()
+        .zip(&roles)
+        .filter_map(|(t, r)| match (t, r) {
+            (Tok::Free(w), _) => Some(w.clone()),
+            (Tok::Number(n), Some(Role::Name)) => Some(number_text(*n)),
+            _ => None,
+        })
+        .collect();
+    let (raise, lower) = (has(Class::Raise), has(Class::Lower));
+    let absolute = |n: f64| {
+        Some(if (0.0..=100.0).contains(&n) {
+            Intent::Volume {
+                change: Change::Absolute(n),
+                room: room.clone(),
+            }
+        } else {
+            Intent::VolumeRange
+        })
+    };
+    if (raise || lower) && (sound || has(Class::Media)) {
+        if raise && lower {
+            return None;
+        }
+        if let Some(n) = number_with(Role::AfterA) {
+            return absolute(n);
+        }
+        let signed = toks.iter().find_map(|t| match t {
+            Tok::Signed(n) => Some(n.abs()),
+            _ => None,
+        });
+        let step = if has(Class::Little) {
+            VOLUME_LITTLE
+        } else {
+            signed
+                .or(number_with(Role::Amount))
+                .map_or(VOLUME_STEP, f64::abs)
+        };
+        return Some(Intent::Volume {
+            change: Change::Relative(if lower { -step } else { step }),
+            room,
+        });
+    }
+    if sound {
+        if has(Class::Set) {
+            return number_with(Role::AfterA).and_then(absolute);
+        }
+        if off {
+            return Some(Intent::Mute { on: true, room });
+        }
+        if has(Class::Resume) {
+            return Some(Intent::Mute { on: false, room });
+        }
+        return None;
+    }
+    if has(Class::Media) {
+        if has(Class::Resume) {
+            return Some(Intent::Media(MediaIntent::Play { resume: true }));
+        }
+        if has(Class::Set) || has(Class::Launch) {
+            let named = !room.is_empty() || toks.iter().any(|t| matches!(t, Tok::Number(_)));
+            return Some(if named {
+                Intent::MediaHint
+            } else {
+                Intent::Media(MediaIntent::Play { resume: false })
+            });
+        }
+    }
+    None
+}
+
+/// The forms of "jouer" that start a search by name.
+const PLAY_WORDS: &[&str] = &["joue", "joues", "jouez", "jouer"];
+
+/// Words after "joue" that ask for some music rather than a name.
+const SOME_MUSIC: &[&str] = &[
+    "musique",
+    "musiques",
+    "quelque chose",
+    "morceau",
+    "chanson",
+    "truc",
+];
+
+/// "joue …" anywhere in the raw sentence: the words after it, as typed (case and accents kept),
+/// are a search; none, or just "de la musique", plays something. A question ("qu'est-ce qui
+/// joue ?") asks what is playing; "ne joue pas" is `None`. Read on the raw sentence, before
+/// [`parse`]: "joue" means music whatever follows.
+pub fn play_by_name(sentence: &str) -> Option<Intent> {
+    let raw: Vec<&str> = sentence.split_whitespace().collect();
+    let clean = |w: &str| fold(w.trim_matches(|c: char| !c.is_alphanumeric()));
+    let at = raw
+        .iter()
+        .position(|w| PLAY_WORDS.contains(&clean(w).as_str()))?;
+    let before: Vec<String> = raw[..at].iter().map(|w| clean(w)).collect();
+    let mut rest: Vec<&str> = raw[at + 1..].to_vec();
+    if before.iter().any(|w| w == "ne" || w == "n")
+        || rest.first().is_some_and(|w| clean(w) == "pas")
+    {
+        return None;
+    }
+    if sentence.trim_end().ends_with('?') || before.iter().any(|w| w == "qui" || w == "quoi") {
+        return Some(Intent::Media(MediaIntent::NowPlaying));
+    }
+    // Politeness at the end is not part of a name.
+    loop {
+        match rest.last().map(|w| clean(w)).as_deref() {
+            Some("stp" | "svp" | "merci" | "") => {
+                rest.pop();
+            }
+            Some("plait") => {
+                rest.pop();
+                if rest
+                    .last()
+                    .is_some_and(|w| matches!(clean(w).as_str(), "te" | "vous"))
+                {
+                    rest.pop();
+                }
+                if rest
+                    .last()
+                    .is_some_and(|w| clean(w) == "s'il" || clean(w) == "sil")
+                {
+                    rest.pop();
+                }
+            }
+            _ => break,
+        }
+    }
+    let query = rest
+        .join(" ")
+        .trim_end_matches(|c: char| c.is_whitespace() || "?!.,;".contains(c))
+        .to_owned();
+    let folded: Vec<String> = query.split_whitespace().map(clean).collect();
+    let skip = match folded.as_slice() {
+        [de, la, ..] if de == "de" && la == "la" => 2,
+        [article, ..]
+            if matches!(
+                article.as_str(),
+                "du" | "des" | "le" | "la" | "les" | "un" | "une"
+            ) =>
+        {
+            1
+        }
+        _ => 0,
+    };
+    let what = folded.get(skip..).unwrap_or_default().join(" ");
+    if what.is_empty() || SOME_MUSIC.contains(&what.as_str()) {
+        return Some(Intent::Media(MediaIntent::Play { resume: false }));
+    }
+    Some(Intent::Media(MediaIntent::PlayMedia { query }))
 }
 
 /// Shutters: an open verb ("ouvre", "monte") or a close verb ("ferme", "baisse"), never both
@@ -865,5 +1148,157 @@ mod tests {
     fn unknown_is_none() {
         assert_eq!(p("fais-moi un café"), None);
         assert_eq!(p(""), None);
+    }
+
+    fn media(m: MediaIntent) -> Option<Intent> {
+        Some(Intent::Media(m))
+    }
+
+    fn volume(change: Change, room: &[&str]) -> Option<Intent> {
+        Some(Intent::Volume {
+            change,
+            room: v(room),
+        })
+    }
+
+    #[test]
+    fn music_sentences() {
+        assert_eq!(p("mets pause"), media(MediaIntent::Pause));
+        assert_eq!(p("pause"), media(MediaIntent::Pause));
+        assert_eq!(p("pause la musique"), media(MediaIntent::Pause));
+        assert_eq!(p("stop la musique"), media(MediaIntent::Pause));
+        assert_eq!(p("arrête la musique"), media(MediaIntent::Pause));
+        assert_eq!(
+            p("reprends la musique"),
+            media(MediaIntent::Play { resume: true })
+        );
+        assert_eq!(
+            p("relance la musique"),
+            media(MediaIntent::Play { resume: true })
+        );
+        assert_eq!(
+            p("mets de la musique"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(
+            p("lance de la musique"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(
+            p("peux-tu mettre de la musique"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(p("mets de la musique classique"), Some(Intent::MediaHint));
+        assert_eq!(p("chanson suivante"), media(MediaIntent::Next));
+        assert_eq!(p("musique suivante"), media(MediaIntent::Next));
+        assert_eq!(p("passe à la suivante"), media(MediaIntent::Next));
+        assert_eq!(p("chanson précédente"), media(MediaIntent::Previous));
+        assert_eq!(p("reviens en arrière"), media(MediaIntent::Previous));
+        assert_eq!(p("chanson suivante et précédente"), None);
+        assert_eq!(
+            p("c'est quoi cette chanson ?"),
+            media(MediaIntent::NowPlaying)
+        );
+        assert_eq!(
+            p("qu'est-ce qu'on écoute ?"),
+            media(MediaIntent::NowPlaying)
+        );
+        assert_eq!(p("quel est le titre ?"), media(MediaIntent::NowPlaying));
+        assert_eq!(p("j'ai mis pause"), None);
+        assert_eq!(p("ne coupe pas le son"), None);
+        assert_eq!(p("ne mets pas pause"), None);
+    }
+
+    #[test]
+    fn volume_sentences() {
+        assert_eq!(p("monte le son"), volume(Change::Relative(10.0), &[]));
+        assert_eq!(p("baisse le son"), volume(Change::Relative(-10.0), &[]));
+        assert_eq!(
+            p("baisse un peu le son"),
+            volume(Change::Relative(-5.0), &[])
+        );
+        assert_eq!(p("monte le son de 20"), volume(Change::Relative(20.0), &[]));
+        assert_eq!(p("monte la musique"), volume(Change::Relative(10.0), &[]));
+        assert_eq!(p("mets le son à 60 %"), volume(Change::Absolute(60.0), &[]));
+        assert_eq!(
+            p("mets le volume à 60"),
+            volume(Change::Absolute(60.0), &[])
+        );
+        assert_eq!(p("mets le son à 140"), Some(Intent::VolumeRange));
+        assert_eq!(
+            p("baisse le son du salon"),
+            volume(Change::Relative(-10.0), &["salon"])
+        );
+        assert_eq!(
+            p("coupe le son"),
+            Some(Intent::Mute {
+                on: true,
+                room: vec![]
+            })
+        );
+        assert_eq!(
+            p("remets le son dans le salon"),
+            Some(Intent::Mute {
+                on: false,
+                room: v(&["salon"])
+            })
+        );
+    }
+
+    /// Sentences that meant something before the music words keep meaning it.
+    #[test]
+    fn house_sentences_are_unchanged() {
+        assert_eq!(
+            p("mets le chauffage à 20"),
+            set(Change::Absolute(20.0), &[])
+        );
+        assert_eq!(
+            p("passe le chauffage à 20"),
+            set(Change::Absolute(20.0), &[])
+        );
+        assert_eq!(p("coupe la lumière"), lights(false, false, &[], &[]));
+        assert!(matches!(
+            p("monte le volet"),
+            Some(Intent::Covers { open: true, .. })
+        ));
+        assert_eq!(p("passe"), None);
+        assert_eq!(
+            p("mets son bureau à 20"),
+            set(Change::Absolute(20.0), &["son", "bureau"])
+        );
+        assert_eq!(
+            p("allume son bureau"),
+            lights(true, false, &[], &["son", "bureau"])
+        );
+    }
+
+    fn m(s: &str) -> Option<Intent> {
+        play_by_name(s)
+    }
+
+    fn query(q: &str) -> Option<Intent> {
+        media(MediaIntent::PlayMedia { query: q.into() })
+    }
+
+    #[test]
+    fn play_by_name_reads_the_words_as_typed() {
+        assert_eq!(m("joue du Daft Punk"), query("du Daft Punk"));
+        assert_eq!(m("Joue Beyoncé !"), query("Beyoncé"));
+        assert_eq!(m("peux-tu jouer la vie en rose"), query("la vie en rose"));
+        assert_eq!(m("joue 99 Luftballons"), query("99 Luftballons"));
+        assert_eq!(m("joue Daft Punk s'il te plaît"), query("Daft Punk"));
+        assert_eq!(
+            m("joue de la musique"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(
+            m("joue une chanson"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(m("joue"), media(MediaIntent::Play { resume: false }));
+        assert_eq!(m("qu'est-ce qui joue ?"), media(MediaIntent::NowPlaying));
+        assert_eq!(m("ne joue pas Daft Punk"), None);
+        assert_eq!(m("mets Daft Punk"), None);
+        assert_eq!(m("allume la lumière"), None);
     }
 }
