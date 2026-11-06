@@ -6,15 +6,16 @@ use std::time::{Duration, Instant};
 
 use futures_util::future::join_all;
 use nidoo_api::{already_there, area_views, entity_views};
+use nidoo_assist::plan::plan_heard;
 use nidoo_assist::plan::{Action, Plan};
 use nidoo_assist::reply::{self, ActionResult, temp};
 use nidoo_assist::view::{
     ActionTrace, AssistRequest, AssistTurn, AssistTurns, OutcomeKind, PendingReply, Question,
     QuestionKind,
 };
-use nidoo_assist::{HeatRange, House, Pending, PendingAnswer, answer_text, plan, plan_request};
+use nidoo_assist::{HeatRange, House, Pending, PendingAnswer, answer_text, plan_request};
 use nidoo_climate::doc::{Override, OverrideOrigin, Setpoint};
-use nidoo_core::model::{Availability, Command};
+use nidoo_core::model::{Availability, Command, StateValue};
 use tokio::time::timeout;
 
 use super::log::TurnLog;
@@ -53,7 +54,7 @@ struct Slot {
 #[derive(Debug)]
 pub(crate) enum Taken {
     /// The question was open: it is now closed, and this is it (and whether it was simulated).
-    Open(Pending, bool),
+    Open(Box<Pending>, bool),
     /// The client has no open question, or it expired.
     Gone,
     /// The client's open question is another one; it is left as it was.
@@ -111,7 +112,7 @@ impl AssistState {
             None => Taken::Gone,
             Some(slot) if slot.id != id => Taken::Superseded,
             Some(_) => match slots.remove(client) {
-                Some(slot) => Taken::Open(slot.pending, slot.simulate),
+                Some(slot) => Taken::Open(Box::new(slot.pending), slot.simulate),
                 None => Taken::Gone,
             },
         }
@@ -204,6 +205,27 @@ fn what(action: &Action) -> (String, String) {
         Action::Setpoint { zone, setpoint } => {
             (zone.clone(), format!("consigne {}", temp(*setpoint)))
         }
+        Action::Media { entity, command } => {
+            let what = match command {
+                Command::PlayMedia { query } => format!("jouer « {query} »"),
+                Command::MediaAction { action } => match action.as_str() {
+                    "pause" => "pause".into(),
+                    "next" => "suivante".into(),
+                    "previous" => "précédente".into(),
+                    _ => "lecture".into(),
+                },
+                _ => "lecture".into(),
+            };
+            (entity.clone(), what)
+        }
+        Action::Speaker { entity, command } => {
+            let what = match command {
+                Command::SetNumber { value } => format!("volume {} %", reply::number(*value)),
+                Command::TurnOff => "remettre le son".into(),
+                _ => "couper le son".into(),
+            };
+            (entity.clone(), what)
+        }
         Action::Cover { entity, command } => {
             let what = match command {
                 Command::SetPosition { position } => format!("ouvrir à {position} %"),
@@ -221,7 +243,7 @@ type Executed = (ActionResult, Option<String>);
 
 fn result_text(result: &Executed, simulate: bool) -> String {
     let base = match result {
-        (ActionResult::Ok, _) => "ok".to_owned(),
+        (ActionResult::Ok | ActionResult::Echo(_), _) => "ok".to_owned(),
         (ActionResult::Skipped, _) => "skipped".to_owned(),
         (ActionResult::Offline, _) => "offline".to_owned(),
         (ActionResult::Failed(fr), detail) => {
@@ -288,9 +310,13 @@ impl Hub {
                 "client is too long ({MAX_CLIENT_LEN} characters at most)"
             )));
         }
-        let (areas, entities) = {
+        // A satellite heard the sentence: its room picks the player and the speakers.
+        let (areas, entities, speaker_room) = {
             let reg = self.read();
-            (area_views(&reg), entity_views(&reg))
+            let speaker_room = client
+                .strip_prefix("satellite:")
+                .and_then(|sid| crate::sound::room_of(&reg, sid));
+            (area_views(&reg), entity_views(&reg), speaker_room)
         };
         let climate = self.climate_view().ok();
         let zones = climate
@@ -349,7 +375,7 @@ impl Hub {
                             simulate |= asked_simulated;
                             answered(&pending, answer, &house)
                         }
-                        None => plan(text, &house),
+                        None => plan_heard(text, &house, speaker_room.as_deref()),
                     };
                 (text.to_owned(), plan)
             }
@@ -497,7 +523,9 @@ impl Hub {
             match action {
                 Action::Light { entity, command }
                 | Action::Cover { entity, command }
-                | Action::Switch { entity, command } => {
+                | Action::Switch { entity, command }
+                | Action::Media { entity, command }
+                | Action::Speaker { entity, command } => {
                     let Some(view) = house.entity(entity) else {
                         return (ActionResult::Failed("inconnue".into()), None);
                     };
@@ -511,7 +539,18 @@ impl Hub {
                         return (ActionResult::Ok, None);
                     }
                     match self.send_command(entity, command.clone()).await {
-                        Ok(response) if response.accepted => (ActionResult::Ok, None),
+                        // A media player's echo carries the song the reply names.
+                        Ok(response) if response.accepted => match response.state {
+                            Some(state) if matches!(action, Action::Media { .. }) => {
+                                match state.value {
+                                    StateValue::MediaPlayer(player) => {
+                                        (ActionResult::Echo(player), None)
+                                    }
+                                    _ => (ActionResult::Ok, None),
+                                }
+                            }
+                            _ => (ActionResult::Ok, None),
+                        },
                         Ok(response) => {
                             failed(response.reason.unwrap_or_else(|| "no response".into()))
                         }
