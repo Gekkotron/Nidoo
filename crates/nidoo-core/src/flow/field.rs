@@ -60,6 +60,10 @@ pub fn fields(
             info("effect", words(&caps.effects), false),
         ],
         Kind::Cover => vec![info("position", percent(), true)],
+        Kind::MediaPlayer => vec![
+            info("title", Reports::Text, false),
+            info("artist", Reports::Text, false),
+        ],
         Kind::Climate => vec![
             info("current", number(unit, None, None), true),
             info("target", number(unit, None, None), false),
@@ -101,6 +105,8 @@ pub fn field_scalar(value: &StateValue, field: &str) -> Option<Scalar> {
     match (value, field) {
         (StateValue::Vacuum(v), "battery") => number(v.battery.map(f64::from)),
         (StateValue::Vacuum(v), "fan_speed") => text(&v.fan_speed),
+        (StateValue::MediaPlayer(p), "title") => text(&p.title),
+        (StateValue::MediaPlayer(p), "artist") => text(&p.artist),
         (StateValue::Light(l), "brightness") => number(
             l.brightness
                 .map(|level| f64::from(brightness_percent(level))),
@@ -259,5 +265,38 @@ mod tests {
         assert_eq!(brightness_percent(1), 1);
         assert_eq!(brightness_percent(36), 14);
         assert_eq!(brightness_percent(255), 100);
+    }
+
+    #[test]
+    fn media_player_fields_are_title_and_artist() {
+        let list = fields(
+            Kind::MediaPlayer,
+            "media_player",
+            &Capabilities::default(),
+            None,
+        );
+        assert_eq!(names(&list), vec!["title", "artist"]);
+        assert!(
+            list.iter()
+                .all(|f| f.reports == Reports::Text && !f.recorded)
+        );
+        let value = StateValue::MediaPlayer(crate::model::MediaPlayerState {
+            state: Some("playing".into()),
+            title: Some("Song".into()),
+            artist: Some("Band".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            field_scalar(&value, "title"),
+            Some(Scalar::Text("Song".into()))
+        );
+        assert_eq!(
+            field_scalar(&value, "artist"),
+            Some(Scalar::Text("Band".into()))
+        );
+        assert_eq!(
+            headline_scalar("media_player", &value),
+            Some(Scalar::Text("playing".into()))
+        );
     }
 }

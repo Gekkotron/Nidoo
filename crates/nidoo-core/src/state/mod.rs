@@ -15,7 +15,7 @@ use crate::model::{Entity, EntityState};
 use crate::template::{TemplateError, Templates};
 
 pub use availability::AVAILABILITY_ATTRIBUTE;
-pub(crate) use kinds::{ALARM_STATES, COVER_STATES, VACUUM_STATES};
+pub(crate) use kinds::{ALARM_STATES, COVER_STATES, MEDIA_STATES, VACUUM_STATES};
 
 /// What a message did to an entity's state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

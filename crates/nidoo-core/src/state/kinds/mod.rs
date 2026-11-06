@@ -15,7 +15,6 @@ mod water_heater;
 
 pub(crate) use alarm::STATES as ALARM_STATES;
 pub(crate) use cover::STATES as COVER_STATES;
-#[allow(unused_imports)] // read by the vocabulary from Task 2
 pub(crate) use media_player::STATES as MEDIA_STATES;
 pub(crate) use vacuum::STATES as VACUUM_STATES;
 

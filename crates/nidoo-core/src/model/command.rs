@@ -77,6 +77,15 @@ pub enum Command {
     SetFanSpeed {
         speed: String,
     },
+    /// A media player's `play`, `pause`, `next` or `previous`. `play` on an idle player means
+    /// "play something".
+    MediaAction {
+        action: String,
+    },
+    /// Plays what the words name, as heard (the player searches).
+    PlayMedia {
+        query: String,
+    },
     /// A control a generic entity announces (`capabilities.generic.controls`); `value` follows
     /// the control's shape: absent for a press, a bool, a number or a string.
     Control {

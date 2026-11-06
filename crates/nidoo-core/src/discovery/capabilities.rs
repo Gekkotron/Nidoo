@@ -37,6 +37,10 @@ const VACUUM_ACTIONS: &[(&str, &str)] = &[
     ("return_home", "return_to_base"),
     ("locate", "locate"),
 ];
+/// The media player commands, in the order the app shows them.
+const MEDIA_FEATURES: &[&str] = &["play", "pause", "next", "previous", "play_media"];
+/// What a media player accepts when it publishes no `supported_features`.
+const DEFAULT_MEDIA_FEATURES: &[&str] = &["play", "pause", "next", "previous"];
 /// Alarm `supported_features` entry → mode.
 const ALARM_FEATURES: &[(&str, AlarmMode)] = &[
     ("arm_home", AlarmMode::Home),
@@ -100,9 +104,8 @@ fn by_kind(kind: Kind, cfg: &Value) -> Capabilities {
         },
         Kind::Vacuum => vacuum(cfg),
         Kind::AlarmPanel => alarm(cfg),
-        Kind::Switch | Kind::Sensor | Kind::BinarySensor | Kind::Button | Kind::MediaPlayer => {
-            Capabilities::default()
-        }
+        Kind::MediaPlayer => media_player(cfg),
+        Kind::Switch | Kind::Sensor | Kind::BinarySensor | Kind::Button => Capabilities::default(),
     }
 }
 
@@ -155,6 +158,19 @@ fn vacuum(cfg: &Value) -> Capabilities {
         } else {
             Vec::new()
         },
+        ..Capabilities::default()
+    }
+}
+
+fn media_player(cfg: &Value) -> Capabilities {
+    let features =
+        str_list(cfg, "supported_features").unwrap_or_else(|| owned(DEFAULT_MEDIA_FEATURES));
+    Capabilities {
+        media_features: MEDIA_FEATURES
+            .iter()
+            .filter(|feature| features.iter().any(|f| f == *feature))
+            .map(|feature| (*feature).to_owned())
+            .collect(),
         ..Capabilities::default()
     }
 }

@@ -51,6 +51,9 @@ pub struct Capabilities {
     pub vacuum_actions: Vec<String>,
     /// The vacuum's `fan_speed_list`; empty when it cannot set a fan speed.
     pub fan_speeds: Vec<String>,
+    /// The media player's supported commands (play, pause, next, previous, play_media), in
+    /// that order.
+    pub media_features: Vec<String>,
     pub min_temp: Option<f64>,
     pub max_temp: Option<f64>,
     pub temp_step: Option<f64>,

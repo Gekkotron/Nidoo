@@ -7,7 +7,10 @@
 //! kind cannot take is [`CommandError::Unsupported`]. Nothing here panics on a hostile config:
 //! a missing topic or a broken template is an error.
 
+mod echo;
 mod kinds;
+
+pub use echo::echo_confirms;
 
 use serde_json::Value;
 
@@ -88,6 +91,8 @@ pub fn command_name(command: &Command) -> &'static str {
         Command::Disarm { .. } => "disarm",
         Command::VacuumAction { .. } => "vacuum_action",
         Command::SetFanSpeed { .. } => "set_fan_speed",
+        Command::MediaAction { .. } => "media_action",
+        Command::PlayMedia { .. } => "play_media",
         Command::Control { .. } => "control",
     }
 }
