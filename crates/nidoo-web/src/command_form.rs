@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::cards::vacuum::action_label as vacuum_action_label;
 use crate::format::word;
 use crate::i18n::Lang;
+use crate::i18n::devices::{DeviceText, device_text};
 use crate::i18n::flows::{
     FlowText, arm_action, control_action, fan_mode_action, fan_speed_action, flow_text,
 };
@@ -84,9 +85,17 @@ pub fn command_label(lang: Lang, c: &Command) -> String {
         Command::SetFanMode { mode } => fan_mode_action(lang, &word(mode)),
         Command::SetFanSpeed { speed } => fan_speed_action(lang, &word(speed)),
         Command::VacuumAction { action } => vacuum_action_label(lang, action),
-        // Task 8 translates them.
-        Command::MediaAction { action } => word(action),
-        Command::PlayMedia { .. } => word("play_media"),
+        Command::MediaAction { action } => {
+            let key = match action.as_str() {
+                "play" => DeviceText::MediaPlay,
+                "pause" => DeviceText::MediaPause,
+                "next" => DeviceText::MediaNext,
+                "previous" => DeviceText::MediaPrevious,
+                _ => return word(action),
+            };
+            device_text(lang, key).to_owned()
+        }
+        Command::PlayMedia { .. } => device_text(lang, DeviceText::PlayByName).to_owned(),
         Command::Arm { mode, .. } => arm_action(lang, *mode),
         Command::Control { control, value } => match (control.as_str(), value) {
             ("locked", Some(Value::Bool(true))) => flow(FlowText::Lock),

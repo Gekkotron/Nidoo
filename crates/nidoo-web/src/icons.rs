@@ -85,6 +85,16 @@ const LOCATE: &str = svg!(
 const SPOT: &str = svg!(
     r#"<circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 1 1-6.5 6.5"/><path d="M12 2a10 10 0 1 1-10 10"/>"#
 );
+/// Media player glyphs: previous and next track, and the note of a player (its kind icon and
+/// the placeholder of a missing cover). Play and pause are `PLAY` and `PAUSE`.
+pub const MEDIA_PREVIOUS: &str =
+    svg!(r#"<path d="M6 5v14"/><path d="M18 5.5v13L9 12z" fill="currentColor"/>"#);
+pub const MEDIA_NEXT: &str =
+    svg!(r#"<path d="M18 5v14"/><path d="M6 5.5v13l9-6.5z" fill="currentColor"/>"#);
+pub const MEDIA_NOTE: &str = svg!(
+    r#"<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>"#
+);
+
 /// The glyph for a vacuum action, a generic button for one the hub does not name.
 pub fn vacuum_action_icon(action: &str) -> &'static str {
     match action {
@@ -448,8 +458,7 @@ pub fn kind_icon(kind: Kind, device_class: Option<&str>) -> &'static str {
         Kind::Button => BUTTON,
         Kind::Vacuum => VACUUM,
         Kind::WaterHeater => WATER_HEATER,
-        // Task 8 draws its glyph.
-        Kind::MediaPlayer => SENSOR,
+        Kind::MediaPlayer => MEDIA_NOTE,
         Kind::Generic => SENSOR,
     }
 }

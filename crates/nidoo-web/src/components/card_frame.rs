@@ -66,6 +66,9 @@ pub fn CardFrame(
     /// Spans two columns (a full row on a phone).
     #[prop(optional)]
     wide: bool,
+    /// An inline style for the card, such as a media player's `--media-tint`; empty for none.
+    #[prop(optional, into)]
+    style: String,
     /// Puts the room and name beside the tile instead of under it.
     #[prop(optional)]
     row_header: bool,
@@ -110,6 +113,7 @@ pub fn CardFrame(
             let area = entity.area.clone();
             Signal::derive(move || house.areas.with(|a| room_name(a, &area)))
         });
+    let tinted = !style.is_empty();
     let class = match tint {
         Some(tint) => format!("card card--{tint}"),
         None => "card".to_owned(),
@@ -118,6 +122,8 @@ pub fn CardFrame(
     view! {
         <article
             class=class
+            class:card--tinted=tinted
+            style=(tinted).then_some(style)
             class:card--wide=wide || is_group
             class:card--row-header=row_header
             class:card--on=is_on

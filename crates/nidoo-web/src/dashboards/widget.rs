@@ -13,6 +13,7 @@ use crate::cards::climate::ClimateCard;
 use crate::cards::cover::CoverCard;
 use crate::cards::light::LightCard;
 use crate::cards::lock::LockCard;
+use crate::cards::media_player::MediaPlayerCard;
 use crate::cards::sensor::SensorCard;
 use crate::cards::water_heater::WaterHeaterCard;
 use crate::house::House;
@@ -73,6 +74,7 @@ pub fn WidgetView(
                 WidgetKind::Sensor => view! { <SensorCard entity=entity /> }.into_any(),
                 WidgetKind::WaterHeater => view! { <WaterHeaterCard entity=entity /> }.into_any(),
                 WidgetKind::Lock => view! { <LockCard entity=entity /> }.into_any(),
+                WidgetKind::MediaPlayer => view! { <MediaPlayerCard entity=entity /> }.into_any(),
                 // A kind that takes no entity (an invalid widget): a labelled placeholder.
                 _ => {
                     let lang = use_lang();

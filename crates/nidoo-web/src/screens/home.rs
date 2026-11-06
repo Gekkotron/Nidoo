@@ -22,6 +22,7 @@ use crate::cards::group::{
 };
 use crate::cards::light::LightCard;
 use crate::cards::lock::LockCard;
+use crate::cards::media_player::MediaPlayerCard;
 use crate::cards::number::NumberCard;
 use crate::cards::satellite::SatelliteCard;
 use crate::cards::select::SelectCard;
@@ -101,8 +102,7 @@ pub fn card_for(entity: EntityView) -> AnyView {
         Kind::AlarmPanel => view! { <AlarmPanelCard entity=entity /> }.into_any(),
         Kind::Vacuum => view! { <VacuumCard entity=entity /> }.into_any(),
         Kind::WaterHeater => view! { <WaterHeaterCard entity=entity /> }.into_any(),
-        // Task 8 adds its card.
-        Kind::MediaPlayer => ().into_any(),
+        Kind::MediaPlayer => view! { <MediaPlayerCard entity=entity /> }.into_any(),
         Kind::Generic if entity.component == "lock" => {
             view! { <LockCard entity=entity /> }.into_any()
         }

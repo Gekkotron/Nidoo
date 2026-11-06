@@ -407,10 +407,12 @@ mod tests {
             Kind::BinarySensor,
             Kind::AlarmPanel,
             Kind::Generic,
+            // A media player never joins a group.
+            Kind::MediaPlayer,
         ] {
             assert!(!GROUP_KINDS.contains(&k));
         }
-        assert_eq!(GROUP_KINDS.len(), Kind::ALL.len() - 4);
+        assert_eq!(GROUP_KINDS.len(), Kind::ALL.len() - 5);
     }
 
     fn entity(id: &str, kind: Kind, protocol: Kind, area: &str) -> EntityView {

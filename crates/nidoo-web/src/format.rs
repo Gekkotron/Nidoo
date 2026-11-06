@@ -78,8 +78,10 @@ pub fn display_value(lang: Lang, state: &EntityState, unit: Option<&str>) -> Str
                 .map_or_else(|| DASH.into(), |m| state_word(lang, StateCtx::Hvac, m)),
         },
         StateValue::Generic(_) => generic_value(lang, None, None, state),
-        // Task 8 words the state.
-        StateValue::MediaPlayer(m) => m.state.clone().unwrap_or_else(|| DASH.into()),
+        StateValue::MediaPlayer(m) => m
+            .state
+            .as_deref()
+            .map_or_else(|| DASH.into(), |s| state_word(lang, StateCtx::Media, s)),
         StateValue::Unknown => DASH.into(),
     }
 }
