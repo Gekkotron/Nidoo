@@ -4,6 +4,12 @@
 //! stereo 48 kHz). The audio callback asks for the frames due from a given time on;
 //! whatever has no chunk is silence, a chunk whose time has passed is dropped, and a
 //! newer chunk wins where two overlap.
+//!
+//! The callback's clock reading wobbles by a few frames from one buffer to the next,
+//! so the playout keeps its own cursor: each buffer starts where the last one ended,
+//! slow drift moves it one frame at a time and only a large gap (a stall, a new
+//! output stream) jumps it. Following every reading skipped or repeated a frame at
+//! most buffer edges, which is audible as crackle.
 
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +17,13 @@ const RATE: i64 = 48_000;
 /// The most audio held (10 s): `nidoo-sound` sends about 5 s ahead, so only a
 /// playout nothing drains (no output device) ever reaches it.
 const MAX_FRAMES: i64 = 10 * RATE;
+/// Up to this far (10 ms) from the cursor, a reading is jitter or drift; beyond it
+/// the cursor jumps to the reading.
+const RESYNC_FRAMES: i64 = RATE / 100;
+/// The smoothed gap that moves the cursor by one frame.
+const NUDGE_FRAMES: f32 = 2.0;
+/// Weight of each reading in the smoothed gap.
+const SMOOTHING: f32 = 1.0 / 16.0;
 
 /// A playout shared between the network task and the audio callback.
 pub type SharedPlayout = Arc<Mutex<Playout>>;
@@ -23,6 +36,10 @@ pub struct Playout {
     chunks: Vec<(i64, Vec<Frame>)>,
     /// Frames before this one were already handed to the speaker.
     played_until: i64,
+    /// The frame the next buffer starts at, and the smoothed gap between the
+    /// callback's readings and it.
+    cursor: Option<i64>,
+    drift: f32,
     volume: u8,
     muted: bool,
     wake_muted: bool,
@@ -33,6 +50,8 @@ impl Default for Playout {
         Self {
             chunks: Vec::new(),
             played_until: i64::MIN,
+            cursor: None,
+            drift: 0.0,
             volume: 100,
             muted: false,
             wake_muted: false,
@@ -138,6 +157,24 @@ impl Playout {
         10f32.powf(-49.0 * (1.0 - v) / 20.0)
     }
 
+    /// The frame a buffer read as due at `wanted` starts at.
+    fn next_frame(&mut self, wanted: i64) -> i64 {
+        let Some(cursor) = self.cursor.filter(|c| (wanted - c).abs() <= RESYNC_FRAMES) else {
+            self.drift = 0.0;
+            return wanted;
+        };
+        self.drift += ((wanted - cursor) as f32 - self.drift) * SMOOTHING;
+        if self.drift >= NUDGE_FRAMES {
+            self.drift -= 1.0;
+            cursor + 1
+        } else if self.drift <= -NUDGE_FRAMES {
+            self.drift += 1.0;
+            cursor - 1
+        } else {
+            cursor
+        }
+    }
+
     /// Fills `out` (interleaved, `channels` per frame) with the frames due from
     /// `first_frame_at_us` on.
     pub fn fill(&mut self, out: &mut [f32], channels: usize, first_frame_at_us: i64) {
@@ -145,7 +182,7 @@ impl Playout {
         if channels == 0 {
             return;
         }
-        let first = frame_at(first_frame_at_us);
+        let first = self.next_frame(frame_at(first_frame_at_us));
         let n = (out.len() / channels) as i64;
         let last = first + n;
         let gain = self.gain() / 32_768.0;
@@ -170,6 +207,7 @@ impl Playout {
         }
         self.chunks.retain(|(s, f)| s + f.len() as i64 > last);
         self.played_until = self.played_until.max(last);
+        self.cursor = Some(last);
     }
 }
 
@@ -296,6 +334,76 @@ mod tests {
                 .chunks(4)
                 .all(|f| f == [0.5, -0.5, 0.0, 0.0])
         );
+    }
+
+    /// A ramp, one step per frame, so a skipped or repeated frame shows.
+    fn ramp(frames: usize) -> Vec<u8> {
+        (0..frames)
+            .flat_map(|i| {
+                let v = i16::try_from(i % 30_000).unwrap();
+                [v.to_le_bytes(), v.to_le_bytes()]
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn clock_jitter_neither_skips_nor_repeats_frames() {
+        // The callback's clock reading wobbles by a few frames (measured ±3 on a
+        // MacBook): every buffer must still follow the last one exactly.
+        let mut p = Playout::default();
+        p.push(0, &ramp(48_000));
+        let jitter = [0i64, 1, -1, 2, -2, 3, -3, 0, 1, -1];
+        let mut played = Vec::new();
+        for (k, j) in jitter.iter().enumerate() {
+            let at = (k as i64 * 512 + j) * 1_000_000 / 48_000;
+            played.extend(fill(&mut p, 512, 1, at));
+        }
+        let step = 1.0 / 32_768.0;
+        for (i, w) in played.windows(2).enumerate() {
+            assert!(
+                (w[1] - w[0] - step).abs() < 1e-7,
+                "jump at frame {i}: {w:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn slow_drift_is_followed_one_frame_at_a_time() {
+        // The callback clock runs 10 frames ahead over 400 buffers: the cursor
+        // catches up by single frames, never by a jump.
+        let mut p = Playout::default();
+        let mut jumps = 0;
+        let mut last: Option<f32> = None;
+        p.push(0, &ramp(400 * 512 + 48_000));
+        for k in 0..400i64 {
+            let at = (k * 512 + k / 40) * 1_000_000 / 48_000;
+            for s in fill(&mut p, 512, 1, at) {
+                if let Some(l) = last {
+                    let d = ((s - l) * 32_768.0).round() as i64;
+                    if d != 1 && d > -29_000 {
+                        assert_eq!(d, 2, "only single-frame skips");
+                        jumps += 1;
+                    }
+                }
+                last = Some(s);
+            }
+        }
+        assert!(
+            (5..=10).contains(&jumps),
+            "{jumps} skips for 10 frames of drift"
+        );
+    }
+
+    #[test]
+    fn large_clock_step_resyncs() {
+        // The device stalled 100 ms (or a new output stream started): play what is
+        // due now, not where the old buffer ended.
+        let mut p = Playout::default();
+        p.push(0, &ramp(48_000));
+        fill(&mut p, 480, 1, 0);
+        let out = fill(&mut p, 1, 1, 110_000);
+        assert_eq!((out[0] * 32_768.0).round() as i64, 110 * 48);
     }
 
     #[test]
