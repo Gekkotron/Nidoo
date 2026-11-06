@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use nidoo_core::model::{
     Availability, ClimateState, CoverState, Entity, EntityState, GenericValue, Hs, LightState,
-    StateValue, VacuumState, WaterHeaterState,
+    MediaPlayerState, StateValue, VacuumState, WaterHeaterState,
 };
 use nidoo_core::state::color::{rgb_to_hs, xy_to_hs};
 use nidoo_core::state::{Applied, StateError, apply_message};
@@ -1279,4 +1279,167 @@ fn update_json_blob_populates_installed_and_latest() {
     let fields = generic_fields(&state);
     assert_eq!(fields["installed"], GenericValue::Text("1.0.0".into()));
     assert_eq!(fields["latest"], GenericValue::Text("1.0.1".into()));
+}
+
+fn media_player() -> Entity {
+    common::entity(
+        "media_player",
+        json!({
+            "name": "Music",
+            "unique_id": "music_player",
+            "state_topic": "music/player/state",
+            "command_topic": "music/player/set",
+            "supported_features": ["play", "pause", "next", "previous", "play_media"]
+        }),
+    )
+}
+
+fn media(state: &EntityState) -> MediaPlayerState {
+    match &state.value {
+        StateValue::MediaPlayer(m) => m.clone(),
+        other => panic!("not a media player state: {other:?}"),
+    }
+}
+
+#[test]
+fn media_player_full_state() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    let payload = json!({
+        "state": "playing", "title": "Song", "artist": "Band", "album": "Record",
+        "image_url": "https://img.example/cover.jpg", "color": "#3d2466",
+        "duration_s": 431, "position_s": 42.5, "position_at": "2026-11-06T10:20:00Z"
+    });
+    assert_eq!(
+        apply(
+            &player,
+            &mut state,
+            "music/player/state",
+            &payload.to_string()
+        ),
+        Applied::Changed
+    );
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("playing".into()),
+            title: Some("Song".into()),
+            artist: Some("Band".into()),
+            album: Some("Record".into()),
+            image_url: Some("https://img.example/cover.jpg".into()),
+            color: Some("#3d2466".into()),
+            duration_s: Some(431.0),
+            position_s: Some(42.5),
+            position_at_ms: Some(1_793_960_400_000),
+        }
+    );
+}
+
+#[test]
+fn media_player_idle_clears_every_field() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        r##"{"state":"idle","title":"x","color":"#000000","duration_s":3}"##,
+    );
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("idle".into()),
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn media_player_message_replaces_the_whole_state() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        r##"{"state":"playing","title":"A","artist":"Band","album":"R","color":"#112233"}"##,
+    );
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        r#"{"state":"paused","title":"B"}"#,
+    );
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("paused".into()),
+            title: Some("B".into()),
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn media_player_ignores_unknown_fields_and_bad_values() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    let payload = json!({
+        "state": "playing", "volume": 3, "color": "red; x:y",
+        "image_url": "javascript:alert(1)", "duration_s": -4, "position_s": "x",
+        "position_at": "yesterday"
+    });
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        &payload.to_string(),
+    );
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("playing".into()),
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn media_player_unknown_state_word_is_unchanged() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        r#"{"state":"paused","title":"A"}"#,
+    );
+    let before = state.clone();
+    assert_eq!(
+        apply(
+            &player,
+            &mut state,
+            "music/player/state",
+            r#"{"state":"buffering"}"#
+        ),
+        Applied::Unchanged
+    );
+    assert_eq!(
+        apply(&player, &mut state, "music/player/state", "not json"),
+        Applied::Unchanged
+    );
+    assert_eq!(state.value, before.value);
+}
+
+#[test]
+fn media_player_color_is_lowercased() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        r##"{"state":"playing","color":"#3D2466"}"##,
+    );
+    assert_eq!(media(&state).color.as_deref(), Some("#3d2466"));
 }

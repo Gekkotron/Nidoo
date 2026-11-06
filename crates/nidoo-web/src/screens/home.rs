@@ -101,6 +101,8 @@ pub fn card_for(entity: EntityView) -> AnyView {
         Kind::AlarmPanel => view! { <AlarmPanelCard entity=entity /> }.into_any(),
         Kind::Vacuum => view! { <VacuumCard entity=entity /> }.into_any(),
         Kind::WaterHeater => view! { <WaterHeaterCard entity=entity /> }.into_any(),
+        // Task 8 adds its card.
+        Kind::MediaPlayer => ().into_any(),
         Kind::Generic if entity.component == "lock" => {
             view! { <LockCard entity=entity /> }.into_any()
         }

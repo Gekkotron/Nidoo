@@ -448,6 +448,8 @@ pub fn kind_icon(kind: Kind, device_class: Option<&str>) -> &'static str {
         Kind::Button => BUTTON,
         Kind::Vacuum => VACUUM,
         Kind::WaterHeater => WATER_HEATER,
+        // Task 8 draws its glyph.
+        Kind::MediaPlayer => SENSOR,
         Kind::Generic => SENSOR,
     }
 }

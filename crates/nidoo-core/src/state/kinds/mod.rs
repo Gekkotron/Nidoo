@@ -6,6 +6,7 @@ mod button;
 mod climate;
 mod cover;
 mod light;
+mod media_player;
 mod number_select;
 mod sensor;
 mod switch;
@@ -14,6 +15,8 @@ mod water_heater;
 
 pub(crate) use alarm::STATES as ALARM_STATES;
 pub(crate) use cover::STATES as COVER_STATES;
+#[allow(unused_imports)] // read by the vocabulary from Task 2
+pub(crate) use media_player::STATES as MEDIA_STATES;
 pub(crate) use vacuum::STATES as VACUUM_STATES;
 
 use super::{Applied, StateError};
@@ -43,6 +46,7 @@ pub(super) fn apply(
         Kind::Button => button::apply(entity, state, topic, payload, templates),
         Kind::Vacuum => vacuum::apply(entity, state, topic, payload, templates),
         Kind::WaterHeater => water_heater::apply(entity, state, topic, payload, templates),
+        Kind::MediaPlayer => media_player::apply(entity, state, topic, payload, templates),
         Kind::Generic => types::type_def(&entity.component)
             .map(|def| types::state::apply(entity, def, state, topic, payload, templates))
             .unwrap_or(Ok(Applied::NotForThisEntity)),

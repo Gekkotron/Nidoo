@@ -66,6 +66,26 @@ pub struct WaterHeaterState {
     pub target: Option<f64>,
 }
 
+/// A media player's state, from the media player contract's JSON. `position_s` was measured at
+/// `position_at_ms` (Unix milliseconds, possibly a little in the future); `color` is the
+/// cover's colour, already darkened by the player, as `#rrggbb`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct MediaPlayerState {
+    /// `playing`, `paused` or `idle`.
+    pub state: Option<String>,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    /// An `http(s)` address only.
+    pub image_url: Option<String>,
+    /// `#rrggbb`, lowercase.
+    pub color: Option<String>,
+    pub duration_s: Option<f64>,
+    pub position_s: Option<f64>,
+    pub position_at_ms: Option<i64>,
+}
+
 /// One named value of a generic entity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -98,6 +118,7 @@ pub enum StateValue {
     Alarm(String),
     Vacuum(VacuumState),
     WaterHeater(WaterHeaterState),
+    MediaPlayer(MediaPlayerState),
     Generic(GenericState),
     /// Nothing received yet, or the payload could not be read.
     #[default]

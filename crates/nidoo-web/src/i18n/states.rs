@@ -185,6 +185,7 @@ pub fn kind_word(lang: Lang, kind: Kind) -> &'static str {
         Kind::Button => ("Button", "Bouton"),
         Kind::Vacuum => ("Vacuum", "Aspirateur"),
         Kind::WaterHeater => ("Water heater", "Chauffe-eau"),
+        Kind::MediaPlayer => ("Media player", "Lecteur"),
         Kind::Generic => ("Generic", "Appareil"),
     };
     pick(lang, en, fr)

@@ -20,7 +20,7 @@ pub type Micros = i64;
 pub const HOUR: Micros = 3_600_000_000;
 
 /// The chartable number for a state value, or `None` when it is not a number
-/// (text, alarm, vacuum) or when the number is not finite.
+/// (text, alarm, vacuum, media player) or when the number is not finite.
 pub fn num_of(value: &StateValue) -> Option<f64> {
     let n = match value {
         StateValue::Number(x) => *x,
@@ -44,6 +44,7 @@ pub fn num_of(value: &StateValue) -> Option<f64> {
         StateValue::Text(_)
         | StateValue::Alarm(_)
         | StateValue::Vacuum(_)
+        | StateValue::MediaPlayer(_)
         | StateValue::Generic(_)
         | StateValue::Unknown => return None,
     };

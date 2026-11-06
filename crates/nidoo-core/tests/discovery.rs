@@ -594,3 +594,31 @@ fn a_bare_topic_key_is_a_state_topic() {
             .contains("homeassistant/camera/front_door/image")
     );
 }
+
+/// The media player contract's discovery config.
+fn media_player_config() -> Value {
+    json!({
+        "name": "Music",
+        "unique_id": "music_node_player",
+        "state_topic": "music/player/state",
+        "command_topic": "music/player/set",
+        "availability_topic": "music/status",
+        "supported_features": ["play", "pause", "next", "previous", "play_media"],
+        "device": {"identifiers": ["music_node"], "name": "Music server", "model": "M", "manufacturer": "X"}
+    })
+}
+
+#[test]
+fn media_player_discovers_from_three_and_two_level_topics() {
+    let payload = media_player_config().to_string();
+    for topic in [
+        "nidoo/media_player/music_node/player/config",
+        "nidoo/media_player/player/config",
+    ] {
+        let entity = common::entity_from_payload(topic, &payload);
+        assert_eq!(entity.kind, Kind::MediaPlayer, "{topic}");
+        assert_eq!(entity.protocol_kind, Kind::MediaPlayer, "{topic}");
+        assert_eq!(entity.component, "media_player", "{topic}");
+        assert!(entity.bindings.topics().contains("music/player/state"));
+    }
+}

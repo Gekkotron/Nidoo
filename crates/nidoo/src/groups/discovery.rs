@@ -278,7 +278,11 @@ pub fn build_config(prefix: &str, id: &str, spec: &GroupSpec, members: &[EntityV
             &[("payload_press", json!(r#"{"type":"press"}"#))],
         ),
         Kind::Vacuum => vacuum(&mut config, &topic, members),
-        Kind::Sensor | Kind::BinarySensor | Kind::AlarmPanel | Kind::Generic => {}
+        Kind::Sensor
+        | Kind::BinarySensor
+        | Kind::AlarmPanel
+        | Kind::MediaPlayer
+        | Kind::Generic => {}
     }
     Value::Object(config)
 }

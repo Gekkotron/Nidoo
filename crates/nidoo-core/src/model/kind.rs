@@ -19,6 +19,7 @@ pub enum Kind {
     Button,
     Vacuum,
     WaterHeater,
+    MediaPlayer,
     /// Any other component, described by the type table; the component name is in `Entity.component`.
     Generic,
 }
@@ -41,6 +42,7 @@ impl Kind {
         Kind::Button,
         Kind::Vacuum,
         Kind::WaterHeater,
+        Kind::MediaPlayer,
         Kind::Generic,
     ];
 
@@ -67,6 +69,7 @@ impl Kind {
             Kind::Button => "button",
             Kind::Vacuum => "vacuum",
             Kind::WaterHeater => "water_heater",
+            Kind::MediaPlayer => "media_player",
             // A formal placeholder: the real component lives in `Entity.component`.
             Kind::Generic => "generic",
         }
