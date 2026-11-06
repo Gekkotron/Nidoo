@@ -46,7 +46,7 @@ pub struct ListEntitiesParams {
     pub area: Option<String>,
     /// Only entities shown as this kind, in snake_case (`light`, `switch`, `cover`, `climate`,
     /// `sensor`, `binary_sensor`, `alarm_panel`, `number`, `select`, `button`, `vacuum`,
-    /// `water_heater`); a switch overridden as a light counts as a light.
+    /// `water_heater`, `media_player`); a switch overridden as a light counts as a light.
     pub kind: Option<Kind>,
     /// Only the entities of this device (a device id from `list_devices`).
     pub device_id: Option<String>,
@@ -102,8 +102,11 @@ pub struct SendCommandParams {
     /// `set_number` {value}, `select_option` {option}, `press`, `arm` {mode, code?}, `disarm`
     /// {code?}, `{"type":"control","control":"<name>","value":…}` for a generic entity (control
     /// names come from its `capabilities.generic.controls`; `value` is a bool, number or
-    /// string by the control's shape, absent for a press) and the vacuum and water-heater
-    /// commands the entity's capabilities list.
+    /// string by the control's shape, absent for a press), a media player's
+    /// `{"type":"media_action","action":"play|pause|next|previous"}` and
+    /// `{"type":"play_media","query":"<words>"}` (only the ones its
+    /// `capabilities.media_features` list; `play` on an idle player plays something), and the
+    /// vacuum and water-heater commands the entity's capabilities list.
     pub command: Command,
 }
 

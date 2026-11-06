@@ -2256,3 +2256,129 @@ fn spoken_message_reaches_subscribers() {
     );
     assert!(hub.snapshot().entities.is_empty(), "not a device");
 }
+
+const PLAYER_ID: &str = "music_node_player";
+const PLAYER_STATE: &str = "music/player/state";
+
+/// A media player playing "A" by "Band", its last report at `position_at` 10:20:00.
+fn feed_player(hub: &Hub) {
+    let config = serde_json::json!({
+        "name": "Music",
+        "unique_id": PLAYER_ID,
+        "state_topic": PLAYER_STATE,
+        "command_topic": "music/player/set",
+        "supported_features": ["play", "pause", "next", "previous", "play_media"],
+        "device": {"identifiers": ["music_node"], "name": "Music server"}
+    });
+    hub.ingest(
+        "nidoo/media_player/music_node/player/config",
+        config.to_string().as_bytes(),
+    );
+    hub.ingest(PLAYER_STATE, &player_state("playing", "A", "10:20:00"));
+}
+
+fn player_state(state: &str, title: &str, at: &str) -> Vec<u8> {
+    serde_json::json!({
+        "state": state, "title": title, "artist": "Band",
+        "duration_s": 200, "position_s": 0, "position_at": format!("2026-11-06T{at}Z")
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// Sends `cmd` to the player and ingests `echo` as soon as the publish is out.
+async fn media_with_echo(
+    hub: &Arc<Hub>,
+    mut publisher: mpsc::Receiver<Publish>,
+    cmd: Command,
+    echo: Vec<u8>,
+) -> (nidoo_api::CommandResponse, Publish) {
+    let echo_task = {
+        let hub = Arc::clone(hub);
+        tokio::spawn(async move {
+            let published = publisher.recv().await.expect("the command publish");
+            hub.ingest(PLAYER_STATE, &echo);
+            published
+        })
+    };
+    let response = hub
+        .send_command(PLAYER_ID, cmd)
+        .await
+        .expect("mapped and published");
+    (response, echo_task.await.expect("echo task"))
+}
+
+fn media(action: &str) -> Command {
+    Command::MediaAction {
+        action: action.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn media_next_is_confirmed_by_a_new_title() {
+    let (hub, publisher) = hub_with_timeout(500);
+    feed_player(&hub);
+    let (response, published) = media_with_echo(
+        &hub,
+        publisher,
+        media("next"),
+        player_state("playing", "B", "10:21:00"),
+    )
+    .await;
+    assert_eq!(published.topic, "music/player/set");
+    assert_eq!(published.payload, r#"{"command":"next"}"#);
+    assert!(response.accepted, "{response:?}");
+    let StateValue::MediaPlayer(player) = response.state.expect("state").value else {
+        panic!("a media player state");
+    };
+    assert_eq!(player.title.as_deref(), Some("B"));
+}
+
+/// Someone else paused while `next` waited: that report is not `next`'s echo.
+#[tokio::test]
+async fn media_next_ignores_a_report_that_changes_nothing_it_needs() {
+    let (hub, publisher) = hub_with_timeout(100);
+    feed_player(&hub);
+    let (response, _) = media_with_echo(
+        &hub,
+        publisher,
+        media("next"),
+        player_state("paused", "A", "10:20:00"),
+    )
+    .await;
+    assert!(!response.accepted, "{response:?}");
+    assert_eq!(
+        response.reason.as_deref(),
+        Some("no state change within 100 ms")
+    );
+}
+
+/// Pausing a paused player: the same retained report confirms it.
+#[tokio::test]
+async fn media_pause_on_a_paused_player_is_confirmed_by_the_same_report() {
+    let (hub, publisher) = hub_with_timeout(500);
+    feed_player(&hub);
+    hub.ingest(PLAYER_STATE, &player_state("paused", "A", "10:20:00"));
+    let (response, _) = media_with_echo(
+        &hub,
+        publisher,
+        media("pause"),
+        player_state("paused", "A", "10:20:00"),
+    )
+    .await;
+    assert!(response.accepted, "{response:?}");
+}
+
+#[tokio::test]
+async fn media_player_cannot_join_a_group() {
+    let (hub, mut rx) = groups_hub();
+    feed_player(&hub);
+    let mut music = switch_group();
+    music.kind = Kind::MediaPlayer;
+    music.members = vec![PLAYER_ID.to_owned()];
+    assert!(matches!(
+        hub.set_group("music", music).await,
+        Err(HubError::Rejected(_))
+    ));
+    assert!(drain(&mut rx).is_empty());
+}
