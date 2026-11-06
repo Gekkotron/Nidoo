@@ -3,9 +3,10 @@
 
 use nidoo_api::search::fold;
 
-use nidoo_core::model::SwitchType;
+use nidoo_core::model::{MediaPlayerState, SwitchType};
 
 use crate::house::House;
+use crate::intent::MediaIntent;
 use crate::lexicon::{Class, class};
 use crate::plan::Done;
 use crate::room::name_words;
@@ -19,7 +20,12 @@ pub enum ActionResult {
     /// The device is offline: nothing was sent, and the reply says it did not answer.
     Offline,
     Failed(String),
+    /// Done, and the media player's state its echo carried.
+    Echo(MediaPlayerState),
 }
+
+/// The French reason the hub gives when a device never echoed (see the hub's `reason_fr`).
+pub const NO_ANSWER: &str = "pas de réponse de l'appareil";
 
 /// A number with a decimal comma, one decimal at most, no ",0": `18,2`, `20`.
 pub fn number(x: f64) -> String {
@@ -187,11 +193,78 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
             names,
             results,
         ),
+        Done::Media { what, .. } => media(what, results.first()),
+        Done::Volume { area, level } => speakers(
+            house.area_name(area),
+            &level.map_or_else(|| "Volume changé".into(), |l| format!("Volume à {l} %")),
+            "Volume déjà là",
+            results,
+        ),
+        Done::Mute { area, on } => {
+            let (done, already) = if *on {
+                ("Son coupé", "Son déjà coupé")
+            } else {
+                ("Son remis", "Son déjà remis")
+            };
+            speakers(house.area_name(area), done, already, results)
+        }
     };
     if simulate {
         format!("Simulation : {text}")
     } else {
         text
+    }
+}
+
+/// A media player's reply, from its echo when there is one.
+fn media(what: &MediaIntent, result: Option<&ActionResult>) -> String {
+    let plain = || match what {
+        MediaIntent::Pause => "Musique en pause.".to_string(),
+        MediaIntent::Play { resume: true } => "Je reprends la musique.".into(),
+        MediaIntent::Play { resume: false } => "Je lance la musique.".into(),
+        MediaIntent::PlayMedia { query } => format!("Je cherche « {query} »."),
+        MediaIntent::Next => "Chanson suivante.".into(),
+        MediaIntent::Previous => "Chanson précédente.".into(),
+        MediaIntent::NowPlaying => String::new(),
+    };
+    match result {
+        Some(ActionResult::Echo(state)) => match (what, &state.title) {
+            (MediaIntent::Pause, _) | (_, None) => plain(),
+            (MediaIntent::Play { resume: true }, Some(title)) => format!("Je reprends {title}."),
+            (MediaIntent::Next | MediaIntent::Previous, Some(title)) => match &state.artist {
+                Some(artist) => format!("{title}, {artist}."),
+                None => format!("{title}."),
+            },
+            (_, Some(title)) => format!("Je joue {title}."),
+        },
+        Some(ActionResult::Skipped) => match what {
+            MediaIntent::Pause => "La musique est déjà en pause.".into(),
+            _ => "La musique joue déjà.".into(),
+        },
+        Some(ActionResult::Offline) => "Le lecteur ne répond pas.".into(),
+        Some(ActionResult::Failed(why)) if why == NO_ANSWER => "Le lecteur n'a pas répondu.".into(),
+        Some(ActionResult::Failed(why)) => format!("Le lecteur n'a pas répondu : {why}."),
+        Some(ActionResult::Ok) | None => plain(),
+    }
+}
+
+/// A room's speakers: `done` when one of them did it, `already` when all were already there,
+/// else what went wrong.
+fn speakers(area: &str, done: &str, already: &str, results: &[ActionResult]) -> String {
+    let place = dans(area);
+    let ok = |r: &ActionResult| matches!(r, ActionResult::Ok | ActionResult::Echo(_));
+    if results.iter().any(ok) {
+        return format!("{done} {place}.");
+    }
+    if !results.is_empty() && results.iter().all(|r| *r == ActionResult::Skipped) {
+        return format!("{already} {place}.");
+    }
+    match results.iter().find_map(|r| match r {
+        ActionResult::Failed(why) => Some(why.as_str()),
+        _ => None,
+    }) {
+        Some(why) => format!("L'enceinte n'a pas répondu {place} : {why}."),
+        None => format!("L'enceinte ne répond pas {place}."),
     }
 }
 
@@ -782,6 +855,135 @@ mod tests {
         assert!(
             r.contains("19 °C") && r.contains("refusé") && r.contains("Chambre Léa"),
             "{r}"
+        );
+    }
+
+    fn media_done(what: crate::intent::MediaIntent) -> Done {
+        Done::Media {
+            player: "Musique".into(),
+            what,
+        }
+    }
+
+    fn echo(state: &str, title: Option<&str>, artist: Option<&str>) -> ActionResult {
+        ActionResult::Echo(nidoo_core::model::MediaPlayerState {
+            state: Some(state.into()),
+            title: title.map(Into::into),
+            artist: artist.map(Into::into),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn media_replies() {
+        use crate::intent::MediaIntent as M;
+        let lucky = echo("playing", Some("Get Lucky"), Some("Daft Punk"));
+        let cases: Vec<(M, ActionResult, &str)> = vec![
+            (
+                M::Pause,
+                echo("paused", Some("Get Lucky"), None),
+                "Musique en pause.",
+            ),
+            (M::Pause, ActionResult::Ok, "Musique en pause."),
+            (
+                M::Pause,
+                ActionResult::Skipped,
+                "La musique est déjà en pause.",
+            ),
+            (
+                M::Play { resume: true },
+                lucky.clone(),
+                "Je reprends Get Lucky.",
+            ),
+            (
+                M::Play { resume: true },
+                ActionResult::Ok,
+                "Je reprends la musique.",
+            ),
+            (
+                M::Play { resume: true },
+                ActionResult::Skipped,
+                "La musique joue déjà.",
+            ),
+            (
+                M::Play { resume: false },
+                lucky.clone(),
+                "Je joue Get Lucky.",
+            ),
+            (
+                M::Play { resume: false },
+                ActionResult::Ok,
+                "Je lance la musique.",
+            ),
+            (
+                M::Play { resume: false },
+                echo("playing", None, None),
+                "Je lance la musique.",
+            ),
+            (
+                M::PlayMedia {
+                    query: "daft punk".into(),
+                },
+                lucky.clone(),
+                "Je joue Get Lucky.",
+            ),
+            (
+                M::PlayMedia {
+                    query: "daft punk".into(),
+                },
+                ActionResult::Ok,
+                "Je cherche « daft punk ».",
+            ),
+            (M::Next, lucky.clone(), "Get Lucky, Daft Punk."),
+            (M::Next, echo("playing", Some("Intro"), None), "Intro."),
+            (M::Next, ActionResult::Ok, "Chanson suivante."),
+            (M::Previous, ActionResult::Ok, "Chanson précédente."),
+            (M::Pause, ActionResult::Offline, "Le lecteur ne répond pas."),
+            (
+                M::Next,
+                ActionResult::Failed("pas de réponse de l'appareil".into()),
+                "Le lecteur n'a pas répondu.",
+            ),
+            (
+                M::Next,
+                ActionResult::Failed("hors ligne".into()),
+                "Le lecteur n'a pas répondu : hors ligne.",
+            ),
+        ];
+        for (what, result, want) in cases {
+            assert_eq!(said(&media_done(what.clone()), &[result]), want, "{what:?}");
+        }
+    }
+
+    #[test]
+    fn volume_and_mute_replies() {
+        let volume = Done::Volume {
+            area: "salon".into(),
+            level: Some(60),
+        };
+        assert_eq!(
+            said(&volume, &[ActionResult::Ok]),
+            "Volume à 60 % dans le Salon."
+        );
+        assert_eq!(
+            said(&volume, &[ActionResult::Offline]),
+            "L'enceinte ne répond pas dans le Salon."
+        );
+        let mute = |on| Done::Mute {
+            area: "salon".into(),
+            on,
+        };
+        assert_eq!(
+            said(&mute(true), &[ActionResult::Ok]),
+            "Son coupé dans le Salon."
+        );
+        assert_eq!(
+            said(&mute(false), &[ActionResult::Ok]),
+            "Son remis dans le Salon."
+        );
+        assert_eq!(
+            said(&mute(true), &[ActionResult::Skipped]),
+            "Son déjà coupé dans le Salon."
         );
     }
 }

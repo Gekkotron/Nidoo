@@ -5,10 +5,10 @@ use nidoo_api::search::fold;
 use nidoo_api::{Category, CategoryAction, Target, category_members, commandable};
 use nidoo_climate::doc::{Setpoint, ZoneState};
 use nidoo_climate::view::ZoneView;
-use nidoo_core::model::{Command, EntityCategory, Kind, StateValue, SwitchType};
+use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue, SwitchType};
 
 use crate::house::House;
-use crate::intent::{Change, Intent, parse};
+use crate::intent::{Change, Intent, MediaIntent, parse, play_by_name};
 use crate::reply::{cannot, dans, de, le, number, temp};
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
@@ -26,6 +26,10 @@ pub struct Request {
     pub lights: Option<Vec<String>>,
     pub covers: Option<Vec<String>>,
     pub switches: Option<Vec<String>>,
+    /// The media player chosen in a question.
+    pub player: Option<String>,
+    /// The room of the satellite that heard the sentence; `None` from the web.
+    pub speaker_room: Option<String>,
     pub confirmed: bool,
 }
 
@@ -37,6 +41,8 @@ impl Request {
             lights: None,
             covers: None,
             switches: None,
+            player: None,
+            speaker_room: None,
             confirmed: false,
         }
     }
@@ -61,6 +67,16 @@ pub enum Action {
     },
     /// A TV or plug: turn on or off.
     Switch {
+        entity: String,
+        command: Command,
+    },
+    /// A media player command.
+    Media {
+        entity: String,
+        command: Command,
+    },
+    /// A speaker's music volume (`SetNumber`) or mute switch (`TurnOn` / `TurnOff`).
+    Speaker {
         entity: String,
         command: Command,
     },
@@ -95,6 +111,12 @@ pub enum Done {
         on: bool,
         names: Vec<String>,
     },
+    /// A media player command; `player` is its name.
+    Media { player: String, what: MediaIntent },
+    /// The music volume of a room's speakers; `level`: the first speaker's new level.
+    Volume { area: String, level: Option<u8> },
+    /// A room's speakers muted (`on`) or not.
+    Mute { area: String, on: bool },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -166,9 +188,19 @@ fn shown(word: &Word) -> String {
 
 /// Plans a typed sentence.
 pub fn plan(sentence: &str, house: &House) -> Plan {
+    plan_heard(sentence, house, None)
+}
+
+/// Plans a sentence heard by a satellite in `speaker_room` (`None`: typed on the web): the
+/// music and volume intents use that room.
+pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> Plan {
     let ws = words(sentence);
-    let mut plan = match parse(&ws) {
-        Some(intent) => plan_request(&Request::new(intent), house),
+    let mut plan = match play_by_name(sentence).or_else(|| parse(&ws)) {
+        Some(intent) => {
+            let mut req = Request::new(intent);
+            req.speaker_room = speaker_room.map(str::to_owned);
+            plan_request(&req, house)
+        }
         None => not_understood(house),
     };
     plan.trace_mut().words = ws.iter().map(shown).collect();
@@ -205,12 +237,23 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
                 ..Default::default()
             },
         ),
-        // Planned in the next commit.
-        Intent::Media(_)
-        | Intent::Volume { .. }
-        | Intent::Mute { .. }
-        | Intent::MediaHint
-        | Intent::VolumeRange => not_understood(house),
+        Intent::Media(what) => media(req, what, house),
+        Intent::Volume { change, room } => volume(req, *change, room, house),
+        Intent::Mute { on, room } => mute(req, *on, room, house),
+        Intent::MediaHint => answer(
+            "Pour un titre ou un artiste, dites « joue » suivi du nom.".into(),
+            Trace {
+                intent: Some("media_hint".into()),
+                ..Default::default()
+            },
+        ),
+        Intent::VolumeRange => answer(
+            "Le volume va de 0 à 100 %.".into(),
+            Trace {
+                intent: Some("volume_range".into()),
+                ..Default::default()
+            },
+        ),
         Intent::CoverPositionRange => answer(
             "La position va de 0 à 100 %.".into(),
             Trace {
@@ -712,6 +755,307 @@ fn switches(
             on,
             names: chosen.iter().map(|s| s.name.clone()).collect(),
         },
+        trace,
+    }
+}
+
+/// The media players a sentence can reach.
+fn players<'a>(house: &House<'a>) -> Vec<&'a EntityView> {
+    house
+        .entities
+        .iter()
+        .filter(|e| e.kind == Kind::MediaPlayer && commandable(e))
+        .collect()
+}
+
+/// The player a media request is for: the chosen one, else the only online one, else the only
+/// online one in the speaker's room; otherwise a question. `Err` is the plan to return instead.
+fn pick_player<'a>(
+    req: &Request,
+    house: &House<'a>,
+    trace: &Trace,
+) -> Result<&'a EntityView, Box<Plan>> {
+    let all = players(house);
+    let none = || {
+        Box::new(answer(
+            "Il n'y a pas de lecteur de musique.".into(),
+            trace.clone(),
+        ))
+    };
+    if let Some(id) = &req.player {
+        return all.into_iter().find(|p| &p.id == id).ok_or_else(none);
+    }
+    if all.is_empty() {
+        return Err(none());
+    }
+    let online: Vec<&EntityView> = all
+        .iter()
+        .copied()
+        .filter(|p| p.state.availability != Availability::Offline)
+        .collect();
+    match online.as_slice() {
+        [] => Err(Box::new(answer(
+            "Le lecteur ne répond pas.".into(),
+            trace.clone(),
+        ))),
+        [one] => Ok(one),
+        _ => {
+            let here: Vec<&EntityView> = match &req.speaker_room {
+                Some(room) => online.iter().copied().filter(|p| &p.area == room).collect(),
+                None => Vec::new(),
+            };
+            if let [one] = here.as_slice() {
+                return Ok(one);
+            }
+            let choices = online
+                .iter()
+                .take(MAX_CHOICES)
+                .map(|p| {
+                    let mut next = req.clone();
+                    next.player = Some(p.id.clone());
+                    (p.name.clone(), next)
+                })
+                .collect();
+            Err(Box::new(Plan::Ask {
+                question: "Quel lecteur ?".into(),
+                choices,
+                trace: trace.clone(),
+            }))
+        }
+    }
+}
+
+/// "Get Lucky, de Daft Punk." / "Get Lucky."
+fn song(title: &str, artist: Option<&str>) -> String {
+    match artist {
+        Some(artist) => format!("{title}, de {artist}."),
+        None => format!("{title}."),
+    }
+}
+
+fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
+    let intent = match what {
+        MediaIntent::Pause => "media_pause",
+        MediaIntent::Play { resume: true } => "media_resume",
+        MediaIntent::Play { resume: false } => "media_play",
+        MediaIntent::Next => "media_next",
+        MediaIntent::Previous => "media_previous",
+        MediaIntent::NowPlaying => "media_now_playing",
+        MediaIntent::PlayMedia { .. } => "media_play_by_name",
+    };
+    let mut trace = Trace {
+        intent: Some(intent.into()),
+        ..Default::default()
+    };
+    let player = match pick_player(req, house, &trace) {
+        Ok(player) => player,
+        Err(plan) => return *plan,
+    };
+    trace.entities = vec![player.id.clone()];
+    let (feature, command) = match what {
+        MediaIntent::NowPlaying => {
+            let reply = match &player.state.value {
+                StateValue::MediaPlayer(state) => match (state.state.as_deref(), &state.title) {
+                    (Some("playing"), Some(title)) => song(title, state.artist.as_deref()),
+                    (Some("paused"), Some(title)) => {
+                        format!("En pause : {}", song(title, state.artist.as_deref()))
+                    }
+                    _ => "Rien ne joue.".into(),
+                },
+                _ => "Rien ne joue.".into(),
+            };
+            return answer(reply, trace);
+        }
+        MediaIntent::PlayMedia { query } => (
+            "play_media",
+            Command::PlayMedia {
+                query: query.clone(),
+            },
+        ),
+        MediaIntent::Pause => (
+            "pause",
+            Command::MediaAction {
+                action: "pause".into(),
+            },
+        ),
+        MediaIntent::Play { .. } => (
+            "play",
+            Command::MediaAction {
+                action: "play".into(),
+            },
+        ),
+        MediaIntent::Next => (
+            "next",
+            Command::MediaAction {
+                action: "next".into(),
+            },
+        ),
+        MediaIntent::Previous => (
+            "previous",
+            Command::MediaAction {
+                action: "previous".into(),
+            },
+        ),
+    };
+    if !player
+        .capabilities
+        .media_features
+        .iter()
+        .any(|f| f == feature)
+    {
+        let reply = if feature == "play_media" {
+            "Ce lecteur ne sait pas chercher un titre."
+        } else {
+            "Ce lecteur ne sait pas faire ça."
+        };
+        return answer(reply.into(), trace);
+    }
+    Plan::Act {
+        actions: vec![Action::Media {
+            entity: player.id.clone(),
+            command,
+        }],
+        done: Done::Media {
+            player: player.name.clone(),
+            what: what.clone(),
+        },
+        trace,
+    }
+}
+
+/// A room's speaker controls marked `device_class` (`volume` numbers, `mute` switches), every
+/// room's when `area` is `None`.
+fn speaker_controls<'a>(class: &str, area: Option<&str>, house: &House<'a>) -> Vec<&'a EntityView> {
+    let kind = if class == "volume" {
+        Kind::Number
+    } else {
+        Kind::Switch
+    };
+    house
+        .entities
+        .iter()
+        .filter(|e| {
+            e.kind == kind
+                && e.device_class.as_deref() == Some(class)
+                && commandable(e)
+                && area.is_none_or(|a| e.area == a)
+        })
+        .collect()
+}
+
+/// The room a volume or mute request is for: answered, else named, else the speaker's, else
+/// the only room with such a control, else a question.
+fn speaker_room(
+    req: &Request,
+    room: &[String],
+    class: &str,
+    house: &House,
+) -> Result<(String, String), Box<Plan>> {
+    if req.area.is_none()
+        && room.is_empty()
+        && let Some(heard) = &req.speaker_room
+    {
+        return Ok((heard.clone(), "pièce du satellite".into()));
+    }
+    let candidates = areas_of(&speaker_controls(class, None, house), house);
+    pick_room(
+        req,
+        room,
+        &candidates,
+        "Il n'y a pas d'enceinte.".into(),
+        house,
+    )
+}
+
+fn volume(req: &Request, change: Change, room: &[String], house: &House) -> Plan {
+    let mut trace = Trace {
+        intent: Some("volume".into()),
+        ..Default::default()
+    };
+    let (area, how) = match speaker_room(req, room, "volume", house) {
+        Ok(found) => found,
+        Err(plan) => return (*plan).with_trace(trace),
+    };
+    trace.room = Some(area.clone());
+    trace.room_how = Some(how);
+    let controls = speaker_controls("volume", Some(&area), house);
+    if controls.is_empty() {
+        return answer(
+            format!("Pas d'enceinte {}.", dans(house.area_name(&area))),
+            trace,
+        );
+    }
+    let levels: Vec<(&EntityView, f64)> = controls
+        .iter()
+        .filter_map(|c| {
+            let level = match change {
+                Change::Absolute(v) => v,
+                Change::Relative(step) => match c.state.value {
+                    StateValue::Number(now) => now + step,
+                    _ => return None,
+                },
+            };
+            Some((*c, level.round().clamp(0.0, 100.0)))
+        })
+        .collect();
+    if levels.is_empty() {
+        return answer("Je ne connais pas le volume actuel.".into(), trace);
+    }
+    trace.entities = levels.iter().map(|(c, _)| c.id.clone()).collect();
+    trace.value = Some(format!("{} %", number(levels[0].1)));
+    Plan::Act {
+        actions: levels
+            .iter()
+            .map(|(c, level)| Action::Speaker {
+                entity: c.id.clone(),
+                command: Command::SetNumber { value: *level },
+            })
+            .collect(),
+        done: Done::Volume {
+            area,
+            level: Some(levels[0].1 as u8),
+        },
+        trace,
+    }
+}
+
+fn mute(req: &Request, on: bool, room: &[String], house: &House) -> Plan {
+    let mut trace = Trace {
+        intent: Some("mute".into()),
+        ..Default::default()
+    };
+    let (area, how) = match speaker_room(req, room, "mute", house) {
+        Ok(found) => found,
+        Err(plan) => return (*plan).with_trace(trace),
+    };
+    trace.room = Some(area.clone());
+    trace.room_how = Some(how);
+    let controls = speaker_controls("mute", Some(&area), house);
+    if controls.is_empty() {
+        return answer(
+            format!("Pas d'enceinte {}.", dans(house.area_name(&area))),
+            trace,
+        );
+    }
+    trace.entities = controls.iter().map(|c| c.id.clone()).collect();
+    let command = if on {
+        Command::TurnOn {
+            brightness: None,
+            color: None,
+            effect: None,
+        }
+    } else {
+        Command::TurnOff
+    };
+    Plan::Act {
+        actions: controls
+            .iter()
+            .map(|c| Action::Speaker {
+                entity: c.id.clone(),
+                command: command.clone(),
+            })
+            .collect(),
+        done: Done::Mute { area, on },
         trace,
     }
 }
@@ -2319,5 +2663,209 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn heard(f: &fixture::Fixture, s: &str, room: Option<&str>) -> Plan {
+        plan_heard(s, &f.house(), room)
+    }
+
+    fn media_of(plan: &Plan) -> (String, Command) {
+        match plan {
+            Plan::Act { actions, .. } => match actions.as_slice() {
+                [Action::Media { entity, command }] => (entity.clone(), command.clone()),
+                other => panic!("not one media action: {other:?}"),
+            },
+            other => panic!("not an act: {other:?}"),
+        }
+    }
+
+    fn reply_text(plan: &Plan) -> &str {
+        match plan {
+            Plan::Answer { reply, .. } => reply,
+            other => panic!("not an answer: {other:?}"),
+        }
+    }
+
+    fn pause() -> Command {
+        Command::MediaAction {
+            action: "pause".into(),
+        }
+    }
+
+    #[test]
+    fn two_players_pick_the_speaker_room() {
+        let f = fixture::two_players();
+        assert_eq!(
+            media_of(&heard(&f, "mets pause", Some("bureau"))),
+            ("player_bureau".to_string(), pause())
+        );
+    }
+
+    #[test]
+    fn two_players_without_speaker_room_ask_which() {
+        let f = fixture::two_players();
+        let asked = heard(&f, "mets pause", None);
+        assert_eq!(labels(&asked), vec!["Musique", "Musique bureau"]);
+        let pending = crate::Pending::of(&asked).expect("a question");
+        let request = pending
+            .resolve(crate::PendingAnswer::Choice(1))
+            .expect("choice 2");
+        assert_eq!(
+            media_of(&plan_request(&request, &f.house())),
+            ("player_bureau".to_string(), pause())
+        );
+    }
+
+    #[test]
+    fn speaker_room_survives_the_question() {
+        let f = fixture::house();
+        let asked = heard(&f, "monte le son", Some("garage"));
+        let Plan::Answer { reply, .. } = &asked else {
+            panic!("no speaker in the garage: {asked:?}");
+        };
+        assert_eq!(reply, "Pas d'enceinte dans le Garage.");
+        let f = fixture::two_players();
+        let asked = heard(&f, "chanson suivante", Some("garage"));
+        let Plan::Ask { choices, .. } = &asked else {
+            panic!("a question: {asked:?}");
+        };
+        assert!(
+            choices
+                .iter()
+                .all(|(_, r)| r.speaker_room.as_deref() == Some("garage"))
+        );
+    }
+
+    #[test]
+    fn volume_uses_the_speaker_room() {
+        let f = fixture::house();
+        let plan = heard(&f, "monte le son", Some("salon"));
+        let Plan::Act { actions, .. } = &plan else {
+            panic!("an act: {plan:?}");
+        };
+        assert_eq!(
+            actions,
+            &vec![Action::Speaker {
+                entity: "number_salon_volume".into(),
+                command: Command::SetNumber { value: 50.0 }
+            }]
+        );
+    }
+
+    #[test]
+    fn volume_is_clamped_and_absolute() {
+        let f = fixture::house();
+        let plan = heard(&f, "mets le son à 100 %", Some("bureau"));
+        let Plan::Act { actions, .. } = &plan else {
+            panic!("an act: {plan:?}");
+        };
+        assert_eq!(
+            actions,
+            &vec![Action::Speaker {
+                entity: "number_bureau_volume".into(),
+                command: Command::SetNumber { value: 100.0 }
+            }]
+        );
+        let mut f = fixture::house();
+        f.entity_mut("number_salon_volume").state.value = StateValue::Number(96.0);
+        let plan = heard(&f, "monte le son", Some("salon"));
+        let Plan::Act { actions, .. } = &plan else {
+            panic!("an act: {plan:?}");
+        };
+        assert_eq!(
+            actions,
+            &vec![Action::Speaker {
+                entity: "number_salon_volume".into(),
+                command: Command::SetNumber { value: 100.0 }
+            }]
+        );
+    }
+
+    #[test]
+    fn unknown_volume_cannot_step() {
+        let mut f = fixture::house();
+        f.entity_mut("number_salon_volume").state.value = StateValue::Unknown;
+        assert_eq!(
+            reply_text(&heard(&f, "monte le son", Some("salon"))),
+            "Je ne connais pas le volume actuel."
+        );
+    }
+
+    #[test]
+    fn no_player() {
+        let mut f = fixture::house();
+        f.entities.retain(|e| e.kind != Kind::MediaPlayer);
+        assert_eq!(
+            reply_text(&heard(&f, "mets pause", None)),
+            "Il n'y a pas de lecteur de musique."
+        );
+    }
+
+    #[test]
+    fn offline_player_answers_it_does_not_answer() {
+        let mut f = fixture::house();
+        f.entity_mut("player_music").state.availability = nidoo_core::model::Availability::Offline;
+        assert_eq!(
+            reply_text(&heard(&f, "mets pause", None)),
+            "Le lecteur ne répond pas."
+        );
+    }
+
+    #[test]
+    fn player_without_play_media_cannot_search() {
+        let mut f = fixture::house();
+        f.entity_mut("player_music")
+            .capabilities
+            .media_features
+            .retain(|feature| feature != "play_media" && feature != "next");
+        assert_eq!(
+            reply_text(&heard(&f, "joue Daft Punk", None)),
+            "Ce lecteur ne sait pas chercher un titre."
+        );
+        assert_eq!(
+            reply_text(&heard(&f, "chanson suivante", None)),
+            "Ce lecteur ne sait pas faire ça."
+        );
+    }
+
+    #[test]
+    fn now_playing_reads_the_state() {
+        let mut f = fixture::house();
+        assert_eq!(
+            reply_text(&heard(&f, "qu'est-ce qu'on écoute ?", None)),
+            "Get Lucky, de Daft Punk."
+        );
+        f.entity_mut("player_music").state.value =
+            StateValue::MediaPlayer(nidoo_core::model::MediaPlayerState {
+                state: Some("paused".into()),
+                title: Some("Get Lucky".into()),
+                ..Default::default()
+            });
+        assert_eq!(
+            reply_text(&heard(&f, "c'est quoi cette chanson ?", None)),
+            "En pause : Get Lucky."
+        );
+        f.entity_mut("player_music").state.value =
+            StateValue::MediaPlayer(nidoo_core::model::MediaPlayerState {
+                state: Some("idle".into()),
+                ..Default::default()
+            });
+        assert_eq!(
+            reply_text(&heard(&f, "c'est quoi cette chanson ?", None)),
+            "Rien ne joue."
+        );
+    }
+
+    #[test]
+    fn media_hints() {
+        let f = fixture::house();
+        assert_eq!(
+            reply_text(&heard(&f, "mets de la musique classique", None)),
+            "Pour un titre ou un artiste, dites « joue » suivi du nom."
+        );
+        assert_eq!(
+            reply_text(&heard(&f, "mets le son à 140", Some("salon"))),
+            "Le volume va de 0 à 100 %."
+        );
     }
 }

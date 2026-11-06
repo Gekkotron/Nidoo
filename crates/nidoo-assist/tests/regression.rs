@@ -14,6 +14,10 @@ enum Expect {
     Covers(Command, &'static [&'static str]),
     /// Every TV or plug listed, in order, sent the same command.
     Switches(Command, &'static [&'static str]),
+    /// One media command to the player: the action ("play_media" for a search) and the query.
+    Media(&'static str, &'static str, Option<&'static str>),
+    /// Each speaker control listed, in order, with its command.
+    Speaker(&'static [(&'static str, Command)]),
     NotUnderstood,
 }
 
@@ -190,6 +194,37 @@ const ROWS: &[(&str, Expect)] = &[
         "allume la lumière du salon tv",
         Answer("Pas de lumière dans le Salon TV."),
     ),
+    ("mets pause", Media("player_music", "pause", None)),
+    ("chanson suivante", Media("player_music", "next", None)),
+    (
+        "joue du Daft Punk",
+        Media("player_music", "play_media", Some("du Daft Punk")),
+    ),
+    ("mets de la musique", Media("player_music", "play", None)),
+    (
+        "c'est quoi cette chanson ?",
+        Answer("Get Lucky, de Daft Punk."),
+    ),
+    (
+        "monte le son du salon",
+        Speaker(&[("number_salon_volume", Command::SetNumber { value: 50.0 })]),
+    ),
+    (
+        "baisse un peu le son du salon",
+        Speaker(&[("number_salon_volume", Command::SetNumber { value: 35.0 })]),
+    ),
+    (
+        "coupe le son du salon",
+        Speaker(&[(
+            "switch_salon_mute",
+            Command::TurnOn {
+                brightness: None,
+                color: None,
+                effect: None,
+            },
+        )]),
+    ),
+    ("monte le son", Ask(&["Salon", "Bureau"])),
 ];
 
 #[test]
@@ -204,7 +239,11 @@ fn regression_table() {
                 fn command(a: &Action) -> Option<(&str, Command)> {
                     match a {
                         Action::Light { entity, command } => Some((entity, command.clone())),
-                        Action::Setpoint { .. } | Action::Cover { .. } | Action::Switch { .. } => None,
+                        Action::Setpoint { .. }
+                        | Action::Cover { .. }
+                        | Action::Switch { .. }
+                        | Action::Media { .. }
+                        | Action::Speaker { .. } => None,
                     }
                 }
                 let want = if *on {
@@ -248,6 +287,22 @@ fn regression_table() {
                 actions.len() == ids.len()
                     && actions.iter().zip(ids.iter()).all(|(a, id)| {
                         matches!(a, Action::Switch { entity, command } if entity == id && command == want)
+                    })
+            }
+            (Media(id, action, query), Plan::Act { actions, .. }) => match actions.as_slice() {
+                [Action::Media { entity, command }] if entity == id => match (command, query) {
+                    (Command::MediaAction { action: a }, None) => a == action,
+                    (Command::PlayMedia { query: q }, Some(want)) => {
+                        *action == "play_media" && q == want
+                    }
+                    _ => false,
+                },
+                _ => false,
+            },
+            (Speaker(want), Plan::Act { actions, .. }) => {
+                actions.len() == want.len()
+                    && actions.iter().zip(want.iter()).all(|(a, (id, cmd))| {
+                        matches!(a, Action::Speaker { entity, command } if entity == id && command == cmd)
                     })
             }
             (Answer(text), Plan::Answer { reply, .. }) => reply == text,
