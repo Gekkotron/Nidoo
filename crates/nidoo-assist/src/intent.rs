@@ -232,8 +232,18 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
             }
         }
     }
-    if let Some(intent) = media(&toks) {
-        return Some(intent);
+    if music_sentence(&toks) {
+        // A music word the music intents cannot use is not understood: never lights or heating.
+        return media(&toks);
+    }
+    // Not about music: the music words are plain words again, as before they were known, so
+    // "la lumière suivante" or "remets le chauffage à 20" parse exactly as they did.
+    for t in &mut toks {
+        if let Tok::Known(c, w) = t
+            && MEDIA_CLASSES.contains(c)
+        {
+            *t = Tok::Free(std::mem::take(w));
+        }
     }
     let has = |c: Class| {
         toks.iter()
@@ -380,6 +390,61 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
     None
 }
 
+/// The lexicon classes only the music and volume intents read.
+const MEDIA_CLASSES: [Class; 10] = [
+    Class::Media,
+    Class::Sound,
+    Class::Pause,
+    Class::Next,
+    Class::Previous,
+    Class::Resume,
+    Class::Launch,
+    Class::Stop,
+    Class::Back,
+    Class::Listen,
+];
+
+/// Words that name the room after them ("dans le salon"), not the music before them.
+const ROOM_LINKERS: &[&str] = &["dans", "du", "au", "aux", "chez", "sur"];
+
+/// A sentence about the music or the speakers: a music word, and no light, shutter, heating,
+/// TV, plug or other device word, and no negation.
+fn music_sentence(toks: &[Tok]) -> bool {
+    let has = |c: Class| {
+        toks.iter()
+            .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
+    };
+    let back = has(Class::Back)
+        && toks
+            .iter()
+            .any(|t| matches!(t, Tok::Free(w) if w == "arriere"));
+    let worded = [
+        Class::Media,
+        Class::Listen,
+        Class::Sound,
+        Class::Pause,
+        Class::Next,
+        Class::Previous,
+        Class::Stop,
+    ]
+    .into_iter()
+    .any(has)
+        || back;
+    let blockers = [
+        Class::Light,
+        Class::LightNamed,
+        Class::Cover,
+        Class::Heating,
+        Class::Temperature,
+        Class::Degree,
+        Class::Tv,
+        Class::Plug,
+        Class::OtherDevice,
+        Class::Negation,
+    ];
+    worded && !blockers.into_iter().any(has)
+}
+
 /// Music and volume: only with a music word ("musique", "le son", "pause", "suivante" …) and
 /// never with a light, shutter, heating, TV, plug or other device word or a negation, so every
 /// house sentence parses as before. `None` hands the sentence back to the house intents.
@@ -505,7 +570,7 @@ fn media(toks: &[Tok]) -> Option<Intent> {
         if off {
             return Some(Intent::Mute { on: true, room });
         }
-        if has(Class::Resume) {
+        if has(Class::Resume) || has(Class::On) {
             return Some(Intent::Mute { on: false, room });
         }
         return None;
@@ -514,8 +579,17 @@ fn media(toks: &[Tok]) -> Option<Intent> {
         if has(Class::Resume) {
             return Some(Intent::Media(MediaIntent::Play { resume: true }));
         }
-        if has(Class::Set) || has(Class::Launch) {
-            let named = !room.is_empty() || toks.iter().any(|t| matches!(t, Tok::Number(_)));
+        if has(Class::Set) || has(Class::Launch) || has(Class::On) {
+            // Words before a room linker name the music; "dans le salon" names a room.
+            let mut in_room = false;
+            let named = toks.iter().any(|t| match t {
+                Tok::Known(Class::Linker, w) if ROOM_LINKERS.contains(&w.as_str()) => {
+                    in_room = true;
+                    false
+                }
+                Tok::Free(_) | Tok::Number(_) => !in_room,
+                _ => false,
+            });
             return Some(if named {
                 Intent::MediaHint
             } else {
@@ -546,17 +620,36 @@ const SOME_MUSIC: &[&str] = &[
 pub fn play_by_name(sentence: &str) -> Option<Intent> {
     let raw: Vec<&str> = sentence.split_whitespace().collect();
     let clean = |w: &str| fold(w.trim_matches(|c: char| !c.is_alphanumeric()));
-    let at = raw
+    // Lower case but not folded: "joué" ("on a joué au foot") is not "joue".
+    let at = raw.iter().position(|w| {
+        let w = w
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        PLAY_WORDS.contains(&w.as_str())
+    })?;
+    // Every word before it, split at hyphens and apostrophes too ("peux-tu", "qu'est-ce").
+    let before: Vec<String> = raw[..at]
         .iter()
-        .position(|w| PLAY_WORDS.contains(&clean(w).as_str()))?;
-    let before: Vec<String> = raw[..at].iter().map(|w| clean(w)).collect();
+        .flat_map(|w| w.split(['-', '\'', '’']))
+        .map(clean)
+        .filter(|w| !w.is_empty())
+        .collect();
     let mut rest: Vec<&str> = raw[at + 1..].to_vec();
-    if before.iter().any(|w| w == "ne" || w == "n")
-        || rest.first().is_some_and(|w| clean(w) == "pas")
-    {
+    if rest.first().is_some_and(|w| clean(w) == "pas") {
         return None;
     }
-    if sentence.trim_end().ends_with('?') || before.iter().any(|w| w == "qui" || w == "quoi") {
+    if before.iter().any(|w| w == "qui" || w == "quoi") {
+        return Some(Intent::Media(MediaIntent::NowPlaying));
+    }
+    // "joue" orders only at the start, after a polite "peux-tu" at most: "baisse le son, ça
+    // joue trop fort" or "ne joue pas" is not a search.
+    let polite = |w: &String| {
+        class(w) == Some(Class::Request) || matches!(w.as_str(), "tu" | "vous" | "me" | "m" | "moi")
+    };
+    if !before.iter().all(polite) {
+        return None;
+    }
+    if sentence.trim_end().ends_with('?') && rest.len() <= 1 {
         return Some(Intent::Media(MediaIntent::NowPlaying));
     }
     // Politeness at the end is not part of a name.
@@ -1300,5 +1393,57 @@ mod tests {
         assert_eq!(m("ne joue pas Daft Punk"), None);
         assert_eq!(m("mets Daft Punk"), None);
         assert_eq!(m("allume la lumière"), None);
+    }
+
+    #[test]
+    fn joue_is_an_order_only_at_the_start() {
+        assert_eq!(m("on a joué au foot"), None);
+        assert_eq!(m("baisse le son, ça joue trop fort"), None);
+        assert_eq!(m("ça joue trop fort"), None);
+        assert_eq!(m("mets pause, la musique joue trop fort"), None);
+        assert_eq!(m("peux-tu me jouer Daft Punk"), query("Daft Punk"));
+        assert_eq!(m("tu peux jouer Daft Punk"), query("Daft Punk"));
+    }
+
+    #[test]
+    fn on_verbs_and_rooms_with_music() {
+        assert_eq!(
+            p("allume la musique"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(
+            p("allume le son"),
+            Some(Intent::Mute {
+                on: false,
+                room: vec![]
+            })
+        );
+        assert_eq!(
+            p("mets de la musique dans le salon"),
+            media(MediaIntent::Play { resume: false })
+        );
+        // A music word the music intents do not use is not understood, never lights.
+        assert_eq!(p("chanson"), None);
+        assert_eq!(
+            p("allume la chanson du salon"),
+            media(MediaIntent::Play { resume: false })
+        );
+    }
+
+    /// With a house word the music words are plain words again: the old parse, unchanged.
+    #[test]
+    fn house_words_keep_music_words_as_names() {
+        assert_eq!(
+            p("allume la lumière de son bureau"),
+            lights(true, false, &[], &["son", "bureau"])
+        );
+        assert_eq!(
+            p("allume la lumière suivante"),
+            lights(true, false, &[], &["suivante"])
+        );
+        assert_eq!(
+            p("remets le chauffage à 20"),
+            set(Change::Absolute(20.0), &["remets"])
+        );
     }
 }

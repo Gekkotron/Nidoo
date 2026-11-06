@@ -897,6 +897,17 @@ fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
             },
         ),
     };
+    // An idle player has no song to pause or skip, and would never echo the command.
+    let idle = matches!(&player.state.value,
+        StateValue::MediaPlayer(state) if state.state.as_deref() == Some("idle"));
+    if idle
+        && matches!(
+            what,
+            MediaIntent::Pause | MediaIntent::Next | MediaIntent::Previous
+        )
+    {
+        return answer("Rien ne joue.".into(), trace);
+    }
     if !player
         .capabilities
         .media_features
@@ -926,6 +937,13 @@ fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
 /// A room's speaker controls marked `device_class` (`volume` numbers, `mute` switches), every
 /// room's when `area` is `None`.
 fn speaker_controls<'a>(class: &str, area: Option<&str>, house: &House<'a>) -> Vec<&'a EntityView> {
+    // Not `commandable`: a satellite's Mute is folded into its Music volume (`part_of`).
+    let usable = |e: &EntityView| {
+        e.category == EntityCategory::Primary
+            && e.enabled_by_default
+            && !e.id.starts_with("group_")
+            && !e.id.starts_with("virtual_")
+    };
     let kind = if class == "volume" {
         Kind::Number
     } else {
@@ -937,10 +955,19 @@ fn speaker_controls<'a>(class: &str, area: Option<&str>, house: &House<'a>) -> V
         .filter(|e| {
             e.kind == kind
                 && e.device_class.as_deref() == Some(class)
-                && commandable(e)
-                && area.is_none_or(|a| e.area == a)
+                && usable(e)
+                && area.is_none_or(|a| speaker_area(e, house) == a)
         })
         .collect()
+}
+
+/// A speaker control's room: a folded one (a satellite's Mute) is in the room of the Music
+/// volume it is folded into, which is where the satellite's room is set.
+fn speaker_area(e: &EntityView, house: &House) -> String {
+    e.part_of
+        .as_deref()
+        .and_then(|parent| house.entity(parent))
+        .map_or_else(|| e.area.clone(), |parent| parent.area.clone())
 }
 
 /// The room a volume or mute request is for: answered, else named, else the speaker's, else
@@ -957,7 +984,13 @@ fn speaker_room(
     {
         return Ok((heard.clone(), "pièce du satellite".into()));
     }
-    let candidates = areas_of(&speaker_controls(class, None, house), house);
+    let controls = speaker_controls(class, None, house);
+    let candidates: Vec<String> = house
+        .areas
+        .iter()
+        .filter(|a| controls.iter().any(|c| speaker_area(c, house) == a.id))
+        .map(|a| a.id.clone())
+        .collect();
     pick_room(
         req,
         room,
@@ -2866,6 +2899,43 @@ mod tests {
         assert_eq!(
             reply_text(&heard(&f, "mets le son à 140", Some("salon"))),
             "Le volume va de 0 à 100 %."
+        );
+    }
+
+    /// A satellite's Mute is folded into its Music volume (`part_of`): still a speaker control.
+    #[test]
+    fn a_folded_mute_is_still_the_room_mute() {
+        let mut f = fixture::house();
+        let mute = f.entity_mut("switch_salon_mute");
+        mute.part_of = Some("number_salon_volume".into());
+        // Its own room is unset: the satellite's room lives on its Music volume.
+        mute.area = String::new();
+        let plan = heard(&f, "coupe le son", Some("salon"));
+        let Plan::Act { actions, .. } = &plan else {
+            panic!("an act: {plan:?}");
+        };
+        assert!(matches!(
+            actions.as_slice(),
+            [Action::Speaker { entity, command: Command::TurnOn { .. } }] if entity == "switch_salon_mute"
+        ));
+    }
+
+    #[test]
+    fn an_idle_player_has_nothing_to_pause_or_skip() {
+        let mut f = fixture::house();
+        f.entity_mut("player_music").state.value =
+            StateValue::MediaPlayer(nidoo_core::model::MediaPlayerState {
+                state: Some("idle".into()),
+                ..Default::default()
+            });
+        for s in ["mets pause", "chanson suivante", "chanson précédente"] {
+            assert_eq!(reply_text(&heard(&f, s, None)), "Rien ne joue.", "{s}");
+        }
+        assert_eq!(
+            media_of(&heard(&f, "mets de la musique", None)).1,
+            Command::MediaAction {
+                action: "play".into()
+            }
         );
     }
 }

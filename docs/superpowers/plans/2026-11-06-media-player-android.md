@@ -133,13 +133,14 @@ git add core/designsystem feature/home
 git commit -m "feat(home): media player card and sheet tinted by the cover colour"
 ```
 
-### Task 3: Widget tile and demo house
+### Task 3: Widget tile, dashboard widget and demo house
 
 **Files:**
 - Modify: `feature/widget/.../TileMapper.kt` (`valueOf`: `TileValue.Text(title)` when playing or paused, `TileValue.None` when idle; `iconOf`: a new `TileIcon.MEDIA`), `feature/widget/.../ui/WidgetContent.kt` (`TileIcon.MEDIA` → new drawable `ic_widget_media`), `feature/widget/.../config/ConfigViewModel.kt` (media players allowed in the picker)
 - Create: `feature/widget/src/main/res/drawable/ic_widget_media.xml` (the note glyph as a vector)
 - Modify: `core/demo/src/main/kotlin/com/gekkotron/nidoo/demo/DemoHouse.kt` (`mediaPlayer("demo_living_music", "Music", "Living room", "demo/living/music")` in `init`; a `private fun mediaPlayer(id, device, area, topic)` with `config("media_player", …)` carrying `state_topic`, `command_topic` `"$topic/set"`, all five `supported_features`; `doc(topic, …)` playing a made-up song with `color` `"#3d2466"`, no `image_url`; `echo("$topic/set", topic)` answering play/pause with the state, next/previous with another made-up title)
-- Test: `feature/widget/src/test/.../TileMapperTest.kt` (or the existing tile tests), `core/demo/src/test/kotlin/com/gekkotron/nidoo/demo/DemoBrokerTest.kt` (add `"demo_living_music"` to the expected id list)
+- Modify: `core/dashboards/src/commonMain/kotlin/com/gekkotron/nidoo/dashboards/Dashboard.kt` (`WidgetKind.MEDIA_PLAYER("media_player")`: the hub's new dashboard widget kind, spans 2x1 and 2x2; today it decodes as `UNKNOWN`), and the dashboard renderer that switches on `WidgetKind` (`feature/home/.../ui/DashboardTiles.kt` and `DashboardUiBuilder.kt`) so a `MEDIA_PLAYER` widget shows the Task 2 media card
+- Test: `feature/widget/src/test/.../TileMapperTest.kt` (or the existing tile tests), `core/demo/src/test/kotlin/com/gekkotron/nidoo/demo/DemoBrokerTest.kt` (add `"demo_living_music"` to the expected id list), `core/dashboards/src/commonTest/.../DashboardDecodeTest.kt` (`media_player decodes as MEDIA_PLAYER`)
 
 - [ ] **Step 1: Write the failing tests**: `media player tile shows the title`, `idle media tile shows nothing`, `media tile icon is media`, `media tile tap opens home`; `DemoBrokerTest` expects `demo_living_music` and that a `{"command":"pause"}` on its command topic echoes `"state":"paused"`.
 - [ ] **Step 2: Run to verify they fail** — `./gradlew :feature:widget:test :core:demo:test` → FAIL.
