@@ -873,3 +873,157 @@ async fn a_switch_not_shown_as_a_plug_is_untouched() {
     assert_eq!(sent_to(&log, PLUG_COMMAND_TOPIC), 0);
     assert_eq!(sent_to(&log, PLAIN_COMMAND_TOPIC), 0);
 }
+
+/// A media player `node` (id `music_<node>`) on `music/<node>/…`, playing "Song 1", in `area`.
+async fn feed_player(hub: &Hub, node: &str, area: &str) -> String {
+    let config = serde_json::json!({
+        "name": format!("Musique {node}"),
+        "unique_id": format!("music_{node}"),
+        "state_topic": format!("music/{node}/state"),
+        "command_topic": format!("music/{node}/set"),
+        "supported_features": ["play", "pause", "next", "previous", "play_media"],
+        "device": {"identifiers": [format!("music_{node}")], "name": format!("Music {node}")}
+    });
+    hub.ingest(
+        &format!("nidoo/media_player/music_{node}/player/config"),
+        config.to_string().as_bytes(),
+    );
+    player_state(hub, node, "playing", "Song 1", 1);
+    place(hub, &format!("music_{node}"), area).await
+}
+
+fn player_state(hub: &Hub, node: &str, state: &str, title: &str, minute: u8) {
+    let payload = serde_json::json!({
+        "state": state, "title": title, "artist": "Band", "duration_s": 200,
+        "position_s": 0, "position_at": format!("2026-11-06T10:{minute:02}:00Z")
+    });
+    hub.ingest(
+        &format!("music/{node}/state"),
+        payload.to_string().as_bytes(),
+    );
+}
+
+/// Plays the music server: logs every command payload and echoes what the command asked.
+fn player_echo(mut rx: mpsc::Receiver<Publish>, hub: Arc<Hub>) -> Arc<Mutex<Vec<String>>> {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&log);
+    tokio::spawn(async move {
+        while let Some(publish) = rx.recv().await {
+            let Some(node) = publish
+                .topic
+                .strip_prefix("music/")
+                .and_then(|t| t.strip_suffix("/set"))
+            else {
+                continue;
+            };
+            sink.lock()
+                .unwrap()
+                .push(format!("{node} {}", publish.payload));
+            let cmd: serde_json::Value = serde_json::from_str(&publish.payload).unwrap();
+            match cmd["command"].as_str().unwrap_or_default() {
+                "pause" => player_state(&hub, node, "paused", "Song 1", 1),
+                "play" => player_state(&hub, node, "playing", "Song 1", 2),
+                "next" => player_state(&hub, node, "playing", "Song 2", 3),
+                "play_media" => player_state(&hub, node, "playing", "Found", 4),
+                _ => {}
+            }
+        }
+    });
+    log
+}
+
+/// A sound satellite `sid` whose Music volume is in `area`.
+async fn feed_satellite(hub: &Hub, sid: &str, area: &str) {
+    let config = serde_json::json!({
+        "name": "Music volume",
+        "unique_id": format!("nidoo_sound_{sid}_volume"),
+        "state_topic": format!("nidoo-sound/{sid}/volume"),
+        "command_topic": format!("nidoo-sound/{sid}/volume/set"),
+        "min": 0, "max": 100, "device_class": "volume",
+        "device": {"identifiers": [format!("nidoo_sound_{sid}")], "name": "Satellite"}
+    });
+    hub.ingest(
+        &format!("nidoo/number/nidoo_sound_{sid}/volume/config"),
+        config.to_string().as_bytes(),
+    );
+    hub.ingest(&format!("nidoo-sound/{sid}/volume"), b"40");
+    place(hub, &format!("nidoo_sound_{sid}_volume"), area).await;
+}
+
+fn heard(sid: &str, s: &str) -> AssistRequest {
+    AssistRequest {
+        client: format!("satellite:{sid}"),
+        ..text(s)
+    }
+}
+
+#[tokio::test]
+async fn joue_x_sends_play_media_and_replies_with_the_echoed_title() {
+    let (hub, rx) = house().await;
+    feed_player(&hub, "a", "living").await;
+    let log = player_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "joue du Daft Punk").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(
+        log.lock().unwrap().as_slice(),
+        [r#"a {"command":"play_media","query":"du Daft Punk"}"#]
+    );
+    assert_eq!(turn.reply, "Je joue Found.");
+}
+
+#[tokio::test]
+async fn next_replies_with_the_new_song() {
+    let (hub, rx) = house().await;
+    feed_player(&hub, "a", "living").await;
+    let _log = player_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "chanson suivante").await;
+    assert_eq!(turn.reply, "Song 2, Band.");
+}
+
+#[tokio::test]
+async fn a_player_that_never_echoes_times_out() {
+    let (hub, _rx) = house().await;
+    feed_player(&hub, "a", "living").await;
+    let turn = say(&hub, "chanson suivante").await;
+    assert_eq!(turn.outcome, OutcomeKind::Failed, "{turn:?}");
+    assert_eq!(turn.reply, "Le lecteur n'a pas répondu.");
+}
+
+#[tokio::test]
+async fn satellite_turn_uses_its_room() {
+    let (hub, rx) = house().await;
+    feed_player(&hub, "a", "living").await;
+    feed_player(&hub, "b", "office").await;
+    feed_satellite(&hub, "0123456789ab", "office").await;
+    let log = player_echo(rx, Arc::clone(&hub));
+    let turn = hub
+        .assist(heard("0123456789ab", "mets pause"))
+        .await
+        .expect("assist");
+    assert_eq!(turn.reply, "Musique en pause.", "{turn:?}");
+    assert_eq!(log.lock().unwrap().as_slice(), [r#"b {"command":"pause"}"#]);
+    let turn = say(&hub, "mets pause").await;
+    assert_eq!(turn.outcome, OutcomeKind::Asked, "{turn:?}");
+    assert_eq!(
+        turn.question.expect("a question").choices,
+        // The hub names an entity "<device> <entity>", as Home Assistant does.
+        vec!["Music a Musique a", "Music b Musique b"]
+    );
+}
+
+#[tokio::test]
+async fn simulated_media_turn_sends_nothing() {
+    let (hub, mut rx) = house().await;
+    feed_player(&hub, "a", "living").await;
+    drain(&mut rx);
+    let turn = hub
+        .assist(simulated("chanson suivante"))
+        .await
+        .expect("assist");
+    assert!(turn.reply.starts_with("Simulation :"), "{}", turn.reply);
+    assert!(
+        drain(&mut rx)
+            .iter()
+            .all(|p| !p.topic.starts_with("music/"))
+    );
+}
