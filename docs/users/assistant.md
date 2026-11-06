@@ -1,7 +1,7 @@
 ---
 title: Assistant
 sidebar_position: 19
-description: Short French sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
+description: Short French sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, control the music and the speakers' volume, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
 ---
 
 The **Assistant** understands short French sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page.
@@ -52,6 +52,34 @@ The setpoint holds until the zone's next scheduled change, at most the zone's ma
 | « allume les 2 prises du bureau » | the plugs of the Bureau |
 
 "Télé", "télévision" and "TV" are TVs, "prise" is a plug. Only a switch whose **Show as** type is **TV** or **Plug** is used: set it once in the device's settings. A plain switch, a siren, a door opener, a chime, a group or a hub-made virtual switch is never touched, whatever its name. With no room and no "toutes", the assistant asks "Dans quelle pièce ?"; with several plugs in the room and a name that fits none, it asks which one. Devices already on or off as asked are left alone, an offline one gets no command and the reply says it did not answer. A sentence with a lights word still means lights: « éteins le salon » never turns off a TV or a plug.
+
+**Music**, on a [media player](media-players.md):
+
+| Sentence | Does | Reply |
+|---|---|---|
+| « mets pause », « pause la musique », « stop la musique » | pauses | "Musique en pause." |
+| « reprends la musique », « relance la musique » | resumes | "Je reprends Get Lucky." |
+| « mets de la musique », « lance de la musique » | plays; an idle player picks what | "Je joue Get Lucky." |
+| « chanson suivante », « passe à la suivante » | next song | "Get Lucky, Daft Punk." |
+| « chanson précédente », « reviens en arrière » | previous song | the song's title and artist |
+| « c'est quoi cette chanson ? », « qu'est-ce qu'on écoute ? » | nothing, reads the player | "Get Lucky, de Daft Punk." or "Rien ne joue." |
+| « joue Daft Punk », « joue la vie en rose » | searches and plays, the words as you said them | "Je joue …" with the song found |
+
+The reply names the song the player reports once it has done it. **Play by name is "joue …" only**: « mets Daft Punk » is not a search, so "mets" keeps meaning what it means for the heating, and « mets de la musique classique » answers with a tip to say "joue". A music sentence needs a music word ("musique", "chanson", "morceau", "titre", "pause", "suivante", "précédente"): a bare "passe" or "mets" never touches the music. A player that cannot search says so, and nothing is sent.
+
+With one player in the house, it is the one. With several, a sentence heard by a [satellite](talk-to-a-satellite.md) uses the player in that satellite's room; typed on the page, or with no player in that room, the assistant asks "Quel lecteur ?". An offline player answers "Le lecteur ne répond pas." and one that does not confirm in time "Le lecteur n'a pas répondu.".
+
+**Speaker volume**, on the [sound satellites](sound.md):
+
+| Sentence | Does |
+|---|---|
+| « monte le son », « baisse le son » | the Music volume ± 10 points |
+| « baisse un peu le son » | ± 5 points |
+| « monte le son de 20 », « mets le son à 60 % » | ± 20 points, or 60 % |
+| « coupe le son », « remets le son » | Mute on or off |
+| « baisse le son du salon » | the Salon's satellites, wherever it was said |
+
+Without a room, a sentence heard by a satellite changes that satellite's room; typed on the page, the assistant asks "Dans quelle pièce ?" among the rooms with a satellite. Only the Music volume changes, never the Speech volume.
 
 **Temperatures**: « quelle température fait-il dans le salon ? », « il fait combien au bureau ? », « il fait combien dehors ? ». A room's temperature is its climate zone's reading, else its thermometer; outdoors is the climate engine's outdoor sensor, else the weather. An old reading is said with its age.
 

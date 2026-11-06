@@ -29,6 +29,15 @@ if [ -n "$brand" ]; then
   printf '%s\n' "$brand"
   status=1
 fi
+# Nidoo stays generic: the music server it was first tried with is never named
+# (the word is encoded so this script does not name it either).
+player=$(printf '%s' 'cGluc29u' | base64 -d)
+named=$(scan -n -i -w "$player" -- . ':!docs/superpowers')
+if [ -n "$named" ]; then
+  echo "A music server is named; Nidoo is generic, say \"a media player\":"
+  printf '%s\n' "$named"
+  status=1
+fi
 # Wording the rename gets wrong: the docs address /Nidoo/ (GitHub Pages paths
 # follow the repo name's case) and the article.
 wording=$(scan -n -E -e 'github\.io/nidoo' -e '(^|[^[:alnum:]])[Aa]n Nidoo([^[:alnum:]]|$)' -- \

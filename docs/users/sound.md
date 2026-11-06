@@ -44,6 +44,13 @@ turns the other one down in the audio it sends.
   satellite](mac-satellite.md) are tuned for this. Another Sendspin player
   keeps Speech above Music but not the exact gap.
 
+The Music volume number is published with `"device_class": "volume"` and
+the Mute switch with `"device_class": "mute"`. The
+[assistant](assistant.md) looks only for these two markers to find a room's
+speakers ("monte le son", "coupe le son"). Another speaker that publishes
+the same markers on its own volume `number` and mute `switch` works the same
+way.
+
 To set Speech by ear, press the speech-bubble test button on the satellite's
 card (or in **Settings → Assistant → Sound**) and move the **Speech** slider
 until the sentence sounds right.
