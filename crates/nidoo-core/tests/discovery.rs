@@ -622,3 +622,15 @@ fn media_player_discovers_from_three_and_two_level_topics() {
         assert!(entity.bindings.topics().contains("music/player/state"));
     }
 }
+
+#[test]
+fn unknown_device_class_is_kept() {
+    let entity = common::entity(
+        "number",
+        json!({
+            "name": "Music volume", "unique_id": "vol", "state_topic": "s/vol",
+            "command_topic": "s/vol/set", "min": 0, "max": 100, "device_class": "volume"
+        }),
+    );
+    assert_eq!(entity.device_class.as_deref(), Some("volume"));
+}
