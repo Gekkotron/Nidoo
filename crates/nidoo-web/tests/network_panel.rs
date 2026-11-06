@@ -198,7 +198,12 @@ async fn panel_shows_existing_watch_state() {
     settle().await;
     let text = panel_text(&m.host).expect("network panel");
     assert!(text.contains("connected"), "{text}");
-    assert!(text.contains("12 s ago · 4 ms"), "{text}");
+    // The reply is 12 s old in whole seconds; the panel reads the clock again when it renders,
+    // so a second boundary (or a slow runner) can make it 13 or 14.
+    assert!(
+        (12..=14).any(|s| text.contains(&format!("{s} s ago · 4 ms"))),
+        "{text}"
+    );
     assert!(text.contains("(90 s)"), "{text}");
     assert_eq!(host_input(&m.host).value(), "192.168.1.42");
 }
