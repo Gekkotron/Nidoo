@@ -61,8 +61,9 @@ pub fn discovery_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(Strin
             "volume",
             with(
                 base("Music volume", "volume"),
+                // `device_class: volume` tells the assistant this is the music volume.
                 json!({"command_topic": command("volume"), "min": 0, "max": 100, "step": 1,
-                       "mode": "slider", "icon": "mdi:volume-high"}),
+                       "mode": "slider", "icon": "mdi:volume-high", "device_class": "volume"}),
             ),
         ),
         (
@@ -79,8 +80,9 @@ pub fn discovery_messages(p: &PlayerPrefs, discovery_prefix: &str) -> Vec<(Strin
             "mute",
             with(
                 base("Mute", "mute"),
+                // `device_class: mute` tells the assistant this mutes the speaker.
                 json!({"command_topic": command("mute"), "payload_on": "ON", "payload_off": "OFF",
-                       "icon": "mdi:volume-off"}),
+                       "icon": "mdi:volume-off", "device_class": "mute"}),
             ),
         ),
         (
@@ -496,6 +498,29 @@ mod tests {
             })
         );
         assert_eq!(parse_command(t, b"nan"), None);
+    }
+
+    #[test]
+    fn volume_and_mute_carry_their_markers() {
+        let sid = short_id(ID);
+        let configs: Vec<serde_json::Value> = discovery_messages(&prefs(), "homeassistant")
+            .iter()
+            .map(|(_, payload)| serde_json::from_str(payload).unwrap())
+            .collect();
+        let find = |uid: String| configs.iter().find(|c| c["unique_id"] == uid).unwrap();
+        assert_eq!(
+            find(format!("nidoo_sound_{sid}_volume"))["device_class"],
+            "volume"
+        );
+        assert_eq!(
+            find(format!("nidoo_sound_{sid}_mute"))["device_class"],
+            "mute"
+        );
+        assert!(
+            find(format!("nidoo_sound_{sid}_speech"))
+                .get("device_class")
+                .is_none()
+        );
     }
 
     #[test]
