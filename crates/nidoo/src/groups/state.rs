@@ -243,7 +243,12 @@ pub fn combine(kind: Kind, members: &[EntityView]) -> Option<GroupState> {
             };
             Some(GroupState::Vacuum(state))
         }
-        Kind::Button | Kind::Sensor | Kind::BinarySensor | Kind::AlarmPanel | Kind::Generic => None,
+        Kind::Button
+        | Kind::Sensor
+        | Kind::BinarySensor
+        | Kind::AlarmPanel
+        | Kind::MediaPlayer
+        | Kind::Generic => None,
     }
 }
 

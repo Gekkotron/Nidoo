@@ -20,7 +20,7 @@ pub(super) fn map(m: &Mapper<'_>) -> Result<Vec<Publish>, CommandError> {
         Kind::Button => button(m),
         Kind::AlarmPanel => alarm(m),
         Kind::Vacuum => vacuum(m),
-        Kind::Sensor | Kind::BinarySensor => Err(m.unsupported()),
+        Kind::Sensor | Kind::BinarySensor | Kind::MediaPlayer => Err(m.unsupported()),
         Kind::Generic => match crate::types::type_def(&m.entity.component) {
             Some(def) => crate::types::command::map(m, def),
             None => Err(m.unsupported()),

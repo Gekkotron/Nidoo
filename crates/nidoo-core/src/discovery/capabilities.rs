@@ -100,7 +100,9 @@ fn by_kind(kind: Kind, cfg: &Value) -> Capabilities {
         },
         Kind::Vacuum => vacuum(cfg),
         Kind::AlarmPanel => alarm(cfg),
-        Kind::Switch | Kind::Sensor | Kind::BinarySensor | Kind::Button => Capabilities::default(),
+        Kind::Switch | Kind::Sensor | Kind::BinarySensor | Kind::Button | Kind::MediaPlayer => {
+            Capabilities::default()
+        }
     }
 }
 

@@ -155,6 +155,7 @@ fn kind_words(kind: Kind) -> &'static [&'static str] {
         Kind::Button => &["button", "bouton"],
         Kind::Vacuum => &["vacuum", "aspirateur"],
         Kind::WaterHeater => &["water_heater", "chauffe-eau", "ballon"],
+        Kind::MediaPlayer => &["media_player"],
         Kind::Generic => &[],
     }
 }

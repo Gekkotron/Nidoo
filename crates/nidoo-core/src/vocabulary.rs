@@ -100,6 +100,7 @@ pub fn reports(kind: Kind, component: &str, caps: &Capabilities, unit: Option<&s
         Kind::Light | Kind::Switch | Kind::BinarySensor => on_off(),
         Kind::Cover => fixed_words(COVER_STATES),
         Kind::Vacuum => fixed_words(VACUUM_STATES),
+        Kind::MediaPlayer => Reports::Nothing,
         Kind::Climate | Kind::WaterHeater => words(&caps.hvac_modes),
         Kind::Select => words(&caps.options),
         Kind::AlarmPanel => {
@@ -340,7 +341,7 @@ pub fn actions(kind: Kind, component: &str, caps: &Capabilities) -> Vec<Action> 
             }))
             .collect(),
         Kind::Generic => generic(component, caps),
-        Kind::Sensor | Kind::BinarySensor => Vec::new(),
+        Kind::Sensor | Kind::BinarySensor | Kind::MediaPlayer => Vec::new(),
     }
 }
 
