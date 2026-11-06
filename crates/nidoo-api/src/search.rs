@@ -155,7 +155,7 @@ fn kind_words(kind: Kind) -> &'static [&'static str] {
         Kind::Button => &["button", "bouton"],
         Kind::Vacuum => &["vacuum", "aspirateur"],
         Kind::WaterHeater => &["water_heater", "chauffe-eau", "ballon"],
-        Kind::MediaPlayer => &["media_player"],
+        Kind::MediaPlayer => &["media_player", "musique", "music", "lecteur", "player"],
         Kind::Generic => &[],
     }
 }
@@ -246,5 +246,12 @@ mod tests {
     fn is_empty_after_stop_words() {
         assert!(Query::parse("  le de the ").is_empty());
         assert!(!Query::parse("le salon").is_empty());
+    }
+
+    #[test]
+    fn music_words_find_media_players() {
+        for word in ["musique", "music", "lecteur", "player"] {
+            assert!(kind_words(Kind::MediaPlayer).contains(&word), "{word}");
+        }
     }
 }

@@ -420,6 +420,15 @@ pub fn already_there(view: &EntityView, cmd: &Command) -> bool {
         Command::SetHvacMode { mode } => {
             matches!(value, StateValue::Climate(c) if c.mode.as_deref() == Some(mode.as_str()))
         }
+        // Playing already, or paused already; next, previous and a search always act.
+        Command::MediaAction { action } if matches!(action.as_str(), "play" | "pause") => {
+            let wanted = if action == "play" {
+                "playing"
+            } else {
+                "paused"
+            };
+            matches!(value, StateValue::MediaPlayer(p) if p.state.as_deref() == Some(wanted))
+        }
         _ => false,
     }
 }
@@ -914,5 +923,27 @@ mod tests {
         ));
         assert!(!already_there(&entity("u", Kind::Light), &Command::TurnOff));
         assert!(!already_there(&plug(true), &Command::Toggle));
+    }
+
+    #[test]
+    fn already_there_for_media() {
+        let player = |state: &str| {
+            let mut e = entity("m", Kind::MediaPlayer);
+            e.state.value = StateValue::MediaPlayer(nidoo_core::model::MediaPlayerState {
+                state: Some(state.into()),
+                ..Default::default()
+            });
+            e
+        };
+        let action = |a: &str| Command::MediaAction { action: a.into() };
+        assert!(already_there(&player("paused"), &action("pause")));
+        assert!(!already_there(&player("playing"), &action("pause")));
+        assert!(already_there(&player("playing"), &action("play")));
+        assert!(!already_there(&player("idle"), &action("play")));
+        assert!(!already_there(&player("playing"), &action("next")));
+        assert!(!already_there(
+            &player("playing"),
+            &Command::PlayMedia { query: "x".into() }
+        ));
     }
 }

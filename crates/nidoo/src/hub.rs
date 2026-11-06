@@ -24,7 +24,7 @@ use nidoo_api::{
     GroupView, IgnoredView, OverridePatch, Snapshot, VirtualKind, VirtualSpec, WatchStatus,
     WsEvent, area_views, device_views, entity_views, mask_secret, snapshot,
 };
-use nidoo_core::command::{CommandError, Publish, map_command};
+use nidoo_core::command::{CommandError, Publish, echo_confirms, map_command};
 use nidoo_core::model::{
     AreasDocument, Availability, Command, Entity, Kind, PatchError, StateValue, UNASSIGNED_AREA,
     UiOverride,
@@ -1322,7 +1322,7 @@ impl Hub {
         // Subscribed before publishing, so a fast echo cannot slip between the two.
         let mut events = self.subscribe();
         let mut seen = self.state_seen.subscribe();
-        let (publishes, before, no_echo_expected) = {
+        let (publishes, before, no_echo_expected, kind) = {
             let reg = self.read();
             let entity = reg
                 .entity(id)
@@ -1344,6 +1344,7 @@ impl Hub {
                 map_command(entity, &state, &cmd, reg.templates())?,
                 state.value,
                 no_echo_expected,
+                entity.protocol_kind,
             )
         };
         for publish in publishes {
@@ -1366,7 +1367,9 @@ impl Hub {
                         // `StateChanged` too, and an echo with the same value comes through
                         // `state_seen` (which excludes availability-only topics).
                         Ok(WsEvent::StateChanged { id: changed, state })
-                            if changed == id && state.value != before =>
+                            if changed == id
+                                && state.value != before
+                                && echo_confirms(kind, &cmd, &before, &state.value) =>
                         {
                             return Some(state);
                         }
@@ -1375,7 +1378,12 @@ impl Hub {
                     },
                     seen_id = seen.recv() => match seen_id {
                         Ok(seen_id) if seen_id.id == id => {
-                            return Some(self.read().state(id).cloned().unwrap_or_default());
+                            let state = self.read().state(id).cloned().unwrap_or_default();
+                            // A media player's state also moves when someone else uses it:
+                            // only the report its command asked for is the echo.
+                            if echo_confirms(kind, &cmd, &before, &state.value) {
+                                return Some(state);
+                            }
                         }
                         Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                         Err(broadcast::error::RecvError::Closed) => return None,

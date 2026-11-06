@@ -178,7 +178,8 @@ fn instructions() -> String {
          `{{{{` and `}}}}` are literal braces; a value that is unknown at run time prints `?`. \
          `if`, `switch` and `trigger.state` take an optional `field` naming a value inside the \
          entity's state (vacuum `battery`, `fan_speed`; light `brightness` in %; cover \
-         `position`; climate and water heater `current`, `target` …); `average` works on a \
+         `position`; climate and water heater `current`, `target`; media player `title`, \
+         `artist` …); `average` works on a \
          field only when it is the entity's recorded number (cover position, current \
          temperature). Diagnostic entities (battery, link quality) are ordinary entities: name \
          them in `entity`. \
