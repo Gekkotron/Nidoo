@@ -74,6 +74,11 @@ only by agreement on both sides.
      really start after play, resume, seek or previous. The UI shows
      `position_s + max(0, now - position_at)`, clamped to `duration_s`, so the line waits still
      until then.
+   - `position_at` is null while a song is still loading after `play_media`, `next` or
+     `previous` (2–9 s for the first music server): the player can't tell when the speakers will
+     start. The state is then `playing` with `position_s` 0, and the line stays still at 0. The
+     player publishes again with a real `position_at` once audio starts. *(agreed with the music
+     server's session on 2026-11-06, after a real-broker test)*
    - Unknown fields are ignored. A missing field is the same as null.
 4. **Commands**, JSON on `command_topic`, not retained:
    - `{"command": "play"}`: resumes. When the player is idle, it means "play something" and the
@@ -106,7 +111,8 @@ agreed behaviour is: idle `play` shuffles favourites (or plays a mix when there 
   | `next`, `previous` | the title or position changes |
   | `play_media` | `state` is `playing` and the title changes |
 
-  For `next` and `previous`, a state message with a newer `position_at` also counts. This
+  For `next`, `previous` and `play_media`, a state message whose `position_at` changed (newer,
+  or now null while the new song loads) also counts. This
   covers the case where `previous` restarts the same song at 0. Use the existing echo timeout. A
   `play_media` that echoes with the same title (the same song was already playing) still counts
   as accepted.
@@ -311,7 +317,8 @@ following the `VacuumMapper` pattern.
 - `speaker_room` goes on `Request` and `plan()`. Existing intents ignore it.
 - The volume and mute markers are `device_class` `volume` / `mute`, published by `nidoo-sound`,
   with no name fallback.
-- The echo for `next` / `previous` also accepts a newer `position_at`. A timeout answers "Le
+- The echo for `next` / `previous` / `play_media` also accepts a changed `position_at` (newer, or
+  null while loading). A timeout answers "Le
   lecteur n'a pas répondu."
 - A player's room comes from the existing area system. Assist asks when a player has no area and
   there are several.
