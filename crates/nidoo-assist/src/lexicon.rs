@@ -45,6 +45,26 @@ pub enum Class {
     Request,
     /// A word that introduces the room ("du", "dans", "chez").
     Linker,
+    /// A word for music ("musique", "chanson", "morceau", "titre").
+    Media,
+    /// "son", "volume": the speakers' sound. "son" is a possessive unless an article precedes it.
+    Sound,
+    /// "pause".
+    Pause,
+    /// "suivante": the next song.
+    Next,
+    /// "précédente": the previous song.
+    Previous,
+    /// "reprends", "relance", "remets": resume the music, or the sound.
+    Resume,
+    /// "lance": start the music.
+    Launch,
+    /// "stop": pause the music (the player has no stop).
+    Stop,
+    /// "reviens" of "reviens en arrière".
+    Back,
+    /// "écoute" of "qu'est-ce qu'on écoute ?".
+    Listen,
     Noise,
 }
 
@@ -186,8 +206,39 @@ const TABLE: &[(Class, &[&str])] = &[
     (Class::Outdoor, &["dehors", "exterieur"]),
     (
         Class::Question,
-        &["?", "quelle", "quel", "quels", "quelles", "combien"],
+        &["?", "quelle", "quel", "quels", "quelles", "combien", "quoi"],
     ),
+    (
+        Class::Media,
+        &[
+            "musique", "musiques", "chanson", "chansons", "morceau", "morceaux", "titre", "titres",
+        ],
+    ),
+    (Class::Sound, &["son", "volume"]),
+    (Class::Pause, &["pause"]),
+    (Class::Next, &["suivante", "suivant"]),
+    (Class::Previous, &["precedente", "precedent"]),
+    (
+        Class::Resume,
+        &[
+            "reprends",
+            "reprend",
+            "reprendre",
+            "reprenez",
+            "relance",
+            "relancer",
+            "relances",
+            "relancez",
+            "remets",
+            "remet",
+            "remettre",
+            "remettez",
+        ],
+    ),
+    (Class::Launch, &["lance", "lancer", "lances", "lancez"]),
+    (Class::Stop, &["stop"]),
+    (Class::Back, &["reviens", "revenir", "revient", "retourne"]),
+    (Class::Listen, &["ecoute", "ecoutes", "ecouter", "ecoutez"]),
     (Class::Fait, &["fait"]),
     (Class::Little, &["legerement"]),
     (
@@ -289,7 +340,6 @@ const TABLE: &[(Class, &[&str])] = &[
             "couple",
             "couples",
             "allure",
-            "pause",
             "metre",
             "metres",
             "allumee",
