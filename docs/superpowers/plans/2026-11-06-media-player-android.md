@@ -15,7 +15,7 @@
 - **Never name the first music server** in code, tests, strings, demo house, commits or PR text. The demo entity is "Music".
 - The MQTT contract is frozen: discovery component `media_player`; state JSON keys `state` (`playing` | `paused` | `idle`), `title`, `artist`, `album`, `image_url`, `color`, `duration_s`, `position_s`, `position_at` (RFC 3339); commands `{"command":"play"|"pause"|"next"|"previous"}` and `{"command":"play_media","query":"…"}` on `command_topic`, not retained.
 - Same value rules as the hub: a message replaces the whole state (missing = null); idle nulls every other field; `color` only `#rrggbb` (lowercased); `image_url` only `http(s)://`; numbers only finite and ≥ 0; an unknown `state` word ignores the message.
-- Progress: `position_s + max(0, now − position_at)`, clamped to `duration_s`; hidden without a duration.
+- Progress: `position_s + max(0, now − position_at)`, clamped to `duration_s`; hidden without a duration. While `playing` with a null `position_at` (the song is loading), the line stays still at `position_s`.
 - No volume control and no search field in the app. The widget tile only displays.
 - Every string in EN (`values/strings.xml`) and FR (`values-fr/strings.xml`); `StringParityTest` enforces it.
 - Branch `feat/media-player` from `origin/main` in Nidoo-app; commit identity `-c user.name=Gekkotron -c user.email=60887050+Gekkotron@users.noreply.github.com`. Gradle caches stay in `$DEV_SCRATCH` (no per-repo overrides).
@@ -108,7 +108,7 @@ git commit -m "feat: media player kind, state and commands"
 Card (spec § "Home card"): cover thumbnail via `SubcomposeAsyncImage` (Coil 3; `error` and `loading` slots show the `MUSIC` glyph), title, artist, one play/pause `IconButton` (hidden when the player lacks that feature), `NidooCard(tint = parseTint(color))`; idle shows the glyph, "Rien ne joue" and ▶ sending `Command.MediaAction("play")`. Sheet (spec § "Control sheet"): large cover, title, "artist · album", ⏮ ▶/❚❚ ⏭ (absent when unsupported), a `LinearProgressIndicator` from `mediaProgress` re-read every second while playing (`LaunchedEffect` + `delay(1000)`), the sheet background tinted with the same colour; no volume, no search.
 
 - [ ] **Step 1: Write the failing tests**
-  - `MediaProgressTest`: `waits for a future position_at`, `moves while playing`, `is clamped to one`, `is null without duration`, `paused stays at the position`; `parseTint` accepts `#3d2466`, refuses `red`, `#3d2466x`, `null`.
+  - `MediaProgressTest`: `waits for a future position_at`, `stays still while loading` (playing, `positionAtMs` null → `positionS / duration`), `moves while playing`, `is clamped to one`, `is null without duration`, `paused stays at the position`; `parseTint` accepts `#3d2466`, refuses `red`, `#3d2466x`, `null`.
   - `CardFormatterTest`: `media player shows title and artist`; idle shows nothing-playing.
   - `MediaPlayerCardTest` (Robolectric, template `EntityCardIconTest`: `HomeUiBuilder.build(...).card(id)!!` in `NidooTheme(ThemeChoice.NIGHT_GLASS)`): `playing shows title and pause` (click sends `MediaAction("pause")` through the `onSend` lambda), `paused shows play`, `idle shows nothing playing and play sends play`, `no colour keeps the plain card` (assert via a `testTag("media-tint")` present only when tinted), `missing pause hides the button`.
   - `MediaPlayerControlsTest`: `sheet shows previous, play-pause and next`, `features without next and previous hide them`, `progress is shown with a duration and hidden without`.

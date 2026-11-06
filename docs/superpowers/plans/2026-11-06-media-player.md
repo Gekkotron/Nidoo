@@ -15,7 +15,7 @@
 - **Never name the first music server** in any tracked file: code, tests, docs, commit messages, PR text. Say "a media player" / "the music server". Fixtures use neutral names ("Music", `player_music`).
 - The MQTT contract is frozen (spec § "The MQTT contract"): topics, the JSON keys `state`, `title`, `artist`, `album`, `image_url`, `color`, `duration_s`, `position_s`, `position_at`, and the command JSON `{"command": "play" | "pause" | "next" | "previous"}` / `{"command": "play_media", "query": "…"}`. Do not rename them.
 - `state` words: `playing`, `paused`, `idle`. Idle means every other field is null.
-- `position_at` may be up to ~1 s in the future; elapsed = `position_s + max(0, now − position_at)`, clamped to `duration_s`.
+- `position_at` may be up to ~1 s in the future; elapsed = `position_s + max(0, now − position_at)`, clamped to `duration_s`. A null `position_at` while `playing` means the song is loading: the line stays still at `position_s` (spec amended 11-06).
 - No HTTP from the hub to a player. No volume on the media player. No new override fields, `cardStyle` or `showAs` values.
 - "mets …" never means play by name; only "joue …" does. Existing sentences ("mets le chauffage à 20", "passe le chauffage à 20", "coupe la lumière", "monte le volet") must parse exactly as today.
 - Volume steps: 10 points for a bare "monte / baisse", 5 for "un peu".
@@ -132,9 +132,9 @@ git commit -m "feat(core): media player kind and state"
 `echo.rs` unit tests, `p(state, title, at_ms)` building `StateValue::MediaPlayer`:
 - `play_is_confirmed_by_playing`: before paused, after playing → true; after paused → false.
 - `pause_is_confirmed_by_paused`.
-- `next_needs_a_new_title_or_a_newer_position_at`: same title same `position_at_ms` → false; new title → true; same title, `position_at_ms` 1000 → 2000 → true; before `None`, after `Some` → true.
+- `next_needs_a_new_title_or_a_changed_position_at`: same title same `position_at_ms` → false; new title → true; same title, `position_at_ms` 1000 → 2000 → true; before `None`, after `Some` → true; before `Some`, after `None` (loading) → true.
 - `previous_restarting_the_same_song_is_confirmed` (same title, newer `position_at_ms`).
-- `play_media_needs_playing_and_news`: after paused → false; playing + same title + same `position_at_ms` → false; playing + same title + newer `position_at_ms` → true.
+- `play_media_needs_playing_and_news`: after paused → false; playing + same title + same `position_at_ms` → false; playing + same title + newer `position_at_ms` → true; playing + new title + `position_at_ms` `None` (loading) → true.
 - `before_unknown_counts_as_empty`: before `StateValue::Unknown`, `next`, after with a title → true.
 - `other_kinds_always_confirm`: `Kind::Switch`, any values → true.
 
@@ -147,7 +147,7 @@ Expected: compile errors on the new variants and functions.
 
 - [ ] **Step 3: Implement**
 
-`fn media_player(m: &Mapper) -> Result<Vec<Publish>, CommandError>` in `kinds.rs`: action/query checked against `m.entity.capabilities.media_features` (`m.unsupported()` when missing), query trimmed and non-empty (the trimmed text is sent), payload built with `serde_json::json!`, published on `command_topic` through `m.publish("command_topic", None, &payload, &[])`. `echo_confirms`: rules exactly as the spec's echo table plus the newer-`position_at` clause for `next`, `previous` and `play_media`; a `before` that is not `MediaPlayer` reads as `MediaPlayerState::default()`.
+`fn media_player(m: &Mapper) -> Result<Vec<Publish>, CommandError>` in `kinds.rs`: action/query checked against `m.entity.capabilities.media_features` (`m.unsupported()` when missing), query trimmed and non-empty (the trimmed text is sent), payload built with `serde_json::json!`, published on `command_topic` through `m.publish("command_topic", None, &payload, &[])`. `echo_confirms`: rules exactly as the spec's echo table plus the changed-`position_at` clause (newer, or `Some` → `None`) for `next`, `previous` and `play_media`; a `before` that is not `MediaPlayer` reads as `MediaPlayerState::default()`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -467,7 +467,7 @@ Card per spec § "Web card": `CardFrame` with `wide=!in_sheet` (like the vacuum)
 
 - [ ] **Step 1: Write the failing tests**
 
-Unit (native): `elapsed_waits_for_a_future_position_at` (`position_at_ms = now + 800` → `position_s`), `elapsed_moves_while_playing` (+3 s), `elapsed_is_clamped_to_the_duration`, `elapsed_is_none_without_duration`, `paused_elapsed_is_the_position`, `tint_accepts_only_hex` (`"#3d2466"` ok; `"red"`, `"#3d2466; x:y"`, `None` → `None`).
+Unit (native): `elapsed_waits_for_a_future_position_at` (`position_at_ms = now + 800` → `position_s`), `elapsed_moves_while_playing` (+3 s), `elapsed_is_clamped_to_the_duration`, `elapsed_is_none_without_duration`, `paused_elapsed_is_the_position`, `loading_elapsed_stays_at_the_position` (playing, `position_at_ms` `None`), `tint_accepts_only_hex` (`"#3d2466"` ok; `"red"`, `"#3d2466; x:y"`, `None` → `None`).
 
 wasm (`rich_cards.rs`, `entity(…, Kind::MediaPlayer, StateValue::MediaPlayer(…))`): `media_card_playing_shows_cover_title_and_pause` (img `src`, title text, a pause button, the `--media-tint` style), `media_card_paused_shows_play`, `media_card_idle_shows_the_placeholder_and_play`, `media_card_without_color_is_plain` (no `--media-tint`), `media_card_hides_buttons_the_player_lacks` (features `["play","pause"]` → no next/previous), `media_card_offline` (offline class like the other cards), `media_card_follows_the_language` (French then English labels).
 
