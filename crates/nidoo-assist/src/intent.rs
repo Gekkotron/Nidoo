@@ -600,8 +600,12 @@ fn media(toks: &[Tok]) -> Option<Intent> {
     None
 }
 
-/// The forms of "jouer" that start a search by name.
-const PLAY_WORDS: &[&str] = &["joue", "joues", "jouez", "jouer"];
+/// The forms of "jouer" that start a search by name, and how speech recognition writes "joue"
+/// when an English title tips it into English ("Play Lost on You", "Ju Shape of You").
+const PLAY_WORDS: &[&str] = &["joue", "joues", "jouez", "jouer", "play", "ju"];
+
+/// Hesitations speech recognition writes down; never the start of a name.
+const FILLERS: &[&str] = &["hum", "hmm", "mm", "euh", "heu"];
 
 /// Words after "joue" that ask for some music rather than a name.
 const SOME_MUSIC: &[&str] = &[
@@ -652,9 +656,16 @@ pub fn play_by_name(sentence: &str) -> Option<Intent> {
     if sentence.trim_end().ends_with('?') && rest.len() <= 1 {
         return Some(Intent::Media(MediaIntent::NowPlaying));
     }
-    // Politeness at the end is not part of a name.
+    while rest
+        .first()
+        .is_some_and(|w| FILLERS.contains(&clean(w).as_str()))
+    {
+        rest.remove(0);
+    }
+    // Politeness at the end is not part of a name, but a lone "merci" is one ("Mercy").
     loop {
         match rest.last().map(|w| clean(w)).as_deref() {
+            Some("merci") if rest.len() == 1 => break,
             Some("stp" | "svp" | "merci" | "") => {
                 rest.pop();
             }
@@ -1403,6 +1414,29 @@ mod tests {
         assert_eq!(m("mets pause, la musique joue trop fort"), None);
         assert_eq!(m("peux-tu me jouer Daft Punk"), query("Daft Punk"));
         assert_eq!(m("tu peux jouer Daft Punk"), query("Daft Punk"));
+    }
+
+    /// An English title can tip speech recognition into English: "joue" comes out as "Play" or
+    /// "Ju", and a filler like "hum" lands in front of the title.
+    #[test]
+    fn english_titles_survive_the_transcription() {
+        assert_eq!(m("Play Lost on You."), query("Lost on You"));
+        assert_eq!(m("Ju Shape of You."), query("Shape of You"));
+        assert_eq!(
+            m("Joue Hum Merci de Cho Mendes."),
+            query("Merci de Cho Mendes")
+        );
+        assert_eq!(m("joue euh Daft Punk"), query("Daft Punk"));
+        assert_eq!(m("play"), media(MediaIntent::Play { resume: false }));
+        assert_eq!(m("baisse le son, play"), None);
+    }
+
+    /// "merci" is politeness after a name, but a title on its own ("Mercy" heard as "merci").
+    #[test]
+    fn a_lone_merci_is_the_title() {
+        assert_eq!(m("Joue merci."), query("merci"));
+        assert_eq!(m("joue Daft Punk merci"), query("Daft Punk"));
+        assert_eq!(m("joue Daft Punk, merci"), query("Daft Punk"));
     }
 
     #[test]
