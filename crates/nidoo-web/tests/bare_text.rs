@@ -236,9 +236,16 @@ fn is_css(s: &str) -> bool {
         "rotate(",
     ];
     // Only a real property name: "error: {e}" or "failed: {}" is a sentence people read.
+    // A custom property: `--name`, lower case and dashes after the two dashes.
+    let custom = |p: &str| {
+        p.strip_prefix("--").is_some_and(|name| {
+            name.starts_with(|c: char| c.is_ascii_lowercase())
+                && name.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+        })
+    };
     let property = s
         .split_once(':')
-        .is_some_and(|(p, _)| PROPERTIES.contains(&p));
+        .is_some_and(|(p, _)| PROPERTIES.contains(&p) || custom(p));
     property || FUNCS.iter().any(|f| s.contains(f))
 }
 
@@ -555,4 +562,14 @@ fn a_word_colon_literal_is_not_always_css() {
     assert_eq!(flagged(r#"let m = format!("error: {e}");"#), ["error: {e}"]);
     assert!(flagged(r#"let s = format!("left: {}%", x);"#).is_empty());
     assert!(flagged(r#"let s = "display: none".to_owned();"#).is_empty());
+}
+
+/// A custom property is CSS too: "--media-tint: #{}" sets a colour, nobody reads it.
+#[test]
+fn a_custom_property_is_css() {
+    assert!(flagged(r#"let s = format!("--media-tint: #{}", c);"#).is_empty());
+    assert_eq!(
+        flagged(r#"let m = format!("--- note: {e}");"#),
+        ["--- note: {e}"]
+    );
 }
