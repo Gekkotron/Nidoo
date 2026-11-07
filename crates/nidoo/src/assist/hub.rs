@@ -387,6 +387,10 @@ impl Hub {
         let mut turn = turn;
         turn.trace.elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         self.assist.turns().push(turn.clone());
+        // The open pages show it as it happens, a turn heard by a satellite included.
+        self.broadcast(nidoo_api::WsEvent::AssistTurnAdded {
+            id: turn.id.clone(),
+        });
         // The database may be slow: the reply never waits for it.
         if self.assist_db().is_some() {
             let hub = Arc::clone(self);

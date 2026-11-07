@@ -95,6 +95,11 @@ pub enum WsEvent {
     AmbianceApplied {
         report: ApplyReport,
     },
+    /// The assistant answered a turn, whoever spoke (a page, a satellite, a flow): refetch
+    /// `GET /api/v1/assist/turns`.
+    AssistTurnAdded {
+        id: String,
+    },
 }
 
 /// A partial override: the keys to set (`null` clears one).
@@ -137,6 +142,10 @@ mod tests {
             (
                 WsEvent::FlowsChanged { flows: vec![] },
                 json!({"type": "flows_changed", "flows": []}),
+            ),
+            (
+                WsEvent::AssistTurnAdded { id: "t1".into() },
+                json!({"type": "assist_turn_added", "id": "t1"}),
             ),
         ];
         for (event, expected) in cases {
