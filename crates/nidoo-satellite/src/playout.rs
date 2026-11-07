@@ -43,6 +43,8 @@ pub struct Playout {
     volume: u8,
     muted: bool,
     wake_muted: bool,
+    /// The next frame of the wake chime while it rings.
+    chime_at: Option<usize>,
 }
 
 impl Default for Playout {
@@ -55,8 +57,31 @@ impl Default for Playout {
             volume: 100,
             muted: false,
             wake_muted: false,
+            chime_at: None,
         }
     }
+}
+
+/// The wake chime: 200 ms, a soft bell C6 then G6, like the board's.
+const CHIME_FRAMES: usize = (RATE / 5) as usize;
+
+/// The chime's sample at frame `i`: two decaying notes, the second from 80 ms,
+/// a 5 ms fade-in on each and a 10 ms fade-out at the end, so nothing clicks.
+fn chime_sample(i: usize) -> f32 {
+    use std::f32::consts::TAU;
+    const LEVEL: f32 = 0.3;
+    const TAU_S: f32 = 0.03;
+    let note = |t: f32, hz: f32| {
+        if t < 0.0 {
+            return 0.0;
+        }
+        let attack = (t / 0.005).min(1.0);
+        attack * (-t / TAU_S).exp() * (TAU * hz * t).sin()
+    };
+    let t = i as f32 / RATE as f32;
+    let end = CHIME_FRAMES as f32 / RATE as f32;
+    let fade = ((end - t) / 0.01).clamp(0.0, 1.0);
+    LEVEL * fade * (note(t, 1046.5) + note(t - 0.08, 1568.0))
 }
 
 /// The 48 kHz frame due at `us` on the local clock.
@@ -144,6 +169,30 @@ impl Playout {
         self.wake_muted = m;
     }
 
+    /// Rings the wake chime from the next buffer on. It is heard over Nidoo's mute
+    /// and the wake mute: it says the wake word was heard.
+    pub fn chime(&mut self) {
+        self.chime_at = Some(0);
+    }
+
+    /// Adds the chime's next frames to `out`, on the first two channels.
+    fn mix_chime(&mut self, out: &mut [f32], channels: usize) {
+        let Some(mut at) = self.chime_at else {
+            return;
+        };
+        for frame in out.chunks_mut(channels) {
+            if at >= CHIME_FRAMES {
+                break;
+            }
+            let c = chime_sample(at);
+            for o in frame.iter_mut().take(2) {
+                *o = (*o + c).clamp(-1.0, 1.0);
+            }
+            at += 1;
+        }
+        self.chime_at = (at < CHIME_FRAMES).then_some(at);
+    }
+
     fn gain(&self) -> f32 {
         if self.muted || self.wake_muted {
             return 0.0;
@@ -206,6 +255,7 @@ impl Playout {
             }
         }
         self.chunks.retain(|(s, f)| s + f.len() as i64 > last);
+        self.mix_chime(out, channels);
         self.played_until = self.played_until.max(last);
         self.cursor = Some(last);
     }
@@ -404,6 +454,47 @@ mod tests {
         fill(&mut p, 480, 1, 0);
         let out = fill(&mut p, 1, 1, 110_000);
         assert_eq!((out[0] * 32_768.0).round() as i64, 110 * 48);
+    }
+
+    #[test]
+    fn chime_plays_over_both_mutes_then_stops() {
+        let mut p = Playout::default();
+        p.set_muted(true);
+        p.set_wake_muted(true);
+        p.push(0, &pcm(CHIME_FRAMES * 2, HALF, HALF));
+        p.chime();
+        // Split over two buffers, like a speaker callback.
+        let mut out = fill(&mut p, CHIME_FRAMES / 2, 2, 0);
+        out.extend(fill(&mut p, CHIME_FRAMES / 2, 2, 100_000));
+        assert!(out.chunks(2).all(|f| f[0] == f[1]), "same on both sides");
+        let peak = out.iter().fold(0f32, |m, s| m.max(s.abs()));
+        assert!((0.1..=0.5).contains(&peak), "audible but soft: {peak}");
+        let first_ms = out[..96].iter().fold(0f32, |m, s| m.max(s.abs()));
+        assert!(first_ms < peak / 2.0, "fades in, no click");
+        let tail = &out[out.len() - 96..];
+        assert!(tail.iter().all(|s| s.abs() < 0.01), "fades out, no click");
+        let after = fill(&mut p, 480, 2, 200_000);
+        assert!(
+            after.iter().all(|&s| s == 0.0),
+            "once only, music still muted"
+        );
+    }
+
+    #[test]
+    fn chime_mixes_over_music() {
+        let mut p = Playout::default();
+        p.push(0, &pcm(CHIME_FRAMES, HALF / 4, HALF / 4));
+        p.chime();
+        let out = fill(&mut p, CHIME_FRAMES, 1, 0);
+        let music = 0.125;
+        assert!(
+            out.iter().any(|&s| (s - music).abs() > 0.05),
+            "the bell is heard"
+        );
+        assert!(
+            out.iter().all(|s| s.abs() <= 1.0),
+            "never clips past full scale"
+        );
     }
 
     #[test]

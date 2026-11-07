@@ -86,7 +86,9 @@ leave the Mac.
 ## The icon
 
 - **A microphone**: ready.
-- **With sound waves**: listening to a request, like a board's light.
+- **With sound waves**: listening to a request, like a board's light. A
+  short two-note chime also rings when the wake word is heard (not when the
+  house asks you a question), even while the music is muted.
 - **Crossed out**: Listening is off, or the microphone cannot be used.
 - **Faded (gray)**: the hub cannot be reached. Nothing is connected for music,
   or the hub has not greeted the Mac for 15 seconds (another network, Wi-Fi

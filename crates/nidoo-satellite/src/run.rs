@@ -289,6 +289,7 @@ impl Runtime {
                     }
                 }
                 Action::WakeMuted(m) => self.playout().set_wake_muted(m),
+                Action::Chime => self.playout().chime(),
             }
         }
     }
