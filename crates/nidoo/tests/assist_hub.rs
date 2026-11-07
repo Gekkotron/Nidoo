@@ -1070,3 +1070,24 @@ async fn coupe_le_son_mutes_the_satellite_that_heard_it() {
     assert_eq!(published.payload, "ON");
     assert_eq!(turn.reply, "Son coupé dans le Bureau.", "{turn:?}");
 }
+
+#[tokio::test]
+async fn every_turn_tells_the_open_pages() {
+    let (hub, rx) = house().await;
+    let _log = echo(rx, Arc::clone(&hub));
+    let mut events = hub.subscribe();
+    let turn = hub
+        .assist(AssistRequest {
+            client: "satellite:0123456789ab".into(),
+            ..text("allume la lumière du salon")
+        })
+        .await
+        .expect("assist");
+    let mut told = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let nidoo_api::WsEvent::AssistTurnAdded { id } = event {
+            told.push(id);
+        }
+    }
+    assert_eq!(told, [turn.id], "one event, naming the turn");
+}

@@ -80,6 +80,8 @@ impl HouseState {
             WsEvent::AmbiancesChanged { .. } | WsEvent::AmbianceApplied { .. } => {}
             // The solar forecast lives in `House` only; the card refetches on this event.
             WsEvent::SolarChanged => {}
+            // The Assistant page refetches its turns on this event.
+            WsEvent::AssistTurnAdded { .. } => {}
         }
     }
 }

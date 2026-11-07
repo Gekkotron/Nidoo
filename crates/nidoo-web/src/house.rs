@@ -56,6 +56,9 @@ pub struct House {
     pub climate_rev: RwSignal<u64>,
     /// Bumped on every `AlarmChanged` event; the alarm settings page and the device sheet refetch.
     pub alarm_rev: RwSignal<u64>,
+    /// Bumped on every `AssistTurnAdded` event and on each snapshot (a reconnect may have
+    /// missed some); the Assistant page refetches its turns.
+    pub assist_rev: RwSignal<u64>,
 }
 
 impl House {
@@ -85,6 +88,7 @@ impl House {
             last_alerts_seen: RwSignal::new(0),
             climate_rev: RwSignal::new(0),
             alarm_rev: RwSignal::new(0),
+            assist_rev: RwSignal::new(0),
         }
     }
 
@@ -215,6 +219,8 @@ impl House {
                 self.ignored.set(s.ignored);
                 self.alerts.set(s.alerts);
                 self.flows.set(s.flows);
+                // A snapshot follows each (re)connect: turns said meanwhile are fetched again.
+                self.assist_rev.update(|r| *r += 1);
             }
             WsEvent::EntityUpserted(view) => {
                 self.entities.update(|m| {
@@ -250,6 +256,8 @@ impl House {
             WsEvent::ClimateChanged { .. } => self.climate_rev.update(|r| *r += 1),
             // The alarm page reads its own view: tell it to refetch.
             WsEvent::AlarmChanged => self.alarm_rev.update(|r| *r += 1),
+            // The Assistant page reads its own list: tell it to refetch.
+            WsEvent::AssistTurnAdded { .. } => self.assist_rev.update(|r| *r += 1),
             WsEvent::WeatherChanged => self.refresh_weather(),
             WsEvent::HomeSettingsChanged { settings } => self.home_settings.set(settings),
             WsEvent::AmbiancesChanged { ambiances } => {
