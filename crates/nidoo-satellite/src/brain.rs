@@ -63,6 +63,8 @@ pub enum Action {
     Mic(bool),
     /// Mute our playback for a voice window, or let it play again.
     WakeMuted(bool),
+    /// Ring the short wake chime: the wake word was heard (not on a follow-up).
+    Chime,
 }
 
 pub struct Brain {
@@ -307,6 +309,7 @@ impl Brain {
         };
         if kind == WakeKind::WakeWord {
             out.push(Action::WakeMuted(true));
+            out.push(Action::Chime);
             self.wake_muted = true;
             self.wake_at = Some(now);
             self.unmute_at = None;
@@ -606,6 +609,7 @@ mod tests {
         r.hello(t);
         let a = r.brain.on_mic(&[0, WAKE, 0], t);
         assert_eq!(wake_muted(&a), Some(true));
+        assert!(a.contains(&Action::Chime), "the wake word rings the chime");
         assert_eq!(
             sent(&a),
             vec![BoardMsg::Wake {
@@ -703,6 +707,7 @@ mod tests {
         r.hello(t);
         let a = r.listen(t);
         assert_eq!(wake_muted(&a), None);
+        assert!(!a.contains(&Action::Chime), "a follow-up has no chime");
         assert_eq!(
             sent(&a),
             vec![BoardMsg::Wake {
