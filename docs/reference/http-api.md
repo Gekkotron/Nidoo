@@ -303,6 +303,7 @@ Energies are kWh (the day figures), powers kW (the period values, the means over
 | `alarm_changed` | No payload: the alarm's settings, state or warnings changed, refetch `GET /api/v1/alarm`. The entity's own state arrives as `state_changed`. |
 | `ambiances_changed` | `{ambiances}`: the stored ambiances (the same list as `GET /api/v1/ambiances`) after one was saved, deleted or arrived from the broker. |
 | `ambiance_applied` | `{report}`: the [apply report](../users/ambiances.md#reading-the-report) of a run, whichever client started it. |
+| `assist_turn_added` | `{id}`: the assistant answered a turn, whoever spoke (a page, a satellite, a flow); refetch `GET /api/v1/assist/turns`. |
 
 ## Assist
 

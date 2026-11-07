@@ -140,6 +140,23 @@ impl ClearMark {
     }
 }
 
+/// Adds the `fresh` turns not yet in `list` (oldest first) and keeps `list` in time order;
+/// the copy already shown wins. Whether any turn was added.
+pub fn add_turns(list: &mut Vec<AssistTurn>, fresh: Vec<AssistTurn>) -> bool {
+    let before = list.len();
+    for turn in fresh {
+        if !list.iter().any(|t| t.id == turn.id) {
+            list.push(turn);
+        }
+    }
+    if list.len() == before {
+        return false;
+    }
+    // Stable: turns said in the same second keep the order they arrived in.
+    list.sort_by_key(|t| t.at);
+    true
+}
+
 /// The turns (oldest first) said after the clear `mark`: those after the marked turn, or, once
 /// it is no longer listed, those from a later second.
 pub fn after_clear(mut turns: Vec<AssistTurn>, mark: Option<&ClearMark>) -> Vec<AssistTurn> {
@@ -165,6 +182,21 @@ fn store_clear_mark(mark: &ClearMark) {
     if let (Some(s), Ok(v)) = (storage(), serde_json::to_string(mark)) {
         let _ = s.set_item(CLEARED_KEY, &v);
     }
+}
+
+/// Brings the newest turn into view once it is drawn.
+fn show_newest() {
+    request_animation_frame(|| {
+        let last = document()
+            .query_selector(".assist__turn:last-child")
+            .ok()
+            .flatten();
+        if let Some(el) = last {
+            let o = web_sys::ScrollIntoViewOptions::new();
+            o.set_block(web_sys::ScrollLogicalPosition::Nearest);
+            el.scroll_into_view_with_scroll_into_view_options(&o);
+        }
+    });
 }
 
 fn storage() -> Option<web_sys::Storage> {
@@ -287,6 +319,8 @@ pub fn AssistantScreen() -> impl IntoView {
     let client = StoredValue::new(client_id());
     // The satellite a spoken turn came from, by name and room (no house in some tests).
     let house = use_context::<crate::house::House>();
+    // Bumped when the hub answers a turn: see the refetch below.
+    let rev = house.as_ref().map(|h| h.assist_rev);
     let source = move |client: &str| {
         let house = house.as_ref()?;
         house.entities.with_untracked(|entities| {
@@ -388,13 +422,26 @@ pub fn AssistantScreen() -> impl IntoView {
         });
     };
 
-    spawn_local(async move {
-        if let Ok(list) = get_turns(LIMIT).await {
-            let mut list_turns = list.turns;
-            list_turns.reverse();
-            let _ = turns.try_set(after_clear(list_turns, stored_clear_mark().as_ref()));
-            let _ = kept.try_set(Some(list.kept));
+    // Loads the turns when the page opens, then again each time the hub answers someone (a
+    // satellite, another page) or the link comes back: the new turns slide in at the bottom.
+    Effect::new(move |_| {
+        if let Some(rev) = rev {
+            rev.track();
         }
+        spawn_local(async move {
+            let Ok(list) = get_turns(LIMIT).await else {
+                return;
+            };
+            let mut fresh = list.turns;
+            fresh.reverse();
+            let fresh = after_clear(fresh, stored_clear_mark().as_ref());
+            let mut added = false;
+            let _ = turns.try_update(|shown| added = add_turns(shown, fresh));
+            let _ = kept.try_set(Some(list.kept));
+            if added {
+                show_newest();
+            }
+        });
     });
     Effect::new(move |_| {
         if let Some(field) = input.get() {
@@ -424,7 +471,7 @@ pub fn AssistantScreen() -> impl IntoView {
                         say(turn.reply.clone());
                     }
                     received.try_set(Some((id.clone(), js_sys::Date::now())));
-                    turns.try_update(|list| list.push(turn));
+                    turns.try_update(|list| add_turns(list, vec![turn]));
                     selected.try_set(Some(id));
                     if kept.try_get_untracked() == Some(None) {
                         kept.try_set(Some(true));
@@ -886,6 +933,27 @@ mod tests {
             at: 30,
         };
         assert!(after_clear(list, Some(&mark)).is_empty());
+    }
+
+    #[test]
+    fn a_turn_already_shown_stays_single() {
+        let mut list = vec![turn("a", 10), turn("b", 20)];
+        let mut b = turn("b", 20);
+        b.reply = "changed".into();
+        assert!(add_turns(&mut list, vec![turn("a", 10), b, turn("c", 30)]));
+        assert_eq!(ids(&list), ["a", "b", "c"]);
+        // The copy on the page wins: a « Faux » tapped here is not undone by a fetch.
+        assert_eq!(list[1].reply, "C'est fait.");
+        assert!(!add_turns(&mut list, vec![turn("c", 30)]));
+        assert_eq!(ids(&list), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_late_reply_lands_in_time_order() {
+        // A satellite turn fetched while this browser waited for its own reply.
+        let mut list = vec![turn("a", 10), turn("sat", 30)];
+        assert!(add_turns(&mut list, vec![turn("mine", 20)]));
+        assert_eq!(ids(&list), ["a", "mine", "sat"]);
     }
 
     #[test]
