@@ -11,13 +11,13 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use nidoo_api::{
-    DatabaseInput, DatabaseView, GeoPlace, Location, MqttInput, MqttView, Secret, SecretView,
-    SetupStatus, SetupStep, TestResult,
+    DatabaseInput, DatabaseView, GeoPlace, Location, MobileCode, MqttInput, MqttView, Secret,
+    SecretView, SetupStatus, SetupStep, TestResult,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -69,6 +69,7 @@ pub fn router_with_solcast<S: Clone + Send + Sync + 'static>(
         .route("/api/v1/setup/database", put(put_database))
         .route("/api/v1/setup/step", put(put_step))
         .route("/api/v1/setup/finish", post(finish))
+        .route("/api/v1/setup/mobile-code", get(mobile_code))
         .merge(super::settings::routes())
         .with_state(RouteState {
             ctx,
@@ -145,6 +146,23 @@ fn database_view(file: &HubFile, bundled: Option<&Bundled>) -> Option<DatabaseVi
         user: b.db_user.clone(),
         password: SecretView { set: true },
     })
+}
+
+/// The text the phone setup QR encodes. It holds the broker login and the gateway key: it is
+/// never logged, and only served in Run mode.
+async fn mobile_code(State(s): State<RouteState>, headers: HeaderMap) -> Response {
+    if s.ctx.mode != Mode::Run {
+        return error(StatusCode::CONFLICT, "finish MQTT and database setup first");
+    }
+    let Some(mqtt) = s.ctx.file.lock().await.mqtt.clone() else {
+        return error(StatusCode::CONFLICT, "finish MQTT and database setup first");
+    };
+    let sections = s.ctx.sections.lock().await.clone();
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
+    Json(MobileCode {
+        payload: super::mobile::build_payload(&mqtt, &sections, host),
+    })
+    .into_response()
 }
 
 async fn status(State(s): State<RouteState>) -> Json<SetupStatus> {

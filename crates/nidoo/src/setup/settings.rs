@@ -25,8 +25,8 @@ use crate::setup::routes::{RESTART_DELAY, RouteState, error};
 use crate::setup::sections::{
     AdvancedSection, PushSection, SECTION_KEYS, Sections, SolcastSection, WeatherSection, assemble,
 };
-use crate::setup::store::{save_section, write_cache};
-use crate::setup::{HubFile, Mode, probe, restart, secret};
+use crate::setup::store::{save_live, save_section, write_cache};
+use crate::setup::{HubFile, Mode, mobile, probe, restart, secret};
 
 pub(super) fn routes() -> Router<RouteState> {
     Router::new()
@@ -65,10 +65,10 @@ fn unprocessable(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message)
 }
 
-/// The sections the generic routes edit (and restart for). "system" is stored by
-/// `Hub::set_system_notify` without a restart, so it is not one of them.
+/// The sections the generic routes edit (and restart for). "system" (`Hub::set_system_notify`)
+/// and "mobile" (`save_live`) are stored without a restart, so they are not among them.
 fn known(section: &str) -> bool {
-    section != "system" && SECTION_KEYS.contains(&section)
+    !matches!(section, "system" | "mobile") && SECTION_KEYS.contains(&section)
 }
 
 /// The project id a service-account key JSON names. The JSON and any parse error stay unlogged.
@@ -134,6 +134,10 @@ fn view(section: &str, s: &Sections) -> Value {
 
 /// The `section` as the API shows it: secrets are `{"set": bool}`.
 pub async fn read_section(ctx: &SetupCtx, section: &str) -> Result<Value, ApiError> {
+    if section == "mobile" {
+        let held = ctx.sections.lock().await;
+        return Ok(serde_json::to_value(mobile::view(&held.mobile)).expect("a view serializes"));
+    }
     if !known(section) {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown section"));
     }
@@ -282,6 +286,9 @@ pub async fn write_section(
     body: Value,
 ) -> Result<Value, ApiError> {
     let unavailable = |m: &str| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, m);
+    if section == "mobile" {
+        return write_mobile(ctx, body).await;
+    }
     if !known(section) {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown section"));
     }
@@ -329,6 +336,26 @@ pub async fn write_section(
     *held = next;
     restart::schedule_restart(ctx, RESTART_DELAY);
     Ok(json!({ "restarting": true }))
+}
+
+/// `mobile` is stored live: no restart, and nothing else reads it at boot.
+async fn write_mobile(ctx: &Arc<SetupCtx>, body: Value) -> Result<Value, ApiError> {
+    if ctx.restarting.load(Ordering::SeqCst) {
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "restarting"));
+    }
+    if ctx.mode != Mode::Run {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "finish MQTT and database setup first",
+        ));
+    }
+    let input: nidoo_api::MobileInput = parse(body, "mobile")?;
+    let stored = ctx.sections.lock().await.mobile.clone();
+    let next = mobile::apply_input(&stored, input).map_err(unprocessable)?;
+    let saved = save_live(ctx, "mobile", |s| s.mobile = next)
+        .await
+        .map_err(|why| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, why))?;
+    Ok(serde_json::to_value(mobile::view(&saved.mobile)).expect("a view serializes"))
 }
 
 async fn put_section(

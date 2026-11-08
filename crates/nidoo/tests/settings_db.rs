@@ -192,6 +192,86 @@ mod put {
         tdb.drop_db().await;
     }
 
+    const GW: &str = "https://house.example.ts.net";
+
+    #[tokio::test]
+    async fn mobile_put_round_trips_without_restart() {
+        let Some(tdb) = fresh_db().await else { return };
+        let s = serve(&tdb.url, Sections::default()).await;
+        let key = "ab".repeat(32);
+        let (code, body) = s
+            .put("mobile", json!({"gateway_url": GW, "gateway_key": key}))
+            .await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        assert_eq!(body["gateway_ready"], true);
+        assert_eq!(s.restarts.load(Ordering::SeqCst), 0);
+        let stored = load_sections(&tdb.db).await.unwrap();
+        assert_eq!(stored.mobile.gateway_url.as_deref(), Some(GW));
+        assert_eq!(stored.mobile.gateway_key.as_deref(), Some(key.as_str()));
+        tdb.drop_db().await;
+    }
+
+    #[tokio::test]
+    async fn mobile_put_keeps_key_on_set_view_and_empty() {
+        let Some(tdb) = fresh_db().await else { return };
+        let s = serve(&tdb.url, Sections::default()).await;
+        let key = "ab".repeat(32);
+        s.put("mobile", json!({"gateway_url": GW, "gateway_key": key}))
+            .await;
+        let (code, _) = s
+            .put(
+                "mobile",
+                json!({"gateway_url": GW, "gateway_key": {"set": true}}),
+            )
+            .await;
+        assert_eq!(code, StatusCode::OK);
+        let (code, _) = s
+            .put("mobile", json!({"gateway_url": GW, "gateway_key": ""}))
+            .await;
+        assert_eq!(code, StatusCode::OK);
+        let stored = load_sections(&tdb.db).await.unwrap();
+        assert_eq!(stored.mobile.gateway_key.as_deref(), Some(key.as_str()));
+        tdb.drop_db().await;
+    }
+
+    #[tokio::test]
+    async fn mobile_put_refuses_bad_input_without_echo() {
+        let Some(tdb) = fresh_db().await else { return };
+        let s = serve(&tdb.url, Sections::default()).await;
+        let short = "cd".repeat(31) + "c";
+        for body in [
+            json!({"gateway_url": "http://house.example.ts.net"}),
+            json!({"gateway_url": GW, "gateway_key": short}),
+        ] {
+            let (code, resp) = s.put("mobile", body).await;
+            assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(!resp.to_string().contains(&short), "{resp}");
+        }
+        tdb.drop_db().await;
+    }
+
+    #[tokio::test]
+    async fn mobile_code_includes_the_gateway() {
+        let Some(tdb) = fresh_db().await else { return };
+        let s = serve(&tdb.url, Sections::default()).await;
+        s.ctx.file.lock().await.mqtt = Some(nidoo::config::MqttConfig {
+            host: "192.0.2.7".into(),
+            ..Default::default()
+        });
+        let key = "ab".repeat(32);
+        s.put("mobile", json!({"gateway_url": GW, "gateway_key": key}))
+            .await;
+        let body: Value = reqwest::get(format!("http://{}/api/v1/setup/mobile-code", s.addr))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let p: Value = serde_json::from_str(body["payload"].as_str().unwrap()).unwrap();
+        assert_eq!(p["gateway"]["url"], GW);
+        tdb.drop_db().await;
+    }
+
     #[tokio::test]
     async fn put_saves_db_and_cache_and_keeps_omitted_secret() {
         let Some(tdb) = fresh_db().await else { return };

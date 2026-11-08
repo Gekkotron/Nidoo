@@ -125,24 +125,9 @@ impl Hub {
             .setup
             .get()
             .ok_or_else(|| unavailable("no setup context"))?;
-        let db = ctx.db.as_ref().ok_or_else(|| unavailable("no database"))?;
-        let mut held = ctx.sections.lock().await;
-        let mut next = held.clone();
-        next.system.notify = notify;
-        if let Err(error) = store::save_section(db, "system", &next).await {
-            tracing::warn!(%error, "could not store the system notify switch");
-            return Err(unavailable("the database did not take the write"));
-        }
-        if let Err(error) = store::write_cache(&ctx.data_dir, &next) {
-            // Boot reads the cache while the database is down, so a switch the cache lacks
-            // could revert silently: put the row back and report the failure.
-            tracing::error!(error = %error.kind(), "could not refresh the settings cache");
-            if let Err(error) = store::save_section(db, "system", &held).await {
-                tracing::warn!(%error, "could not restore the system row after a cache failure");
-            }
-            return Err(unavailable("the settings cache could not be written"));
-        }
-        *held = next;
+        store::save_live(ctx, "system", |s| s.system.notify = notify)
+            .await
+            .map_err(unavailable)?;
         self.system_notify.store(notify, Ordering::Relaxed);
         Ok(notify)
     }
