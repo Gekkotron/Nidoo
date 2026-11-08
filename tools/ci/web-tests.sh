@@ -24,4 +24,4 @@ for file in tests/*.rs; do
 done
 
 echo "shard $index of $total: $((${#args[@]} / 2)) of $i test files"
-wasm-pack test --headless --chrome --chromedriver "${CHROMEWEBDRIVER:?}/chromedriver" -- --no-fail-fast "${args[@]}"
+wasm-pack test --headless --chrome --chromedriver "${CHROMEWEBDRIVER:?}/chromedriver" -- "${args[@]}"
