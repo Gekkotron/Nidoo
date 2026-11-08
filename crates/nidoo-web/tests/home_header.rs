@@ -13,6 +13,7 @@ use nidoo_web::home_header::view::HomeHeader;
 use nidoo_web::house::House;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn entity(id: &str, kind: Kind, device_class: Option<&str>, value: StateValue) -> EntityView {
     EntityView {

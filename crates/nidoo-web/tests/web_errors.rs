@@ -13,6 +13,7 @@ use nidoo_web::house::House;
 use nidoo_web::i18n::Lang;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 struct Mounted {
     host: web_sys::Element,

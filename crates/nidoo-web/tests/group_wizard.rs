@@ -12,6 +12,7 @@ use nidoo_web::i18n::Lang;
 use nidoo_web::screens::group_wizard::GroupWizardScreen;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn entity(id: &str, kind: Kind, protocol_kind: Kind, area: &str) -> EntityView {
     EntityView {

@@ -6,66 +6,8 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# The browser tests are mostly one binary (tests/browser.rs) rather than one per file: each
-# binary costs a wasm link and a Chrome start, which made the CI job take 15 minutes. The files
-# below stay alone: they click links or press page-wide keys, and an app another test left
-# mounted in the same page would catch those first.
-autotests = false
-
 [lib]
 path = "src/lib.rs"
-
-[[test]]
-name = "browser"
-path = "tests/browser.rs"
-
-[[test]]
-name = "bare_text"
-path = "tests/bare_text.rs"
-
-[[test]]
-name = "assist_fab"
-path = "tests/assist_fab.rs"
-
-[[test]]
-name = "assist_leave"
-path = "tests/assist_leave.rs"
-
-[[test]]
-name = "assist_settings"
-path = "tests/assist_settings.rs"
-
-[[test]]
-name = "drawer"
-path = "tests/drawer.rs"
-
-[[test]]
-name = "search_back"
-path = "tests/search_back.rs"
-
-[[test]]
-name = "search_escape"
-path = "tests/search_escape.rs"
-
-[[test]]
-name = "search_glass"
-path = "tests/search_glass.rs"
-
-[[test]]
-name = "search_slash"
-path = "tests/search_slash.rs"
-
-[[test]]
-name = "search_slash_focus"
-path = "tests/search_slash_focus.rs"
-
-[[test]]
-name = "system_nav"
-path = "tests/system_nav.rs"
-
-[[test]]
-name = "system_page"
-path = "tests/system_page.rs"
 
 [[bin]]
 name = "nidoo-web"

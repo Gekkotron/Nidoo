@@ -17,6 +17,7 @@ use nidoo_web::screens::home::card_for;
 use serde_json::Value;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

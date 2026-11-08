@@ -17,6 +17,7 @@ use nidoo_web::screens::group_sheet_v2::GroupSheetV2Screen;
 use nidoo_web::screens::groups::GroupsScreen;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn entity(id: &str, name: &str) -> EntityView {
     EntityView {

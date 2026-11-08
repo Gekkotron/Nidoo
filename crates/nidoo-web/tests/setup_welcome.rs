@@ -10,6 +10,7 @@ use nidoo_web::setup::wizard::WizardNav;
 use nidoo_web::setup::{Applying, SetupState, reload_to};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 // gloo-net leaves a trailing `&` on a query URL, so stub keys end with one.
 #[path = "support/fetch_stub.rs"]

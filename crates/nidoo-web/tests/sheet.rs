@@ -18,6 +18,7 @@ use nidoo_web::screens::entity_sheet::{EntitySheetScreen, SheetBody};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 use web_sys::{Event, EventInit, HtmlInputElement};
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn sensor(value: f64) -> EntityView {
     EntityView {

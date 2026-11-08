@@ -6,6 +6,7 @@ use nidoo_web::components::popup::{Popup, PopupSize};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 use web_sys::{Element, HtmlElement};
+wasm_bindgen_test_configure!(run_in_browser);
 
 async fn settle() {
     tick().await;

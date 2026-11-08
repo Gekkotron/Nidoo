@@ -13,6 +13,7 @@ use nidoo_web::solar::measured::SolarMeasured;
 use nidoo_web::solar::model::{day_bounds, local_date};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn now_s() -> u64 {
     (js_sys::Date::now() / 1000.0) as u64

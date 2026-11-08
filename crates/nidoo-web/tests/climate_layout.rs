@@ -16,6 +16,7 @@ use nidoo_web::house::House;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 use web_sys::Element;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn install_styles() {
     let document = web_sys::window().unwrap().document().unwrap();
