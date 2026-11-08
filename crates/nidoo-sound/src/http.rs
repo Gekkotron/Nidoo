@@ -29,6 +29,8 @@ pub struct SatelliteView {
 #[derive(Clone, Default)]
 pub struct Satellites {
     inner: Arc<RwLock<BTreeMap<String, (PlayerPrefs, bool)>>>,
+    /// Short id -> the name given in Nidoo, which wins over the satellite's own.
+    names: Arc<RwLock<BTreeMap<String, String>>>,
 }
 
 impl Satellites {
@@ -50,15 +52,26 @@ impl Satellites {
         }
     }
 
+    /// Records the name given in Nidoo to satellite `short_id`; `None` goes back to the
+    /// name the satellite reports. It may come before the satellite does.
+    pub fn set_name(&self, short_id: &str, name: Option<String>) {
+        let mut names = self.names.write().unwrap();
+        match name {
+            Some(name) => names.insert(short_id.to_owned(), name),
+            None => names.remove(short_id),
+        };
+    }
+
     /// The approved satellites, sorted by name and then id.
     pub fn list(&self) -> Vec<SatelliteView> {
         let map = self.inner.read().unwrap();
+        let names = self.names.read().unwrap();
         let mut out: Vec<SatelliteView> = map
             .iter()
             .filter(|(_, (prefs, _))| prefs.allowed)
             .map(|(id, (prefs, connected))| SatelliteView {
                 id: id.clone(),
-                name: prefs.name.clone(),
+                name: names.get(id).unwrap_or(&prefs.name).clone(),
                 volume: prefs.volume,
                 muted: prefs.muted,
                 connected: *connected,
@@ -191,6 +204,27 @@ mod tests {
         let names: Vec<&str> = list.iter().map(|v| v.name.as_str()).collect();
         assert_eq!(names, ["Kitchen", "Living room"]);
         assert_eq!(list[0].id, short_id("kitchen-id"));
+    }
+
+    #[test]
+    fn a_name_given_in_nidoo_wins_and_sorts() {
+        let s = Satellites::default();
+        s.apply(&player(prefs("living-id", "Living room", true), true));
+        s.apply(&player(prefs("board-id", "Satellite", true), true));
+        s.set_name(&short_id("board-id"), Some("Bedroom".into()));
+        let names: Vec<String> = s.list().into_iter().map(|v| v.name).collect();
+        assert_eq!(names, ["Bedroom", "Living room"]);
+        s.set_name(&short_id("board-id"), None);
+        let names: Vec<String> = s.list().into_iter().map(|v| v.name).collect();
+        assert_eq!(names, ["Living room", "Satellite"]);
+    }
+
+    #[test]
+    fn a_name_given_before_the_satellite_shows_up_is_kept() {
+        let s = Satellites::default();
+        s.set_name(&short_id("board-id"), Some("Bedroom".into()));
+        s.apply(&player(prefs("board-id", "Satellite", true), true));
+        assert_eq!(s.list()[0].name, "Bedroom");
     }
 
     #[test]

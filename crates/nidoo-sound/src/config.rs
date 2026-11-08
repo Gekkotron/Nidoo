@@ -41,6 +41,9 @@ pub struct SoundConfig {
     /// Silence on a connected input after which playback stops.
     pub idle_stop_ms: u32,
     pub discovery_prefix: String,
+    /// The hub's override sub-tree (its `[topics] ui_prefix`): a satellite renamed in
+    /// Nidoo carries its name on `<ui_prefix>/nidoo_sound_<short id>_volume`.
+    pub ui_prefix: String,
     /// The hub's web address, where its speech clips are fetched
     /// (`NIDOO_SOUND_HUB_URL`); by default the one in `hub.json`.
     pub hub_url: Option<String>,
@@ -64,6 +67,7 @@ impl Default for SoundConfig {
             input_buffer_ms: 250,
             idle_stop_ms: 5000,
             discovery_prefix: "homeassistant".into(),
+            ui_prefix: "nidoo/ui".into(),
             hub_url: None,
             broker_from_hub: false,
             hub_http: None,
@@ -204,6 +208,7 @@ mod tests {
             assert_eq!(c.data_dir, PathBuf::from("./data"));
             assert_eq!((c.lead_ms, c.idle_stop_ms), (500, 5000));
             assert_eq!(c.discovery_prefix, "homeassistant");
+            assert_eq!(c.ui_prefix, "nidoo/ui");
             assert_eq!(c.mqtt, MqttSettings::default());
             Ok(())
         });
