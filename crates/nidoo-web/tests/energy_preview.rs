@@ -98,15 +98,16 @@ async fn choosing_orbite_saves_and_switches_the_preview() {
             .is_some()
     );
     options(&host)[2].click();
+    // The stub logs a request only once it has read the body: wait for it, not a fixed delay.
+    let put = stub.wait_for("PUT").await.expect("the view is saved");
+    assert!(
+        put.body.contains("\"energy_view\":\"orbite\""),
+        "{}",
+        put.body
+    );
     tick().await;
     TimeoutFuture::new(50).await;
-    let puts = stub.requests();
-    assert_eq!(puts.len(), 1);
-    assert!(
-        puts[0].body.contains("\"energy_view\":\"orbite\""),
-        "{}",
-        puts[0].body
-    );
+    assert_eq!(stub.requests().len(), 1);
     assert!(
         host.query_selector(".energy-preview[data-view='orbite']")
             .unwrap()
