@@ -9,6 +9,17 @@ use crate::api::setup::{get_mobile, get_mobile_code, put_mobile};
 use crate::i18n::{MobileText, use_lang, use_mobile_text};
 use crate::qr::qr_svg;
 
+/// Settings → Mobile app: the phone block on its own page (the sheet header comes from the
+/// Settings screen).
+#[component]
+pub fn MobileAppPage() -> impl IntoView {
+    view! {
+        <section class="sheet__panel">
+            <PhoneSetup />
+        </section>
+    }
+}
+
 /// Connect your phone: a blurred QR code to reveal on demand, and the optional gateway fields.
 /// It reads `Lang` from context and fetches its own data on mount.
 #[component]

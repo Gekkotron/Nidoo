@@ -186,6 +186,7 @@ pub enum Key {
     SolarForecast,
     Cameras,
     PushNotifications,
+    MobileApp,
     Solar,
     Beta,
     Ambiances,
@@ -335,6 +336,7 @@ impl Key {
         Key::SolarForecast,
         Key::Cameras,
         Key::PushNotifications,
+        Key::MobileApp,
         Key::Solar,
         Key::Beta,
         Key::Ambiances,
@@ -485,6 +487,7 @@ pub fn text(lang: Lang, key: Key) -> &'static str {
         Key::SolarForecast => ("Solar forecast", "Prévision solaire"),
         Key::Cameras => ("Cameras", "Caméras"),
         Key::PushNotifications => ("Notifications", "Notifications"),
+        Key::MobileApp => ("Mobile app", "Application mobile"),
         Key::Solar => ("Solar", "Solaire"),
         Key::Beta => ("Beta", "Bêta"),
         Key::Ambiances => ("My moods", "Mes ambiances"),
@@ -767,6 +770,7 @@ mod tests {
             | Key::SolarForecast
             | Key::Cameras
             | Key::PushNotifications
+            | Key::MobileApp
             | Key::Solar
             | Key::Beta
             | Key::Ambiances
@@ -902,7 +906,7 @@ mod tests {
         for &k in Key::ALL {
             assert!(listed(k));
         }
-        assert_eq!(Key::ALL.len(), 144);
+        assert_eq!(Key::ALL.len(), 145);
     }
     #[test]
     fn every_key_differs_between_languages() {

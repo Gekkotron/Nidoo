@@ -16,7 +16,7 @@ use crate::i18n::settings::{
     updates_waiting,
 };
 use crate::i18n::setup::{SetupText, setup_text};
-use crate::i18n::{Key, Lang, text, use_lang};
+use crate::i18n::{Key, Lang, MobileText, mobile_text, text, use_lang};
 use crate::nav::BackLink;
 use crate::screens::alarm_settings::{AlarmSettingsPage, settings_status};
 use crate::screens::assist_settings::AssistVoicePage;
@@ -24,6 +24,7 @@ use crate::screens::assist_status;
 use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
+use crate::screens::mobile_app::MobileAppPage;
 use crate::screens::network_settings::{NetworkSettingsPage, watched_label};
 use crate::screens::sound_settings::{self, SoundSettingsPage};
 use crate::screens::speech_input::AssistListeningPage;
@@ -292,6 +293,7 @@ pub enum SettingsPage {
     SolarForecast,
     Cameras,
     Push,
+    MobileApp,
     Alarm,
     NetworkPresence,
     AssistantVoice,
@@ -308,13 +310,14 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 18] = [
+    pub const ALL: [SettingsPage; 19] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
         SettingsPage::SolarForecast,
         SettingsPage::Cameras,
         SettingsPage::Push,
+        SettingsPage::MobileApp,
         SettingsPage::Alarm,
         SettingsPage::NetworkPresence,
         SettingsPage::AssistantVoice,
@@ -337,6 +340,7 @@ impl SettingsPage {
             SettingsPage::SolarForecast => "solar-forecast",
             SettingsPage::Cameras => "cameras",
             SettingsPage::Push => "push-notifications",
+            SettingsPage::MobileApp => "mobile-app",
             SettingsPage::Alarm => "alarm",
             SettingsPage::NetworkPresence => "network-presence",
             SettingsPage::AssistantVoice => "assistant-voice",
@@ -365,6 +369,7 @@ impl SettingsPage {
             SettingsPage::SolarForecast => Key::SolarForecast,
             SettingsPage::Cameras => Key::Cameras,
             SettingsPage::Push => Key::PushNotifications,
+            SettingsPage::MobileApp => Key::MobileApp,
             SettingsPage::Alarm => Key::Alarm,
             SettingsPage::NetworkPresence => Key::NetworkPresence,
             SettingsPage::AssistantVoice => Key::AssistantVoice,
@@ -394,6 +399,7 @@ impl SettingsPage {
                 SettingsPage::SolarForecast => T::HintSolarForecast,
                 SettingsPage::Cameras => T::HintCameras,
                 SettingsPage::Push => T::HintPush,
+                SettingsPage::MobileApp => T::HintMobileApp,
                 SettingsPage::Alarm => T::HintAlarm,
                 SettingsPage::NetworkPresence => T::HintNetworkPresence,
                 SettingsPage::AssistantVoice => T::HintAssistantVoice,
@@ -424,6 +430,7 @@ impl SettingsPage {
             SettingsPage::SolarForecast => (icons::SUN, "amber"),
             SettingsPage::Cameras => (icons::CAMERA, "violet"),
             SettingsPage::Push => (icons::BELL, "rose"),
+            SettingsPage::MobileApp => (icons::PHONE, "blue"),
             SettingsPage::Alarm => (icons::SHIELD, "mint"),
             SettingsPage::NetworkPresence => (icons::WIFI, "cyan"),
             SettingsPage::AssistantVoice => (icons::SPEECH, "cyan"),
@@ -449,6 +456,7 @@ impl SettingsPage {
             | SettingsPage::SolarForecast
             | SettingsPage::Cameras
             | SettingsPage::Push
+            | SettingsPage::MobileApp
             | SettingsPage::Alarm
             | SettingsPage::NetworkPresence => T::GroupHouse,
             SettingsPage::AssistantVoice
@@ -560,6 +568,14 @@ pub fn SettingsScreen() -> impl IntoView {
             }
         });
     });
+    let mobile = RwSignal::new(None::<nidoo_api::MobileView>);
+    Effect::new(move |_| {
+        spawn_local(async move {
+            if let Ok(v) = crate::api::setup::get_mobile().await {
+                mobile.try_set(Some(v));
+            }
+        });
+    });
     let status = move |page: SettingsPage| match page {
         SettingsPage::Home
         | SettingsPage::Location
@@ -567,6 +583,18 @@ pub fn SettingsScreen() -> impl IntoView {
         | SettingsPage::SolarForecast
         | SettingsPage::Cameras
         | SettingsPage::Push => String::new(),
+        SettingsPage::MobileApp => mobile
+            .with(|m| {
+                m.as_ref().map(|m| {
+                    let k = if m.gateway_ready {
+                        MobileText::HomeAndAway
+                    } else {
+                        MobileText::HomeOnly
+                    };
+                    mobile_text(lang(), k).to_owned()
+                })
+            })
+            .unwrap_or_default(),
         SettingsPage::Alarm => alarm
             .get()
             .map(|v| settings_status(&v, lang()))
@@ -737,6 +765,7 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::SolarForecast) => view! { <SolarPage /> }.into_any(),
                 Some(SettingsPage::Cameras) => view! { <CamerasPage /> }.into_any(),
                 Some(SettingsPage::Push) => view! { <PushPage /> }.into_any(),
+                Some(SettingsPage::MobileApp) => view! { <MobileAppPage /> }.into_any(),
                 Some(SettingsPage::Alarm) => view! { <AlarmSettingsPage /> }.into_any(),
                 Some(SettingsPage::NetworkPresence) => {
                     view! { <NetworkSettingsPage /> }.into_any()

@@ -7,10 +7,15 @@ use nidoo_api::{DeviceView, UpdateView};
 use nidoo_core::model::Availability;
 use nidoo_web::house::House;
 use nidoo_web::i18n::Lang;
+use nidoo_web::screens::mobile_app::MobileAppPage;
 use nidoo_web::screens::settings::{SettingsScreen, ZigbeePage};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
+
+#[path = "support/fetch_stub.rs"]
+mod fetch_stub;
+use fetch_stub::FetchStub;
 
 fn device(name: &str, update: Option<UpdateView>) -> DeviceView {
     DeviceView {
@@ -191,4 +196,54 @@ async fn the_zigbee_row_pluralises_in_french() {
     lang.set(Lang::En);
     tick().await;
     assert!(host.text_content().unwrap().contains("2 updates"));
+}
+
+const MOBILE_HOME: &str =
+    r#"{"gateway_url":null,"gateway_key":{"set":false},"gateway_ready":false}"#;
+const MOBILE_CODE: &str = r#"{"payload":"{\"v\":1,\"hub\":\"http://192.0.2.10:8081\"}"}"#;
+
+async fn settle() {
+    for _ in 0..8 {
+        gloo_timers::future::TimeoutFuture::new(15).await;
+        tick().await;
+    }
+}
+
+#[wasm_bindgen_test]
+async fn settings_lists_mobile_app_in_the_house_group() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/settings/mobile", 200, MOBILE_HOME);
+    let lang = RwSignal::new(Lang::En);
+    let host = mount_in(lang, vec![], SettingsScreen).await;
+    settle().await;
+    let row = host
+        .query_selector("a[href='/settings/mobile-app']")
+        .unwrap()
+        .expect("the Mobile app row is listed");
+    let text = row.text_content().unwrap();
+    assert!(text.contains("Mobile app"), "{text}");
+    assert!(text.contains("Home network only"), "{text}");
+}
+
+#[wasm_bindgen_test]
+async fn mobile_app_page_shows_the_phone_block() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/settings/mobile", 200, MOBILE_HOME);
+    stub.reply("GET", "/api/v1/setup/mobile-code", 200, MOBILE_CODE);
+    let document = web_sys::window().unwrap().document().unwrap();
+    let host = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&host).unwrap();
+    std::mem::forget(leptos::mount::mount_to(
+        host.clone().unchecked_into(),
+        move || {
+            provide_context(House::new());
+            provide_context(RwSignal::new(nidoo_web::theme::Theme::Auto));
+            provide_context(RwSignal::new(Lang::En));
+            view! { <Router><MobileAppPage /></Router> }
+        },
+    ));
+    settle().await;
+    let text = host.text_content().unwrap();
+    assert!(text.contains("Connect your phone"), "{text}");
+    assert!(text.contains("Show code"), "{text}");
 }
