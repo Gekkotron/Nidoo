@@ -38,7 +38,7 @@ key**.
 - A code the app rejects ("Not a Nidoo code" / invalid field) because the hub drew something the
   app's parser refuses.
 - The owner's host names, addresses or Tailscale names anywhere in tracked text (examples use
-  `house.example.ts.net`, `192.168.1.10`).
+  `house.example.ts.net`, `192.0.2.10`).
 
 ## The payload (`v:1`, as `OnboardingPayload.parse` in Nidoo-app reads it)
 

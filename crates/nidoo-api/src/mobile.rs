@@ -24,8 +24,30 @@ pub struct MobileInput {
     pub gateway_key: Secret,
 }
 
-/// The text the setup QR code encodes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// The text the setup QR code encodes. It holds the broker password, the gateway key and the
+/// Frigate password, so `Debug` never prints it.
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct MobileCode {
     pub payload: String,
+}
+
+impl std::fmt::Debug for MobileCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MobileCode")
+            .field("payload", &"***")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_masks_the_payload() {
+        let code = MobileCode {
+            payload: r#"{"v":1,"local":{"pass":"secret-pass"}}"#.into(),
+        };
+        assert!(!format!("{code:?}").contains("secret-pass"));
+    }
 }
