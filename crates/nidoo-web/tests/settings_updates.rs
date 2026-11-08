@@ -11,6 +11,7 @@ use nidoo_web::screens::mobile_app::MobileAppPage;
 use nidoo_web::screens::settings::{SettingsScreen, ZigbeePage};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

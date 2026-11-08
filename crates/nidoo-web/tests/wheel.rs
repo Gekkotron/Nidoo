@@ -7,6 +7,7 @@ use nidoo_web::components::hs_wheel::HsWheel;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 use web_sys::{HtmlElement, KeyboardEvent, KeyboardEventInit};
+wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test]
 async fn marker_follows_the_colour_and_arrows_nudge_it() {

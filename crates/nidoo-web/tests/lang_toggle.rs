@@ -9,6 +9,7 @@ use nidoo_web::shell::Shell;
 use nidoo_web::theme::Theme;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 /// Switching the language on a mounted screen rewrites its text, with no remount.
 #[wasm_bindgen_test]

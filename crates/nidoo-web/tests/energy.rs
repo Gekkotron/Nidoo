@@ -15,6 +15,7 @@ use web_sys::{Element, Event, HtmlElement, KeyboardEvent, KeyboardEventInit};
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;
 use fetch_stub::FetchStub;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn sensor(id: &str, name: &str, unit: &str, value: f64, ui: UiOverride) -> EntityView {
     EntityView {

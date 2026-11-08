@@ -17,6 +17,7 @@ use nidoo_web::dashboards::edit::EditState;
 use nidoo_web::house::House;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 const NOW: u64 = 1_800_000_000;
 const SNAPSHOT: &str = "/api/v1/media?url=snap";

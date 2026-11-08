@@ -16,6 +16,7 @@ use nidoo_web::house::House;
 use nidoo_web::screens::home::card_for;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn entity(id: &str, kind: Kind, value: StateValue) -> EntityView {
     EntityView {

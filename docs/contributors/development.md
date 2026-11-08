@@ -86,12 +86,13 @@ cd crates/nidoo-web && wasm-pack test --headless --chrome
 
 The other tests under `crates/nidoo-web/tests` (cards, flow canvas, group wizard and so on) run the same way.
 
-The browser tests build as one binary, `tests/browser.rs`, which lists each test file as a module. The hub's integration tests work the same way, from `crates/nidoo/tests/integration.rs`. Each test binary costs a link, and each browser binary also costs a Chrome start, so a new test file gets a `mod` line there instead of becoming a binary of its own. The exception is a browser test that clicks a link or presses a page-wide key: an app another test left mounted in the same page would catch it first, so its file gets its own `[[test]]` in `crates/nidoo-web/Cargo.toml`, like `search_slash`. To run one file of the shared binary, filter by its module:
+The hub's integration tests build as one binary, from `crates/nidoo/tests/integration.rs`, which lists each test file as a module: each test binary costs a link of the whole hub, so a new test file gets a `mod` line there instead of becoming a binary of its own. To run one file, filter by its module:
 
 ```sh
-cd crates/nidoo-web && wasm-pack test --headless --chrome -- --test browser -- flow_canvas::
 cargo test -p nidoo --test integration flows::
 ```
+
+The browser tests stay one binary per file. Many of them leave their app mounted, and a test that clicks a link or goes back would be caught by an earlier test's app if they shared a page.
 
 ## `tools/restart.sh`
 

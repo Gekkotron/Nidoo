@@ -17,6 +17,7 @@ use nidoo_web::screens::alerts::AlertsScreen;
 use nidoo_web::screens::security::SecurityScreen;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn entity(id: &str, name: &str, kind: Kind, class: Option<&str>, value: StateValue) -> EntityView {
     EntityView {

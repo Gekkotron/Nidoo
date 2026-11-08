@@ -13,6 +13,7 @@ use nidoo_web::components::toast::Toasts;
 use nidoo_web::house::House;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 fn entity(
     id: &str,
