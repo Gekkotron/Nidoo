@@ -173,7 +173,7 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     if cfg.http_port != 0 {
         tokio::spawn(nidoo_sound::http::serve(
             cfg.http_port,
-            satellites,
+            satellites.clone(),
             control_tx.clone(),
         ));
         tracing::info!(http_port = cfg.http_port, "HTTP API on /players");
@@ -184,6 +184,8 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
             run_mqtt(
                 &cfg.mqtt,
                 &cfg.discovery_prefix,
+                &cfg.ui_prefix,
+                satellites,
                 publish_rx,
                 control_tx,
                 speak_tx,

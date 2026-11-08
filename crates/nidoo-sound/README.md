@@ -58,6 +58,7 @@ the same values as `NIDOO_SOUND_MQTT__*`.
 | `input_buffer_ms` | `NIDOO_SOUND_INPUT_BUFFER_MS` | `250` | phone audio gathered before playback starts, so Wi-Fi stalls up to about this long play through without gaps; adds this much delay |
 | `idle_stop_ms` | `NIDOO_SOUND_IDLE_STOP_MS` | `5000` | silence on a connected input that stops playback |
 | `discovery_prefix` | `NIDOO_SOUND_DISCOVERY_PREFIX` | `homeassistant` | MQTT discovery prefix |
+| `ui_prefix` | `NIDOO_SOUND_UI_PREFIX` | `nidoo/ui` | the hub's override sub-tree (its `[topics] ui_prefix`), read for the names given in Nidoo |
 | `mqtt.host` | `NIDOO_SOUND_MQTT__HOST` | the hub's, else `localhost` | broker |
 | `mqtt.port` | `NIDOO_SOUND_MQTT__PORT` | the hub's, else `1883` | |
 | `mqtt.user` | `NIDOO_SOUND_MQTT__USER` | the hub's, else none | |
@@ -83,6 +84,10 @@ be bound, `nidoo-sound` logs a warning and plays on without the API.
 ```
 
 `id` is the satellite's 12-character short id, the same one its MQTT topics use.
+`name` is the one given in Nidoo when the satellite was renamed there (the `name`
+of the override the hub retains on `<ui_prefix>/nidoo_sound_<sid>_volume`, its
+Music volume entity), else the one the satellite reports. With a broker login of
+its own, `nidoo-sound` needs read access on `<ui_prefix>/+` for that.
 
 `PUT /players/{id}` takes a JSON body with `volume` (0-100), `muted` (boolean),
 or both:

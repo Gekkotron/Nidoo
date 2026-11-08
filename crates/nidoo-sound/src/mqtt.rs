@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use crate::config::MqttSettings;
 use crate::group::{Control, Published};
 use crate::hold::{HOLD_TOPIC, HoldRequest, parse_hold};
+use crate::http::Satellites;
 use crate::speech::{SPEAK_TOPIC, SpeakRequest, Waiting, parse_speak};
 use crate::state::{PlayerPrefs, short_id};
 
@@ -217,6 +218,29 @@ pub enum Incoming {
     Ignored,
 }
 
+/// A satellite's override retained by the hub on `<ui_prefix>/nidoo_sound_<sid>_volume`
+/// (its Music volume entity is its identity): `(sid, name given in Nidoo)`. `None` as the
+/// name when the override is cleared or names nothing. `None` for every other topic.
+pub fn parse_rename(
+    topic: &str,
+    payload: &[u8],
+    ui_prefix: &str,
+) -> Option<(String, Option<String>)> {
+    let sid = topic
+        .strip_prefix(ui_prefix)?
+        .strip_prefix("/nidoo_sound_")?
+        .strip_suffix("_volume")?;
+    if sid.is_empty() || sid.contains('/') {
+        return None;
+    }
+    // The override's `name`, as the hub's `UiOverride` reads it; nothing else matters here.
+    let name = serde_json::from_slice::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(|n| n.trim().to_owned()))
+        .filter(|n| !n.is_empty());
+    Some((sid.to_owned(), name))
+}
+
 /// Sorts one incoming message.
 pub fn route(topic: &str, payload: &[u8], ha_status: &str) -> Incoming {
     if topic == ha_status {
@@ -235,9 +259,12 @@ pub fn route(topic: &str, payload: &[u8], ha_status: &str) -> Incoming {
     parse_command(topic, payload).map_or(Incoming::Ignored, Incoming::Control)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_mqtt(
     cfg: &MqttSettings,
     discovery_prefix: &str,
+    ui_prefix: &str,
+    satellites: Satellites,
     mut publish: mpsc::Receiver<Published>,
     control: mpsc::Sender<Control>,
     speak: mpsc::Sender<Waiting>,
@@ -269,9 +296,17 @@ pub async fn run_mqtt(
                     client.subscribe(ha_status.clone(), QoS::AtLeastOnce).await?;
                     client.subscribe(SPEAK_TOPIC, QoS::AtLeastOnce).await?;
                     client.subscribe(HOLD_TOPIC, QoS::AtLeastOnce).await?;
+                    // The names given in Nidoo, for the HTTP API (retained: all come back now).
+                    client.subscribe(format!("{ui_prefix}/+"), QoS::AtLeastOnce).await?;
                     announced.clear();
                     for (prefs, connected, address) in known.values() {
                         send(&client, discovery_prefix, prefs, *connected, *address, &mut announced).await?;
+                    }
+                }
+                Ok(Event::Incoming(Packet::Publish(p))) if p.topic.starts_with(ui_prefix) => {
+                    if let Some((sid, name)) = parse_rename(&p.topic, &p.payload, ui_prefix) {
+                        tracing::debug!(%sid, ?name, "name given in Nidoo");
+                        satellites.set_name(&sid, name);
                     }
                 }
                 Ok(Event::Incoming(Packet::Publish(p))) => match route(&p.topic, &p.payload, &ha_status) {
@@ -640,6 +675,34 @@ mod tests {
             Incoming::Control(Control::SetMute { muted: true, .. })
         ));
         assert_eq!(route("elsewhere", b"x", ha), Incoming::Ignored);
+    }
+
+    #[test]
+    fn rename_comes_from_the_volume_entity_override() {
+        let ui = "nidoo/ui";
+        let topic = "nidoo/ui/nidoo_sound_0123456789ab_volume";
+        assert_eq!(
+            parse_rename(topic, br#"{"name":" Living room ","area":"living"}"#, ui),
+            Some(("0123456789ab".into(), Some("Living room".into())))
+        );
+        // Cleared override, override without a name, blank name: back to the satellite's own.
+        for payload in [&b""[..], br#"{"area":"living"}"#, br#"{"name":"  "}"#] {
+            assert_eq!(
+                parse_rename(topic, payload, ui),
+                Some(("0123456789ab".into(), None)),
+                "{}",
+                String::from_utf8_lossy(payload)
+            );
+        }
+        for other in [
+            "nidoo/ui/nidoo_sound_0123456789ab_mute",
+            "nidoo/ui/light_kitchen",
+            "nidoo/ui/_areas",
+            "nidoo/ui/nidoo_sound__volume",
+            "other/ui/nidoo_sound_0123456789ab_volume",
+        ] {
+            assert_eq!(parse_rename(other, br#"{"name":"X"}"#, ui), None, "{other}");
+        }
     }
 
     #[test]
