@@ -409,7 +409,7 @@ mod tests {
     #[test]
     fn all_lists_every_variant() {
         // The match in `settings_text` is exhaustive, so a new variant only needs listing here.
-        assert_eq!(SettingsText::ALL.len(), 77);
+        assert_eq!(SettingsText::ALL.len(), 78);
     }
 
     #[test]
