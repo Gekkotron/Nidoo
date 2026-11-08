@@ -62,11 +62,11 @@ Each area with a climate device is a zone. A zone is in one of three states:
 
 ## How a zone is decided
 
-The engine decides per zone from a priority tree, and every decision carries its `source` (`safety`, `override`, `holiday`, `eco`, `away`, `empty`, `schedule` or `idle`) and a `reason`:
+The engine decides per zone from a priority tree, and every decision carries its `source` (`safety`, `override`, `boost`, `holiday`, `eco`, `away`, `empty`, `schedule` or `idle`) and a `reason`:
 
 1. **Safety** comes first and always acts: frost, overheat, overcool, and a stale reading (no usable temperature, so no schedule, override or eco setpoint is sent to an active zone). A safety cause that holds stays until the reading is clearly back inside its limit.
 2. **Pending**: a pending zone does nothing beyond safety.
-3. **Zone override**: a whole-zone target and/or mode held for a number of minutes or until a time.
+3. **Zone override**: a whole-zone target and/or mode held for a number of minutes or until a time. One with a temperature is a **boost** (source `boost`): a room target, reached through the room-thermometer correction like the schedule's. Leaving the house (nobody home, or a holiday starting) ends a boost set before the leave; a boost set while away runs, to warm the room before you come back. An app sets one with `<prefix>/zone/<zone>/hold/set` (below).
 4. **Rules**: holiday, then eco (the zone's own eco, or the whole house's while nobody is home), then the schedule, set back while the room is empty (see [Room presence](#room-presence)).
 
 Per-device overrides (hand changes) sit on top of the rules and hold their device whatever the zone does. An override the device cannot run (cool on a heat-only valve) holds it as it is, and the reason says "held as it is".

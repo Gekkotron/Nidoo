@@ -778,6 +778,10 @@ impl Hub {
     /// event: a non-retained message on the command topic of a button some flow watches
     /// broadcasts [`WsEvent::ButtonPressed`]. A retained one is a replay, never a press.
     pub fn ingest_message(&self, topic: &str, payload: &[u8], retain: bool) -> Vec<Change> {
+        // A climate hold command from an app, never a device.
+        if self.ingest_climate_command(topic, payload, retain) {
+            return Vec::new();
+        }
         // A report for the voice service, never a device.
         if topic == crate::sound::SPOKEN_TOPIC {
             if let Some(spoken) = crate::sound::parse_spoken(payload) {

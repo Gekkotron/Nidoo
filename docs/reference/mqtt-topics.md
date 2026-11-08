@@ -44,6 +44,7 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | `nidoo/push/history` | in, out | yes | JSON array of the normalised alerts, newest first | `[push] prefix` |
 | `nidoo/climate/house` | in, out | yes | The house settings document | `[climate] prefix` |
 | `nidoo/climate/zone/<zone>/<doc>`, `<doc>` being `settings`, `proposal`, `override`, `decision` or `eco` (`{until, set_at}`, the zone's eco until a date; the hub deletes it once ended) | in, out | yes | A zone document | `[climate] prefix` |
+| `nidoo/climate/zone/<zone>/hold/set` | in | no | A zone's boost: `{"setpoint":22,"minutes":90}` (or `until`, Unix seconds, instead of `minutes`) sets it; an empty payload ends it and keeps hand holds. A retained message is ignored | `[climate] prefix` |
 | `<prefix>/settings` (alarm) | in, out | yes | The alarm settings document; `enabled` defaults to false. Default prefix `nidoo/alarm` | `[alarm] prefix` |
 | `<prefix>/state` (alarm) | in, out | yes | The alarm's runtime: state, mode, source, timers, motion hits, open sensors and the open alert | `[alarm] prefix` |
 | `<prefix>/panel` (alarm) | out | yes | The panel entity's state: `disarmed`, `arming`, `armed_away`, `armed_home`, `armed_night`, `pending` or `triggered` | `[alarm] prefix` |
@@ -64,7 +65,7 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 ## Notes
 
 - **Reserved sub-trees.** Under a discovery prefix, the segments `ui`, `automation`, `virtual`, `push`, `weather` and `solar` are reserved: never publish discovery there. A topic in them is never read as discovery and never shows under `GET /api/v1/ignored`.
-- **Climate documents never end in `/config`.** They cannot be read as discovery. The hub subscribes to `<prefix>/house` and `<prefix>/zone/+/+`, never `<prefix>/#`. `nidoo/push/responses` is always subscribed: a reply whose id starts with `alarm-` goes to the alarm, and the others (a tapped proposal button, for example) go to the climate engine when it is on.
+- **Climate documents never end in `/config`.** They cannot be read as discovery. The hub subscribes to `<prefix>/house`, `<prefix>/zone/+/+` and `<prefix>/zone/+/hold/set`, never `<prefix>/#`. `nidoo/push/responses` is always subscribed: a reply whose id starts with `alarm-` goes to the alarm, and the others (a tapped proposal button, for example) go to the climate engine when it is on.
 - **Overlapping subscriptions.** The hub subscribes to `<discovery prefix>/#`, `<z2m_base>/bridge/#`, `<ui_prefix>/#` and `<automation_prefix>/#`. A push filter that falls inside one of those wildcards (the default `nidoo/push/…` under `nidoo/#`) is left out, so the broker does not deliver a notification twice.
 - **Alerts raised inside the hub** (the Frigate bridge, watchdogs, flows, MCP) go to the push service in process, without the broker.
 - **Retained history.** `nidoo/push/history` is the history itself: the hub adopts it at its first sync.

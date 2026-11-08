@@ -58,10 +58,30 @@ pub fn zone_topic(prefix: &str, zone: &str, doc: ZoneDoc) -> String {
     )
 }
 
-/// The two subscription filters of the engine (never `<prefix>/#`).
-pub fn filters(prefix: &str) -> [String; 2] {
+/// The subscription filters of the engine (never `<prefix>/#`): the retained documents and
+/// the hold command.
+pub fn filters(prefix: &str) -> [String; 3] {
     let p = prefix.trim_end_matches('/');
-    [format!("{p}/house"), format!("{p}/zone/+/+")]
+    [
+        format!("{p}/house"),
+        format!("{p}/zone/+/+"),
+        format!("{p}/zone/+/hold/set"),
+    ]
+}
+
+/// Topic of a zone's hold command: a JSON override request sets a boost, an empty payload
+/// clears it. A command, never retained.
+pub fn hold_command_topic(prefix: &str, zone: &str) -> String {
+    format!("{}/zone/{zone}/hold/set", prefix.trim_end_matches('/'))
+}
+
+/// The zone of a hold command topic under `prefix`; `None` for any other topic.
+pub fn parse_hold_command(prefix: &str, topic: &str) -> Option<String> {
+    let zone = topic
+        .strip_prefix(prefix.trim_end_matches('/'))?
+        .strip_prefix("/zone/")?
+        .strip_suffix("/hold/set")?;
+    (!zone.is_empty() && !zone.contains('/')).then(|| zone.to_owned())
 }
 
 /// Parse a topic received under `prefix`; `None` for anything that is not a climate document.
@@ -134,8 +154,33 @@ mod tests {
             filters("nidoo/climate"),
             [
                 "nidoo/climate/house".to_owned(),
-                "nidoo/climate/zone/+/+".to_owned()
+                "nidoo/climate/zone/+/+".to_owned(),
+                "nidoo/climate/zone/+/hold/set".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn hold_command_round_trip() {
+        let topic = hold_command_topic("nidoo/climate/", "living");
+        assert_eq!(topic, "nidoo/climate/zone/living/hold/set");
+        assert_eq!(
+            parse_hold_command("nidoo/climate", &topic),
+            Some("living".to_owned())
+        );
+        assert_eq!(
+            parse_hold_command("nidoo/climate", "nidoo/climate/zone/living/override"),
+            None
+        );
+        assert_eq!(
+            parse_hold_command("nidoo/climate", "nidoo/climate/zone//hold/set"),
+            None
+        );
+        assert_eq!(
+            parse_hold_command("nidoo/climate", "nidoo/climate/zone/living/hold/set/x"),
+            None
+        );
+        // Never one of the retained documents.
+        assert_eq!(parse("nidoo/climate", &topic), None);
     }
 }
