@@ -137,6 +137,18 @@ impl FetchStub {
             })
             .collect()
     }
+
+    /// The first `method` request, waiting up to 2 s for it: a request is logged only once its
+    /// body has been read, which a busy browser can take longer than a `settle()` to do.
+    pub async fn wait_for(&self, method: &str) -> Option<Recorded> {
+        for _ in 0..200 {
+            if let Some(r) = self.requests().into_iter().find(|r| r.method == method) {
+                return Some(r);
+            }
+            gloo_timers::future::TimeoutFuture::new(10).await;
+        }
+        None
+    }
 }
 
 impl Drop for FetchStub {

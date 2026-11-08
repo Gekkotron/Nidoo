@@ -187,12 +187,8 @@ fn climate_json(enabled: bool) -> String {
     .unwrap()
 }
 
-fn put_body(stub: &FetchStub) -> serde_json::Value {
-    let put = stub
-        .requests()
-        .into_iter()
-        .find(|r| r.method == "PUT")
-        .expect("a PUT was sent");
+async fn put_body(stub: &FetchStub) -> serde_json::Value {
+    let put = stub.wait_for("PUT").await.expect("a PUT was sent");
     serde_json::from_str(&put.body).unwrap()
 }
 
@@ -210,7 +206,7 @@ async fn new_editor_saves_slug_and_next_order() {
     settle().await;
     one(&m.host, ".ambiance-save").click();
     settle().await;
-    let body = put_body(&stub);
+    let body = put_body(&stub).await;
     assert_eq!(body["id"], "cosy_night");
     assert_eq!(body["order"], 4);
     assert_eq!(body["name"], "Cosy night");
@@ -235,7 +231,7 @@ async fn a_mood_named_new_does_not_take_a_route_name() {
     settle().await;
     one(&m.host, ".ambiance-save").click();
     settle().await;
-    assert_eq!(put_body(&stub)["id"], "new_2");
+    assert_eq!(put_body(&stub).await["id"], "new_2");
 }
 
 #[wasm_bindgen_test]
@@ -406,7 +402,7 @@ async fn missing_entity_row_is_marked_and_kept_on_save() {
     assert!(rows[0].text_content().unwrap().contains("(missing)"));
     one(&m.host, ".ambiance-save").click();
     settle().await;
-    assert_eq!(put_body(&stub)["actions"][0]["entity"], "gone");
+    assert_eq!(put_body(&stub).await["actions"][0]["entity"], "gone");
 }
 
 #[wasm_bindgen_test]
@@ -466,7 +462,7 @@ async fn unknown_fields_survive_edit() {
     settle().await;
     one(&m.host, ".ambiance-save").click();
     settle().await;
-    let body = put_body(&stub);
+    let body = put_body(&stub).await;
     assert_eq!(body["name"], "Renamed");
     assert_eq!(body["id"], "mood_a");
     assert_eq!(body["order"], 7);
@@ -521,7 +517,7 @@ async fn a_vanished_except_id_is_flagged_and_can_be_cleared() {
     one(&m.host, ".ambiance-save").click();
     settle().await;
     assert!(
-        put_body(&stub)["actions"][0]["except"].is_null(),
+        put_body(&stub).await["actions"][0]["except"].is_null(),
         "an empty except is left out"
     );
 }
@@ -580,7 +576,7 @@ async fn saving_replaces_the_history_entry_and_falls_back_to_the_route_id() {
     let before = history.length().unwrap();
     one(&m.host, ".ambiance-save").click();
     settle().await;
-    assert_eq!(put_body(&stub)["id"], "mood_a");
+    assert_eq!(put_body(&stub).await["id"], "mood_a");
     assert_eq!(history.length().unwrap(), before, "replace, not push");
 }
 
