@@ -14,6 +14,7 @@ pub enum SettingsText {
     HintSolarForecast,
     HintCameras,
     HintPush,
+    HintMobileApp,
     HintAlarm,
     HintNetworkPresence,
     HintAssistantVoice,
@@ -95,6 +96,7 @@ impl SettingsText {
         SettingsText::HintSolarForecast,
         SettingsText::HintCameras,
         SettingsText::HintPush,
+        SettingsText::HintMobileApp,
         SettingsText::HintAlarm,
         SettingsText::HintNetworkPresence,
         SettingsText::HintAssistantVoice,
@@ -191,6 +193,10 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
             "Événements, images et vue en direct de Frigate",
         ),
         T::HintPush => ("Alerts on your phone", "Alertes sur votre téléphone"),
+        T::HintMobileApp => (
+            "Set up the Nidoo app on a phone",
+            "Configurer l'application Nidoo sur un téléphone",
+        ),
         T::HintAlarm => (
             "Sensors, sirens, remotes and presence",
             "Capteurs, sirènes, télécommandes et présence",

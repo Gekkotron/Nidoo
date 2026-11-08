@@ -23,6 +23,7 @@ Nidoo is a home-automation hub written in Rust. It runs on the home server next 
 - **Energy**: the live power flow between solar, grid, battery, the house and its consumers, with kWh per day. [Web UI](https://gekkotron.github.io/Nidoo/docs/users/web-ui#energy)
 - **Climate** (beta): heating and cooling by zone; the engine learns a weekly schedule from history and proposes it for approval. [Climate](https://gekkotron.github.io/Nidoo/docs/users/climate)
 - **Phone alerts and cameras**: push notifications to the Android app through Firebase, with Frigate snapshots and clips. [Push notifications](https://gekkotron.github.io/Nidoo/docs/users/push-notifications)
+- **Phone setup**: the hub draws a QR code the Android app scans to configure itself, with optional remote access through the gateway. [Mobile app](https://gekkotron.github.io/Nidoo/docs/users/mobile-app)
 - **History**: every state change in TimescaleDB, for charts and energy totals. [History](https://gekkotron.github.io/Nidoo/docs/users/history)
 - **Talk to it**: an MCP server for Claude Code, Codex, Claude Desktop and any MCP client. [MCP](https://gekkotron.github.io/Nidoo/docs/users/assistants-mcp)
 

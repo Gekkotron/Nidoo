@@ -154,6 +154,8 @@ pub const HOUSE: &str =
 pub const BELL: &str = svg!(
     r#"<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/>"#
 );
+pub const PHONE: &str =
+    svg!(r#"<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>"#);
 pub const FLOW_NODES: &str = svg!(
     r#"<circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M6.5 7.4 10.5 16.6"/><path d="M17.5 7.4 13.5 16.6"/>"#
 );
