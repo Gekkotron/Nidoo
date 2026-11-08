@@ -401,3 +401,72 @@
     text-align: left;
   }
 }
+
+/* Done step: connect the phone app. */
+.phone {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--chip-border);
+  border-radius: 12px;
+}
+
+.phone__title {
+  margin: 0 0 4px;
+  font-size: 1.1em;
+}
+
+.phone__lead {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.phone__status {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.phone__status--remote {
+  color: var(--accent-mint);
+}
+
+/* The code stays white in both themes: a camera needs the contrast. */
+.phone__code {
+  width: min(240px, 100%);
+  margin: 0 auto 8px;
+  background: #ffffff;
+  border-radius: 8px;
+  line-height: 0;
+  transition: filter 0.2s ease;
+}
+
+.phone__code svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.phone__code--hidden {
+  filter: blur(12px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.phone__warning {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
+.phone__remote {
+  margin: 12px 0 0;
+}
+
+.phone__remote summary {
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.phone__problem {
+  min-height: 1.2em;
+  margin: 8px 0 0;
+  color: var(--accent-amber);
+}

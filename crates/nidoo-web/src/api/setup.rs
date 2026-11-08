@@ -1,7 +1,9 @@
 //! The hub's setup routes (`/api/v1/setup/*`) and the settings sections the wizard edits.
 
 use gloo_net::http::{Request, Response};
-use nidoo_api::{ApiError, GeoPlace, Location, SetupStatus, SetupStep, TestResult};
+use nidoo_api::{
+    ApiError, GeoPlace, Location, MobileCode, MobileView, SetupStatus, SetupStep, TestResult,
+};
 use serde_json::{Value, json};
 
 use super::core::{WebError, check, encode_id, read_json};
@@ -136,6 +138,25 @@ pub async fn put_section(section: &str, body: &Value) -> Result<(), SaveError> {
     let url = format!("/api/v1/settings/{}", encode_id(section));
     save(Request::put(&url).json(body)).await?;
     Ok(())
+}
+
+/// The phone app's section: the gateway address and whether the key is set.
+pub async fn get_mobile() -> Result<MobileView, ApiError> {
+    let response = check(Request::get("/api/v1/settings/mobile").build(), None).await?;
+    read_json(response).await
+}
+
+/// Saves the phone app's section and returns the new view. An empty `gateway_key` keeps the
+/// stored key.
+pub async fn put_mobile(input: &Value) -> Result<MobileView, SaveError> {
+    let response = save(Request::put("/api/v1/settings/mobile").json(input)).await?;
+    read_json(response).await.map_err(SaveError::Api)
+}
+
+/// The text the setup QR code encodes (it holds the passwords: never log it).
+pub async fn get_mobile_code() -> Result<MobileCode, ApiError> {
+    let response = check(Request::get("/api/v1/setup/mobile-code").build(), None).await?;
+    read_json(response).await
 }
 
 /// Tries a service's values (`solcast` or `frigate`) without saving them.

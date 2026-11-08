@@ -12,6 +12,7 @@ use crate::house::House;
 use crate::i18n::setup::{SetupText, setup_text, use_setup_text};
 use crate::i18n::use_lang;
 use crate::screens::devices::device_rooms;
+use crate::screens::mobile_app::PhoneSetup;
 
 /// The services' names, for the summary rows.
 fn service_title(id: &str) -> SetupText {
@@ -170,6 +171,7 @@ pub fn DoneStep() -> impl IntoView {
                         .collect_view()
                 }}
             </ul>
+            <PhoneSetup />
             <p class="loc__problem" role="alert">{move || failure.get()}</p>
             <div class="loc__actions">
                 <button
