@@ -7,7 +7,7 @@ use nidoo_api::WsEvent;
 use nidoo_climate::doc::{Decision, HouseSettings, ZoneSettings, ZoneState};
 use nidoo_climate::topics::{self, ClimateTopic, ZoneDoc};
 use nidoo_climate::view::{
-    ClimateView, DecisionLog, DecisionRow, LearnStatus, PresenceView, ZoneView,
+    ClimateView, DecisionLog, DecisionRow, LearnStatus, OverrideRequest, PresenceView, ZoneView,
 };
 use nidoo_core::command::Publish;
 use nidoo_core::model::{Kind, UNASSIGNED_AREA};
@@ -282,6 +282,47 @@ impl Hub {
         })?;
         self.ingest_climate(&topic, payload.as_bytes());
         Ok(())
+    }
+
+    /// Handles a zone's hold command (`<prefix>/zone/<zone>/hold/set`): a JSON override request
+    /// sets the boost, an empty payload clears it. True when `topic` is a hold command, so the
+    /// message never reaches the registry; a retained one is a replay and is not acted on.
+    pub(crate) fn ingest_climate_command(&self, topic: &str, payload: &[u8], retain: bool) -> bool {
+        let Some(prefix) = self.climate_prefix() else {
+            return false;
+        };
+        let Some(zone) = topics::parse_hold_command(prefix, topic) else {
+            return false;
+        };
+        if retain {
+            tracing::warn!(%topic, "retained hold command ignored");
+            return true;
+        }
+        let Some(hub) = self.me.upgrade() else {
+            return true;
+        };
+        if payload.is_empty() {
+            tokio::spawn(async move {
+                if let Err(error) = hub.clear_climate_boost(&zone).await {
+                    tracing::warn!(zone, %error, "boost not cleared");
+                }
+            });
+            return true;
+        }
+        let ov = serde_json::from_slice::<OverrideRequest>(payload)
+            .map_err(|e| e.to_string())
+            .and_then(|request| request.into_override(clock::now()));
+        match ov {
+            Ok(ov) => {
+                tokio::spawn(async move {
+                    if let Err(error) = hub.set_climate_override(&zone, ov).await {
+                        tracing::warn!(zone, %error, "boost not set");
+                    }
+                });
+            }
+            Err(error) => tracing::warn!(zone, %error, "hold command refused"),
+        }
+        true
     }
 
     /// Feeds a message to the climate store when `topic` is one of its documents; false when it

@@ -251,6 +251,14 @@ impl Hub {
         Ok(())
     }
 
+    /// Removes the zone's boost (its whole-zone override) and keeps the per-device holds.
+    pub async fn clear_climate_boost(self: &Arc<Self>, zone: &str) -> Result<(), HubError> {
+        self.require_climate()?;
+        self.require_zone(zone)?;
+        self.update_overrides(zone, |list| list.retain(|o| o.entity.is_some()));
+        Ok(())
+    }
+
     /// Removes every override of the zone, so the schedule applies again.
     pub async fn clear_climate_override(self: &Arc<Self>, zone: &str) -> Result<(), HubError> {
         self.require_climate()?;

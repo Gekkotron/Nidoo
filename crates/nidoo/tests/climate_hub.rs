@@ -95,6 +95,7 @@ async fn enabled_subscribes_house_and_zones_only() {
     assert!(
         f.contains(&"nidoo/climate/house".to_owned())
             && f.contains(&"nidoo/climate/zone/+/+".to_owned())
+            && f.contains(&"nidoo/climate/zone/+/hold/set".to_owned())
     );
     assert!(!f.iter().any(|t| t.ends_with('#')));
 }
@@ -3108,5 +3109,118 @@ mod approval {
                 .last()
                 .is_some_and(|p| p.payload.is_empty() && p.retain)
         );
+    }
+
+    const HOLD: &str = "nidoo/climate/zone/living/hold/set";
+
+    /// The approval rig with its zone active, as a boost needs.
+    async fn active_rig() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+        let (hub, mut rx) = rig().await;
+        hub.set_climate_zone("living", active()).unwrap();
+        drain(&mut rx);
+        (hub, rx)
+    }
+
+    /// Lets the task a command spawned run.
+    async fn settle() {
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    fn entity_count(hub: &Hub) -> usize {
+        hub.snapshot().entities.len()
+    }
+
+    #[tokio::test]
+    async fn hold_command_sets_a_boost() {
+        let (hub, _rx) = active_rig().await;
+        let before = entity_count(&hub);
+        let now = clock::now();
+        let changes = hub.ingest_message(HOLD, br#"{"setpoint":22,"minutes":90}"#, false);
+        assert!(changes.is_empty());
+        settle().await;
+        let held = zone(&hub).overrides;
+        assert_eq!(held.len(), 1, "{held:?}");
+        assert_eq!(held[0].entity, None);
+        assert_eq!(held[0].setpoint, Some(Setpoint::Temp(22.0)));
+        assert!(
+            (now + 5400..=now + 5402).contains(&held[0].until),
+            "{}",
+            held[0].until - now
+        );
+        assert_eq!(entity_count(&hub), before);
+    }
+
+    #[tokio::test]
+    async fn hold_command_empty_clears_boost_keeps_hand_hold() {
+        let (hub, _rx) = active_rig().await;
+        let id = zone(&hub).entities[0].clone();
+        let now = clock::now();
+        hub.ingest_message(HOLD, br#"{"setpoint":22,"minutes":60}"#, false);
+        settle().await;
+        hub.set_climate_override(
+            "living",
+            nidoo_climate::doc::Override {
+                entity: Some(id.clone()),
+                setpoint: Some(Setpoint::Temp(20.0)),
+                mode: None,
+                until: now + 600,
+                origin: nidoo_climate::doc::OverrideOrigin::Hand,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(zone(&hub).overrides.len(), 2);
+        assert!(hub.ingest_message(HOLD, b"", false).is_empty());
+        settle().await;
+        let held = zone(&hub).overrides;
+        assert_eq!(held.len(), 1, "{held:?}");
+        assert_eq!(held[0].entity.as_deref(), Some(id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn hold_command_ignores_retained() {
+        let (hub, _rx) = active_rig().await;
+        let before = entity_count(&hub);
+        let changes = hub.ingest_message(HOLD, br#"{"setpoint":22,"minutes":90}"#, true);
+        assert!(changes.is_empty());
+        settle().await;
+        assert!(zone(&hub).overrides.is_empty());
+        assert_eq!(entity_count(&hub), before);
+    }
+
+    #[tokio::test]
+    async fn hold_command_ignores_bad_json() {
+        let (hub, _rx) = active_rig().await;
+        let before = entity_count(&hub);
+        assert!(hub.ingest_message(HOLD, b"{nope", false).is_empty());
+        settle().await;
+        assert!(zone(&hub).overrides.is_empty());
+        assert_eq!(entity_count(&hub), before);
+    }
+
+    #[tokio::test]
+    async fn hold_command_ignores_pending_zone() {
+        let (hub, _rx) = rig().await;
+        assert!(
+            hub.ingest_message(HOLD, br#"{"setpoint":22,"minutes":90}"#, false)
+                .is_empty()
+        );
+        settle().await;
+        assert!(zone(&hub).overrides.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hold_command_without_duration_is_rejected() {
+        let (hub, _rx) = active_rig().await;
+        let before = entity_count(&hub);
+        assert!(
+            hub.ingest_message(HOLD, br#"{"setpoint":22}"#, false)
+                .is_empty()
+        );
+        settle().await;
+        assert!(zone(&hub).overrides.is_empty());
+        assert_eq!(entity_count(&hub), before);
     }
 }
