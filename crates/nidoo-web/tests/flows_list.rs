@@ -11,7 +11,6 @@ use nidoo_web::i18n::Lang;
 use nidoo_web::screens::flows::FlowsScreen;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 const REFERENCE: &str = r#"{
   "id": "living_led_motion",

@@ -13,7 +13,7 @@ use nidoo_core::flow::{Flow, NodeKind};
 use nidoo_core::model::{Area, AreasDocument, Command};
 use tokio::sync::mpsc;
 
-mod common;
+use crate::common;
 
 const LED_ID: &str = "0x60a423fffe94d1c6_light_zigbee2mqtt";
 const MOTION_ID: &str = "0x00158d008b5a2d65_occupancy_zigbee2mqtt";

@@ -15,7 +15,6 @@ use wasm_bindgen_test::*;
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;
 use fetch_stub::FetchStub;
-wasm_bindgen_test_configure!(run_in_browser);
 
 async fn mount(stored: EnergyView, lang: Lang) -> web_sys::Element {
     let document = web_sys::window().unwrap().document().unwrap();

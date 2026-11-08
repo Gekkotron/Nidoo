@@ -8,7 +8,6 @@ use nidoo_web::i18n::Lang;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 use web_sys::{Element, HtmlElement, PointerEvent, PointerEventInit};
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn block(days: &[Day], from: &str, to: &str, t: f64) -> Block {
     Block {

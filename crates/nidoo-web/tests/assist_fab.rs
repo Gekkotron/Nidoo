@@ -3,7 +3,6 @@
 //! first router the page mounted, so it must be the only test here (as `search_glass.rs`).
 
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

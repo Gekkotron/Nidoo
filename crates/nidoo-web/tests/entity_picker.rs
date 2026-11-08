@@ -19,7 +19,6 @@ use nidoo_web::screens::alarm_settings::AlarmSettingsPage;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

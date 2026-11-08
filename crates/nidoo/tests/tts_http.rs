@@ -1,7 +1,7 @@
 //! The speech management routes over HTTP, against a fake Hugging Face server and a fake
 //! synthesiser.
 
-mod common;
+use crate::common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

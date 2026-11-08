@@ -19,7 +19,6 @@ use nidoo_web::screens::generic_panel::GenericPanel;
 use nidoo_web::screens::home::card_for;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn generic(component: &str, controls: &[&str], text: &str) -> EntityView {
     let mut g = GenericState::default();

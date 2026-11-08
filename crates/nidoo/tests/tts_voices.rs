@@ -1,6 +1,6 @@
 //! The voice catalogue against a fake Hugging Face server.
 
-mod common;
+use crate::common;
 
 use common::fake_hf::{FakeRepo, serve};
 use nidoo::assist::tts::TtsError;

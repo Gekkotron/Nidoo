@@ -1,7 +1,7 @@
 //! Database-backed tests for the `settings` table. They skip without `TEST_DATABASE_URL`,
 //! like `history_db.rs`.
 
-mod common;
+use crate::common;
 
 use common::db::fresh_db;
 use nidoo::setup::sections::Sections;

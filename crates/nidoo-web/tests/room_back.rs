@@ -15,7 +15,6 @@ use nidoo_web::screens::home::HomeScreen;
 use nidoo_web::theme::Theme;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn light(id: &str, area: &str) -> EntityView {
     EntityView {
