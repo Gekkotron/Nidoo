@@ -6,7 +6,7 @@
 //! `skipping: TEST_DATABASE_URL unset` and returns, so the suite stays green on machines
 //! without a database.
 
-mod common;
+use crate::common;
 
 use common::db::{TestDb, fresh_db};
 use nidoo::history::climate::ClimateDecisionRow;

@@ -3,7 +3,7 @@
 //! Needs `TEST_DATABASE_URL` (see `history_db.rs`); without it each test prints
 //! `skipping: TEST_DATABASE_URL unset` and returns.
 
-mod common;
+use crate::common;
 
 use common::db::fresh_db;
 use nidoo_assist::view::{ActionTrace, AssistTurn, OutcomeKind, Question, QuestionKind, Trace};

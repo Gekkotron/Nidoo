@@ -11,7 +11,6 @@ use nidoo_web::shell::Shell;
 use nidoo_web::theme::Theme;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn dashboard(id: &str, name: &str, order: u32) -> DashboardView {
     DashboardView {

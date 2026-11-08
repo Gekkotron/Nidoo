@@ -5,6 +5,13 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+# The integration tests are one binary (tests/integration.rs) rather than one per file, so CI
+# links the hub once.
+autotests = false
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [features]
 default = ["tts", "stt"]

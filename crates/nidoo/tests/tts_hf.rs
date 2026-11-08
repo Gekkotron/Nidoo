@@ -1,6 +1,6 @@
 //! The Hugging Face client against a fake server.
 
-mod common;
+use crate::common;
 
 use common::fake_hf::{FakeRepo, TOKEN, serve};
 use nidoo::assist::tts::TtsError;

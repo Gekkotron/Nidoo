@@ -1,6 +1,6 @@
 //! The model download job against a fake Hugging Face server.
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

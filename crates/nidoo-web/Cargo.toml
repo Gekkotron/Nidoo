@@ -6,8 +6,20 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# The browser tests are one binary (tests/browser.rs) rather than one per file: each binary
+# costs a wasm link and a Chrome start, which made the CI job take 15 minutes.
+autotests = false
+
 [lib]
 path = "src/lib.rs"
+
+[[test]]
+name = "browser"
+path = "tests/browser.rs"
+
+[[test]]
+name = "bare_text"
+path = "tests/bare_text.rs"
 
 [[bin]]
 name = "nidoo-web"

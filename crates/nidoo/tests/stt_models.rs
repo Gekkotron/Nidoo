@@ -2,7 +2,7 @@
 //! it is ignored by default:
 //!
 //! ```text
-//! NIDOO_STT_MODELS=<folder> cargo test -p nidoo --test stt_models -- --ignored --nocapture
+//! NIDOO_STT_MODELS=<folder> cargo test -p nidoo --test integration stt_models:: -- --ignored --nocapture
 //! ```
 //!
 //! `<folder>` holds the Parakeet files, `silero_vad.onnx` and `test_wavs/fr.wav`, as the

@@ -1,7 +1,7 @@
 //! The system task through the hub: sensors and their availability, the restart push, the
 //! service outage pushes and the in-memory view. The publisher channel is inspected.
 
-mod common;
+use crate::common;
 
 use std::path::Path;
 use std::sync::Arc;

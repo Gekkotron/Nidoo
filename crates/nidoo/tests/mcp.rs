@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-mod common;
+use crate::common;
 
 type Client = RunningService<RoleClient, ()>;
 

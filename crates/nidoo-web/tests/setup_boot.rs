@@ -9,7 +9,6 @@ use nidoo_web::app::Root;
 use nidoo_web::setup::{Applying, ApplyingOverlay, wait_for_hub};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

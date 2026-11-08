@@ -10,7 +10,6 @@ use nidoo_web::i18n::Lang;
 use nidoo_web::screens::settings::{SettingsScreen, ZigbeePage};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 fn device(name: &str, update: Option<UpdateView>) -> DeviceView {
     DeviceView {

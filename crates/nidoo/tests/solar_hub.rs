@@ -1,6 +1,6 @@
 //! The solar entities, cache and view as the hub publishes them.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

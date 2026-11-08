@@ -1,7 +1,7 @@
 //! The Solcast poller against a local stub of the API, with the hub served on an ephemeral
 //! port. No test reaches the real network.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

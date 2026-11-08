@@ -10,7 +10,6 @@ use nidoo_web::i18n::Lang;
 use nidoo_web::setup::services::energy::EnergyForm;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
-wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

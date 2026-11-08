@@ -2,7 +2,7 @@
 //!
 //! Needs a real model folder, so it is `#[ignore]`d: run it by hand with
 //! `NIDOO_TTS_MODEL_DIR=<folder> NIDOO_TTS_WEIGHTS=model.q8.gguf \
-//!  cargo test --release -p nidoo --test tts_real -- --ignored --nocapture`.
+//!  cargo test --release -p nidoo --test integration tts_real:: -- --ignored --nocapture`.
 #![cfg(feature = "tts")]
 
 use std::time::Instant;
