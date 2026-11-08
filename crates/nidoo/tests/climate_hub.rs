@@ -825,6 +825,7 @@ mod engine {
             reading_age_s: Some(30),
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: true,
             at: rig.t0 - 3600,
             entities: BTreeMap::from([(
@@ -886,6 +887,7 @@ mod engine {
                 reading_age_s: None,
                 outdoor_mean: None,
                 home: true,
+                holiday: false,
                 applied: true,
                 at,
                 entities,
@@ -1039,6 +1041,7 @@ mod engine {
             reading_age_s: None,
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: false,
             at: rig.t0 - 3600,
             entities: BTreeMap::from([(
@@ -2125,6 +2128,7 @@ mod engine {
             reading_age_s: Some(9999),
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: false,
             at: rig.t0,
             entities: BTreeMap::new(),
@@ -2481,6 +2485,7 @@ mod engine {
             reading_age_s: Some(30),
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: true,
             // Stepped 5 min before the restart: the next step still waits interval_min (15).
             at: rig.t0 - 300,
@@ -2535,6 +2540,140 @@ mod engine {
         let out = rig.pass(661).await;
         assert!(commands(&out).is_empty(), "{out:?}");
         assert_eq!(rig.sim.units[&0].1, 21.0);
+    }
+
+    /// A rig whose house presence follows the `t/home` switch, at home, heating at 17 °C.
+    async fn house_rig() -> Rig {
+        let mut rig = Rig::new(None).await;
+        rig.hub.ingest(
+            "nidoo/switch/presence/home/config",
+            br#"{"name":"Home","unique_id":"presence_home","state_topic":"t/home","command_topic":"t/home/set"}"#,
+        );
+        let switch = rig
+            .hub
+            .snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id.contains("presence_home"))
+            .expect("presence switch")
+            .id;
+        rig.hub.ingest("t/home", b"ON");
+        rig.hub
+            .set_climate_house(HouseSettings {
+                presence: vec![switch],
+                ..HouseSettings::default()
+            })
+            .unwrap();
+        rig.settings(heat_rules(17.0));
+        rig
+    }
+
+    fn boost(rig: &Rig, setpoint: f64) -> Override {
+        Override {
+            entity: None,
+            setpoint: Some(Setpoint::Temp(setpoint)),
+            mode: None,
+            until: rig.t0 + 7200,
+            origin: OverrideOrigin::User,
+        }
+    }
+
+    fn source(rig: &Rig) -> Source {
+        rig.zone().decision.expect("decision").source
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaving_drops_a_boost_set_before() {
+        let mut rig = house_rig().await;
+        rig.pass(0).await;
+        rig.hub
+            .set_climate_override("living", boost(&rig, 22.0))
+            .await
+            .unwrap();
+        rig.pass(60).await;
+        assert_eq!(source(&rig), Source::Boost);
+        // Nobody home past the grace: away, and the boost is gone for good.
+        rig.hub.ingest("t/home", b"OFF");
+        let out = rig.pass(1000).await;
+        assert_eq!(source(&rig), Source::Away);
+        assert!(rig.zone().overrides.iter().all(|o| o.entity.is_some()));
+        let retained = out
+            .iter()
+            .rfind(|p| p.topic == "nidoo/climate/zone/living/override")
+            .expect("override doc republished");
+        // An empty list clears the retained doc.
+        if !retained.payload.is_empty() {
+            let list: Vec<Override> = serde_json::from_str(&retained.payload).unwrap();
+            assert!(list.iter().all(|o| o.entity.is_some()), "{list:?}");
+        }
+        rig.hub.ingest("t/home", b"ON");
+        rig.pass(1100).await;
+        assert_eq!(source(&rig), Source::Schedule);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn boost_set_while_away_runs_and_survives_return() {
+        let mut rig = house_rig().await;
+        rig.pass(0).await;
+        rig.hub.ingest("t/home", b"OFF");
+        rig.pass(1000).await;
+        assert_eq!(source(&rig), Source::Away);
+        rig.hub
+            .set_climate_override("living", boost(&rig, 22.0))
+            .await
+            .unwrap();
+        rig.pass(1060).await;
+        assert_eq!(source(&rig), Source::Boost);
+        rig.hub.ingest("t/home", b"ON");
+        rig.pass(1120).await;
+        assert_eq!(source(&rig), Source::Boost);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaving_keeps_hand_holds() {
+        let mut rig = house_rig().await;
+        rig.pass(0).await;
+        rig.hub
+            .set_climate_override("living", boost(&rig, 22.0))
+            .await
+            .unwrap();
+        let hold = Override {
+            entity: Some(rig.id.clone()),
+            ..boost(&rig, 20.0)
+        };
+        rig.hub.set_climate_override("living", hold).await.unwrap();
+        rig.pass(60).await;
+        rig.hub.ingest("t/home", b"OFF");
+        rig.pass(1000).await;
+        let overrides = rig.zone().overrides;
+        assert_eq!(overrides.len(), 1, "{overrides:?}");
+        assert_eq!(overrides[0].entity.as_deref(), Some(rig.id.as_str()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restart_while_away_keeps_new_boost() {
+        let mut rig = house_rig().await;
+        rig.pass(0).await;
+        rig.hub.ingest("t/home", b"OFF");
+        let out = rig.pass(1000).await;
+        assert_eq!(source(&rig), Source::Away);
+        let decision = out
+            .iter()
+            .rfind(|p| p.topic == "nidoo/climate/zone/living/decision")
+            .expect("decision published")
+            .clone();
+        // A new hub picks up the retained away decision, then a boost is set while away.
+        let mut next = house_rig().await;
+        next.t0 = rig.t0;
+        next.hub.ingest("t/home", b"OFF");
+        next.hub
+            .ingest_message(&decision.topic, decision.payload.as_bytes(), true);
+        next.hub
+            .set_climate_override("living", boost(&next, 22.0))
+            .await
+            .unwrap();
+        next.pass(1100).await;
+        assert_eq!(source(&next), Source::Boost);
     }
 }
 

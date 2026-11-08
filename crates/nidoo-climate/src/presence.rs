@@ -3,7 +3,7 @@
 //!
 //! Pure and deterministic: no I/O, no clock. `now` (Unix seconds) comes in through the input.
 
-use crate::doc::PresenceSettings;
+use crate::doc::{Decision, PresenceSettings};
 
 /// How close to the end of the "back" window a detection must be for the room to count as
 /// occupied again: someone still there, not someone who passed through.
@@ -81,6 +81,12 @@ pub fn track(
         state.arrival = fresh;
     }
     state
+}
+
+/// Whether the house was just left: the previous decision was at home and not on holiday, and
+/// now nobody is home or the holiday started. A leave ends a boost set before it (spec §5.2).
+pub fn left_house(previous: Option<&Decision>, home: bool, holiday: bool) -> bool {
+    previous.is_some_and(|p| p.home && !p.holiday) && (!home || holiday)
 }
 
 #[cfg(test)]
@@ -192,5 +198,53 @@ mod tests {
             a + 60,
         );
         assert!(!s.is_empty());
+    }
+
+    fn decision(home: bool, holiday: bool) -> crate::doc::Decision {
+        serde_json::from_value(serde_json::json!({
+            "zone": "z", "mode": "heat", "setpoint": null, "source": "schedule",
+            "reason": "", "reading": null, "reading_age_s": null, "outdoor_mean": null,
+            "home": home, "holiday": holiday, "applied": false, "at": T, "entities": {},
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn left_house_on_presence_leave() {
+        assert!(left_house(Some(&decision(true, false)), false, false));
+    }
+
+    #[test]
+    fn left_house_on_holiday_start() {
+        assert!(left_house(Some(&decision(true, false)), true, true));
+    }
+
+    #[test]
+    fn no_leave_when_already_away() {
+        assert!(!left_house(Some(&decision(false, false)), false, false));
+        assert!(!left_house(Some(&decision(true, true)), false, true));
+    }
+
+    #[test]
+    fn no_leave_on_return() {
+        assert!(!left_house(Some(&decision(false, false)), true, false));
+        assert!(!left_house(Some(&decision(true, true)), true, false));
+    }
+
+    #[test]
+    fn no_leave_without_previous() {
+        assert!(!left_house(None, false, false));
+        assert!(!left_house(None, true, true));
+    }
+
+    #[test]
+    fn old_decision_without_holiday_reads_as_false() {
+        let d: crate::doc::Decision = serde_json::from_value(serde_json::json!({
+            "zone": "z", "mode": "heat", "setpoint": null, "source": "schedule",
+            "reason": "", "reading": null, "reading_age_s": null, "outdoor_mean": null,
+            "home": true, "applied": false, "at": T, "entities": {},
+        }))
+        .unwrap();
+        assert!(!d.holiday);
     }
 }

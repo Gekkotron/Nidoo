@@ -677,6 +677,9 @@ pub struct Decision {
     pub reading_age_s: Option<u64>,
     pub outdoor_mean: Option<f64>,
     pub home: bool,
+    /// The house was on holiday; with `home`, how the next pass tells the house was just left.
+    #[serde(default)]
+    pub holiday: bool,
     pub applied: bool,
     pub at: u64,
     pub entities: BTreeMap<String, DeviceTarget>,
@@ -699,6 +702,7 @@ impl Decision {
             && self.cause == other.cause
             && self.reason == other.reason
             && self.home == other.home
+            && self.holiday == other.holiday
             && self.applied == other.applied
             && self.entities == other.entities
             && self.eco_restore == other.eco_restore
@@ -946,6 +950,7 @@ mod tests {
             reading_age_s: Some(5),
             outdoor_mean: Some(8.0),
             home: true,
+            holiday: false,
             applied: true,
             at,
             entities: BTreeMap::new(),
@@ -1162,6 +1167,7 @@ mod tests {
             reading_age_s: None,
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: false,
             at: 1,
             entities: BTreeMap::new(),
