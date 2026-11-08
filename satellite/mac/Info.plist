@@ -12,6 +12,8 @@
     <string>Nidoo Satellite</string>
     <key>CFBundleDisplayName</key>
     <string>Nidoo Satellite</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
