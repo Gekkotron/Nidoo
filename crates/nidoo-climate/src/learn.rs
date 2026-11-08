@@ -224,6 +224,7 @@ fn device_slot(
                 | Source::Empty
                 | Source::Holiday
                 | Source::Override
+                | Source::Boost
         )
     {
         return None;
@@ -1087,6 +1088,7 @@ mod tests {
             Source::Eco,
             Source::Holiday,
             Source::Override,
+            Source::Boost,
         ] {
             assert_eq!(
                 slots(&d, &[command(source)])[NOON],
