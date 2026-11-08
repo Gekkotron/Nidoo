@@ -202,6 +202,7 @@ pub fn zone(
             reading_age_s: reading.map(|_| 60),
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: true,
             at: NOW - 60,
             entities: BTreeMap::new(),

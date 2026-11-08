@@ -16,6 +16,7 @@ use nidoo_climate::doc::{
 use nidoo_climate::eco::fan_plan;
 use nidoo_climate::feedback::FeedbackState;
 use nidoo_climate::ledger::{Ledger, Observed, hold_until};
+use nidoo_climate::presence::left_house;
 use nidoo_climate::topics::{self, ZoneDoc};
 use nidoo_core::history::Micros;
 use nidoo_core::model::{Availability, Command, EntityState, Kind, StateValue, UNASSIGNED_AREA};
@@ -506,7 +507,14 @@ impl Hub {
             return;
         }
         self.tidy_zone(&mut inp);
-        inp.previous_cause = self.last_decision(zone).and_then(|d| d.cause);
+        let previous = self.last_decision(zone);
+        if left_house(previous.as_ref(), inp.home, inp.holiday)
+            && inp.overrides.iter().any(|o| o.entity.is_none())
+        {
+            inp.overrides = self.update_overrides(zone, |list| list.retain(|o| o.entity.is_some()));
+            tracing::info!(zone, "house left: boost ended");
+        }
+        inp.previous_cause = previous.and_then(|d| d.cause);
         let mut decision = decide(&inp.borrowed());
         {
             let kept = FeedbackState::after(
@@ -1127,6 +1135,7 @@ fn no_safety(zone: &str) -> Decision {
         reading_age_s: None,
         outdoor_mean: None,
         home: true,
+        holiday: false,
         applied: false,
         at: 0,
         entities: Default::default(),

@@ -187,6 +187,7 @@ fn base_decision(inp: &ZoneInputs, source: Source, reason: String) -> Decision {
         reading_age_s,
         outdoor_mean: inp.outdoor_mean,
         home: inp.home,
+        holiday: inp.holiday,
         applied: false,
         at: inp.now,
         entities: BTreeMap::new(),

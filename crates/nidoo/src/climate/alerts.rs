@@ -208,6 +208,7 @@ mod tests {
             reading_age_s: None,
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: false,
             at: 0,
             entities: Default::default(),
