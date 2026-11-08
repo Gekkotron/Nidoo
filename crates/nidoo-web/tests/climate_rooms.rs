@@ -183,6 +183,7 @@ fn zone(id: &str, name: &str, state: ZoneState, setpoint: Option<f64>) -> ZoneVi
             reading_age_s: None,
             outdoor_mean: None,
             home: true,
+            holiday: false,
             applied: true,
             at: 0,
             entities: Default::default(),
