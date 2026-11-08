@@ -476,9 +476,18 @@ impl Hub {
             watched.extend(entity_ids);
         }
         let outdoor = outdoor_mean(self, now);
+        // After a restart: a house the retained decisions already show away stays away, so the
+        // away grace does not start again at boot (and a later pass never reads a leave).
+        let retained_away = self
+            .climate_store()
+            .zones
+            .values()
+            .any(|docs| docs.decision.as_ref().is_some_and(|d| !d.home));
         let mut rt = self.climate_runtime();
-        if home_now == HomeNow::Home || rt.last_home_at.is_none() {
+        if home_now == HomeNow::Home {
             rt.last_home_at = Some(now);
+        } else if rt.last_home_at.is_none() {
+            rt.last_home_at = Some(if retained_away { 0 } else { now });
         }
         if let Some(mode) = nidoo_climate::schedule::season_mode(&house, outdoor, rt.previous_mode)
         {
@@ -508,10 +517,13 @@ impl Hub {
         }
         self.tidy_zone(&mut inp);
         let previous = self.last_decision(zone);
+        // A boost is a whole-zone override with a temperature; `off` and mode-only holds stay.
+        let is_boost =
+            |o: &Override| o.entity.is_none() && matches!(o.setpoint, Some(Setpoint::Temp(_)));
         if left_house(previous.as_ref(), inp.home, inp.holiday)
-            && inp.overrides.iter().any(|o| o.entity.is_none())
+            && inp.overrides.iter().any(is_boost)
         {
-            inp.overrides = self.update_overrides(zone, |list| list.retain(|o| o.entity.is_some()));
+            inp.overrides = self.update_overrides(zone, |list| list.retain(|o| !is_boost(o)));
             tracing::info!(zone, "house left: boost ended");
         }
         inp.previous_cause = previous.and_then(|d| d.cause);
