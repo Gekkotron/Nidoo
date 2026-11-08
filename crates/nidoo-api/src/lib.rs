@@ -12,6 +12,7 @@ mod flows;
 mod groups;
 mod history;
 mod home;
+mod mobile;
 mod network;
 pub mod search;
 mod setup;
@@ -49,6 +50,7 @@ pub use history::{
     HistoryToday, LastChange, LastChangeItem,
 };
 pub use home::{EnergyView, HomeSettings, OffPeakDevice, OffPeakEntry, OffPeakWindow};
+pub use mobile::{MobileCode, MobileInput, MobileView};
 pub use network::{NetworkWatchSpec, NetworkWatchView, WatchState, WatchStatus};
 pub use setup::{
     DatabaseInput, DatabaseView, FrigateInput, FrigateView, GeoPlace, Location, MqttInput,

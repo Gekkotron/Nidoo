@@ -12,10 +12,11 @@ use crate::config::{
     WeatherConfig,
 };
 use crate::setup::hub_file::HubFile;
+use crate::setup::mobile::MobileSection;
 
 /// The row keys, in the order the sections are listed.
-pub const SECTION_KEYS: [&str; 7] = [
-    "weather", "solcast", "frigate", "push", "climate", "advanced", "system",
+pub const SECTION_KEYS: [&str; 8] = [
+    "weather", "solcast", "frigate", "push", "climate", "advanced", "system", "mobile",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -155,6 +156,7 @@ pub struct Sections {
     pub climate: ClimateConfig,
     pub advanced: AdvancedSection,
     pub system: SystemSection,
+    pub mobile: MobileSection,
 }
 
 impl Sections {
@@ -171,6 +173,7 @@ impl Sections {
             ("climate", row(&self.climate)),
             ("advanced", row(&self.advanced)),
             ("system", row(&self.system)),
+            ("mobile", row(&self.mobile)),
         ]
     }
 
@@ -196,6 +199,7 @@ impl Sections {
                 "climate" => out.climate = parse(&key, value),
                 "advanced" => out.advanced = parse(&key, value),
                 "system" => out.system = parse(&key, value),
+                "mobile" => out.mobile = parse(&key, value),
                 _ => {}
             }
         }

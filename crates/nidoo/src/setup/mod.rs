@@ -5,6 +5,7 @@ pub mod boot;
 pub mod bundled;
 pub mod fs;
 pub mod hub_file;
+pub mod mobile;
 pub mod probe;
 pub mod restart;
 pub mod routes;
