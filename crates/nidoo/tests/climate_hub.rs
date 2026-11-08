@@ -2675,6 +2675,27 @@ mod engine {
             .unwrap();
         next.pass(1100).await;
         assert_eq!(source(&next), Source::Boost);
+        // Past the away grace the restart is not taken for a leave: the boost still runs.
+        next.pass(2100).await;
+        assert_eq!(source(&next), Source::Boost);
+        assert!(next.zone().overrides.iter().any(|o| o.entity.is_none()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaving_keeps_an_off_hold() {
+        let mut rig = house_rig().await;
+        rig.pass(0).await;
+        let off = Override {
+            setpoint: Some(Setpoint::Off),
+            ..boost(&rig, 0.0)
+        };
+        rig.hub.set_climate_override("living", off).await.unwrap();
+        rig.pass(60).await;
+        assert_eq!(source(&rig), Source::Override);
+        rig.hub.ingest("t/home", b"OFF");
+        rig.pass(1000).await;
+        assert_eq!(source(&rig), Source::Override);
+        assert_eq!(rig.zone().overrides.len(), 1);
     }
 }
 
