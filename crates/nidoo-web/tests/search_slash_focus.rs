@@ -3,6 +3,7 @@
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/search_harness.rs"]
 mod harness;

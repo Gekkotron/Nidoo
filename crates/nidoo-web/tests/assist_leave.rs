@@ -4,6 +4,7 @@
 
 use serde_json::Value;
 use wasm_bindgen_test::*;
+wasm_bindgen_test_configure!(run_in_browser);
 
 #[path = "support/fetch_stub.rs"]
 mod fetch_stub;

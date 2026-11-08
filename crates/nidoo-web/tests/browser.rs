@@ -1,15 +1,14 @@
-//! Every browser test, built as one wasm binary so the run links once and starts Chrome once.
-//! Each `tests/<name>.rs` stays its own module; a new test file needs a line here.
+//! The browser tests, built as one wasm binary so the run links once and starts Chrome once.
+//! Each `tests/<name>.rs` stays its own module; a new test file needs a line here. A test that
+//! clicks a link or presses a page-wide key needs a clean page instead: give its file a `[[test]]`
+//! of its own in `Cargo.toml`, like `search_slash`.
 #![cfg(target_arch = "wasm32")]
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 mod ambiance_editor;
 mod ambiances_page;
-mod assist_fab;
-mod assist_leave;
 mod assist_redirect;
-mod assist_settings;
 mod assist_speak;
 mod assistant;
 mod camera_widget;
@@ -19,7 +18,6 @@ mod climate_rooms;
 mod climate_timeline;
 mod cover;
 mod dashboard_screen;
-mod drawer;
 mod energy;
 mod energy_preview;
 mod entity_picker;
@@ -41,13 +39,8 @@ mod rich_cards;
 mod room_back;
 mod rooms;
 mod satellite_card;
-mod search_back;
 mod search_back_scroll;
-mod search_escape;
-mod search_glass;
 mod search_page;
-mod search_slash;
-mod search_slash_focus;
 mod security;
 mod settings_updates;
 mod setup_boot;
@@ -65,8 +58,6 @@ mod solar_card;
 mod solar_page;
 mod sound_page;
 mod speech_input;
-mod system_nav;
-mod system_page;
 mod weather_page;
 mod web_errors;
 mod wheel;
