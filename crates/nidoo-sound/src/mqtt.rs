@@ -25,6 +25,13 @@ pub const SPOKEN_TOPIC: &str = "nidoo-sound/spoken";
 /// `online` / `offline` (last will), retained.
 pub const STATUS_TOPIC: &str = "nidoo-sound/status";
 
+/// Largest message read from the broker. `<ui_prefix>/+` brings the hub's retained
+/// documents (`_types` is 17 KiB, `_home` grows with the house): over rumqttc's 10 KiB
+/// default the link drops, the will marks every satellite offline and no name is read.
+const MAX_INCOMING_PACKET: usize = 1024 * 1024;
+/// Largest message sent; discovery configs and states stay small.
+const MAX_OUTGOING_PACKET: usize = 64 * 1024;
+
 fn on_off(b: bool) -> &'static str {
     if b { "ON" } else { "OFF" }
 }
@@ -259,17 +266,8 @@ pub fn route(topic: &str, payload: &[u8], ha_status: &str) -> Incoming {
     parse_command(topic, payload).map_or(Incoming::Ignored, Incoming::Control)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn run_mqtt(
-    cfg: &MqttSettings,
-    discovery_prefix: &str,
-    ui_prefix: &str,
-    satellites: Satellites,
-    mut publish: mpsc::Receiver<Published>,
-    control: mpsc::Sender<Control>,
-    speak: mpsc::Sender<Waiting>,
-    hold: mpsc::Sender<HoldRequest>,
-) -> anyhow::Result<()> {
+/// The broker session: keep-alive, login, the `offline` will and the packet limits.
+fn mqtt_options(cfg: &MqttSettings) -> MqttOptions {
     let mut options = MqttOptions::new(cfg.client_id.clone(), cfg.host.clone(), cfg.port);
     options.set_keep_alive(Duration::from_secs(30));
     if let Some(user) = &cfg.user {
@@ -281,7 +279,22 @@ pub async fn run_mqtt(
         QoS::AtLeastOnce,
         true,
     ));
-    let (client, mut eventloop) = AsyncClient::new(options, 256);
+    options.set_max_packet_size(MAX_INCOMING_PACKET, MAX_OUTGOING_PACKET);
+    options
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_mqtt(
+    cfg: &MqttSettings,
+    discovery_prefix: &str,
+    ui_prefix: &str,
+    satellites: Satellites,
+    mut publish: mpsc::Receiver<Published>,
+    control: mpsc::Sender<Control>,
+    speak: mpsc::Sender<Waiting>,
+    hold: mpsc::Sender<HoldRequest>,
+) -> anyhow::Result<()> {
+    let (client, mut eventloop) = AsyncClient::new(mqtt_options(cfg), 256);
     let ha_status = format!("{discovery_prefix}/status");
     let mut known: HashMap<String, (PlayerPrefs, bool, Option<Ipv4Addr>)> = HashMap::new();
     let mut announced: HashMap<String, String> = HashMap::new();
@@ -675,6 +688,19 @@ mod tests {
             Incoming::Control(Control::SetMute { muted: true, .. })
         ));
         assert_eq!(route("elsewhere", b"x", ha), Incoming::Ignored);
+    }
+
+    #[test]
+    fn the_hubs_retained_documents_fit_in_one_packet() {
+        // `<ui_prefix>/+` brings `_types` back on every connect; a packet over the limit
+        // drops the link, so the satellites flap offline and keep their own names.
+        let options = mqtt_options(&MqttSettings::default());
+        let types = nidoo_core::types::table_json().len();
+        assert!(
+            options.max_packet_size() >= 16 * types,
+            "limit {} for a {types}-byte type table",
+            options.max_packet_size()
+        );
     }
 
     #[test]
