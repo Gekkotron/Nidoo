@@ -276,3 +276,152 @@ async fn a_late_answer_after_the_timeout_corrects_the_row() {
         row_text(&host, "solar")
     );
 }
+
+const MOBILE_HOME: &str =
+    r#"{"gateway_url":null,"gateway_key":{"set":false},"gateway_ready":false}"#;
+const MOBILE_REMOTE: &str = r#"{"gateway_url":"https://house.example.ts.net","gateway_key":{"set":true},"gateway_ready":true}"#;
+const MOBILE_CODE: &str = r#"{"payload":"{\"v\":1,\"hub\":\"http://192.0.2.10:8081\"}"}"#;
+
+fn stub_mobile(stub: &FetchStub, view: &str) {
+    stub.reply("GET", "/api/v1/settings/mobile", 200, view);
+    stub.reply("GET", "/api/v1/setup/mobile-code", 200, MOBILE_CODE);
+}
+
+fn html(host: &web_sys::Element, selector: &str) -> web_sys::HtmlElement {
+    host.query_selector(selector)
+        .unwrap()
+        .unwrap_or_else(|| panic!("{selector} is missing"))
+        .unchecked_into()
+}
+
+fn mobile_gets(stub: &FetchStub) -> usize {
+    stub.requests()
+        .iter()
+        .filter(|r| r.method == "GET" && r.url == "/api/v1/setup/mobile-code")
+        .count()
+}
+
+#[wasm_bindgen_test]
+async fn done_shows_the_phone_block_blurred() {
+    let stub = FetchStub::install();
+    stub_mobile(&stub, MOBILE_HOME);
+    let host = mount_done();
+    settle().await;
+    let code = html(&host, ".phone__code");
+    assert!(code.class_list().contains("phone__code--hidden"));
+    assert_eq!(
+        html(&host, ".phone__toggle").text_content().unwrap().trim(),
+        "Show code"
+    );
+    assert!(host.text_content().unwrap().contains("Connect your phone"));
+}
+
+#[wasm_bindgen_test]
+async fn show_code_reveals_and_hide_blurs() {
+    let stub = FetchStub::install();
+    stub_mobile(&stub, MOBILE_HOME);
+    let host = mount_done();
+    settle().await;
+    let toggle = html(&host, ".phone__toggle");
+    toggle.click();
+    settle().await;
+    let code = html(&host, ".phone__code");
+    assert!(!code.class_list().contains("phone__code--hidden"));
+    assert!(code.query_selector("svg").unwrap().is_some());
+    toggle.click();
+    settle().await;
+    assert!(
+        html(&host, ".phone__code")
+            .class_list()
+            .contains("phone__code--hidden")
+    );
+}
+
+#[wasm_bindgen_test]
+async fn home_only_status_without_gateway() {
+    let stub = FetchStub::install();
+    stub_mobile(&stub, MOBILE_HOME);
+    let host = mount_done();
+    settle().await;
+    assert_eq!(
+        html(&host, ".phone__status").text_content().unwrap().trim(),
+        "Home network only"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn saving_the_gateway_refetches_the_code() {
+    let stub = FetchStub::install();
+    stub_mobile(&stub, MOBILE_HOME);
+    stub.reply("PUT", "/api/v1/settings/mobile", 200, MOBILE_REMOTE);
+    let host = mount_done();
+    settle().await;
+    let before = mobile_gets(&stub);
+    let url: web_sys::HtmlInputElement = html(&host, "#phone-gateway-url").unchecked_into();
+    url.set_value("https://house.example.ts.net");
+    url.dispatch_event(&web_sys::Event::new("input").unwrap())
+        .unwrap();
+    let key: web_sys::HtmlInputElement = html(&host, "#phone-gateway-key").unchecked_into();
+    key.set_value(&"ab".repeat(32));
+    key.dispatch_event(&web_sys::Event::new("input").unwrap())
+        .unwrap();
+    settle().await;
+    html(&host, ".phone__save").click();
+    let put = stub.wait_for("PUT").await.expect("a PUT");
+    assert_eq!(put.url, "/api/v1/settings/mobile");
+    let body: serde_json::Value = serde_json::from_str(&put.body).unwrap();
+    assert_eq!(body["gateway_url"], "https://house.example.ts.net");
+    assert_eq!(body["gateway_key"], "ab".repeat(32));
+    settle().await;
+    assert!(mobile_gets(&stub) > before);
+    assert_eq!(
+        html(&host, ".phone__status").text_content().unwrap().trim(),
+        "At home and away"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn a_refusal_shows_inline() {
+    let stub = FetchStub::install();
+    stub_mobile(&stub, MOBILE_HOME);
+    stub.reply(
+        "PUT",
+        "/api/v1/settings/mobile",
+        422,
+        r#"{"error":"The gateway key must be 64 hex characters"}"#,
+    );
+    let host = mount_done();
+    settle().await;
+    html(&host, ".phone__save").click();
+    stub.wait_for("PUT").await.expect("a PUT");
+    settle().await;
+    let alert = html(&host, ".phone [role=alert]");
+    assert!(
+        alert
+            .text_content()
+            .unwrap()
+            .contains("The gateway key must be 64 hex characters")
+    );
+}
+
+#[wasm_bindgen_test]
+async fn open_my_house_still_works_without_the_code() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/settings/mobile", 200, MOBILE_HOME);
+    stub.reply(
+        "GET",
+        "/api/v1/setup/mobile-code",
+        503,
+        r#"{"error":"database unreachable"}"#,
+    );
+    let host = mount_done();
+    settle().await;
+    let alert = html(&host, ".phone [role=alert]");
+    assert!(
+        alert
+            .text_content()
+            .unwrap()
+            .contains("database unreachable")
+    );
+    assert!(!html(&host, ".done__open").has_attribute("disabled"));
+}

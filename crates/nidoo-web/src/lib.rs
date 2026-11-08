@@ -39,6 +39,7 @@ pub mod if_value;
 pub mod layout;
 pub mod nav;
 pub mod override_editor;
+pub mod qr;
 pub mod room_order;
 pub mod rooms;
 pub mod sankey_layout;

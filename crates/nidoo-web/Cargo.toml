@@ -29,6 +29,7 @@ nidoo-assist = { path = "../nidoo-assist" }
 nidoo-climate = { path = "../nidoo-climate" }
 nidoo-core = { path = "../nidoo-core" }
 nidoo-frigate = { path = "../nidoo-frigate" }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 serde.workspace = true
 serde-wasm-bindgen.workspace = true
 serde_json.workspace = true
