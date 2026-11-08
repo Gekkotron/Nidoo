@@ -478,18 +478,8 @@ impl Hub {
                 };
                 (OutcomeKind::Confirming, question, Some(q), trace)
             }
-            Plan::NotUnderstood {
-                reply,
-                examples,
-                trace,
-            } => {
-                let text = if examples.is_empty() {
-                    reply
-                } else {
-                    let quoted: Vec<String> = examples.iter().map(|e| format!("« {e} »")).collect();
-                    format!("{reply} Essaie par exemple : {}.", quoted.join(", "))
-                };
-                (OutcomeKind::NotUnderstood, text, None, trace)
+            Plan::NotUnderstood { reply, trace } => {
+                (OutcomeKind::NotUnderstood, reply, None, trace)
             }
         };
         if simulate && !text.starts_with("Simulation :") {

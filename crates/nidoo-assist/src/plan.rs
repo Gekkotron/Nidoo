@@ -144,7 +144,6 @@ pub enum Plan {
     },
     NotUnderstood {
         reply: String,
-        examples: Vec<String>,
         trace: Trace,
     },
 }
@@ -201,7 +200,7 @@ pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> 
             req.speaker_room = speaker_room.map(str::to_owned);
             plan_request(&req, house)
         }
-        None => not_understood(house),
+        None => not_understood(),
     };
     plan.trace_mut().words = ws.iter().map(shown).collect();
     plan
@@ -264,10 +263,9 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
     }
 }
 
-fn not_understood(house: &House) -> Plan {
+fn not_understood() -> Plan {
     Plan::NotUnderstood {
         reply: "Je n'ai pas compris.".into(),
-        examples: crate::pending::examples(house),
         trace: Trace::default(),
     }
 }

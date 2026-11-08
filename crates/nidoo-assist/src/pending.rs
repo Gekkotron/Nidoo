@@ -1,10 +1,7 @@
 //! A question left pending, and reading a typed answer to it.
 
-use crate::house::House;
-use crate::intent::parse;
 use crate::lexicon::{Class, class};
-use crate::plan::{Plan, Request, plan_request};
-use crate::reply::{dans, de, le};
+use crate::plan::{Plan, Request};
 use crate::room::{name_words, score};
 use crate::text::{Word, number_text, words};
 
@@ -156,54 +153,9 @@ pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
     }
 }
 
-/// Plans a sentence without ever building examples (which would recurse); `None` when it is
-/// not understood.
-fn try_plan(sentence: &str, house: &House) -> Option<Plan> {
-    parse(&words(sentence)).map(|intent| plan_request(&Request::new(intent), house))
-}
-
-/// Up to three sentences the assistant understands, built from this house's own rooms: a
-/// room with lights, an active heating zone (another room when there is one) and a room with
-/// a temperature reading.
-pub fn examples(house: &House) -> Vec<String> {
-    let names: Vec<&str> = house.areas.iter().map(|a| a.name.as_str()).collect();
-    let lights = |n: &&str| format!("allume la lumière {}", de(n));
-    let heat = |n: &&str| format!("mets {} à 19", le(n));
-    let read = |n: &&str| format!("quelle température fait-il {} ?", dans(n));
-    let mut out = Vec::new();
-    let light_room = names
-        .iter()
-        .find(|n| matches!(try_plan(&lights(n), house), Some(Plan::Act { .. })));
-    out.extend(light_room.map(lights));
-    let heat_rooms: Vec<&&str> = names
-        .iter()
-        .filter(|n| {
-            matches!(
-                try_plan(&heat(n), house),
-                Some(Plan::Act { .. } | Plan::Confirm { .. })
-            )
-        })
-        .collect();
-    let heat_room = heat_rooms
-        .iter()
-        .find(|n| Some(**n) != light_room)
-        .or(heat_rooms.first());
-    out.extend(heat_room.map(|n| heat(n)));
-    let read_room = names.iter().find(|n| {
-        matches!(
-            try_plan(&read(n), house),
-            Some(Plan::Answer { ref reply, .. }) if reply.starts_with("Il fait")
-        )
-    });
-    out.extend(read_room.map(read));
-    out.truncate(3);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixture;
     use crate::intent::{Change, Intent};
     use crate::plan::Request;
 
@@ -274,63 +226,6 @@ mod tests {
         assert_eq!(answer_text("il fait combien dehors ?", &rooms()), None);
         assert_eq!(answer_text("il fait combien dehors ?", &confirm()), None);
         assert_eq!(answer_text("allume la chambre de Léa", &rooms()), None);
-    }
-
-    #[test]
-    fn examples_use_real_names() {
-        let f = fixture::house();
-        let ex = examples(&f.house());
-        assert!(!ex.is_empty() && ex.len() <= 3, "{ex:?}");
-        for e in &ex {
-            assert!(e.contains("Salon") || e.contains("Chambre Léa"), "{e}");
-            for absent in ["Cuisine", "Garage", "Chambre Tom"] {
-                assert!(!e.contains(absent), "{e}");
-            }
-            // Every example is understood.
-            assert!(
-                !matches!(
-                    crate::plan::plan(e, &f.house()),
-                    crate::plan::Plan::NotUnderstood { .. }
-                ),
-                "{e}"
-            );
-        }
-    }
-
-    #[test]
-    fn examples_say_chambre_de_for_a_person_room() {
-        let f = fixture::person_rooms();
-        let ex = examples(&f.house());
-        assert!(ex.iter().any(|e| e.contains("la chambre de Léa")), "{ex:?}");
-        for e in &ex {
-            assert!(
-                !matches!(
-                    crate::plan::plan(e, &f.house()),
-                    crate::plan::Plan::NotUnderstood { .. }
-                ),
-                "{e}"
-            );
-        }
-    }
-
-    #[test]
-    fn empty_house_has_no_examples() {
-        let mut f = fixture::house();
-        f.areas.clear();
-        f.entities.clear();
-        f.zones.clear();
-        assert!(examples(&f.house()).is_empty());
-    }
-
-    #[test]
-    fn a_room_name_the_parser_rejects_is_skipped() {
-        // "volets" is a device word: a sentence naming this room is not understood.
-        let mut f = fixture::house();
-        f.areas.insert(0, fixture::area("volets", "Volets"));
-        f.entities
-            .push(fixture::light("light_volets", "Lampe", "volets", false));
-        let ex = examples(&f.house());
-        assert!(ex.iter().all(|e| !e.contains("Volets")), "{ex:?}");
     }
 
     #[test]
