@@ -137,7 +137,7 @@ pub fn PhoneSetup() -> impl IntoView {
                 <button
                     type="button"
                     class="btn phone__save"
-                    prop:disabled=move || saving.get()
+                    prop:disabled=move || saving.get() || view_state.with(Option::is_none)
                     on:click=save
                 >
                     {move || t(MobileText::Save)}

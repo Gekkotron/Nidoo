@@ -52,17 +52,7 @@ pub fn apply_input(
 ) -> Result<MobileSection, &'static str> {
     let gateway_url = match input.gateway_url.as_deref().map(str::trim) {
         None | Some("") => None,
-        Some(text) => {
-            let ok = url::Url::parse(text).is_ok_and(|u| {
-                u.scheme() == "https"
-                    && u.host_str().is_some_and(|h| !h.is_empty())
-                    && u.port() != Some(0)
-            });
-            if !ok {
-                return Err(BAD_URL);
-            }
-            Some(text.to_owned())
-        }
+        Some(text) => Some(normalize_gateway_url(text).ok_or(BAD_URL)?),
     };
     let gateway_key = secret::apply(stored.gateway_key.clone(), input.gateway_key);
     let gateway_key = match gateway_key {
@@ -79,6 +69,73 @@ pub fn apply_input(
         gateway_url,
         gateway_key,
     })
+}
+
+/// The gateway address as the app's parser wants it, or `None` when it is not an https URL
+/// with a host. The text is stored in its normalized form (lower-case scheme, punycode host,
+/// escaped path), so a capitalised `Https://` or a sloppy `https:host` typed on a phone never
+/// becomes a code the app refuses; a bare trailing `/` is dropped.
+fn normalize_gateway_url(text: &str) -> Option<String> {
+    let u = url::Url::parse(text).ok()?;
+    let ok =
+        u.scheme() == "https" && u.host_str().is_some_and(|h| !h.is_empty()) && u.port() != Some(0);
+    if !ok {
+        return None;
+    }
+    let s = u.as_str();
+    let bare_root = u.path() == "/" && u.query().is_none() && u.fragment().is_none();
+    Some(
+        if bare_root {
+            s.trim_end_matches('/')
+        } else {
+            s
+        }
+        .to_owned(),
+    )
+}
+
+/// Whether the app takes `url` as a Frigate address: `http(s)://host[:port]` with an ASCII
+/// host (letters, digits, `.`, `_`, `-`, or a bracketed IPv6) and at most a trailing `/`
+/// (Nidoo-app `isHistoryUrl`). Anything else would make the app refuse the whole code.
+fn app_takes_frigate_url(url: &str) -> bool {
+    let url = url.trim();
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (host, port) = if let Some(v6) = rest.strip_prefix('[') {
+        let Some((inside, after)) = v6.split_once(']') else {
+            return false;
+        };
+        if inside.is_empty() || !inside.chars().all(|c| c.is_ascii_hexdigit() || c == ':') {
+            return false;
+        }
+        match after {
+            "" => ("v6", None),
+            p => match p.strip_prefix(':') {
+                Some(p) => ("v6", Some(p)),
+                None => return false,
+            },
+        }
+    } else {
+        match rest.split_once(':') {
+            Some((h, p)) => (h, Some(p)),
+            None => (rest, None),
+        }
+    };
+    let host_ok = !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    let port_ok = port.is_none_or(|p| {
+        (1..=5).contains(&p.len())
+            && p.bytes().all(|b| b.is_ascii_digit())
+            && p.parse::<u32>().is_ok_and(|n| (1..=65535).contains(&n))
+    });
+    host_ok && port_ok
 }
 
 /// The broker host a phone can reach: the configured one, unless it only means something
@@ -133,7 +190,7 @@ pub fn build_payload(mqtt: &MqttConfig, sections: &Sections, request_host: Optio
         );
     }
     let f = &sections.frigate;
-    if let Some(url) = f.url.as_deref().filter(|u| !u.is_empty()) {
+    if let Some(url) = f.url.as_deref().filter(|u| app_takes_frigate_url(u)) {
         let mut frigate = Map::new();
         frigate.insert("url".into(), json!(url));
         if let Some(user) = f.user.as_deref().filter(|u| !u.is_empty()) {
@@ -284,6 +341,52 @@ mod tests {
         assert!(payload(&mqtt(), &s, None).get("frigate").is_none());
         s.frigate.url = Some(String::new());
         assert!(payload(&mqtt(), &s, None).get("frigate").is_none());
+    }
+
+    #[test]
+    fn frigate_the_app_refuses_is_left_out() {
+        let mut s = Sections::default();
+        for bad in [
+            "http://192.0.2.8:5000/frigate",
+            "http://caméra.example:5000",
+            "ftp://192.0.2.8",
+            "http://192.0.2.8:0",
+            "http://192.0.2.8:70000",
+        ] {
+            s.frigate.url = Some(bad.into());
+            assert!(payload(&mqtt(), &s, None).get("frigate").is_none(), "{bad}");
+        }
+        for good in [
+            "http://192.0.2.8:5000/",
+            "https://nvr.example:8971",
+            "http://[2001:db8::8]:5000",
+        ] {
+            s.frigate.url = Some(good.into());
+            assert_eq!(payload(&mqtt(), &s, None)["frigate"]["url"], good, "{good}");
+        }
+    }
+
+    #[test]
+    fn gateway_url_is_stored_as_the_app_reads_it() {
+        let none = MobileSection::default();
+        for (typed, stored) in [
+            (
+                "Https://house.example.ts.net",
+                "https://house.example.ts.net",
+            ),
+            (
+                "HTTPS://house.example.ts.net/",
+                "https://house.example.ts.net",
+            ),
+            ("https:house.example.ts.net", "https://house.example.ts.net"),
+            (
+                "https://house.example.ts.net/a b",
+                "https://house.example.ts.net/a%20b",
+            ),
+        ] {
+            let got = apply_input(&none, input(Some(typed), Secret::Keep)).unwrap();
+            assert_eq!(got.gateway_url.as_deref(), Some(stored), "{typed}");
+        }
     }
 
     #[test]

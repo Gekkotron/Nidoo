@@ -17,7 +17,7 @@ The code is blurred. Press **Show code** to reveal it and **Hide** to blur it ag
 
 Install the Nidoo app, open it, tap **Scan setup code** and point the camera at the screen. The app fills in the hub and the broker for you.
 
-By default the code carries the hub's address on your home network, such as `http://192.0.2.10:8081`, so the phone works at home only. The list row in Settings reads **Home network only**.
+By default the code carries the broker's address on your home network, such as `192.0.2.10`, so the phone works at home only. The list row in Settings reads **Home network only**.
 
 ## Remote access
 
@@ -30,4 +30,4 @@ Press **Save**. The hub does not restart. Once both fields are set, the code is 
 
 ## Keep the code private
 
-The code holds your passwords: the broker login and the gateway key. Show it only to people you trust, never share a screenshot of it, and blur it again when you are done. The hub never writes it to its logs.
+The code holds your passwords: the broker login, the gateway key and, when cameras are set up, the Frigate login. Show it only to people you trust, never share a screenshot of it, and blur it again when you are done. The hub never writes it to its logs.
