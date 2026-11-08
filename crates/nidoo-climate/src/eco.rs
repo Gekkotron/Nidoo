@@ -32,7 +32,10 @@ pub fn fan_plan(
     let mut memory = previous.clone();
     let mut commands = Vec::new();
     let in_eco = matches!(decision.source, Source::Eco | Source::Away);
-    let interrupted = matches!(decision.source, Source::Safety | Source::Override);
+    let interrupted = matches!(
+        decision.source,
+        Source::Safety | Source::Override | Source::Boost
+    );
     if !zone_off && interrupted {
         return (memory, commands);
     }
@@ -384,7 +387,7 @@ mod tests {
 
     #[test]
     fn safety_or_override_keeps_memory() {
-        for source in [Source::Safety, Source::Override] {
+        for source in [Source::Safety, Source::Override, Source::Boost] {
             let d = decision(source, &[("a", "heat", false)]);
             let (mem, cmds) = plan(&set("auto", "low"), &d, &[unit("low")], &want("low"));
             assert!(cmds.is_empty(), "{source:?}");
