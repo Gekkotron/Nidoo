@@ -70,20 +70,27 @@ jobs:
       - run: cargo test --workspace
 
   web:
-    name: web UI browser tests
+    name: web UI browser tests (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    # Each test file is its own wasm binary with its own Chrome; three jobs share them out.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      # The shards build the same dependencies: one cache for all three.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: web
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
       # The runner image ships Chrome and a matching chromedriver.
-      - run: wasm-pack test --headless --chrome --chromedriver "$CHROMEWEBDRIVER/chromedriver"
-        working-directory: crates/nidoo-web
+      - run: tools/ci/web-tests.sh ${{ matrix.shard }} 3
 
   stack:
     name: bundled stack
