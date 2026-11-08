@@ -23,6 +23,10 @@ satellite/mac/build-app.sh --install
 This builds `Nidoo Satellite.app`, signs it for this Mac only, and copies it
 to `~/Applications`. Open it from there.
 
+The app's Finder icon comes from `satellite/mac/icon/AppIcon.svg`. After
+editing it, run `satellite/mac/icon/make-icns.sh` (it needs Google Chrome) to
+remake `AppIcon.icns`.
+
 On first launch, macOS asks:
 
 - whether the app may find and talk to **devices on your local network**:

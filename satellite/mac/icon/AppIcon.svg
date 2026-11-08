@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<!-- Nidoo Satellite app icon: the Nidoo chick in its nest, sending sound waves.
+     Rendered to AppIcon.icns by make-icns.sh. -->
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#1b2757"/><stop offset=".55" stop-color="#0e1533"/><stop offset="1" stop-color="#070b18"/>
+  </linearGradient>
+  <radialGradient id="halo" cx="512" cy="560" r="360" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#58e1ff" stop-opacity=".30"/><stop offset=".6" stop-color="#58e1ff" stop-opacity=".07"/><stop offset="1" stop-color="#58e1ff" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="head" cx="44" cy="46" r="40" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#b4f6ff"/><stop offset=".45" stop-color="#58e1ff"/><stop offset="1" stop-color="#1f9fd0"/>
+  </radialGradient>
+  <linearGradient id="nest" x1="0" y1="62" x2="0" y2="94" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#ffd884"/><stop offset=".5" stop-color="#ffc457"/><stop offset="1" stop-color="#d9962f"/>
+  </linearGradient>
+  <linearGradient id="beak" x1="0" y1="66" x2="0" y2="73" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#ffe09a"/><stop offset="1" stop-color="#f0a83a"/>
+  </linearGradient>
+  <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff" stop-opacity=".10"/><stop offset=".3" stop-color="#fff" stop-opacity="0"/>
+  </linearGradient>
+  <clipPath id="above"><path d="M0 0 H120 V62 H112 C 104 104, 16 104, 8 62 H0 Z"/></clipPath>
+  <clipPath id="bowl"><path d="M8 62 C 16 104, 104 104, 112 62 Z"/></clipPath>
+  <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  <filter id="shadow" x="-8%" y="-8%" width="116%" height="116%">
+    <feGaussianBlur stdDeviation="14"/>
+  </filter>
+  <filter id="glow" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+    <feGaussianBlur stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="soft" x="-5%" y="-5%" width="110%" height="115%" color-interpolation-filters="sRGB">
+    <feDropShadow dx="0" dy="3" stdDeviation="2.2" flood-color="#04060f" flood-opacity=".45"/>
+  </filter>
+</defs>
+<rect x="112" y="122" width="800" height="800" rx="180" fill="#000" fill-opacity=".42" filter="url(#shadow)"/>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sky)"/>
+<g clip-path="url(#tile)">
+  <circle cx="232" cy="248" r="4.5" fill="#fff" fill-opacity="0.85"/><circle cx="300" cy="330" r="2.6" fill="#fff" fill-opacity="0.55"/><circle cx="196" cy="410" r="2.2" fill="#fff" fill-opacity="0.4"/><circle cx="790" cy="236" r="3.8" fill="#fff" fill-opacity="0.75"/><circle cx="742" cy="318" r="2.4" fill="#fff" fill-opacity="0.5"/><circle cx="838" cy="392" r="2.8" fill="#fff" fill-opacity="0.45"/><circle cx="384" cy="196" r="2.2" fill="#fff" fill-opacity="0.45"/><circle cx="650" cy="186" r="2.6" fill="#fff" fill-opacity="0.5"/>
+  <circle cx="512" cy="560" r="360" fill="url(#halo)"/>
+  <g fill="none" stroke="#58e1ff" stroke-width="24" stroke-linecap="round" filter="url(#glow)"><path d="M309.3 498.0 A212 212 0 0 1 399.7 380.2" stroke-opacity="0.95"/><path d="M624.3 380.2 A212 212 0 0 1 714.7 498.0" stroke-opacity="0.95"/><path d="M253.8 481.1 A270 270 0 0 1 368.9 331.0" stroke-opacity="0.62"/><path d="M655.1 331.0 A270 270 0 0 1 770.2 481.1" stroke-opacity="0.62"/><path d="M198.3 464.1 A328 328 0 0 1 338.2 281.8" stroke-opacity="0.32"/><path d="M685.8 281.8 A328 328 0 0 1 825.7 464.1" stroke-opacity="0.32"/></g>
+  <g transform="translate(200 237.6) scale(5.2)" filter="url(#soft)">
+    <g clip-path="url(#above)">
+      <path d="M54 37 L49 25 M60 35 L60 21 M66 37 L71 25" stroke="#58e1ff" stroke-width="4" stroke-linecap="round" fill="none"/>
+      <circle cx="60" cy="62" r="28" fill="url(#head)"/>
+      <circle cx="49" cy="56" r="9" fill="#fff"/><circle cx="71" cy="56" r="9" fill="#fff"/>
+      <circle cx="49.6" cy="55.6" r="4.6" fill="#0b1020"/><circle cx="71.6" cy="55.6" r="4.6" fill="#0b1020"/>
+      <circle cx="51.2" cy="53.9" r="1.5" fill="#fff"/><circle cx="73.2" cy="53.9" r="1.5" fill="#fff"/>
+      <ellipse cx="41" cy="66" rx="4" ry="2.4" fill="#ff8fb1" fill-opacity=".45"/><ellipse cx="79" cy="66" rx="4" ry="2.4" fill="#ff8fb1" fill-opacity=".45"/>
+      <path d="M55 65.5 L65 65.5 L60 72.5 Z" fill="url(#beak)" stroke="#e0952c" stroke-width=".6" stroke-linejoin="round"/>
+    </g>
+    <path d="M8 62 C 16 104, 104 104, 112 62 Z" fill="url(#nest)"/>
+    <path d="M8 62 H112" stroke="#ffe7b0" stroke-width="2.4" stroke-linecap="round"/>
+    <g clip-path="url(#bowl)">
+    <path d="M16 74 C 44 84, 76 66, 104 74 M24 85 C 46 92, 74 80, 96 86" stroke="#b8892f" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M20 68 C 34 72, 46 66, 58 69 M64 69 C 76 66, 88 71, 100 67 M36 86 C 50 90, 70 89, 84 85" stroke="#c99a3e" stroke-width="1.8" stroke-linecap="round" fill="none" stroke-opacity=".8"/>
+    </g>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#rim)"/>
+</g>
+<rect x="101" y="101" width="822" height="822" rx="184" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="2"/>
+</svg>
