@@ -21,6 +21,10 @@ env:
   CARGO_INCREMENTAL: 0
   # No debug info: less to link and to cache. Panic messages keep their file and line.
   CARGO_PROFILE_DEV_DEBUG: 0
+  # sccache keeps compiled crates in the GitHub Actions cache. rust-cache restores the
+  # dependencies already built, so sccache mostly serves the workspace crates a commit did
+  # not touch. The lint job goes without it: clippy must run on every crate.
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   lint:
@@ -63,11 +67,15 @@ jobs:
           --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://nidoo:nidoo@localhost:5432/nidoo
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: cargo test --workspace
+      - if: always()
+        run: sccache --show-stats
 
   web:
     name: web UI browser tests (${{ matrix.shard }}/3)
@@ -77,6 +85,8 @@ jobs:
       fail-fast: false
       matrix:
         shard: [0, 1, 2]
+    env:
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -86,22 +96,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: web
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
       # The runner image ships Chrome and a matching chromedriver.
       - run: tools/ci/web-tests.sh ${{ matrix.shard }} 3
+      - if: always()
+        run: sccache --show-stats
 
   stack:
     name: bundled stack
     runs-on: ubuntu-latest
     # Starts the real Mosquitto and TimescaleDB images from compose.yml, on
     # top of the credentials init-bundled writes.
+    env:
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: tools/tests/update_test.sh
       - run: shellcheck tools/*.sh tools/ci/*.sh tools/tests/*.sh
       - run: tools/ci/brand-check.sh
       - run: tools/ci/stack-check.sh
+      - if: always()
+        run: sccache --show-stats
