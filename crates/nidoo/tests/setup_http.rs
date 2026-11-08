@@ -1407,3 +1407,90 @@ async fn the_notify_unreachable_switches_show_in_the_views_and_default_off() {
         assert_eq!(view["notify_unreachable"], false, "{key}");
     }
 }
+
+async fn mobile_get(s: &Server, path: &str, host: Option<&str>) -> (StatusCode, Value) {
+    let mut req = s.client.get(format!("http://{}{path}", s.addr));
+    if let Some(h) = host {
+        req = req.header("Host", h);
+    }
+    let r = req.send().await.unwrap();
+    (r.status(), r.json().await.unwrap_or(Value::Null))
+}
+
+fn payload_of(body: &Value) -> Value {
+    serde_json::from_str(body["payload"].as_str().expect("a payload")).expect("payload is JSON")
+}
+
+#[tokio::test]
+async fn mobile_code_is_refused_in_setup_mode() {
+    let s = setup_server().await;
+    let (code, body) = mobile_get(&s, "/api/v1/setup/mobile-code", None).await;
+    assert_eq!(code, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "finish MQTT and database setup first");
+}
+
+#[tokio::test]
+async fn mobile_code_carries_the_broker() {
+    let s = serve(Mode::Run, mqtt_file("192.0.2.7"), None, false).await;
+    let (code, body) = mobile_get(&s, "/api/v1/setup/mobile-code", None).await;
+    assert_eq!(code, StatusCode::OK);
+    let p = payload_of(&body);
+    assert_eq!(p["v"], 1);
+    assert_eq!(p["local"]["host"], "192.0.2.7");
+}
+
+#[tokio::test]
+async fn mobile_code_swaps_localhost_for_the_request_host() {
+    let s = serve(Mode::Run, mqtt_file("localhost"), None, false).await;
+    let (code, body) = mobile_get(&s, "/api/v1/setup/mobile-code", Some("192.0.2.5:8081")).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(payload_of(&body)["local"]["host"], "192.0.2.5");
+}
+
+#[tokio::test]
+async fn mobile_read_never_shows_the_key() {
+    let s = serve(Mode::Run, HubFile::default(), None, false).await;
+    let key = "ab".repeat(32);
+    {
+        let mut held = s.ctx.sections.lock().await;
+        held.mobile.gateway_url = Some("https://house.example.ts.net".into());
+        held.mobile.gateway_key = Some(key.clone());
+    }
+    let r = s
+        .client
+        .get(format!("http://{}/api/v1/settings/mobile", s.addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let text = r.text().await.unwrap();
+    assert!(!text.contains(&key), "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["gateway_key"], json!({"set": true}));
+    assert_eq!(v["gateway_ready"], true);
+}
+
+#[tokio::test]
+async fn mobile_read_reports_not_ready_with_url_only() {
+    let s = serve(Mode::Run, HubFile::default(), None, false).await;
+    s.ctx.sections.lock().await.mobile.gateway_url = Some("https://house.example.ts.net".into());
+    let (code, v) = mobile_get(&s, "/api/v1/settings/mobile", None).await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(v["gateway_ready"], false);
+}
+
+#[tokio::test]
+async fn mobile_save_without_database_is_unavailable() {
+    let s = serve(Mode::Run, HubFile::default(), None, false).await;
+    let r = s
+        .client
+        .put(format!("http://{}/api/v1/settings/mobile", s.addr))
+        .json(&json!({"gateway_url": "https://house.example.ts.net"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let (_, v) = mobile_get(&s, "/api/v1/settings/mobile", None).await;
+    assert_eq!(v["gateway_url"], Value::Null);
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 0);
+}

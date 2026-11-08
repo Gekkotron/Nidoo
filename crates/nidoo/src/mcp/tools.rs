@@ -81,8 +81,8 @@ impl NidooMcp {
     }
 
     /// One section of the hub's service settings (`weather`, `solcast`, `frigate`, `push`,
-    /// `climate` or `advanced`), as the settings page shows it. Secrets (the Solcast key, the
-    /// Frigate password, the push service account) are write-only: they read as `{"set": bool}`.
+    /// `climate`, `advanced` or `mobile`), as the settings page shows it. Secrets (the Solcast key,
+    /// the Frigate password, the push service account, the `mobile` gateway key) are write-only: they read as `{"set": bool}`.
     #[tool(name = "get_settings", annotations(read_only_hint = true))]
     async fn get_settings(
         &self,
@@ -97,7 +97,9 @@ impl NidooMcp {
     }
 
     /// Replaces one section of the service settings with `value`, checks it, saves it and
-    /// restarts the hub so every service picks it up (returns `{"restarting": true}`).
+    /// restarts the hub so every service picks it up (returns `{"restarting": true}`). The
+    /// exception is `mobile` (the remote gateway address and key the phone setup code carries):
+    /// saving it does not restart the hub and returns the new view of the section.
     /// Read the section with `get_settings` first and send the whole of it back: what is left
     /// out takes its default. Secrets are write-only: a string sets one, `null` clears it, and
     /// leaving it out (or sending `""` or back `{"set": true}`) keeps the stored value. Changing a

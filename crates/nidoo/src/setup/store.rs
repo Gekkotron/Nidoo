@@ -6,6 +6,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::history::db::Db;
+use crate::setup::SetupCtx;
 use crate::setup::fs::write_private_atomic;
 use crate::setup::sections::Sections;
 
@@ -51,6 +52,35 @@ pub async fn save_section(db: &Db, key: &str, s: &Sections) -> Result<(), sqlx::
         .execute(db.pool())
         .await?;
     Ok(())
+}
+
+/// Changes one section row and stores it without restarting the hub. The row is written
+/// first, then the cache; if the cache write fails the row is put back. Only when both succeed
+/// does the new copy replace the held one. The `Err` text is fixed and never carries a secret.
+pub async fn save_live(
+    ctx: &SetupCtx,
+    key: &'static str,
+    change: impl FnOnce(&mut Sections),
+) -> Result<Sections, &'static str> {
+    let db = ctx.db.as_ref().ok_or("no database")?;
+    let mut held = ctx.sections.lock().await;
+    let mut next = held.clone();
+    change(&mut next);
+    if let Err(error) = save_section(db, key, &next).await {
+        tracing::warn!(%error, section = key, "could not store the setting");
+        return Err("the database did not take the write");
+    }
+    if let Err(error) = write_cache(&ctx.data_dir, &next) {
+        // Boot reads the cache while the database is down, so a value the cache lacks could
+        // revert silently: put the row back and report the failure.
+        tracing::error!(error = %error.kind(), "could not refresh the settings cache");
+        if let Err(error) = save_section(db, key, &held).await {
+            tracing::warn!(%error, section = key, "could not restore the row after a cache failure");
+        }
+        return Err("the settings cache could not be written");
+    }
+    *held = next.clone();
+    Ok(next)
 }
 
 /// `None` when the cache is missing or unparsable. The warning names the file, never its

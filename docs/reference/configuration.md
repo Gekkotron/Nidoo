@@ -15,13 +15,13 @@ Two places, split by what the hub needs before it can reach anything:
 | Where | What it holds |
 | --- | --- |
 | `data/hub.json` | The bootstrap settings: the MQTT connection, the database URL, the home location, the HTTP bind address, the log level, the wizard's progress and a "setup finished" flag. The hub writes it, one wizard step at a time, with mode `0600`. You do not edit it, except for the rare field with no screen (below). |
-| The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate` and `advanced`. Secrets are stored in the same rows. |
+| The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate`, `advanced` and `mobile`. Secrets are stored in the same rows. |
 | `data/settings-cache.json` | A copy of the settings the hub last read, mode `0600`. If the database is down when the hub starts, it starts from this copy with a warning, so the house keeps running. |
 | `data/bundled.json` | Written by the compose `init` service (`nidoo init-bundled`): the credentials of the Mosquitto and TimescaleDB that come with Nidoo, `mqtt_user`, `mqtt_password`, `db_user`, `db_password` and `db_name`, mode `0600`. The wizard reads it to pre-fill the MQTT and Database steps. It is not used once those steps are saved. |
 
 The documents the hub keeps on the broker (home settings, alarm, climate schedules, flows, groups, dashboards, ambiances) are not part of this: they are edited on their own screens and routes.
 
-You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. A value it could not start with is refused with the reason, and nothing is saved.
+You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. The exception is `mobile`, which is stored without a restart. A value it could not start with is refused with the reason, and nothing is saved.
 
 The folder is `./data` by default. `nidoo --data <dir>` (or `NIDOO_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`.
 
@@ -179,6 +179,17 @@ The climate engine (beta, still being tested). Switched on from the Climate card
 | --- | --- | --- |
 | `enabled` | `false` | Turn the engine on. While `false`, `GET /api/v1/climate` answers 503 and the climate MCP tools answer `climate disabled`. |
 | `prefix` | `"nidoo/climate"` | No screen. Topic prefix of the climate documents. When enabled it must not be empty or only `/`, and must not contain `+` or `#`. |
+
+## Mobile
+
+The remote gateway the Android app uses away from home, carried by the phone setup code. Read with `GET /api/v1/settings/mobile`, change with `PUT /api/v1/settings/mobile` (or `get_settings` and `set_settings`). Unlike the other sections, saving it does not restart the hub. A `PUT` replaces the whole section.
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `gateway_url` | none | The gateway address, for example `https://house.example.ts.net`. It must start with `https://` and name a host. |
+| `gateway_key` | none | The gateway key (a secret): 64 hex characters. A read shows `{"set": bool}` and `gateway_ready`, which is true when both fields are set. |
+
+`GET /api/v1/setup/mobile-code` returns `{"payload": "<json>"}`, the `v:1` JSON the phone reads from a QR code. It is built from the broker in `hub.json`, the `mobile` section and the `Host` of the request (a broker on `localhost` is replaced by that host, so the phone can reach it). It answers 409 outside Run mode or before the MQTT step is saved. The code holds secrets: the broker login and the gateway key. Show it only to someone you trust, and do not share a screenshot of it. The hub never logs it.
 
 ## Advanced
 
