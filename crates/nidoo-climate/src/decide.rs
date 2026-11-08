@@ -502,6 +502,24 @@ fn zone_override(inp: &ZoneInputs) -> Option<Decision> {
             .filter(|o| o.entity.is_none() && live(o, inp.now)),
     )?;
     let mode = ov.mode.or(inp.mode)?;
+    if let Some(Setpoint::Temp(t)) = ov.setpoint {
+        let sp = Setpoint::Temp(t);
+        let mut d = base_decision(
+            inp,
+            Source::Boost,
+            format!(
+                "Boost to {} until {}",
+                setpoint_text(sp),
+                clock(inp, ov.until)
+            ),
+        );
+        d.mode = Some(mode);
+        d.setpoint = Some(sp);
+        d.entities = targets(inp.devices, sp, mode);
+        apply_correction(inp, &mut d, mode, t);
+        hold_devices(inp, &mut d, Some(sp));
+        return Some(d);
+    }
     let sp = ov.setpoint.or_else(|| choose(inp, Some(mode)).setpoint)?;
     let mut d = base_decision(
         inp,
@@ -1136,12 +1154,78 @@ mod tests {
     }
 
     #[test]
-    fn no_correction_under_zone_override() {
+    fn boost_runs_correction() {
         let mut c = corrected(21.6, 30);
         c.overrides = vec![zone_ov(21.0, NOW + 3600)];
         let d = c.run();
-        assert_eq!(d.entities["trv"].setpoint, Some(21.0));
+        assert_eq!(d.source, Source::Boost);
+        assert_eq!(d.setpoint, Some(Setpoint::Temp(21.0)));
+        assert!(d.adjust.is_some());
+        assert!(d.entities["trv"].setpoint < Some(21.0));
+        assert!(
+            d.reason.starts_with("Boost to 21.0 °C until 11:00"),
+            "{}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn boost_without_feedback_sends_target() {
+        let mut c = Case::new();
+        c.overrides = vec![zone_ov(22.0, NOW + 3600)];
+        let d = c.run();
+        assert_eq!(d.source, Source::Boost);
+        assert_eq!(d.entities["trv"], target(Some(22.0), "heat", false));
         assert_eq!(d.adjust, None);
+    }
+
+    #[test]
+    fn mode_only_override_is_unchanged() {
+        let mut c = Case::new();
+        let mut off = zone_ov(0.0, NOW + 3600);
+        off.setpoint = Some(Setpoint::Off);
+        c.overrides = vec![off];
+        let d = c.run();
+        assert_eq!(d.source, Source::Override);
+        assert_eq!(d.adjust, None);
+    }
+
+    #[test]
+    fn boost_beats_away_eco_and_empty() {
+        let mut away = corrected(19.0, 30);
+        away.home = false;
+        let mut eco = corrected(19.0, 30);
+        eco.room_eco = eco_until(NOW + 7200);
+        for mut c in [away, eco, empty_room(15.0)] {
+            assert_ne!(c.run().source, Source::Boost);
+            c.overrides = vec![zone_ov(22.0, NOW + 3600)];
+            assert_eq!(c.run().source, Source::Boost);
+        }
+    }
+
+    #[test]
+    fn stale_reading_beats_boost() {
+        let mut c = corrected(21.0, 30);
+        c.reading = Reading::Missing;
+        c.overrides = vec![zone_ov(25.0, NOW + 3600)];
+        let d = c.run();
+        assert_eq!(d.source, Source::Safety);
+        assert_eq!(d.entities["trv"].setpoint, Some(17.0));
+    }
+
+    #[test]
+    fn held_device_under_boost() {
+        let mut c = corrected(21.6, 30);
+        c.devices = vec![dev_step("a", 0.5), dev_step("b", 0.5)];
+        c.overrides = vec![zone_ov(22.0, NOW + 3600), dev_ov("a", 20.0)];
+        let d = c.run();
+        assert_eq!(d.source, Source::Boost);
+        assert_eq!(d.entities["a"], target(Some(20.0), "heat", true));
+        assert_eq!(
+            d.entities["b"].setpoint,
+            Some(22.0 + d.adjust.unwrap_or(0.0))
+        );
+        assert!(!d.entities["b"].held);
     }
 
     #[test]
@@ -1575,7 +1659,7 @@ mod tests {
         c.devices = vec![trv(), dev("trv2", &["off", "heat"], Some(21.0))];
         c.overrides = vec![zone_ov(22.0, NOW + 3600), device_ov("trv2", 24.0)];
         let d = c.run();
-        assert_eq!(d.source, Source::Override);
+        assert_eq!(d.source, Source::Boost);
         assert_eq!(d.entities["trv"], target(Some(22.0), "heat", false));
         assert_eq!(d.entities["trv2"], target(Some(24.0), "heat", true));
     }
@@ -1672,9 +1756,9 @@ mod tests {
         let mut c = Case::new();
         c.overrides = vec![zone_ov(22.0, NOW + 3600)];
         let d = c.run();
-        assert_eq!(d.source, Source::Override);
+        assert_eq!(d.source, Source::Boost);
         assert_eq!(d.entities["trv"], target(Some(22.0), "heat", false));
-        assert_eq!(d.reason, "Override to 22.0 °C until 11:00");
+        assert_eq!(d.reason, "Boost to 22.0 °C until 11:00");
     }
 
     #[test]
@@ -1994,7 +2078,7 @@ mod tests {
         let mut c = Case::new();
         c.room_eco = eco_until(NOW + 3600);
         c.overrides = vec![zone_ov(22.0, NOW + 1800)];
-        assert_eq!(c.run().source, Source::Override);
+        assert_eq!(c.run().source, Source::Boost);
         c.overrides.clear();
         c.holiday = true;
         assert_eq!(c.run().source, Source::Holiday);

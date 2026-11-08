@@ -103,6 +103,7 @@ pub fn source_word(lang: Lang, source: Source) -> &'static str {
         match source {
             Source::Safety => ClimateText::SrcSafety,
             Source::Override => ClimateText::SrcOverride,
+            Source::Boost => ClimateText::SrcBoost,
             Source::Holiday => ClimateText::SrcHoliday,
             Source::Away => ClimateText::SrcAway,
             Source::Eco => ClimateText::SrcEco,
@@ -118,6 +119,7 @@ pub fn history_source(lang: Lang, raw: &str) -> String {
     let known = match raw {
         "safety" => Some(Source::Safety),
         "override" => Some(Source::Override),
+        "boost" => Some(Source::Boost),
         "holiday" => Some(Source::Holiday),
         "away" => Some(Source::Away),
         "eco" => Some(Source::Eco),
@@ -753,6 +755,9 @@ mod tests {
     fn history_rows_use_the_known_words() {
         assert_eq!(history_source(Lang::Fr, "schedule"), "Programmation");
         assert_eq!(history_source(Lang::Fr, "override"), "Dérogation");
+        assert_eq!(history_source(Lang::En, "boost"), "Boost");
+        assert_eq!(history_source(Lang::Fr, "boost"), "Boost");
+        assert_eq!(source_word(Lang::En, Source::Boost), "Boost");
         assert_eq!(history_source(Lang::En, "away"), "Away");
         assert_eq!(history_source(Lang::En, "eco"), "Eco");
         assert_eq!(history_source(Lang::Fr, "eco"), "Éco");

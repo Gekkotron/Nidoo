@@ -27,6 +27,7 @@ pub enum ClimateText {
     Idle,
     SrcSafety,
     SrcOverride,
+    SrcBoost,
     SrcHoliday,
     SrcAway,
     SrcEco,
@@ -162,6 +163,7 @@ impl ClimateText {
         ClimateText::Idle,
         ClimateText::SrcSafety,
         ClimateText::SrcOverride,
+        ClimateText::SrcBoost,
         ClimateText::SrcHoliday,
         ClimateText::SrcAway,
         ClimateText::SrcEco,
@@ -318,6 +320,7 @@ pub fn climate_text(lang: Lang, k: ClimateText) -> &'static str {
         T::Idle => ("Idle", "Au repos"),
         T::SrcSafety => ("Safety", "Sécurité"),
         T::SrcOverride => ("Override", "Dérogation"),
+        T::SrcBoost => ("Boost", "Boost"),
         T::SrcHoliday => ("Holiday", "Vacances"),
         T::SrcAway => ("Away", "Absence"),
         T::SrcEco => ("Eco", "Éco"),
@@ -584,6 +587,7 @@ mod tests {
         ClimateText::UnitMin,
         ClimateText::Base,
         ClimateText::UnitHours,
+        ClimateText::SrcBoost,
     ];
 
     #[test]

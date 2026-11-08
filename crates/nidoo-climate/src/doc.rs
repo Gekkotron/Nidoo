@@ -628,6 +628,8 @@ pub struct Override {
 pub enum Source {
     Safety,
     Override,
+    /// A whole-zone override with a temperature: a room target the correction drives.
+    Boost,
     Holiday,
     /// The zone's own eco until a date.
     Eco,

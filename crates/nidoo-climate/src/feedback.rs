@@ -220,7 +220,12 @@ impl FeedbackState {
     /// counts as not reached yet, so a restart during a heat-up never raises early. `None` when
     /// that decision carried no correction.
     pub fn restored(decision: &Decision, enabled: bool) -> Option<FeedbackState> {
-        if !enabled || !matches!(decision.source, Source::Schedule | Source::Empty) {
+        if !enabled
+            || !matches!(
+                decision.source,
+                Source::Schedule | Source::Empty | Source::Boost
+            )
+        {
             return None;
         }
         let Some(Setpoint::Temp(target)) = decision.setpoint else {
@@ -246,7 +251,12 @@ impl FeedbackState {
         thermometer: Option<ReadingSource>,
         now: u64,
     ) -> Option<FeedbackState> {
-        if !settings.enabled || !matches!(decision.source, Source::Schedule | Source::Empty) {
+        if !settings.enabled
+            || !matches!(
+                decision.source,
+                Source::Schedule | Source::Empty | Source::Boost
+            )
+        {
             return None;
         }
         let Some(Setpoint::Temp(target)) = decision.setpoint else {
@@ -686,6 +696,23 @@ mod tests {
         assert_eq!(
             FeedbackState::restored(&d, true),
             Some(state(17.0, -0.5, NOW, Some(NOW)))
+        );
+    }
+
+    #[test]
+    fn after_tracks_boost() {
+        let prev = state(19.0, 0.0, 500, None);
+        let d = decision(Source::Boost, Some(Setpoint::Temp(22.0)), Some(-0.5));
+        let s = FeedbackState::after(Some(&prev), &d, &on(), None, NOW).unwrap();
+        assert_eq!(s, state(22.0, -0.5, NOW, Some(NOW)));
+    }
+
+    #[test]
+    fn restored_picks_up_boost_offset() {
+        let d = decision(Source::Boost, Some(Setpoint::Temp(22.0)), Some(-1.0));
+        assert_eq!(
+            FeedbackState::restored(&d, true),
+            Some(state(22.0, -1.0, NOW, Some(NOW)))
         );
     }
 
