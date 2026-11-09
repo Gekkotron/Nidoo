@@ -1,8 +1,8 @@
 //! The card of a speaker satellite (the `nidoo-sound` service): one card per satellite, on its
 //! Volume entity, which holds the Mute, Allowed and Connected entities folded into it.
 //!
-//! Once allowed it shows the volume with its value, a Mute toggle and a test button that says a
-//! short sentence on that satellite only; while it waits for approval it shows that and an
+//! Once allowed it shows the volume with its value on one row, then a Mute toggle and a test
+//! button that says a short sentence on that satellite only; while it waits for approval it shows that and an
 //! Allow button instead.
 
 use leptos::prelude::*;
@@ -137,8 +137,9 @@ fn SatelliteFace(
             });
         };
         view! {
-            <div class="card__controls">
+            <div class="card__controls card__controls--stack">
                 {volume}
+                <div class="card__controls">
                 {mute}
                 <button
                     type="button"
@@ -148,6 +149,7 @@ fn SatelliteFace(
                     inner_html=SPEECH_BUBBLE
                     on:click=on_speak
                 ></button>
+                </div>
             </div>
         }
         .into_any()
@@ -173,7 +175,7 @@ fn SatelliteFace(
     };
 
     view! {
-        <CardFrame entity=frame on_click=on_click pending=pending title=sat.name.clone()>
+        <CardFrame entity=frame on_click=on_click pending=pending title=sat.name.clone() icon=SPEAKER>
             {body}
             {move || error.get().map(|e| view! { <p class="satellite__error" role="alert">{e}</p> })}
         </CardFrame>

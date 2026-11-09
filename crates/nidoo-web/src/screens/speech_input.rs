@@ -217,7 +217,7 @@ pub fn SpeechInputSection() -> impl IntoView {
                 <label>
                     <span>{move || t(T::Threads)}</span>
                     <input
-                        class="speech-in__threads"
+                        class="field__input speech-in__threads"
                         type="number"
                         min="1"
                         max="16"
@@ -228,7 +228,7 @@ pub fn SpeechInputSection() -> impl IntoView {
                 <label>
                     <span>{move || t(T::Gain)}</span>
                     <input
-                        class="speech-in__gain"
+                        class="field__input speech-in__gain"
                         type="number"
                         min="1"
                         max="16"
@@ -240,7 +240,7 @@ pub fn SpeechInputSection() -> impl IntoView {
                 <label>
                     <span>{move || t(T::Margin)}</span>
                     <input
-                        class="speech-in__margin"
+                        class="field__input speech-in__margin"
                         type="number"
                         min="0"
                         max="2000"
@@ -252,7 +252,7 @@ pub fn SpeechInputSection() -> impl IntoView {
                 <label>
                     <span>{move || t(T::Port)}</span>
                     <input
-                        class="speech-in__port"
+                        class="field__input speech-in__port"
                         type="number"
                         min="1024"
                         max="65535"

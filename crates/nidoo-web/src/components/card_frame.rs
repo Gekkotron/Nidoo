@@ -72,11 +72,14 @@ pub fn CardFrame(
     /// Puts the room and name beside the tile instead of under it.
     #[prop(optional)]
     row_header: bool,
+    /// Replaces the tile icon computed from the entity (a satellite's speaker on its Volume).
+    #[prop(optional, into)]
+    icon: Option<&'static str>,
     /// The body; a card whose state line says everything has none.
     #[prop(optional)]
     children: Option<Children>,
 ) -> impl IntoView {
-    let icon = entity_icon(&entity);
+    let icon = icon.unwrap_or_else(|| entity_icon(&entity));
     let availability = entity.state.availability;
     let is_on = crate::format::is_on(&entity.state);
     let lang = crate::i18n::use_lang();
