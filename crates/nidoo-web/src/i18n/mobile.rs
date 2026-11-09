@@ -13,6 +13,7 @@ pub enum MobileText {
     HomeOnly,
     HomeAndAway,
     Remote,
+    GatewayHelp,
     GatewayAddress,
     GatewayKey,
     KeyPlaceholder,
@@ -39,6 +40,7 @@ pub fn mobile_text(lang: Lang, k: MobileText) -> &'static str {
         HomeOnly => ("Home network only", "Réseau de la maison uniquement"),
         HomeAndAway => ("At home and away", "À la maison et à distance"),
         Remote => ("Remote access", "Accès à distance"),
+        GatewayHelp => ("Set up the gateway", "Installer la passerelle"),
         GatewayAddress => ("Gateway address", "Adresse de la passerelle"),
         GatewayKey => ("Gateway key", "Clé de la passerelle"),
         KeyPlaceholder => ("64 hex characters", "64 caractères hexadécimaux"),
@@ -67,7 +69,9 @@ mod tests {
         use MobileText::*;
         match k {
             Title | Lead | Show | Hide | Warning | HomeOnly | HomeAndAway | Remote
-            | GatewayAddress | GatewayKey | KeyPlaceholder | Saved | Save | Hint => true,
+            | GatewayHelp | GatewayAddress | GatewayKey | KeyPlaceholder | Saved | Save | Hint => {
+                true
+            }
         }
     }
 
@@ -82,6 +86,7 @@ mod tests {
             HomeOnly,
             HomeAndAway,
             Remote,
+            GatewayHelp,
             GatewayAddress,
             GatewayKey,
             KeyPlaceholder,

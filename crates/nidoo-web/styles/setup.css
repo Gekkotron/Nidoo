@@ -465,6 +465,10 @@
   margin-bottom: 8px;
 }
 
+.phone__help {
+  margin: 0 0 8px;
+}
+
 .phone__problem {
   min-height: 1.2em;
   margin: 8px 0 0;

@@ -21,7 +21,7 @@ By default the code carries the broker's address on your home network, such as `
 
 ## Remote access
 
-To use the app away from home, the code must also carry the address of your encryption gateway. In **Remote access**, fill in:
+To use the app away from home, the code must also carry the address of your encryption gateway, [Nidoo-gateway](https://github.com/Gekkotron/Nidoo-gateway). Its README covers installing it, exposing it over https and finding its key. In **Remote access**, fill in:
 
 - **Gateway address**: the gateway's https address, for example `https://house.example.ts.net`. It must start with `https://`.
 - **Gateway key**: the gateway's 64-character hexadecimal key.

@@ -9,6 +9,9 @@ use crate::api::setup::{get_mobile, get_mobile_code, put_mobile};
 use crate::i18n::{MobileText, use_lang, use_mobile_text};
 use crate::qr::qr_svg;
 
+/// The user guide's remote-access section: where to get the gateway and its key.
+const GATEWAY_DOCS: &str = "https://gekkotron.github.io/Nidoo/docs/users/mobile-app#remote-access";
+
 /// Settings → Mobile app: the phone block on its own page (the sheet header comes from the
 /// Settings screen).
 #[component]
@@ -106,6 +109,11 @@ pub fn PhoneSetup() -> impl IntoView {
             </button>
             <details class="phone__remote" prop:open=remote_open>
                 <summary>{move || t(MobileText::Remote)}</summary>
+                <p class="phone__help">
+                    <a href=GATEWAY_DOCS target="_blank" rel="noopener">
+                        {move || t(MobileText::GatewayHelp)}
+                    </a>
+                </p>
                 <label class="field" for="phone-gateway-url">
                     <span class="field__caption">{move || t(MobileText::GatewayAddress)}</span>
                     <input
