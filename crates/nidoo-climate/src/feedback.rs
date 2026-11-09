@@ -97,6 +97,12 @@ pub fn correct(input: &CorrectionInput) -> Correction {
     // The saving side (heat: room above, cool: room below) jumps to the gap at once, whatever the
     // interval, when that is deeper than the offset held; otherwise it steps once per interval.
     let gap = nearest_step(r - target, input.step);
+    // The warm-up only holds a push past the target (heat: above zero, cool: below). A cut still
+    // held on the saving side, often one made under another target, unwinds once per interval.
+    let saving = |o: f64| match input.mode {
+        Mode::Heat => o < -1e-9,
+        Mode::Cool => o > 1e-9,
+    };
 
     let mut offset = start;
     match input.mode {
@@ -107,13 +113,21 @@ pub fn correct(input: &CorrectionInput) -> Correction {
                 } else if ready {
                     offset -= input.step;
                 }
-            } else if below && ready && warm {
-                offset += input.step;
+            } else if below && ready && (warm || saving(offset)) {
+                offset = if warm {
+                    offset + input.step
+                } else {
+                    (offset + input.step).min(0.0)
+                };
             }
         }
         Mode::Cool => {
-            if above && ready && warm {
-                offset -= input.step;
+            if above && ready && (warm || saving(offset)) {
+                offset = if warm {
+                    offset - input.step
+                } else {
+                    (offset - input.step).max(0.0)
+                };
             } else if below {
                 if -gap > offset + 1e-9 {
                     offset = -gap;
@@ -420,6 +434,37 @@ mod tests {
         let p = reached(state(20.0, -2.0, NOW - 7200, Some(NOW - 900)));
         let c = run(Mode::Heat, 20.0, Some(15.0), 19.0, 0, Some(&p), false);
         assert_eq!(c.offset, -1.5);
+    }
+
+    #[test]
+    fn warmup_never_holds_a_cut_below_target() {
+        // The room emptied: 18 °C with the room at 19.8 cut -2. Someone comes back 11 min later:
+        // 20 °C, room 19.1. The new target restarts the warm-up, but the warm-up only holds raises
+        // above the target, so the cut unwinds at once, one step per interval.
+        let p = state(18.0, -2.0, NOW - 660, Some(NOW - 900));
+        let c = run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false);
+        assert_eq!(c.offset, -1.5);
+        // Still one step per interval.
+        let p = state(20.0, -1.5, NOW - 600, Some(NOW - 600));
+        let c = run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false);
+        assert_eq!(c.offset, -1.5);
+        // The last step stops at zero; going above waits for the warm-up.
+        let p = state(20.0, -0.5, NOW - 1800, Some(NOW - 900));
+        assert_eq!(
+            run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false).offset,
+            0.0
+        );
+        let p = state(20.0, 0.0, NOW - 1800, Some(NOW - 900));
+        assert_eq!(
+            run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false).offset,
+            0.0
+        );
+        // Cool, mirrored: a raise held above the target unwinds during the warm-up.
+        let p = state(24.0, 1.5, NOW - 600, Some(NOW - 900));
+        assert_eq!(
+            run(Mode::Cool, 26.0, None, 27.0, 0, Some(&p), false).offset,
+            1.0
+        );
     }
 
     #[test]

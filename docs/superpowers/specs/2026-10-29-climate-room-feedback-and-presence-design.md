@@ -105,9 +105,10 @@ Each evaluation, with a usable room-thermometer value `r` (§6.3):
 - `r > target + band` → the offset jumps to `−(r − target)` rounded to the nearest `step`, at
   once, whatever the interval, when that is deeper than the offset held. Otherwise, with at least
   `interval` since the last step → offset −= step.
-- `r < target − band` and at least `interval` since the last step, **and** the warm-up is over →
-  offset += step. The warm-up is over once the room has reached the band (`r ≥ target − band`)
-  since the target began, or `warmup` after the target began at the latest.
+- `r < target − band` and at least `interval` since the last step → offset += step, either when
+  the warm-up is over or, during it, while the offset is still negative (the raise then stops at
+  0). The warm-up is over once the room has reached the band (`r ≥ target − band`) since the
+  target began, or `warmup` after the target began at the latest.
 - Otherwise the offset stays.
 
 *Changed 2026-11-05:* the saving side used to move one `step` per `interval` too, so a room 2 °C
@@ -115,8 +116,14 @@ over its target took 45 min to reach −2.0 while the AC kept heating. It now ju
 (21.2 °C on a 20 °C target → −1.0, 21.9 °C → −2.0) and keeps stepping if the room stays above.
 The warm-up used to be a fixed `warmup` (60 min) after the target began; it now ends as soon as
 the room first reaches the band, with `warmup` kept as the cap, so the change can only shorten
-it. Recovery after a jump stays one `step` per `interval` once the warm-up is over (*Claude's
-call*). No new setting.
+it. Recovery after a jump stays one `step` per `interval` (*Claude's call*). No new setting.
+
+*Changed 2026-11-09:* the warm-up used to hold every raise, so a cut made under another target
+stayed. An empty-room setback (18 °C, room 19.8 °C) cut −2.0; someone came back 11 min later, the
+target went to 20 °C with the room at 19.1 °C, and the AC stayed at 18 °C for the whole 60-min
+warm-up before stepping back up (20 °C only after ~1 h 45). The warm-up only exists to stop a push
+past the target while the room heats up, so it now holds raises above 0 only; a negative offset
+unwinds one `step` per `interval` from the start (20 °C ~50 min after the return). Cool mirrors it.
 
 Limits, applied to the result (heat):
 - lowest: `target + offset ≥ max(target − max_below, base of the rules, frost)`;
