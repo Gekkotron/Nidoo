@@ -673,10 +673,15 @@ label.assist-set__item {
   margin: 12px 0;
 }
 
+/* A caption that wraps to two lines keeps its input on the row's baseline. */
 .speech-in__fields label {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
   gap: 4px;
+}
+
+.speech-in__fields label > span {
   font-size: 0.85rem;
   color: var(--muted);
 }
