@@ -40,7 +40,8 @@ impl RegistryConfig {
     /// The reserved sub-trees under a discovery prefix: `ui`, `automation`, `virtual`,
     /// `push` (the hub's notification topics, `nidoo/push/...`) and `weather` (the hub's weather
     /// states and availability), `solar` (the hub's solar forecast states, availability and cache)
-    /// and `network` (the hub's network presence definitions, states and availability).
+    /// `network` (the hub's network presence definitions, states and availability) and
+    /// `flow_labels` (the flow label catalog).
     pub fn default_reserved() -> Vec<String> {
         vec![
             "ui".to_owned(),
@@ -50,6 +51,7 @@ impl RegistryConfig {
             "weather".to_owned(),
             "solar".to_owned(),
             "network".to_owned(),
+            "flow_labels".to_owned(),
         ]
     }
 }

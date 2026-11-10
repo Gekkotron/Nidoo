@@ -260,6 +260,8 @@ impl House {
             WsEvent::AssistTurnAdded { .. } => self.assist_rev.update(|r| *r += 1),
             WsEvent::WeatherChanged => self.refresh_weather(),
             WsEvent::HomeSettingsChanged { settings } => self.home_settings.set(settings),
+            // The Flows page does not read labels yet.
+            WsEvent::FlowLabelsChanged { .. } => {}
             WsEvent::AmbiancesChanged { ambiances } => {
                 self.ambiances.set(ambiances);
                 self.ambiances_loaded.set(true);

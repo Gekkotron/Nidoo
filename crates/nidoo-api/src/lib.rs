@@ -8,6 +8,7 @@ mod cameras;
 mod dashboards;
 mod energy;
 mod events;
+mod flow_labels;
 mod flows;
 mod groups;
 mod history;
@@ -40,6 +41,7 @@ pub use dashboards::{
 };
 pub use energy::{energy_entities, energy_entity};
 pub use events::{ApiError, CommandResponse, ConnectionStatus, OverridePatch, WsEvent};
+pub use flow_labels::{FlowLabelsView, LabelEdit};
 pub use flows::{
     FlowView, FlowWriteOutcome, FlowsConfigView, RunStatus, RunView, SchedulePreview, StepOutcome,
     StepView, TriggerInfo,

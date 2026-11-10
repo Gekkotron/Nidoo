@@ -616,7 +616,7 @@ impl Hub {
 
     /// Publishes the definition retained and applies it locally (the broker's echo is then a
     /// no-op); the registry lock is not held while publishing.
-    fn write_flow(&self, flow: &Flow) -> Result<FlowView, HubError> {
+    pub(crate) fn write_flow(&self, flow: &Flow) -> Result<FlowView, HubError> {
         let payload = flow.encode();
         self.publish(Publish {
             topic: self.flow_topic(&flow.id),
