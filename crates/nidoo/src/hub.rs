@@ -232,6 +232,13 @@ pub struct Hub {
     acl_watchdog: Option<AclWatchdog>,
     /// The retained flow definitions and their runs.
     flow_store: Mutex<FlowStore>,
+    /// The flow label catalog, retained on `flow_labels_topic`.
+    flow_labels: Mutex<nidoo_core::flow::FlowLabelCatalog>,
+    /// `[topics] flow_labels`.
+    pub(crate) flow_labels_topic: String,
+    /// Held by every write that touches labels across flows (catalog edits, label switches,
+    /// flow saves), so each one reads the flows and the catalog as the last one left them.
+    pub(crate) labels_pass: tokio::sync::Mutex<()>,
     /// Every reading of the entities an `if` averages; the engine sets which on reload.
     recent_readings: Mutex<crate::flows::readings::RecentReadings>,
     /// The passes of every `limit` node still inside its window, by (flow, node). Runs execute
@@ -459,6 +466,9 @@ impl Hub {
             home_settings: Mutex::new(nidoo_api::HomeSettings::default()),
             assist: crate::assist::AssistState::default(),
             automation_prefix: cfg.topics.automation_prefix.clone(),
+            flow_labels: Mutex::default(),
+            flow_labels_topic: cfg.topics.flow_labels.trim().to_owned(),
+            labels_pass: tokio::sync::Mutex::new(()),
             zone: crate::flows::house_zone(&cfg.flows),
             house_point: cfg.flows.house_point(),
             fallback_active: cfg.flows.fallback_active(),
@@ -577,6 +587,10 @@ impl Hub {
         }
         if topic == crate::home::topic(&self.ui_prefix) {
             self.ingest_home(payload);
+            return Vec::new();
+        }
+        if topic == self.flow_labels_topic {
+            self.ingest_flow_labels(payload);
             return Vec::new();
         }
         if let Some(id) = self.dashboard_id_of(topic) {
@@ -2087,6 +2101,13 @@ impl Hub {
     }
 
     /// The flow store, taken as it is when a thread panicked while holding it.
+    /// The flow label catalog, taken as it is when a thread panicked while holding it.
+    pub(crate) fn flow_label_slot(&self) -> MutexGuard<'_, nidoo_core::flow::FlowLabelCatalog> {
+        self.flow_labels
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub(crate) fn flow_store(&self) -> MutexGuard<'_, FlowStore> {
         self.flow_store
             .lock()

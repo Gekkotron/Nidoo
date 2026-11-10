@@ -87,6 +87,11 @@ pub enum WsEvent {
     HomeSettingsChanged {
         settings: HomeSettings,
     },
+    /// The flow label catalog changed. `counts` is as of this change; clients count a
+    /// flow's labels from the flow list as it changes.
+    FlowLabelsChanged {
+        labels: crate::FlowLabelsView,
+    },
     /// The ambiances list changed.
     AmbiancesChanged {
         ambiances: Vec<AmbianceView>,

@@ -266,3 +266,29 @@ fn area_primary_count_skips_non_card_generic_placements() {
     let entities = |s: &nidoo_api::Snapshot| s.areas.iter().map(|a| a.entity_count).sum::<usize>();
     assert_eq!(entities(&after), entities(&before) + 1);
 }
+
+#[test]
+fn flow_label_wire_shapes() {
+    let edit: nidoo_api::LabelEdit =
+        serde_json::from_str(r#"{"op":"create_label","name":"Été"}"#).expect("edit");
+    assert_eq!(
+        edit,
+        nidoo_api::LabelEdit::CreateLabel {
+            name: "Été".to_owned(),
+            choice: None
+        }
+    );
+    let edit: nidoo_api::LabelEdit =
+        serde_json::from_str(r#"{"op":"recolor_label","id":"ete","color":"teal"}"#)
+            .expect("recolor");
+    assert!(matches!(edit, nidoo_api::LabelEdit::RecolorLabel { .. }));
+    let event = WsEvent::FlowLabelsChanged {
+        labels: nidoo_api::FlowLabelsView::default(),
+    };
+    assert_eq!(
+        serde_json::to_string(&event).expect("serialize"),
+        r#"{"type":"flow_labels_changed","labels":{"catalog":{"labels":[],"choices":[]},"counts":{}}}"#
+    );
+    let _ = schemars::schema_for!(nidoo_api::LabelEdit);
+    let _ = schemars::schema_for!(nidoo_api::FlowLabelsView);
+}

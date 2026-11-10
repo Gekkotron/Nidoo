@@ -288,9 +288,10 @@ async fn outbound(
 }
 
 /// The wildcards that are always subscribed: discovery, the Z2M bridge, the UI sub-tree, the
-/// flow definitions and the push topics. A push filter already inside one of the `#` wildcards
-/// (`nidoo/push/...` under `nidoo/#`) is left out: an overlapping subscription may make the
-/// broker deliver a notification twice, and so send it twice.
+/// flow definitions, the flow label catalog and the push topics. A push filter (or the catalog)
+/// already inside one of the `#` wildcards (`nidoo/push/...` under `nidoo/#`) is left out: an
+/// overlapping subscription may make the broker deliver a notification twice, and so send it
+/// twice.
 fn static_filters(topics: &TopicsConfig, push: &[String]) -> BTreeSet<String> {
     let wildcards: BTreeSet<String> = topics
         .discovery_prefixes
@@ -308,7 +309,12 @@ fn static_filters(topics: &TopicsConfig, push: &[String]) -> BTreeSet<String> {
             filter.starts_with(base)
         })
     };
-    let push: Vec<String> = push.iter().filter(|f| !covered(f)).cloned().collect();
+    let push: Vec<String> = push
+        .iter()
+        .chain(std::iter::once(&topics.flow_labels))
+        .filter(|f| !covered(f))
+        .cloned()
+        .collect();
     wildcards.into_iter().chain(push).collect()
 }
 
@@ -418,6 +424,18 @@ mod tests {
         // `nidoo-push/...` is not under `nidoo/#`: a prefix match stops at the separator.
         let filters = static_filters(&topics, &push_filters("nidoo-push"));
         assert!(filters.contains("nidoo-push/history"));
+    }
+
+    #[test]
+    fn flow_labels_topic_is_subscribed_once() {
+        let filters = static_filters(&TopicsConfig::default(), &[]);
+        assert!(!filters.contains("nidoo/flow_labels"), "{filters:?}");
+        let topics = TopicsConfig {
+            flow_labels: "home/labels".into(),
+            ..TopicsConfig::default()
+        };
+        let filters = static_filters(&topics, &[]);
+        assert!(filters.contains("home/labels"), "{filters:?}");
     }
 
     #[test]
