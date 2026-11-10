@@ -205,7 +205,8 @@ async fn menu_offers_delete_with_confirmation() {
     click_text(&host, ".room-menu__confirm button", "Cancel");
     tick().await;
     assert_eq!(count(&host, ".room-menu__confirm"), 0);
-    assert_eq!(count(&host, ".room-menu__head"), 1, "{}", host.inner_html());
+    // "Move to room" and "Labels".
+    assert_eq!(count(&host, ".room-menu__head"), 2, "{}", host.inner_html());
 }
 
 /// The text of the focused element.
@@ -619,11 +620,9 @@ async fn trigger_menu_replaces_the_chips() {
         .expect("a checked kind");
     assert!(checked.text_content().unwrap().ends_with("Manual"));
     // Escape closes the menu and keeps the filter.
-    let esc = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
-        "keydown",
-        web_sys::KeyboardEventInit::new().key("Escape"),
-    )
-    .unwrap();
+    let init = web_sys::KeyboardEventInit::new();
+    init.set_key("Escape");
+    let esc = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap();
     web_sys::window().unwrap().dispatch_event(&esc).unwrap();
     tick().await;
     assert_eq!(count(&host, ".trigger-menu [role=menuitemcheckbox]"), 0);
@@ -648,4 +647,341 @@ async fn rows_show_label_chips() {
         texts(&host, ".flow-tile .label-chip"),
         ["Hiver", "Vacances"]
     );
+}
+
+/// Types `text` into the input at `selector`, as a keystroke would (an `input` event).
+fn type_into(host: &web_sys::Element, selector: &str, text: &str) {
+    let input: web_sys::HtmlInputElement = host
+        .query_selector(selector)
+        .unwrap()
+        .unwrap_or_else(|| panic!("no {selector}: {}", host.inner_html()))
+        .unchecked_into();
+    input.set_value(text);
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    input
+        .dispatch_event(&web_sys::Event::new_with_event_init_dict("input", &init).unwrap())
+        .unwrap();
+}
+
+/// The bodies of every `method url` request so far, as JSON.
+fn bodies(stub: &FetchStub, method: &str, url: &str) -> Vec<serde_json::Value> {
+    stub.requests()
+        .into_iter()
+        .filter(|r| r.method == method && r.url == url)
+        .map(|r| serde_json::from_str(&r.body).unwrap())
+        .collect()
+}
+
+/// Waits up to 2 s for the `n`th `method url` request and returns them all.
+async fn wait_bodies(
+    stub: &FetchStub,
+    method: &str,
+    url: &str,
+    n: usize,
+) -> Vec<serde_json::Value> {
+    for _ in 0..200 {
+        let seen = bodies(stub, method, url);
+        if seen.len() >= n {
+            return seen;
+        }
+        gloo_timers::future::TimeoutFuture::new(10).await;
+    }
+    panic!("{n} {method} {url} expected, saw {:?}", stub.requests());
+}
+
+/// Waits up to 2 s for `selector`'s texts to read `want`, then compares them.
+async fn wait_texts(host: &web_sys::Element, selector: &str, want: &[&str]) {
+    for _ in 0..200 {
+        if texts(host, selector) == want {
+            return;
+        }
+        gloo_timers::future::TimeoutFuture::new(10).await;
+    }
+    assert_eq!(texts(host, selector), want, "{}", host.inner_html());
+}
+
+/// Opens the label manager with the header button at `selector` (`label` = its text, or any).
+/// An earlier test's dialog drops its history entry with an asynchronous `history.back()`; its
+/// `popstate` would close a dialog opened before it lands, so let it land first.
+async fn open_manager(host: &web_sys::Element, selector: &str, label: Option<&str>) {
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    match label {
+        Some(label) => click_text(host, selector, label),
+        None => click(host, selector),
+    }
+    tick().await;
+    assert_eq!(count(host, ".label-manager"), 1, "{}", host.inner_html());
+}
+
+/// [`seasons`] with `edit` applied to its JSON, as the hub's reply to a catalog edit.
+fn seasons_with(edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut view = serde_json::to_value(seasons()).unwrap();
+    edit(&mut view);
+    view.to_string()
+}
+
+#[wasm_bindgen_test]
+async fn manager_creates_choice_and_labels() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        "/api/v1/flow-labels",
+        200,
+        &seasons_with(|v| {
+            v["catalog"]["choices"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"id": "presence", "name": "Presence"}));
+        }),
+    );
+    let host = host();
+    let _page = mount_labelled(&host, season_flows(), "label");
+    tick().await;
+    // ⚙ on the Saison header opens the manager on that choice.
+    open_manager(&host, ".flow-section__head .flow-section__manage", None).await;
+    assert_eq!(
+        texts(&host, ".label-manager__choice-name"),
+        ["Saison", "Mode"]
+    );
+    assert_eq!(
+        texts(
+            &host,
+            ".label-manager__group--focus .label-manager__choice-name"
+        ),
+        ["Saison"]
+    );
+    assert_eq!(
+        texts(
+            &host,
+            ".label-manager__group[data-choice=saison] .label-manager__name"
+        ),
+        ["Hiver", "Été"]
+    );
+    click_text(&host, ".label-manager button", "＋ Choice");
+    tick().await;
+    type_into(&host, ".label-manager__new input", "Presence");
+    click_text(&host, ".label-manager__new button", "Create");
+    let sent = wait_bodies(&stub, "POST", "/api/v1/flow-labels", 1).await;
+    assert_eq!(
+        sent[0],
+        serde_json::json!({"op": "create_choice", "name": "Presence"})
+    );
+    wait_texts(
+        &host,
+        ".label-manager__choice-name",
+        &["Saison", "Mode", "Presence"],
+    )
+    .await;
+    stub.reply(
+        "POST",
+        "/api/v1/flow-labels",
+        200,
+        &seasons_with(|v| {
+            v["catalog"]["choices"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"id": "presence", "name": "Presence"}));
+            v["catalog"]["labels"].as_array_mut().unwrap().push(
+                serde_json::json!({"id": "home", "name": "Home", "color": "red", "choice": "presence"}),
+            );
+        }),
+    );
+    click(
+        &host,
+        ".label-manager__group[data-choice=presence] .label-manager__add-in-choice",
+    );
+    tick().await;
+    type_into(&host, ".label-manager__new input", "Home");
+    click_text(&host, ".label-manager__new button", "Create");
+    let sent = wait_bodies(&stub, "POST", "/api/v1/flow-labels", 2).await;
+    assert_eq!(
+        sent[1],
+        serde_json::json!({"op": "create_label", "name": "Home", "choice": "presence"})
+    );
+    wait_texts(
+        &host,
+        ".label-manager__group[data-choice=presence] .label-manager__name",
+        &["Home"],
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn manager_opens_from_no_label_to_create_one() {
+    let host = host();
+    let _page = mount_labelled(&host, season_flows(), "label");
+    tick().await;
+    open_manager(&host, ".flow-section__head button", Some("＋ Label")).await;
+    assert_eq!(count(&host, ".label-manager__new input"), 1);
+}
+
+#[wasm_bindgen_test]
+async fn manager_delete_names_flows_using_it() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        "/api/v1/flow-labels",
+        200,
+        &seasons_with(|v| {
+            v["catalog"]["labels"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|l| l["id"] != "ete");
+        }),
+    );
+    let switcher = {
+        let definition = Flow::decode(
+            serde_json::json!({
+                "id": "summer", "name": "Summer switch",
+                "nodes": [
+                    {"id": "go", "type": "trigger.manual", "params": {}},
+                    {"id": "pick", "type": "flow.label", "params": {"label": "ete", "action": "pick"}}
+                ],
+                "edges": [{"from": "go", "to": "pick"}]
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        FlowView {
+            definition,
+            invalid: None,
+            active_run: None,
+            runs: vec![],
+        }
+    };
+    let mut flows = season_flows();
+    flows.push(switcher);
+    let host = host();
+    let _page = mount_labelled(&host, flows, "label");
+    tick().await;
+    open_manager(&host, ".flow-section__head .flow-section__manage", None).await;
+    // A label no action names asks plainly.
+    click(
+        &host,
+        ".label-manager__line[data-label=hiver] .label-manager__delete",
+    );
+    tick().await;
+    let confirm = texts(&host, ".label-manager__confirm").join(" ");
+    assert!(confirm.contains("Delete “Hiver”?"), "{confirm}");
+    assert!(!confirm.contains("Summer switch"), "{confirm}");
+    click_text(&host, ".label-manager__confirm button", "Cancel");
+    tick().await;
+    assert_eq!(count(&host, ".label-manager__confirm"), 0);
+    // Été is picked by a flow's label action: the prompt names that flow.
+    click(
+        &host,
+        ".label-manager__line[data-label=ete] .label-manager__delete",
+    );
+    tick().await;
+    let confirm = texts(&host, ".label-manager__confirm").join(" ");
+    assert!(confirm.contains("Delete “Été”?"), "{confirm}");
+    assert!(confirm.contains("Summer switch"), "{confirm}");
+    assert!(bodies(&stub, "POST", "/api/v1/flow-labels").is_empty());
+    click_text(&host, ".label-manager__confirm button", "Delete");
+    let sent = wait_bodies(&stub, "POST", "/api/v1/flow-labels", 1).await;
+    assert_eq!(
+        sent[0],
+        serde_json::json!({"op": "delete_label", "id": "ete"})
+    );
+    wait_texts(
+        &host,
+        ".label-manager__group[data-choice=saison] .label-manager__name",
+        &["Hiver"],
+    )
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn row_menu_tags_a_flow() {
+    let stub = FetchStub::install();
+    let tagged_after = tagged("heat", "Heat", &["hiver", "vacances"]);
+    stub.reply(
+        "POST",
+        "/api/v1/flows/heat/labels",
+        200,
+        &serde_json::to_string(&tagged_after).unwrap(),
+    );
+    let host = host();
+    let _page = mount_labelled(&host, vec![tagged("heat", "Heat", &["hiver"])], "none");
+    tick().await;
+    click(&host, ".room-menu__button");
+    tick().await;
+    let items = ".room-menu [role=menuitemcheckbox]";
+    assert_eq!(
+        texts(&host, items),
+        ["✓Hiver · Saison", "Été · Saison", "Solo · Mode", "Vacances"]
+    );
+    assert_eq!(
+        count(
+            &host,
+            ".room-menu [role=menuitemcheckbox][aria-checked=true]"
+        ),
+        1
+    );
+    click_text(&host, items, "Vacances");
+    let sent = wait_bodies(&stub, "POST", "/api/v1/flows/heat/labels", 1).await;
+    assert_eq!(
+        sent[0],
+        serde_json::json!({"labels": ["hiver", "vacances"]})
+    );
+}
+
+#[wasm_bindgen_test]
+async fn row_menu_creates_and_tags() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        "/api/v1/flow-labels",
+        200,
+        &seasons_with(|v| {
+            v["catalog"]["labels"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!({"id": "guests", "name": "Guests", "color": "red"}));
+        }),
+    );
+    stub.reply(
+        "POST",
+        "/api/v1/flows/heat/labels",
+        200,
+        &serde_json::to_string(&tagged("heat", "Heat", &["guests", "hiver"])).unwrap(),
+    );
+    let host = host();
+    let _page = mount_labelled(&host, vec![tagged("heat", "Heat", &["hiver"])], "none");
+    tick().await;
+    click(&host, ".room-menu__button");
+    tick().await;
+    click_text(&host, ".room-menu__item", "＋ New label…");
+    tick().await;
+    type_into(&host, ".room-menu__new input", "Guests");
+    click_text(&host, ".room-menu__new button", "Create");
+    let created = wait_bodies(&stub, "POST", "/api/v1/flow-labels", 1).await;
+    assert_eq!(
+        created[0],
+        serde_json::json!({"op": "create_label", "name": "Guests"})
+    );
+    let tagged = wait_bodies(&stub, "POST", "/api/v1/flows/heat/labels", 1).await;
+    assert_eq!(
+        tagged[0],
+        serde_json::json!({"labels": ["guests", "hiver"]})
+    );
+}
+
+#[wasm_bindgen_test]
+async fn row_menu_labels_wait_for_an_invalid_flow_to_be_fixed() {
+    let host = host();
+    let _page = mount_labelled(&host, vec![broken()], "none");
+    tick().await;
+    click(&host, ".room-menu__button");
+    tick().await;
+    let all = host
+        .query_selector_all(".room-menu [role=menuitemcheckbox]")
+        .unwrap();
+    assert_eq!(all.length(), 4);
+    for i in 0..all.length() {
+        let item: web_sys::Element = all.item(i).unwrap().unchecked_into();
+        assert!(item.has_attribute("disabled"), "{}", item.outer_html());
+    }
 }

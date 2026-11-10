@@ -2760,3 +2760,94 @@ async fn speak_card_edits_its_text_and_room() {
     assert_eq!(node["params"]["room"], "kitchen", "{node}");
     settle_history().await;
 }
+
+// ---- Labels ---------------------------------------------------------------------------------
+
+/// A season choice (Hiver, Été) and a standalone Vacances label.
+fn season_labels() -> nidoo_api::FlowLabelsView {
+    serde_json::from_value(serde_json::json!({
+        "catalog": {
+            "labels": [
+                {"id": "hiver", "name": "Hiver", "color": "blue", "choice": "saison"},
+                {"id": "ete", "name": "Été", "color": "amber", "choice": "saison"},
+                {"id": "vacances", "name": "Vacances", "color": "green"}
+            ],
+            "choices": [{"id": "saison", "name": "Saison", "current": "hiver"}]
+        }
+    }))
+    .unwrap()
+}
+
+/// Types `text` into the labels field's add box and presses Enter.
+async fn add_label(host: &web_sys::Element, text: &str) {
+    let input: web_sys::HtmlInputElement = element(host, ".flow-labels__add").unchecked_into();
+    input.set_value(text);
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    input
+        .dispatch_event(&web_sys::Event::new_with_event_init_dict("input", &init).unwrap())
+        .unwrap();
+    let enter = web_sys::KeyboardEventInit::new();
+    enter.set_key("Enter");
+    enter.set_bubbles(true);
+    input
+        .dispatch_event(
+            &web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &enter).unwrap(),
+        )
+        .unwrap();
+    tick().await;
+}
+
+fn label_names(host: &web_sys::Element) -> Vec<String> {
+    let all = host
+        .query_selector_all(".flow-labels .label-chip__name")
+        .unwrap();
+    (0..all.length())
+        .filter_map(|i| all.item(i))
+        .map(|n| n.text_content().unwrap_or_default())
+        .collect()
+}
+
+/// Saves the draft and returns the flow the PUT sent.
+async fn saved_flow(host: &web_sys::Element, view: &FlowView) -> serde_json::Value {
+    let fetch = FakeFetch::answer(&write_outcome(view));
+    click(host, ".flow-toolbar button[aria-label=Save]");
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    let requests = puts(&fetch);
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    serde_json::from_str(&requests[0].2).unwrap()
+}
+
+#[wasm_bindgen_test]
+async fn editor_labels_field_saves_with_the_flow() {
+    let view = reference_view(None, vec![]);
+    let (host, _mounted, house) = editing(view.clone()).await;
+    house.flow_labels.set(season_labels());
+    tick().await;
+    assert!(label_names(&host).is_empty());
+    // A known name (any case) adds that label; ✕ takes one off again.
+    add_label(&host, "été").await;
+    add_label(&host, "Vacances").await;
+    assert_eq!(label_names(&host), ["Été", "Vacances"]);
+    click(
+        &host,
+        ".flow-labels .label-chip[data-label=vacances] .label-chip__remove",
+    );
+    tick().await;
+    assert_eq!(label_names(&host), ["Été"]);
+    let sent = saved_flow(&host, &view).await;
+    assert_eq!(sent["labels"], serde_json::json!(["ete"]), "{sent}");
+}
+
+#[wasm_bindgen_test]
+async fn editor_drops_stale_labels_on_save() {
+    let mut view = reference_view(None, vec![]);
+    view.definition.labels = vec!["ete".into(), "gone".into()];
+    let (host, _mounted, house) = editing(view.clone()).await;
+    house.flow_labels.set(season_labels());
+    tick().await;
+    // A label the catalog no longer has is not shown, and the save leaves it out.
+    assert_eq!(label_names(&host), ["Été"]);
+    let sent = saved_flow(&host, &view).await;
+    assert_eq!(sent["labels"], serde_json::json!(["ete"]), "{sent}");
+}

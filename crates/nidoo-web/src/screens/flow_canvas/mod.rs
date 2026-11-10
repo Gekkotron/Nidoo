@@ -7,6 +7,7 @@
 
 mod drawer;
 mod graph;
+mod labels_field;
 mod library;
 mod manual;
 mod math;

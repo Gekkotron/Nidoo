@@ -452,6 +452,70 @@ pub fn clear_stale_area(flow: &mut Flow, areas: &[AreaView]) {
     }
 }
 
+/// Drops the label ids the catalog no longer has, so a save never carries a stale one. An empty
+/// catalog drops nothing: it may simply not have loaded yet, and the hub keeps a stored stale id
+/// anyway.
+pub fn clear_stale_labels(flow: &mut Flow, catalog: &FlowLabelCatalog) {
+    if catalog.labels.is_empty() {
+        return;
+    }
+    flow.labels.retain(|id| catalog.label(id).is_some());
+}
+
+/// The names of the flows whose label action (a `flow.label` card) names label `id`, sorted.
+pub fn label_users(flows: &[FlowView], id: &str) -> Vec<String> {
+    let mut names: Vec<String> = flows
+        .iter()
+        .filter(|f| {
+            f.definition
+                .nodes
+                .iter()
+                .any(|n| matches!(&n.kind, NodeKind::FlowLabel(p) if p.label == id))
+        })
+        .map(|f| f.definition.name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+/// How many flows carry each label id (stale ids included; readers look up known ones).
+pub fn label_flow_counts(flows: &[FlowView]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for flow in flows {
+        for id in &flow.definition.labels {
+            *counts.entry(id.clone()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// The id of the label a create added: the first label of `after` that `before` lacks.
+pub fn new_label_id(before: &FlowLabelCatalog, after: &FlowLabelCatalog) -> Option<String> {
+    after
+        .labels
+        .iter()
+        .find(|l| before.label(&l.id).is_none())
+        .map(|l| l.id.clone())
+}
+
+/// The label whose name matches `name`, ignoring case and accents and surrounding spaces.
+pub fn label_by_name<'a>(catalog: &'a FlowLabelCatalog, name: &str) -> Option<&'a FlowLabel> {
+    let wanted = fold_accents(name.trim()).to_lowercase();
+    catalog
+        .labels
+        .iter()
+        .find(|l| fold_accents(l.name.trim()).to_lowercase() == wanted)
+}
+
+/// `labels` with `id` added or removed, sorted and without duplicates, as the hub stores them.
+pub fn toggled_labels(labels: &[String], id: &str) -> Vec<String> {
+    let mut set: BTreeSet<String> = labels.iter().cloned().collect();
+    if !set.remove(id) {
+        set.insert(id.to_owned());
+    }
+    set.into_iter().collect()
+}
+
 /// The preferences as the JSON to store.
 pub fn encode_prefs(p: &FlowListPrefs) -> String {
     serde_json::to_string(p).unwrap_or_default()
@@ -622,6 +686,84 @@ mod tests {
 
     fn label_rows(flows: &[FlowView], catalog: &FlowLabelCatalog) -> Vec<ListRow> {
         rows(Lang::En, flows, &[], &BTreeMap::new(), catalog)
+    }
+
+    fn picking(name: &str, labels: &[&str], picks: Option<&str>) -> FlowView {
+        let mut nodes =
+            vec![serde_json::json!({"id": "go", "type": "trigger.manual", "params": {}})];
+        if let Some(label) = picks {
+            nodes.push(
+                serde_json::json!({"id": "pick", "type": "flow.label", "params": {"label": label}}),
+            );
+        }
+        let json = serde_json::json!({"id": name, "name": name, "labels": labels, "nodes": nodes});
+        FlowView {
+            definition: Flow::decode(json.to_string().as_bytes()).unwrap(),
+            invalid: None,
+            active_run: None,
+            runs: vec![],
+        }
+    }
+
+    fn two_labels() -> FlowLabelCatalog {
+        serde_json::from_value(serde_json::json!({
+            "labels": [{"id": "ete", "name": "Été"}, {"id": "hiver", "name": "Hiver"}]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn clear_stale_labels_keeps_known_ids_unless_the_catalog_is_empty() {
+        let mut flow = picking("a", &["ete", "gone"], None).definition;
+        clear_stale_labels(&mut flow, &FlowLabelCatalog::default());
+        assert_eq!(flow.labels, ["ete", "gone"]);
+        clear_stale_labels(&mut flow, &two_labels());
+        assert_eq!(flow.labels, ["ete"]);
+    }
+
+    #[test]
+    fn label_users_and_counts() {
+        let flows = [
+            picking("Zeta", &["ete"], Some("ete")),
+            picking("Alpha", &["ete", "hiver"], Some("ete")),
+            picking("Other", &[], Some("hiver")),
+        ];
+        assert_eq!(label_users(&flows, "ete"), ["Alpha", "Zeta"]);
+        assert!(label_users(&flows, "vacances").is_empty());
+        let counts = label_flow_counts(&flows);
+        assert_eq!(counts.get("ete"), Some(&2));
+        assert_eq!(counts.get("hiver"), Some(&1));
+    }
+
+    #[test]
+    fn new_label_id_and_name_lookup() {
+        let before = two_labels();
+        let mut after = before.clone();
+        after.labels.push(
+            serde_json::from_value(serde_json::json!({"id": "vacances", "name": "Vacances"}))
+                .unwrap(),
+        );
+        assert_eq!(new_label_id(&before, &after).as_deref(), Some("vacances"));
+        assert_eq!(new_label_id(&before, &before), None);
+        assert_eq!(
+            label_by_name(&before, " été ").map(|l| l.id.as_str()),
+            Some("ete")
+        );
+        assert_eq!(
+            label_by_name(&before, "ETE").map(|l| l.id.as_str()),
+            Some("ete")
+        );
+        assert!(label_by_name(&before, "Printemps").is_none());
+    }
+
+    #[test]
+    fn toggled_labels_sorts_and_dedups() {
+        let labels = ["hiver".to_owned(), "ete".to_owned()];
+        assert_eq!(
+            toggled_labels(&labels, "vacances"),
+            ["ete", "hiver", "vacances"]
+        );
+        assert_eq!(toggled_labels(&labels, "hiver"), ["ete"]);
     }
 
     #[test]

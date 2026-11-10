@@ -1,14 +1,18 @@
-//! The ⋯ menu of a flow row or card: open the flow, move it to a room, or delete it.
+//! The ⋯ menu of a flow row or card: open the flow, move it to a room, tag it with labels, or
+//! delete it.
 
 use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::components::A;
+use nidoo_api::LabelEdit;
 use nidoo_core::model::UNASSIGNED_AREA;
 use wasm_bindgen::JsCast;
 
 use crate::api;
+use crate::api::flow_labels::{edit_flow_labels, set_flow_labels};
 use crate::components::toast::Toasts;
+use crate::flow_list::{label_by_name, new_label_id, toggled_labels};
 use crate::house::House;
 use crate::i18n::flows::{FlowText, delete_flow_prompt, use_flow_text};
 use crate::i18n::{Key, use_lang, use_text};
@@ -47,8 +51,9 @@ pub fn provide_open_menu() {
     });
 }
 
-/// A ⋯ button over a small popover. `current` is the flow's room (a known area id), `invalid`
-/// flows cannot be moved (they can still be deleted). Delete asks first, inside the popover,
+/// A ⋯ button over a small popover. `current` is the flow's room (a known area id), `labels`
+/// the label ids it carries; `invalid` flows cannot be moved or tagged (they can still be
+/// deleted). Delete asks first, inside the popover,
 /// naming the flow by `name`. Esc or a press outside the menu closes it (see [`OpenMenu`]).
 #[component]
 pub fn RoomMenu(
@@ -56,6 +61,7 @@ pub fn RoomMenu(
     name: String,
     href: String,
     current: Option<String>,
+    labels: Vec<String>,
     invalid: bool,
 ) -> impl IntoView {
     let house = expect_context::<House>();
@@ -141,6 +147,150 @@ pub fn RoomMenu(
         }
     };
     let none_checked = current.is_none();
+
+    // The labels as last asked for: a second tick before the hub's push builds on the first.
+    let carried = RwSignal::new(labels);
+    let toggle = move |label: String| {
+        let before = carried.get_untracked();
+        let next = toggled_labels(&before, &label);
+        carried.set(next.clone());
+        let id = id.get_value();
+        spawn_local(async move {
+            if let Err(e) = set_flow_labels(&id, &next).await {
+                carried.try_set(before);
+                toasts.push(e.error);
+            }
+        });
+    };
+    let label_items = move || {
+        house.flow_labels.with(|v| {
+            let catalog = &v.catalog;
+            catalog
+                .labels
+                .iter()
+                .map(|label| {
+                    let id = label.id.clone();
+                    let checked = carried.with(|c| c.contains(&id));
+                    let choice = label
+                        .choice
+                        .as_deref()
+                        .and_then(|c| catalog.choice(c))
+                        .map(|c| format!(" · {}", c.name));
+                    view! {
+                        <button
+                            type="button"
+                            role="menuitemcheckbox"
+                            class="room-menu__item"
+                            aria-checked=checked.to_string()
+                            disabled=invalid
+                            title=move || invalid.then(|| t(FlowText::FixFlowFirst))
+                            on:click=move |_| toggle(id.clone())
+                        >
+                            <span class="room-menu__check" aria-hidden="true">
+                                {checked.then_some("✓")}
+                            </span>
+                            {label.name.clone()}
+                            {choice.map(|c| view! { <span class="room-menu__choice">{c}</span> })}
+                        </button>
+                    }
+                })
+                .collect_view()
+        })
+    };
+    // "＋ New label…" turns into a name field; Create makes the label (or finds one of that
+    // name) and tags the flow with it.
+    let naming = RwSignal::new(false);
+    let new_name = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        if !open.get() {
+            naming.set(false);
+            new_name.set(String::new());
+        }
+    });
+    let create = move || {
+        let name = new_name.get_untracked().trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        naming.set(false);
+        new_name.set(String::new());
+        let known = house
+            .flow_labels
+            .with_untracked(|v| label_by_name(&v.catalog, &name).map(|l| l.id.clone()));
+        if let Some(label) = known {
+            if !carried.with_untracked(|c| c.contains(&label)) {
+                toggle(label);
+            }
+            return;
+        }
+        let before = house.flow_labels.with_untracked(|v| v.catalog.clone());
+        spawn_local(async move {
+            match edit_flow_labels(&LabelEdit::CreateLabel { name, choice: None }).await {
+                Ok(view) => {
+                    let label = new_label_id(&before, &view.catalog);
+                    house.flow_labels.set(view);
+                    if let Some(label) = label {
+                        toggle(label);
+                    }
+                }
+                Err(e) => toasts.push(e.error),
+            }
+        });
+    };
+    let new_label = move || {
+        if naming.get() {
+            view! {
+                <div class="room-menu__new">
+                    <input
+                        type="text"
+                        class="input"
+                        aria-label=move || t(FlowText::LabelNameField)
+                        placeholder=move || t(FlowText::LabelNameField)
+                        autocomplete="off"
+                        prop:value=move || new_name.get()
+                        on:input=move |ev| new_name.set(event_target_value(&ev))
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.key() == "Enter" {
+                                ev.prevent_default();
+                                create();
+                            }
+                        }
+                    />
+                    <button type="button" class="btn" on:click=move |_| create()>
+                        {move || t(FlowText::CreateLabelButton)}
+                    </button>
+                </div>
+            }
+            .into_any()
+        } else {
+            view! {
+                <button
+                    type="button"
+                    role="menuitem"
+                    class="room-menu__item"
+                    disabled=invalid
+                    title=move || invalid.then(|| t(FlowText::FixFlowFirst))
+                    on:click=move |_| {
+                        naming.set(true);
+                        request_animation_frame(|| {
+                            let field = web_sys::window()
+                                .and_then(|w| w.document())
+                                .and_then(|d| d.query_selector(".room-menu__new input").ok().flatten())
+                                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok());
+                            if let Some(field) = field {
+                                let _ = field.focus();
+                            }
+                        });
+                    }
+                >
+                    <span class="room-menu__check" aria-hidden="true"></span>
+                    "＋ "
+                    {move || t(FlowText::NewLabel)}
+                </button>
+            }
+            .into_any()
+        }
+    };
     // The hub's push drops the row; a refusal shows as a toast and the row stays.
     let delete = move |_| {
         open_menu.set(None);
@@ -195,6 +345,11 @@ pub fn RoomMenu(
                                         None,
                                         none_checked,
                                     )}
+                                    <p class="room-menu__head" role="presentation">
+                                        {move || t(FlowText::Labels)}
+                                    </p>
+                                    {label_items}
+                                    {new_label}
                                     <button
                                         type="button"
                                         role="menuitem"
