@@ -3350,9 +3350,17 @@ p.override__hint {
 
 .flow-section__head {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.flow-section__toggle {
+  display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  min-width: 0;
   padding: 4px 2px;
   border: 0;
   background: transparent;
@@ -3361,6 +3369,69 @@ p.override__hint {
   letter-spacing: 0.06em;
   text-align: left;
   cursor: pointer;
+}
+
+/* A choice's label picker and a label's Turn all on / off, at the end of its header. */
+.label-pick .seg__btn {
+  min-height: 32px;
+}
+
+.label-pick__incomplete {
+  font: var(--type-label);
+  opacity: 0.6;
+}
+
+.label-switch {
+  display: flex;
+  gap: 8px;
+}
+
+.label-switch__btn {
+  min-height: 32px;
+}
+
+/* The trigger filter opens below its button, from the left. */
+.trigger-menu .room-menu__pop {
+  right: auto;
+  left: 0;
+}
+
+/* A label on a row or card: its colour as a tinted pill. Dark values first, Ivoire below. */
+.label-chip {
+  --label: #7aa7ff;
+
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: var(--radius-nav);
+  background: color-mix(in srgb, var(--label) 18%, transparent);
+  color: var(--label);
+  font: var(--type-label);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.label-chip--blue { --label: #7aa7ff; }
+.label-chip--amber { --label: #ffc457; }
+.label-chip--green { --label: #6ff0bf; }
+.label-chip--red { --label: #ff7a7a; }
+.label-chip--purple { --label: #a99bff; }
+.label-chip--teal { --label: #58e1ff; }
+.label-chip--pink { --label: #ff8fc0; }
+.label-chip--slate { --label: #a8b3c4; }
+
+:root[data-theme="light"] .label-chip--blue { --label: #2f5fb3; }
+:root[data-theme="light"] .label-chip--amber { --label: #8f6613; }
+:root[data-theme="light"] .label-chip--green { --label: #2f6b4a; }
+:root[data-theme="light"] .label-chip--red { --label: #b23a3a; }
+:root[data-theme="light"] .label-chip--purple { --label: #6a5acd; }
+:root[data-theme="light"] .label-chip--teal { --label: #2d6f86; }
+:root[data-theme="light"] .label-chip--pink { --label: #a63d72; }
+:root[data-theme="light"] .label-chip--slate { --label: #4f5b6b; }
+
+.flow-tile__labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .flow-section__title {

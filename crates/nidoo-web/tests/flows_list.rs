@@ -13,6 +13,10 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
+#[path = "support/fetch_stub.rs"]
+mod fetch_stub;
+use fetch_stub::FetchStub;
+
 const REFERENCE: &str = r#"{
   "id": "living_led_motion",
   "name": "Living LED on motion",
@@ -375,4 +379,273 @@ async fn the_delete_confirmation_follows_the_language_without_a_remount() {
         confirm()
     );
     assert!(confirm().contains("This can't be undone."), "{}", confirm());
+}
+
+/// The house of the label tests: a season choice (current: winter), an incomplete choice and a
+/// standalone label.
+fn seasons() -> nidoo_api::FlowLabelsView {
+    serde_json::from_value(serde_json::json!({
+        "catalog": {
+            "labels": [
+                {"id": "hiver", "name": "Hiver", "color": "blue", "choice": "saison"},
+                {"id": "ete", "name": "Été", "color": "amber", "choice": "saison"},
+                {"id": "solo", "name": "Solo", "color": "teal", "choice": "mode"},
+                {"id": "vacances", "name": "Vacances", "color": "green"}
+            ],
+            "choices": [
+                {"id": "saison", "name": "Saison", "current": "hiver"},
+                {"id": "mode", "name": "Mode"}
+            ]
+        },
+        "counts": {}
+    }))
+    .unwrap()
+}
+
+/// A flow with a manual trigger carrying `labels`.
+fn tagged(id: &str, name: &str, labels: &[&str]) -> FlowView {
+    let definition = Flow::decode(
+        serde_json::json!({
+            "id": id, "name": name, "labels": labels,
+            "nodes": [{"id": "go", "type": "trigger.manual", "params": {}}]
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .unwrap();
+    FlowView {
+        definition,
+        invalid: None,
+        active_run: None,
+        runs: vec![],
+    }
+}
+
+const PREFS_KEY: &str = "nidoo.flowList";
+
+fn local_storage() -> web_sys::Storage {
+    web_sys::window().unwrap().local_storage().unwrap().unwrap()
+}
+
+/// Mounts the page with the season catalog, the list grouped by `grouping`, and returns the
+/// toasts it pushes. The stored preferences are reset when `Labelled` drops.
+struct Labelled {
+    _mounted: Box<dyn std::any::Any>,
+    toasts: Toasts,
+}
+
+impl Drop for Labelled {
+    fn drop(&mut self) {
+        let _ = local_storage().remove_item(PREFS_KEY);
+    }
+}
+
+fn mount_labelled(host: &web_sys::Element, flows: Vec<FlowView>, grouping: &str) -> Labelled {
+    local_storage()
+        .set_item(PREFS_KEY, &format!(r#"{{"grouping":"{grouping}"}}"#))
+        .unwrap();
+    let house = House::new();
+    house.flows.set(flows);
+    house.flow_labels.set(seasons());
+    let toasts = Toasts::new();
+    let mounted = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
+        provide_context(house);
+        provide_context(toasts);
+        provide_context(nidoo_web::components::now::install_now());
+        provide_context(RwSignal::new(Lang::En));
+        view! {
+            <Router>
+                <FlowsScreen />
+            </Router>
+        }
+    });
+    Labelled {
+        _mounted: Box::new(mounted),
+        toasts,
+    }
+}
+
+fn season_flows() -> Vec<FlowView> {
+    vec![
+        tagged("heat", "Heat", &["hiver"]),
+        tagged("fan", "Fan", &["ete"]),
+        tagged("away", "Away", &["vacances", "hiver"]),
+        tagged("plain", "Plain", &[]),
+    ]
+}
+
+fn texts(host: &web_sys::Element, selector: &str) -> Vec<String> {
+    let all = host.query_selector_all(selector).unwrap();
+    (0..all.length())
+        .filter_map(|i| all.item(i))
+        .map(|n| n.text_content().unwrap_or_default().trim().to_owned())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+async fn grouping_offers_label() {
+    let host = host();
+    let _page = mount_labelled(&host, season_flows(), "room");
+    tick().await;
+    click_text(&host, ".seg[aria-label=\"Group\"] button", "Label");
+    tick().await;
+    assert_eq!(
+        texts(&host, ".flow-section__title"),
+        ["SAISON", "MODE", "VACANCES", "NO LABEL"]
+    );
+    assert!(
+        local_storage()
+            .get_item(PREFS_KEY)
+            .unwrap()
+            .unwrap_or_default()
+            .contains(r#""grouping":"label""#)
+    );
+}
+
+#[wasm_bindgen_test]
+async fn label_sections_show_picker_and_switch() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        "/api/v1/flow-labels/ete/switch",
+        200,
+        r#"{"label":"ete","action":"pick","enabled":["fan"],"disabled":["heat","away"],"skipped":[]}"#,
+    );
+    let host = host();
+    let page = mount_labelled(&host, season_flows(), "label");
+    tick().await;
+    // The current label is pressed; the incomplete choice offers no picker.
+    let picker = ".flow-section__head .label-pick button";
+    assert_eq!(texts(&host, picker), ["Hiver", "Été"]);
+    let pressed = host
+        .query_selector(".label-pick button[aria-pressed=\"true\"]")
+        .unwrap()
+        .expect("the current label");
+    assert_eq!(pressed.text_content().unwrap(), "Hiver");
+    assert_eq!(
+        texts(&host, ".label-pick__incomplete"),
+        ["Needs two labels"]
+    );
+    click_text(&host, picker, "Été");
+    let post = stub.wait_for("POST").await.expect("a switch was sent");
+    assert_eq!(post.url, "/api/v1/flow-labels/ete/switch");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&post.body).unwrap(),
+        serde_json::json!({"action": "pick"})
+    );
+    gloo_timers::future::TimeoutFuture::new(20).await;
+    let shown: Vec<String> = page
+        .toasts
+        .0
+        .get_untracked()
+        .into_iter()
+        .map(|t| t.text)
+        .collect();
+    assert_eq!(shown, ["Été picked: 1 on, 2 off."]);
+}
+
+#[wasm_bindgen_test]
+async fn standalone_label_all_off() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "POST",
+        "/api/v1/flow-labels/vacances/switch",
+        200,
+        r#"{"label":"vacances","action":"off","enabled":[],"disabled":["away"],"skipped":[]}"#,
+    );
+    let host = host();
+    let page = mount_labelled(&host, season_flows(), "label");
+    tick().await;
+    click_text(
+        &host,
+        ".flow-section__head .label-switch button",
+        "Turn all off",
+    );
+    let post = stub.wait_for("POST").await.expect("a switch was sent");
+    assert_eq!(post.url, "/api/v1/flow-labels/vacances/switch");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&post.body).unwrap(),
+        serde_json::json!({"action": "off"})
+    );
+    gloo_timers::future::TimeoutFuture::new(20).await;
+    let shown: Vec<String> = page
+        .toasts
+        .0
+        .get_untracked()
+        .into_iter()
+        .map(|t| t.text)
+        .collect();
+    assert_eq!(shown, ["Vacances: 1 off."]);
+}
+
+#[wasm_bindgen_test]
+async fn label_sections_fold_from_the_title() {
+    let host = host();
+    let _page = mount_labelled(&host, season_flows(), "label");
+    tick().await;
+    let rows = count(&host, ".flow-row");
+    click(&host, ".flow-section__toggle");
+    tick().await;
+    assert!(count(&host, ".flow-row") < rows, "{}", host.inner_html());
+}
+
+#[wasm_bindgen_test]
+async fn trigger_menu_replaces_the_chips() {
+    let host = host();
+    let _page = mount_labelled(
+        &host,
+        vec![reference(), tagged("hand", "By hand", &[])],
+        "none",
+    );
+    tick().await;
+    assert_eq!(
+        count(&host, ".flow-chips__set[aria-label=\"Trigger type\"]"),
+        0,
+        "{}",
+        host.inner_html()
+    );
+    assert_eq!(texts(&host, ".trigger-menu__button"), ["Trigger ▾"]);
+    assert_eq!(count(&host, "[role=menuitemcheckbox]"), 0);
+    click(&host, ".trigger-menu__button");
+    tick().await;
+    assert_eq!(count(&host, ".trigger-menu [role=menuitemcheckbox]"), 7);
+    click_text(&host, ".trigger-menu [role=menuitemcheckbox]", "Manual");
+    tick().await;
+    assert_eq!(texts(&host, ".flow-row__link"), ["By hand"]);
+    assert_eq!(texts(&host, ".trigger-menu__button"), ["Trigger · 1 ▾"]);
+    let checked = host
+        .query_selector(".trigger-menu [aria-checked=\"true\"]")
+        .unwrap()
+        .expect("a checked kind");
+    assert!(checked.text_content().unwrap().ends_with("Manual"));
+    // Escape closes the menu and keeps the filter.
+    let esc = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(
+        "keydown",
+        web_sys::KeyboardEventInit::new().key("Escape"),
+    )
+    .unwrap();
+    web_sys::window().unwrap().dispatch_event(&esc).unwrap();
+    tick().await;
+    assert_eq!(count(&host, ".trigger-menu [role=menuitemcheckbox]"), 0);
+    assert_eq!(texts(&host, ".flow-row__link"), ["By hand"]);
+}
+
+#[wasm_bindgen_test]
+async fn rows_show_label_chips() {
+    let host = host();
+    let _page = mount_labelled(
+        &host,
+        vec![tagged("away", "Away", &["vacances", "hiver"])],
+        "none",
+    );
+    tick().await;
+    assert_eq!(texts(&host, ".flow-row .label-chip"), ["Hiver", "Vacances"]);
+    assert_eq!(count(&host, ".flow-row .label-chip--blue"), 1);
+    assert_eq!(count(&host, ".flow-row .label-chip--green"), 1);
+    click_text(&host, ".seg[aria-label=\"View\"] button", "Cards");
+    tick().await;
+    assert_eq!(
+        texts(&host, ".flow-tile .label-chip"),
+        ["Hiver", "Vacances"]
+    );
 }

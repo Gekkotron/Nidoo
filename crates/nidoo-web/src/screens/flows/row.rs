@@ -8,7 +8,7 @@ use nidoo_core::flow::FlowMode;
 use crate::api;
 use crate::components::flow_switch::FlowSwitch;
 use crate::components::now::Now;
-use crate::flow_list::ListRow;
+use crate::flow_list::{ListRow, label_color_name};
 use crate::flows::status_word;
 use crate::i18n::flows::{FlowText, flow_text};
 use crate::i18n::format::{ago, date_time, local_date_time};
@@ -68,6 +68,17 @@ pub(super) fn invalid_badge(flow: &FlowView) -> Option<impl IntoView + use<>> {
     })
 }
 
+/// The row's labels as coloured chips, in catalog order; nothing when it carries none.
+pub(super) fn label_chips(row: &ListRow) -> impl IntoView + use<> {
+    row.labels
+        .iter()
+        .map(|label| {
+            let class = format!("label-chip label-chip--{}", label_color_name(label.color));
+            view! { <span class=class>{label.name.clone()}</span> }
+        })
+        .collect_view()
+}
+
 /// A row of the list view. `menu` is the slot at the row end for the ⋯ menu.
 #[component]
 pub fn FlowRow(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl IntoView {
@@ -101,6 +112,7 @@ pub fn FlowRow(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl In
                         }
                     })}
                 {badge}
+                {label_chips(&row)}
             </span>
             <span class="flow-row__sub">
                 <span class="flow-row__trigger">{trigger}</span>

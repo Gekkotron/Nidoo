@@ -3,7 +3,9 @@
 use leptos::prelude::*;
 use leptos_router::components::A;
 
-use super::row::{icon_view, invalid_badge, is_restart, last_run, last_run_failed, run_title};
+use super::row::{
+    icon_view, invalid_badge, is_restart, label_chips, last_run, last_run_failed, run_title,
+};
 use crate::api;
 use crate::components::flow_switch::FlowSwitch;
 use crate::components::now::Now;
@@ -46,6 +48,8 @@ pub fn FlowCard(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl I
                 </span>
             </div>
             <p class="flow-tile__trigger">{row.trigger_text.clone()}</p>
+            {(!row.labels.is_empty())
+                .then(|| view! { <div class="flow-tile__labels">{label_chips(&row)}</div> })}
             <div class="flow-tile__bottom">
                 <span class="flow-row__run" class:flow-row__run--failed=failed title=move || started.map(|s| run_title(lang(), s))>
                     {move || last_run(lang(), &run_flow, now.0.get())}

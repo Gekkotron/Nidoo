@@ -8,7 +8,9 @@ use std::hash::{Hash, Hasher};
 use std::mem::discriminant;
 
 use nidoo_api::{AreaView, EntityView, FlowView, RunStatus};
-use nidoo_core::flow::{Flow, FlowChoice, FlowLabel, FlowLabelCatalog, FlowMode, NodeKind};
+use nidoo_core::flow::{
+    Flow, FlowChoice, FlowLabel, FlowLabelCatalog, FlowMode, LabelColor, NodeKind,
+};
 use nidoo_core::model::UNASSIGNED_AREA;
 use serde::{Deserialize, Serialize};
 
@@ -386,6 +388,20 @@ pub fn label_sections(lang: Lang, rows: Vec<ListRow>, catalog: &FlowLabelCatalog
     out
 }
 
+/// A label colour's wire name, which is also its CSS modifier (`label-chip--blue`).
+pub fn label_color_name(color: LabelColor) -> &'static str {
+    match color {
+        LabelColor::Blue => "blue",
+        LabelColor::Amber => "amber",
+        LabelColor::Green => "green",
+        LabelColor::Red => "red",
+        LabelColor::Purple => "purple",
+        LabelColor::Teal => "teal",
+        LabelColor::Pink => "pink",
+        LabelColor::Slate => "slate",
+    }
+}
+
 /// The `<For>` key of a row or card: the flow id and a digest of everything it shows (name,
 /// switch, restart tag, invalid reason, trigger, icon, room, label chips, attention, newest run and whether
 /// the last finished one failed). A run event changes the key of its own row only, so the page
@@ -606,6 +622,14 @@ mod tests {
 
     fn label_rows(flows: &[FlowView], catalog: &FlowLabelCatalog) -> Vec<ListRow> {
         rows(Lang::En, flows, &[], &BTreeMap::new(), catalog)
+    }
+
+    #[test]
+    fn label_color_names_are_the_wire_names() {
+        for color in nidoo_core::flow::LabelColor::ALL {
+            let wire = serde_json::to_value(color).unwrap();
+            assert_eq!(wire, label_color_name(color));
+        }
     }
 
     #[test]

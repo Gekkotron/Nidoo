@@ -17,7 +17,7 @@ use crate::i18n::{Key, use_lang, use_text};
 /// list rebuilds keeps its menu open, only one menu is ever open, and one pair of window
 /// listeners serves them all.
 #[derive(Clone, Copy)]
-pub struct OpenMenu(RwSignal<Option<String>>);
+pub struct OpenMenu(pub(super) RwSignal<Option<String>>);
 
 /// Provides [`OpenMenu`] to the page and registers its one Escape / outside-press listener pair,
 /// removed when the page goes away.
