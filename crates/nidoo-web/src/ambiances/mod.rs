@@ -240,6 +240,7 @@ fn device_sentence(
         entities: house.entities,
         areas: house.areas,
         flows: house.flows,
+        labels: &crate::flow_text::NO_LABELS,
         lang,
     };
     let full = sentence(&node, &ctx);

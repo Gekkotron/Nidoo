@@ -2,10 +2,11 @@
 
 use nidoo_core::flow::TriggerSignalParams;
 use nidoo_core::flow::{
-    AskAnswer, AskParams, CommandParams, DelayParams, FlowEnableParams, IfParams, LimitParams,
-    MathParams, Node, NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SpeakParams,
-    SunWhich, SwitchParams, SwitchRule, TimeBetweenParams, TriggerManualParams,
-    TriggerOffPeakParams, TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
+    AskAnswer, AskParams, CommandParams, DelayParams, FlowEnableParams, FlowLabelParams, IfParams,
+    LabelAction, LimitParams, MathParams, Node, NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp,
+    Scalar, SpeakParams, SunWhich, SwitchParams, SwitchRule, TimeBetweenParams,
+    TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams, TriggerSilentParams,
+    TriggerStateParams,
 };
 use nidoo_core::model::Command;
 use serde_json::Value;
@@ -77,6 +78,7 @@ fn command(entity: &str, command: Command) -> NodeKind {
 fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::TriggerManual(_) => "inject injecter button bouton",
+        NodeKind::FlowLabel(_) => "choice choix season saison tag",
         _ => "",
     }
 }
@@ -267,6 +269,16 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             Some(FlowText::EnableFlow),
             FlowText::EnableFlowSub,
         ),
+        (
+            Group::Flow,
+            NodeKind::FlowLabel(FlowLabelParams {
+                label: String::new(),
+                action: LabelAction::Pick,
+                ..Default::default()
+            }),
+            Some(FlowText::NodeFlowLabel),
+            FlowText::NodeFlowLabelSub,
+        ),
     ];
     // The label a generic card reads in `lang`; the sentence of a card with no target reads
     // poorly, so the picker names it.
@@ -277,6 +289,7 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
                 entities: ctx.entities,
                 areas: ctx.areas,
                 flows: ctx.flows,
+                labels: ctx.labels,
                 lang,
             };
             entry(Group::Flow, kind.clone(), &other).label
@@ -445,6 +458,7 @@ mod tests {
             entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         };
         entries(query, &ctx)
@@ -462,6 +476,7 @@ mod tests {
                 entities: &entities,
                 areas: &areas,
                 flows: &[],
+                labels: &crate::flow_text::NO_LABELS,
                 lang,
             };
             let got = entries(query, &ctx);
@@ -481,6 +496,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang,
         };
         let fr = entries("", &ctx(crate::i18n::Lang::Fr));
@@ -508,6 +524,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::Fr,
         };
         let got = entries("salon", &ctx);
@@ -520,6 +537,27 @@ mod tests {
 
     fn count(entries: &[Entry], group: Group) -> usize {
         entries.iter().filter(|e| e.group == group).count()
+    }
+
+    #[test]
+    fn library_lists_pick_a_label() {
+        let entities = BTreeMap::new();
+        for query in ["label", "étiquette", "choix"] {
+            let got = run(query, &entities);
+            let card = got
+                .iter()
+                .find(|e| matches!(&e.kind, NodeKind::FlowLabel(_)))
+                .unwrap_or_else(|| panic!("{query}: {got:?}"));
+            assert_eq!(card.group, Group::Flow);
+            assert_eq!(card.label, "Pick a label");
+            assert_eq!(
+                card.sub.as_deref(),
+                Some("Pick a season, or turn a label's flows on or off")
+            );
+            assert!(
+                matches!(&card.kind, NodeKind::FlowLabel(p) if p.label.is_empty() && p.action == nidoo_core::flow::LabelAction::Pick)
+            );
+        }
     }
 
     #[test]
@@ -547,6 +585,7 @@ mod tests {
                 (Group::Wait, "Limit"),
                 (Group::Flow, "Disable this flow"),
                 (Group::Flow, "Enable a flow"),
+                (Group::Flow, "Pick a label"),
             ]
         );
         let subs: Vec<_> = got.iter().map(|e| e.sub.as_deref()).collect();
@@ -570,6 +609,7 @@ mod tests {
                 Some("Lets only so many runs through"),
                 Some("Stops it from running again"),
                 Some("Switches another flow on or off"),
+                Some("Pick a season, or turn a label's flows on or off"),
             ]
         );
         assert!(matches!(
@@ -654,6 +694,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang,
         };
         let fr = entries("", &ctx(crate::i18n::Lang::Fr));
@@ -715,6 +756,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         };
         let got = entries("table", &ctx);
@@ -793,6 +835,7 @@ mod tests {
                 entities: &entities,
                 areas: &areas,
                 flows: &[],
+                labels: &crate::flow_text::NO_LABELS,
                 lang,
             };
             let labels: Vec<String> = entries("alarme", &ctx)
@@ -910,6 +953,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         };
         let got = entries("chambre volet", &ctx);

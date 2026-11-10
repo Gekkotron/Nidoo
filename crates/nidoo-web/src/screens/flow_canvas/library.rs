@@ -86,6 +86,7 @@ pub fn Library(on_add: Callback<NodeKind>, query: RwSignal<String>) -> impl Into
                         entities,
                         areas,
                         flows: &names,
+                        labels: &crate::flow_text::NO_LABELS,
                         lang: lang(),
                     },
                 )

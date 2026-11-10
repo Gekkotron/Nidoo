@@ -513,6 +513,188 @@ fn flow_enable_fields(
     }
 }
 
+/// The `flow.label` editor: what to do (pick, turn on, turn off); for a pick the choice then one
+/// of its labels, otherwise any label; and a live preview of what it would switch right now.
+fn flow_label_fields(
+    form: Form,
+    id: String,
+    p: nidoo_core::flow::FlowLabelParams,
+) -> impl IntoView {
+    use nidoo_core::flow::{Flow, LabelAction, plan_switch};
+
+    use crate::i18n::flows::{label_off_preview, label_preview};
+
+    let house = expect_context::<House>();
+    let lang = use_lang();
+    let t = use_flow_text();
+    let action = RwSignal::new(p.action);
+    let label = RwSignal::new(p.label.clone());
+    // The choice a pick looks in: the label's own, until another is chosen.
+    let choice = RwSignal::new(house.flow_labels.with_untracked(|v| {
+        v.catalog
+            .label(&p.label)
+            .and_then(|l| l.choice.clone())
+            .unwrap_or_default()
+    }));
+    let id = StoredValue::new(id);
+    let write = move || {
+        let (next_action, next_label) = (action.get_untracked(), label.get_untracked());
+        form.update(&id.get_value(), |n| {
+            if let NodeKind::FlowLabel(ref mut f) = n.kind {
+                f.action = next_action;
+                f.label = next_label;
+            }
+        });
+    };
+    let on_action = move |ev: web_sys::Event| {
+        action.set(match event_target_value(&ev).as_str() {
+            "on" => LabelAction::On,
+            "off" => LabelAction::Off,
+            _ => LabelAction::Pick,
+        });
+        write();
+    };
+    // Another choice drops the label, which must then be one of its own.
+    let on_choice = move |ev: web_sys::Event| {
+        let next = event_target_value(&ev);
+        if next == choice.get_untracked() {
+            return;
+        }
+        choice.set(next);
+        label.set(String::new());
+        write();
+    };
+    let on_label = move |ev: web_sys::Event| {
+        label.set(event_target_value(&ev));
+        write();
+    };
+    let action_value = move || match action.get() {
+        LabelAction::Pick => "pick",
+        LabelAction::On => "on",
+        LabelAction::Off => "off",
+    };
+    let choices = move || {
+        let current = choice.get();
+        house.flow_labels.with(|v| {
+            let known = v.catalog.choice(&current).is_some();
+            let blank = (!known).then(|| {
+                view! { <option value="" selected=true>"—"</option> }
+            });
+            let options = v
+                .catalog
+                .choices
+                .iter()
+                .map(|c| {
+                    let selected = c.id == current;
+                    view! { <option value=c.id.clone() selected=selected>{c.name.clone()}</option> }
+                })
+                .collect_view();
+            view! { {blank} {options} }
+        })
+    };
+    // A pick offers the choice's labels, on / off every label; an unset or lost label shows as
+    // itself (or "—") until another is picked.
+    let labels = move || {
+        let current = label.get();
+        let in_choice = (action.get() == LabelAction::Pick).then(|| choice.get());
+        house.flow_labels.with(|v| {
+            let offered: Vec<_> = match &in_choice {
+                Some(c) => v.catalog.members(c),
+                None => v.catalog.labels.iter().collect(),
+            };
+            let known = offered.iter().any(|l| l.id == current);
+            let stray = (!known).then(|| {
+                let text = if current.is_empty() {
+                    "—".to_owned()
+                } else {
+                    current.clone()
+                };
+                view! { <option value=current.clone() selected=true>{text}</option> }
+            });
+            let options = offered
+                .iter()
+                .map(|l| {
+                    let selected = l.id == current;
+                    view! { <option value=l.id.clone() selected=selected>{l.name.clone()}</option> }
+                })
+                .collect_view();
+            view! { {stray} {options} }
+        })
+    };
+    let preview = move || {
+        let current = label.get();
+        let act = action.get();
+        let lang = lang();
+        house.flow_labels.with(|v| {
+            house.flows.with(|flows| {
+                let catalog = &v.catalog;
+                let pairs: Vec<(&Flow, bool)> = flows
+                    .iter()
+                    .map(|f| (&f.definition, f.invalid.is_some()))
+                    .collect();
+                let plan = plan_switch(catalog, &pairs, &current, act).ok()?;
+                let name = catalog.label(&current)?.name.clone();
+                Some(match act {
+                    LabelAction::Pick => {
+                        let others: Vec<&str> = plan
+                            .choice
+                            .as_deref()
+                            .map(|c| catalog.members(c))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|l| l.id != current)
+                            .map(|l| l.name.as_str())
+                            .collect();
+                        label_preview(lang, plan.enable.len(), &name, plan.disable.len(), &others)
+                    }
+                    LabelAction::On => label_preview(lang, plan.enable.len(), &name, 0, &[]),
+                    LabelAction::Off => label_off_preview(lang, plan.disable.len(), &name),
+                })
+            })
+        })
+    };
+    view! {
+        <label class="node-editor__field">
+            <span class="node-editor__label">{move || t(FlowText::NodeAction)}</span>
+            <select
+                class="field"
+                aria-label=move || t(FlowText::NodeAction)
+                prop:value=action_value
+                on:change=on_action
+            >
+                <option value="pick" selected=move || action_value() == "pick">
+                    {move || t(FlowText::LabelPick)}
+                </option>
+                <option value="on" selected=move || action_value() == "on">
+                    {move || t(FlowText::LabelOn)}
+                </option>
+                <option value="off" selected=move || action_value() == "off">
+                    {move || t(FlowText::LabelOff)}
+                </option>
+            </select>
+        </label>
+        <Show when=move || action.get() == LabelAction::Pick>
+            <label class="node-editor__field">
+                <span class="node-editor__label">{move || t(FlowText::NewChoice)}</span>
+                <select
+                    class="field"
+                    aria-label=move || t(FlowText::NewChoice)
+                    on:change=on_choice
+                >
+                    {choices}
+                </select>
+            </label>
+        </Show>
+        <label class="node-editor__field">
+            <span class="node-editor__label">{move || t(FlowText::GroupLabel)}</span>
+            <select class="field" aria-label=move || t(FlowText::GroupLabel) on:change=on_label>
+                {labels}
+            </select>
+        </label>
+        {move || preview().map(|text| view! { <p class="node-editor__hint flow-label-preview">{text}</p> })}
+    }
+}
+
 /// The `notify` editor: title and body text, the channel and severity of the alert, and
 /// whether it arrives silently.
 /// A severity as a word; one the table does not know stays as the hub names it.
@@ -1734,7 +1916,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
         NodeKind::TriggerOffPeak(p) => off_peak_fields(form, id, p.edge).into_any(),
         NodeKind::TriggerManual(p) => manual_fields(form, id, p.value).into_any(),
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
-        NodeKind::FlowLabel(_) => ().into_any(),
+        NodeKind::FlowLabel(p) => flow_label_fields(form, id, p).into_any(),
         NodeKind::Notify(p) => notify_fields(form, id, p).into_any(),
         NodeKind::Speak(p) => speak_fields(form, id, p).into_any(),
         NodeKind::Ask(p) => ask_fields(form, id, p).into_any(),

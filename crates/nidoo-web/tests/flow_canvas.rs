@@ -1083,7 +1083,7 @@ async fn library_open_in_edit_mode() {
     let html = host.inner_html();
     assert_eq!(count(&host, ".flow-drawer--open"), 1, "{html}");
     assert_eq!(count(&host, ".flow-library"), 1, "{html}");
-    assert_eq!(count(&host, ".flow-library__item"), 17, "{html}");
+    assert_eq!(count(&host, ".flow-library__item"), 18, "{html}");
     assert_eq!(count(&host, ".flow-picker-wrap"), 0, "{html}");
 }
 
@@ -2850,4 +2850,107 @@ async fn editor_drops_stale_labels_on_save() {
     assert_eq!(label_names(&host), ["Été"]);
     let sent = saved_flow(&host, &view).await;
     assert_eq!(sent["labels"], serde_json::json!(["ete"]), "{sent}");
+}
+
+/// A flow with a manual trigger carrying `labels`, for the label previews.
+fn labelled_view(id: &str, labels: &[&str]) -> FlowView {
+    let flow = serde_json::json!({
+        "id": id, "name": id, "enabled": true, "labels": labels,
+        "nodes": [{"id": "go", "type": "trigger.manual", "params": {}}]
+    });
+    FlowView {
+        definition: Flow::decode(flow.to_string().as_bytes()).unwrap(),
+        invalid: None,
+        active_run: None,
+        runs: vec![],
+    }
+}
+
+/// An editing canvas whose `season` card is the label action `params`, with the season labels
+/// and three tagged flows (one Hiver, two Été; all on).
+async fn editing_label_card(params: &str) -> (web_sys::Element, Box<dyn std::any::Any>, FlowView) {
+    let view = line_view(&format!(
+        r#"[
+          {{ "id": "start", "type": "trigger.manual", "params": {{}} }},
+          {{ "id": "season", "type": "flow.label", "params": {params} }}
+        ]"#
+    ));
+    let (host, mounted, house) = editing(view.clone()).await;
+    house.flow_labels.set(season_labels());
+    house.flows.update(|f| {
+        f.push(labelled_view("heat", &["hiver"]));
+        f.push(labelled_view("fan", &["ete"]));
+        f.push(labelled_view("blinds", &["ete"]));
+    });
+    tick().await;
+    select_card(&host, "season").await;
+    (host, mounted, view)
+}
+
+fn drawer_select(host: &web_sys::Element, label: &str) -> web_sys::HtmlSelectElement {
+    element(host, &format!(".flow-drawer select[aria-label='{label}']")).unchecked_into()
+}
+
+fn option_texts(select: &web_sys::HtmlSelectElement) -> Vec<String> {
+    let options = select.query_selector_all("option").unwrap();
+    (0..options.length())
+        .filter_map(|i| options.item(i))
+        .map(|o| o.text_content().unwrap_or_default())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+async fn flow_label_card_saves_pick() {
+    let (host, _mounted, view) =
+        editing_label_card(r#"{ "label": "hiver", "action": "pick" }"#).await;
+    assert_eq!(drawer_select(&host, "Action").value(), "pick");
+    assert_eq!(drawer_select(&host, "Choice").value(), "saison");
+    let label = drawer_select(&host, "Label");
+    assert_eq!(option_texts(&label), ["Hiver", "Été"]);
+    // Été's two flows are on already: picking it turns only Hiver's flow off.
+    label.set_value("ete");
+    change(&label);
+    tick().await;
+    assert_eq!(
+        text(&host, ".flow-drawer .flow-label-preview"),
+        "No \"Été\" flow to turn on, turns off the \"Hiver\" flow."
+    );
+    assert_eq!(
+        text(&host, "[data-node=season] .flow-node__title"),
+        "Pick a label: Saison → Été"
+    );
+    let nodes = saved_nodes(&host, &view).await;
+    assert_eq!(nodes[1]["type"], "flow.label");
+    assert_eq!(
+        nodes[1]["params"],
+        serde_json::json!({"label": "ete", "action": "pick"})
+    );
+    settle_history().await;
+}
+
+#[wasm_bindgen_test]
+async fn flow_label_card_turns_a_label_off() {
+    let (host, _mounted, view) =
+        editing_label_card(r#"{ "label": "hiver", "action": "pick" }"#).await;
+    let action = drawer_select(&host, "Action");
+    action.set_value("off");
+    change(&action);
+    tick().await;
+    // No choice for on / off: every label is offered.
+    assert_eq!(count(&host, ".flow-drawer select[aria-label='Choice']"), 0);
+    let label = drawer_select(&host, "Label");
+    assert_eq!(option_texts(&label), ["Hiver", "Été", "Vacances"]);
+    label.set_value("ete");
+    change(&label);
+    tick().await;
+    assert_eq!(
+        text(&host, ".flow-drawer .flow-label-preview"),
+        "Turns off the 2 \"Été\" flows."
+    );
+    let nodes = saved_nodes(&host, &view).await;
+    assert_eq!(
+        nodes[1]["params"],
+        serde_json::json!({"label": "ete", "action": "off"})
+    );
+    settle_history().await;
 }

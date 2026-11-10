@@ -210,6 +210,7 @@ pub enum FlowText {
     NodeCommand,
     NodeFlowSwitch,
     NodeFlowLabel,
+    NodeFlowLabelSub,
     TitleLabel,
     TitleExample,
     BodyLabel,
@@ -531,6 +532,7 @@ impl FlowText {
         FlowText::NodeCommand,
         FlowText::NodeFlowSwitch,
         FlowText::NodeFlowLabel,
+        FlowText::NodeFlowLabelSub,
         FlowText::TitleLabel,
         FlowText::TitleExample,
         FlowText::BodyLabel,
@@ -933,6 +935,10 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::NodeCommand => ("Command", "Commande"),
         T::NodeFlowSwitch => ("Flow switch", "Interrupteur d'automatisation"),
         T::NodeFlowLabel => ("Pick a label", "Choisir une étiquette"),
+        T::NodeFlowLabelSub => (
+            "Pick a season, or turn a label's flows on or off",
+            "Choisit une saison, ou active ou désactive les automatisations d'une étiquette",
+        ),
         T::TitleLabel => ("Title", "Titre"),
         T::TitleExample => ("Door open", "Porte ouverte"),
         T::BodyLabel => ("Body", "Message"),
@@ -1170,6 +1176,66 @@ pub fn label_switch_result(
         out.push_str(&format!(" {lead}{colon} {}.", names.join(", ")));
     }
     out
+}
+
+/// A label name in quotes: "Été" / «\u{A0}Été\u{A0}».
+fn quoted_label(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::Fr => format!("«{NBSP}{name}{NBSP}»"),
+        Lang::En => format!("\"{name}\""),
+    }
+}
+
+/// The sentence of a `flow.label` card: "Pick a label: Saison → Été", "Turn on "Vacances"";
+/// `label` is the label's name (or its id when the catalog lost it), `choice` its choice's name.
+/// An unset label reads as the card's name.
+pub fn flow_label_card(
+    lang: Lang,
+    action: nidoo_core::flow::LabelAction,
+    label: &str,
+    choice: Option<&str>,
+) -> String {
+    use nidoo_core::flow::LabelAction;
+    let head = flow_text(lang, FlowText::NodeFlowLabel);
+    if label.is_empty() {
+        return head.to_owned();
+    }
+    match action {
+        LabelAction::Pick => {
+            let colon = if lang == Lang::Fr {
+                format!("{NBSP}: ")
+            } else {
+                ": ".to_owned()
+            };
+            match choice {
+                Some(choice) => format!("{head}{colon}{choice} → {label}"),
+                None => format!("{head}{colon}{label}"),
+            }
+        }
+        LabelAction::On => format!(
+            "{} {}",
+            flow_text(lang, FlowText::LabelOn),
+            quoted_label(lang, label)
+        ),
+        LabelAction::Off => format!(
+            "{} {}",
+            flow_text(lang, FlowText::LabelOff),
+            quoted_label(lang, label)
+        ),
+    }
+}
+
+/// The live preview of a "turn a label off" card: « Désactive les 12 automatisations « Été ». ».
+pub fn label_off_preview(lang: Lang, off: usize, label: &str) -> String {
+    let label = quoted_label(lang, label);
+    match (lang, off) {
+        (Lang::Fr, 0) => format!("Aucune automatisation {label} à désactiver."),
+        (Lang::Fr, 1) => format!("Désactive l'automatisation {label}."),
+        (Lang::Fr, n) => format!("Désactive les {n} automatisations {label}."),
+        (Lang::En, 0) => format!("No {label} flow to turn off."),
+        (Lang::En, 1) => format!("Turns off the {label} flow."),
+        (Lang::En, n) => format!("Turns off the {n} {label} flows."),
+    }
 }
 
 /// The live preview of a "pick a label" card: « Active les 5 automatisations « Été », désactive
@@ -2124,6 +2190,22 @@ mod tests {
         assert_eq!(
             label_color_word(Lang::Fr, nidoo_core::flow::LabelColor::Slate),
             "Ardoise"
+        );
+    }
+
+    #[test]
+    fn label_off_preview_sentences() {
+        assert_eq!(
+            label_off_preview(Lang::En, 2, "Été"),
+            "Turns off the 2 \"Été\" flows."
+        );
+        assert_eq!(
+            label_off_preview(Lang::En, 0, "Été"),
+            "No \"Été\" flow to turn off."
+        );
+        assert_eq!(
+            label_off_preview(Lang::Fr, 1, "Été"),
+            "Désactive l'automatisation «\u{a0}Été\u{a0}»."
         );
     }
 
