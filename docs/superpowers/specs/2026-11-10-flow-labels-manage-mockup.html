@@ -1,0 +1,71 @@
+<h2>Making labels, tagging flows, and the new action</h2>
+<p class="subtitle">Three small pieces. Not a choice between them: tell me what's wrong or missing in each.</p>
+
+<style>
+  .nd { font: 14px/1.45 system-ui, sans-serif; background:#1b2347; color:#e8eaf3; padding:14px; border-radius:10px; }
+  .nd h4 { margin:0 0 10px; font-size:15px; }
+  .nd .muted { color:#8f97b8; font-size:12px; }
+  .nd .pill { display:inline-block; padding:3px 10px; border:1px solid #ffffff2a; border-radius:999px; white-space:nowrap; font-size:13px; }
+  .nd .pill.on { background:#f7c766; color:#1b2347; font-weight:600; border-color:#f7c766; }
+  .nd .box { border:1px solid #ffffff22; border-radius:10px; padding:10px; margin-bottom:10px; background:#ffffff08; }
+  .nd .line { display:flex; align-items:center; gap:8px; margin:6px 0; }
+  .nd .grow { flex:1; }
+  .nd .dot { width:10px; height:10px; border-radius:50%; flex:none; }
+  .nd .x { color:#8f97b8; }
+  .nd .chip { font-size:12px; padding:1px 8px; border-radius:999px; }
+  .nd .c-h { background:#60a5fa33; color:#93c5fd; }
+  .nd .c-e { background:#f7c76633; color:#f7c766; }
+  .nd .c-v { background:#34d39933; color:#6ee7b7; }
+  .nd .field { border:1px solid #ffffff2a; border-radius:8px; padding:6px 10px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .nd .sel { border:1px solid #ffffff2a; border-radius:8px; padding:6px 10px; display:flex; justify-content:space-between; }
+  .nd .node { border:2px solid #f7c766; border-radius:12px; padding:10px; max-width:300px; }
+  .nd .check { width:14px; height:14px; border:1px solid #8f97b8; border-radius:3px; display:inline-block; text-align:center; font-size:11px; line-height:13px; }
+  .nd .check.y { background:#f7c766; border-color:#f7c766; color:#1b2347; }
+  .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; }
+</style>
+
+<div class="grid3">
+  <div class="mockup"><div class="mockup-header">1 · Label manager (from ⚙ or "＋ Étiquette")</div><div class="mockup-body nd">
+    <h4>Étiquettes</h4>
+    <div class="box">
+      <div class="line"><b class="grow">Saison</b><span class="muted">choix · une seule active</span><span class="x">✎ 🗑</span></div>
+      <div class="line"><span class="dot" style="background:#93c5fd"></span><span class="grow">Hiver</span><span class="muted">12 automatisations</span><span class="x">✎ 🗑</span></div>
+      <div class="line"><span class="dot" style="background:#f7c766"></span><span class="grow">Été</span><span class="muted">5</span><span class="x">✎ 🗑</span></div>
+      <div class="line"><span class="pill">＋ Étiquette dans ce choix</span></div>
+    </div>
+    <div class="box">
+      <div class="muted" style="margin-bottom:4px">Étiquettes seules</div>
+      <div class="line"><span class="dot" style="background:#6ee7b7"></span><span class="grow">Vacances</span><span class="muted">3</span><span class="x">✎ 🗑</span></div>
+    </div>
+    <div class="line"><span class="pill">＋ Étiquette</span><span class="pill">＋ Choix</span></div>
+    <p class="muted">A label is in at most one choice. Colour is picked automatically, changeable in ✎. Deleting a label used by a "Choisir une étiquette" action asks first and names those flows.</p>
+  </div></div>
+
+  <div class="mockup"><div class="mockup-header">2 · Tagging a flow</div><div class="mockup-body nd">
+    <div class="muted" style="margin-bottom:6px">In the flow editor's settings, under the room:</div>
+    <div class="muted">Pièce</div>
+    <div class="sel" style="margin-bottom:8px"><span>Salon</span><span>▾</span></div>
+    <div class="muted">Étiquettes</div>
+    <div class="field"><span class="chip c-h">Hiver ✕</span><span class="chip c-v">Vacances ✕</span><span class="muted">＋ ajouter…</span></div>
+    <div class="muted" style="margin:14px 0 6px">From the list: the row's "⋯" menu gets "Étiquettes…", next to "Déplacer vers une pièce":</div>
+    <div class="box">
+      <div class="line"><span class="check y">✓</span>Hiver <span class="muted">· Saison</span></div>
+      <div class="line"><span class="check"></span>Été <span class="muted">· Saison</span></div>
+      <div class="line"><span class="check y">✓</span>Vacances</div>
+      <div class="line"><span class="muted">＋ Nouvelle étiquette…</span></div>
+    </div>
+  </div></div>
+
+  <div class="mockup"><div class="mockup-header">3 · The new action in the flow editor</div><div class="mockup-body nd">
+    <div class="node">
+      <h4>🏷 Choisir une étiquette</h4>
+      <div class="muted">Choix</div>
+      <div class="sel" style="margin-bottom:8px"><span>Saison</span><span>▾</span></div>
+      <div class="muted">Étiquette</div>
+      <div class="sel"><span>Été</span><span>▾</span></div>
+      <p class="muted" style="margin-top:10px">Active les 5 automatisations « Été », désactive les 12 « Hiver ».</p>
+    </div>
+    <p class="muted" style="margin-top:12px">For a plain label, the same card offers "Activer / Désactiver toutes les automatisations « Vacances »". It sits in the library next to "Activer / désactiver une automatisation".</p>
+    <p class="muted">Run history: « Été choisi : 5 activées, 12 désactivées. »</p>
+  </div></div>
+</div>
