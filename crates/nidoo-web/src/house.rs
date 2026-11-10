@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use leptos::prelude::*;
 use nidoo_api::{
     AlertView, AmbianceView, ApplyReport, AreaView, BridgeView, ConnectionStatus, Dashboard,
-    DashboardView, DeviceView, EntityView, FlowView, FlowsConfigView, GroupView, HomeSettings,
-    IgnoredView, SolarView, WeatherView, WsEvent,
+    DashboardView, DeviceView, EntityView, FlowLabelsView, FlowView, FlowsConfigView, GroupView,
+    HomeSettings, IgnoredView, SolarView, WeatherView, WsEvent,
 };
 
 #[derive(Clone, Copy)]
@@ -33,6 +33,9 @@ pub struct House {
     pub solar_loaded: RwSignal<bool>,
     /// The home settings; the default document until the first fetch answers.
     pub home_settings: RwSignal<HomeSettings>,
+    /// The flow label catalog; empty until the first fetch answers. Its `counts` is a snapshot:
+    /// count a flow's labels from [`House::flows`].
+    pub flow_labels: RwSignal<FlowLabelsView>,
     /// The ambiances as the hub lists them, unreadable ones included.
     pub ambiances: RwSignal<Vec<AmbianceView>>,
     /// Whether the first ambiance fetch (or push) has landed; the Home row waits for it.
@@ -78,6 +81,7 @@ impl House {
             solar: RwSignal::new(None),
             solar_loaded: RwSignal::new(false),
             home_settings: RwSignal::new(HomeSettings::default()),
+            flow_labels: RwSignal::new(FlowLabelsView::default()),
             ambiances: RwSignal::new(Vec::new()),
             ambiances_loaded: RwSignal::new(false),
             ambiance_reports: RwSignal::new(BTreeMap::new()),
@@ -154,6 +158,16 @@ impl House {
         leptos::task::spawn_local(async move {
             if let Ok(settings) = crate::api::home::get_home_settings().await {
                 home_settings.set(settings);
+            }
+        });
+    }
+
+    /// Fetches the flow label catalog into [`House::flow_labels`]; a failure leaves the last value.
+    pub fn refresh_flow_labels(&self) {
+        let flow_labels = self.flow_labels;
+        leptos::task::spawn_local(async move {
+            if let Ok(view) = crate::api::flow_labels::get_flow_labels().await {
+                flow_labels.set(view);
             }
         });
     }
@@ -261,7 +275,7 @@ impl House {
             WsEvent::WeatherChanged => self.refresh_weather(),
             WsEvent::HomeSettingsChanged { settings } => self.home_settings.set(settings),
             // The Flows page does not read labels yet.
-            WsEvent::FlowLabelsChanged { .. } => {}
+            WsEvent::FlowLabelsChanged { labels } => self.flow_labels.set(labels),
             WsEvent::AmbiancesChanged { ambiances } => {
                 self.ambiances.set(ambiances);
                 self.ambiances_loaded.set(true);
@@ -348,6 +362,17 @@ mod tests {
             },
         });
         assert_eq!(house.home_settings.get_untracked().eco_setpoint, Some(16.0));
+    }
+
+    #[test]
+    fn flow_labels_event_updates_signal() {
+        let house = House::new();
+        let mut labels = nidoo_api::FlowLabelsView::default();
+        labels.counts.insert("hiver".into(), 2);
+        house.apply(WsEvent::FlowLabelsChanged {
+            labels: labels.clone(),
+        });
+        assert_eq!(house.flow_labels.get_untracked(), labels);
     }
 
     #[test]

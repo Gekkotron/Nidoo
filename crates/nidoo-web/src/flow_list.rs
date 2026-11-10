@@ -8,7 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::mem::discriminant;
 
 use nidoo_api::{AreaView, EntityView, FlowView, RunStatus};
-use nidoo_core::flow::{Flow, FlowMode, NodeKind};
+use nidoo_core::flow::{Flow, FlowChoice, FlowLabel, FlowLabelCatalog, FlowMode, NodeKind};
 use nidoo_core::model::UNASSIGNED_AREA;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,9 @@ use crate::i18n::flows::{FlowText, flow_text};
 
 /// The key of the section holding flows with no (known) room.
 pub const NO_ROOM_KEY: &str = "__no_room__";
+
+/// The key of the section holding flows with no (known) label.
+pub const NO_LABEL_KEY: &str = "__no_label__";
 
 /// What starts a flow; one chip each in the top bar. `Manual` is a flow with a Manual card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -53,12 +56,13 @@ pub enum Sort {
     LastRun,
 }
 
-/// Whether the list is cut into room sections.
+/// Whether the list is cut into room sections, label sections, or not at all.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Grouping {
     #[default]
     Room,
+    Label,
     None,
 }
 
@@ -82,6 +86,8 @@ pub struct ListRow {
     /// A known area id, else `None`.
     pub room: Option<String>,
     pub room_name: Option<String>,
+    /// The flow's labels that the catalog knows, in catalog order.
+    pub labels: Vec<FlowLabel>,
     pub attention: bool,
 }
 
@@ -103,12 +109,29 @@ pub struct StatusCounts {
     pub attention: usize,
 }
 
-/// A room and its flows.
+/// What a section header offers besides its title.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SectionHead {
+    /// A room (or "No room"): the title only.
+    Plain,
+    /// A choice: a picker of its labels, in catalog order.
+    Choice {
+        choice: FlowChoice,
+        members: Vec<FlowLabel>,
+    },
+    /// A standalone label: turn all its flows on or off.
+    Label(FlowLabel),
+    /// The flows with no label.
+    NoLabel,
+}
+
+/// A room, a choice or a label, and its flows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
-    /// The area id, or [`NO_ROOM_KEY`].
+    /// The area id or [`NO_ROOM_KEY`]; `choice:<id>`, `label:<id>` or [`NO_LABEL_KEY`].
     pub key: String,
     pub title: String,
+    pub head: SectionHead,
     pub rows: Vec<ListRow>,
     /// Whether any row needs attention.
     pub attention: bool,
@@ -162,12 +185,13 @@ pub fn trigger_kinds(view: &FlowView) -> BTreeSet<TriggerKind> {
 }
 
 /// The rows for `flows`, in the given order. A flow whose area is unknown (or `Unassigned`)
-/// has no room.
+/// has no room; a label id the catalog does not have is left out.
 pub fn rows(
     lang: Lang,
     flows: &[FlowView],
     areas: &[AreaView],
     entities: &BTreeMap<String, EntityView>,
+    catalog: &FlowLabelCatalog,
 ) -> Vec<ListRow> {
     flows
         .iter()
@@ -183,6 +207,12 @@ pub fn rows(
                 kinds: trigger_kinds(view),
                 room: area.map(|a| a.id.clone()),
                 room_name: area.map(|a| a.name.clone()),
+                labels: catalog
+                    .labels
+                    .iter()
+                    .filter(|l| view.definition.labels.contains(&l.id))
+                    .cloned()
+                    .collect(),
                 attention: needs_attention(view),
                 view: view.clone(),
             }
@@ -200,6 +230,7 @@ fn matches_query(row: &ListRow, needle: &str) -> bool {
         ]
         .into_iter()
         .flatten()
+        .chain(row.labels.iter().map(|l| l.name.as_str()))
         .any(|text| fold_accents(text).contains(needle))
 }
 
@@ -270,6 +301,7 @@ pub fn sections(lang: Lang, rows: Vec<ListRow>, areas: &[AreaView]) -> Vec<Secti
         .map(|a| Section {
             key: a.id.clone(),
             title: a.name.clone(),
+            head: SectionHead::Plain,
             rows: Vec::new(),
             attention: false,
         })
@@ -277,6 +309,7 @@ pub fn sections(lang: Lang, rows: Vec<ListRow>, areas: &[AreaView]) -> Vec<Secti
     let mut no_room = Section {
         key: NO_ROOM_KEY.to_owned(),
         title: flow_text(lang, FlowText::NoRoom).to_owned(),
+        head: SectionHead::Plain,
         rows: Vec::new(),
         attention: false,
     };
@@ -294,8 +327,67 @@ pub fn sections(lang: Lang, rows: Vec<ListRow>, areas: &[AreaView]) -> Vec<Secti
     out
 }
 
+/// Cuts `rows` by label: one section per choice (catalog order; the rows carrying any of its
+/// labels), then one per standalone label, then the rows with no label under "No label". A row
+/// is in every section it matches, once each. Choice and label sections are kept when empty
+/// (their header still switches); an empty "No label" is dropped. Row order is preserved.
+pub fn label_sections(lang: Lang, rows: Vec<ListRow>, catalog: &FlowLabelCatalog) -> Vec<Section> {
+    let section = |key: String, title: &str, head: SectionHead, rows: Vec<ListRow>| Section {
+        key,
+        title: title.to_owned(),
+        attention: rows.iter().any(|r| r.attention),
+        head,
+        rows,
+    };
+    let carrying = |ids: &[&str]| -> Vec<ListRow> {
+        rows.iter()
+            .filter(|r| r.labels.iter().any(|l| ids.contains(&l.id.as_str())))
+            .cloned()
+            .collect()
+    };
+    let mut out = Vec::new();
+    for choice in &catalog.choices {
+        let members: Vec<FlowLabel> = catalog.members(&choice.id).into_iter().cloned().collect();
+        let ids: Vec<&str> = members.iter().map(|l| l.id.as_str()).collect();
+        let rows = carrying(&ids);
+        out.push(section(
+            format!("choice:{}", choice.id),
+            &choice.name,
+            SectionHead::Choice {
+                choice: choice.clone(),
+                members,
+            },
+            rows,
+        ));
+    }
+    let standalone = catalog.labels.iter().filter(|l| {
+        l.choice
+            .as_deref()
+            .is_none_or(|c| catalog.choice(c).is_none())
+    });
+    for label in standalone {
+        let rows = carrying(&[label.id.as_str()]);
+        out.push(section(
+            format!("label:{}", label.id),
+            &label.name,
+            SectionHead::Label(label.clone()),
+            rows,
+        ));
+    }
+    let unlabelled: Vec<ListRow> = rows.into_iter().filter(|r| r.labels.is_empty()).collect();
+    if !unlabelled.is_empty() {
+        out.push(section(
+            NO_LABEL_KEY.to_owned(),
+            flow_text(lang, FlowText::NoLabel),
+            SectionHead::NoLabel,
+            unlabelled,
+        ));
+    }
+    out
+}
+
 /// The `<For>` key of a row or card: the flow id and a digest of everything it shows (name,
-/// switch, restart tag, invalid reason, trigger, icon, room, attention, newest run and whether
+/// switch, restart tag, invalid reason, trigger, icon, room, label chips, attention, newest run and whether
 /// the last finished one failed). A run event changes the key of its own row only, so the page
 /// rebuilds that row and keeps every other one as it is; steps added to a running run change
 /// nothing shown, so they keep the row too.
@@ -309,6 +401,9 @@ pub fn row_key(row: &ListRow) -> (String, u64) {
     row.trigger_text.hash(&mut hasher);
     row.kinds.hash(&mut hasher);
     row.room.hash(&mut hasher);
+    for label in &row.labels {
+        (&label.id, &label.name, label.color).hash(&mut hasher);
+    }
     row.attention.hash(&mut hasher);
     if let Some(run) = row.view.runs.first() {
         run.id.hash(&mut hasher);
@@ -350,7 +445,7 @@ pub fn encode_prefs(p: &FlowListPrefs) -> String {
 mod tests {
     use super::*;
     use nidoo_api::{AreaView, FlowView, RunStatus, RunView};
-    use nidoo_core::flow::Flow;
+    use nidoo_core::flow::{Flow, FlowLabelCatalog};
     use nidoo_core::model::UNASSIGNED_AREA;
 
     fn run(status: RunStatus, started_at: u64) -> RunView {
@@ -477,7 +572,149 @@ mod tests {
     }
 
     fn row(v: FlowView) -> ListRow {
-        rows(Lang::En, &[v], &[], &BTreeMap::new()).remove(0)
+        rows(
+            Lang::En,
+            &[v],
+            &[],
+            &BTreeMap::new(),
+            &FlowLabelCatalog::default(),
+        )
+        .remove(0)
+    }
+
+    /// The house of the examples: a season choice and a standalone label.
+    fn seasons() -> FlowLabelCatalog {
+        serde_json::from_value(serde_json::json!({
+            "labels": [
+                {"id": "hiver", "name": "Hiver", "color": "blue", "choice": "saison"},
+                {"id": "ete", "name": "Été", "color": "amber", "choice": "saison"},
+                {"id": "vacances", "name": "Vacances", "color": "green"}
+            ],
+            "choices": [
+                {"id": "saison", "name": "Saison", "current": "hiver"},
+                {"id": "mode", "name": "Mode"}
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn labelled(id: &str, labels: &[&str]) -> FlowView {
+        let mut v = view(id, id, &["trigger.manual"]);
+        v.definition.labels = labels.iter().map(|l| (*l).to_owned()).collect();
+        v
+    }
+
+    fn label_rows(flows: &[FlowView], catalog: &FlowLabelCatalog) -> Vec<ListRow> {
+        rows(Lang::En, flows, &[], &BTreeMap::new(), catalog)
+    }
+
+    #[test]
+    fn grouping_label_decodes() {
+        assert_eq!(
+            decode_prefs(r#"{"grouping":"label"}"#).grouping,
+            Grouping::Label
+        );
+        let p = FlowListPrefs {
+            grouping: Grouping::Label,
+            ..FlowListPrefs::default()
+        };
+        assert_eq!(decode_prefs(&encode_prefs(&p)), p);
+    }
+
+    #[test]
+    fn rows_resolve_labels_in_catalog_order_and_drop_unknown_ids() {
+        let catalog = seasons();
+        let out = label_rows(&[labelled("a", &["vacances", "ghost", "hiver"])], &catalog);
+        let ids: Vec<&str> = out[0].labels.iter().map(|l| l.id.as_str()).collect();
+        assert_eq!(ids, ["hiver", "vacances"]);
+    }
+
+    #[test]
+    fn label_sections_order_and_duplicates() {
+        let catalog = seasons();
+        let list = label_rows(
+            &[
+                labelled("both", &["hiver", "ete"]),
+                labelled("winter_away", &["hiver", "vacances"]),
+                labelled("plain", &[]),
+                labelled("stale", &["ghost"]),
+            ],
+            &catalog,
+        );
+        let out = label_sections(Lang::Fr, list, &catalog);
+        let keys: Vec<&str> = out.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "choice:saison",
+                "choice:mode",
+                "label:vacances",
+                NO_LABEL_KEY
+            ]
+        );
+        assert_eq!(ids(&out[0].rows), ["both", "winter_away"]);
+        assert_eq!(ids(&out[2].rows), ["winter_away"]);
+        assert_eq!(ids(&out[3].rows), ["plain", "stale"]);
+        assert_eq!(out[3].title, "Sans étiquette");
+        assert_eq!(out[0].title, "Saison");
+        match &out[0].head {
+            SectionHead::Choice { choice, members } => {
+                assert_eq!(choice.id, "saison");
+                let m: Vec<&str> = members.iter().map(|l| l.id.as_str()).collect();
+                assert_eq!(m, ["hiver", "ete"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(&out[2].head, SectionHead::Label(l) if l.id == "vacances"));
+        assert_eq!(out[3].head, SectionHead::NoLabel);
+    }
+
+    #[test]
+    fn empty_choice_section_is_kept() {
+        let catalog = seasons();
+        let out = label_sections(
+            Lang::En,
+            label_rows(&[labelled("x", &["hiver"])], &catalog),
+            &catalog,
+        );
+        let keys: Vec<&str> = out.iter().map(|s| s.key.as_str()).collect();
+        // `mode` and `vacances` carry no flow but keep their switch; "No label" is empty and dropped.
+        assert_eq!(keys, ["choice:saison", "choice:mode", "label:vacances"]);
+        assert!(out[1].rows.is_empty());
+        assert!(matches!(&out[1].head, SectionHead::Choice { members, .. } if members.is_empty()));
+    }
+
+    #[test]
+    fn room_sections_have_plain_heads() {
+        let out = sections(Lang::En, vec![row(view("a", "A", &[]))], &[]);
+        assert_eq!(out[0].head, SectionHead::Plain);
+    }
+
+    #[test]
+    fn query_matches_label_names() {
+        let catalog = seasons();
+        let list = label_rows(&[labelled("a", &["ete"]), labelled("b", &[])], &catalog);
+        let f = Filters {
+            query: "ETE".into(),
+            ..Filters::default()
+        };
+        assert_eq!(ids(&filter(&list, &f)), ["a"]);
+    }
+
+    #[test]
+    fn row_key_changes_with_labels() {
+        let catalog = seasons();
+        let key = |labels: &[&str], catalog: &FlowLabelCatalog| {
+            row_key(&label_rows(&[labelled("a", labels)], catalog)[0])
+        };
+        assert_ne!(key(&["hiver"], &catalog), key(&[], &catalog));
+        assert_ne!(key(&["hiver"], &catalog), key(&["ete"], &catalog));
+        let mut recoloured = catalog.clone();
+        recoloured.labels[0].color = nidoo_core::flow::LabelColor::Red;
+        assert_ne!(key(&["hiver"], &catalog), key(&["hiver"], &recoloured));
+        let mut renamed = catalog.clone();
+        renamed.labels[0].name = "Winter".into();
+        assert_ne!(key(&["hiver"], &catalog), key(&["hiver"], &renamed));
     }
 
     fn row_in(v: FlowView, room: &str, room_name: &str) -> ListRow {
@@ -578,6 +815,7 @@ mod tests {
             &[ghost, unassigned, known],
             &areas,
             &BTreeMap::new(),
+            &FlowLabelCatalog::default(),
         );
         assert_eq!(
             (out[0].room.clone(), out[0].room_name.clone()),
