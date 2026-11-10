@@ -6,6 +6,7 @@ mod clock;
 mod duration;
 mod field;
 mod graph;
+mod labels;
 pub mod math;
 mod model;
 mod scalar;
@@ -20,6 +21,10 @@ pub use duration::{
     DurationError, MAX_WINDOW, MIN_WINDOW, format_duration, parse_duration, pick_duration, window,
 };
 pub use field::{FieldInfo, brightness_percent, field_scalar, fields, headline_scalar};
+pub use labels::{
+    FlowChoice, FlowLabel, FlowLabelCatalog, LabelAction, LabelColor, LabelError, SwitchPlan,
+    label_id, next_color, plan_switch,
+};
 pub use math::{
     FUNCTIONS, Formula, FormulaError, Function, MAX_DEPTH, MAX_FORMULA_CHARS, MAX_INPUTS,
     MAX_TABLE_POINTS, fit_to_entity, is_valid_name, parse_formula,
