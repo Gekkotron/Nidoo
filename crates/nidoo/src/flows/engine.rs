@@ -226,13 +226,14 @@ fn watched_value(component: &str, value: &StateValue, field: Option<&str>) -> Op
 }
 
 /// Whether two definitions of a flow do the same thing: they may differ only in how the UI
-/// presents the flow (`name`, `description`, `area`), so renaming it or moving it to another room
-/// never cancels its run.
+/// presents the flow (`name`, `description`, `area`, `labels`), so renaming it, moving it to
+/// another room or relabelling it never cancels its run.
 fn same_behaviour(a: &Flow, b: &Flow) -> bool {
     let behaviour = |flow: &Flow| Flow {
         name: String::new(),
         description: None,
         area: None,
+        labels: Vec::new(),
         ..flow.clone()
     };
     behaviour(a) == behaviour(b)
