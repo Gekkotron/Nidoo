@@ -1,4 +1,5 @@
-//! The top bar of the Flows page: search, sort, grouping, view toggle and the filter chips.
+//! The top bar of the Flows page: search, sort, grouping and view toggle, then the status chips
+//! and the trigger menu.
 
 use leptos::prelude::*;
 
@@ -6,6 +7,11 @@ use crate::flow_list::{
     FlowListPrefs, Grouping, Sort, StatusCounts, StatusFilter, TriggerKind, ViewMode,
 };
 use crate::i18n::flows::{FlowText, use_flow_text};
+
+use super::room_menu::OpenMenu;
+
+/// The [`OpenMenu`] id of the trigger menu (flow ids never start with `_`).
+const TRIGGER_MENU: &str = "__trigger_menu__";
 
 /// A small segmented control: one button per option, the current one pressed.
 #[component]
@@ -74,29 +80,6 @@ pub fn FlowsBar(
                 </button>
             }
         };
-    let trigger_chips = TRIGGER_CHIPS
-        .into_iter()
-        .map(|(kind, label)| {
-            let on = move || prefs.with(|p| p.triggers.contains(&kind));
-            view! {
-                <button
-                    type="button"
-                    class="chip"
-                    class:chip--selected=on
-                    aria-pressed=move || on().to_string()
-                    on:click=move |_| {
-                        prefs.update(|p| {
-                            if !p.triggers.remove(&kind) {
-                                p.triggers.insert(kind);
-                            }
-                        });
-                    }
-                >
-                    {move || t(label)}
-                </button>
-            }
-        })
-        .collect_view();
     view! {
         <div class="flow-bar">
             <input
@@ -117,7 +100,11 @@ pub fn FlowsBar(
             <span class="flow-bar__label">{move || t(FlowText::GroupBy)}</span>
             <Segmented
                 label=FlowText::GroupBy
-                options=vec![(Grouping::Room, FlowText::GroupRoom), (Grouping::None, FlowText::GroupNone)]
+                options=vec![
+                    (Grouping::Room, FlowText::GroupRoom),
+                    (Grouping::Label, FlowText::GroupLabel),
+                    (Grouping::None, FlowText::GroupNone),
+                ]
                 current=Signal::derive(move || prefs.with(|p| p.grouping))
                 on_pick=Callback::new(move |v| prefs.update(|p| p.grouping = v))
             />
@@ -135,13 +122,79 @@ pub fn FlowsBar(
                 {status_chip(StatusFilter::Off, FlowText::StatusOff, |c| c.off)}
                 {status_chip(StatusFilter::Attention, FlowText::NeedsAttention, |c| c.attention)}
             </div>
-            <div
-                class="flow-chips__set"
-                role="group"
-                aria-label=move || t(FlowText::TriggerType)
-            >
-                {trigger_chips}
-            </div>
+            <TriggerMenu prefs=prefs />
         </div>
+    }
+}
+
+/// "Trigger ▾" (with "· n" when n kinds are picked) over a popover of the seven trigger kinds as
+/// checkboxes; picking none shows every flow. It shares the page's [`OpenMenu`], so Escape or a
+/// press outside closes it like a row's ⋯ menu.
+#[component]
+fn TriggerMenu(prefs: RwSignal<FlowListPrefs>) -> impl IntoView {
+    let t = use_flow_text();
+    let OpenMenu(open_menu) = expect_context::<OpenMenu>();
+    let open = Memo::new(move |_| open_menu.with(|o| o.as_deref() == Some(TRIGGER_MENU)));
+    let toggle = move |_| {
+        open_menu.update(|o| {
+            *o = if o.as_deref() == Some(TRIGGER_MENU) {
+                None
+            } else {
+                Some(TRIGGER_MENU.to_owned())
+            };
+        });
+    };
+    let picked = Memo::new(move |_| prefs.with(|p| p.triggers.len()));
+    let selected = Signal::derive(move || picked.get() > 0);
+    let label = move || match picked.get() {
+        0 => format!("{} ▾", t(FlowText::TriggerMenu)),
+        n => format!("{} · {n} ▾", t(FlowText::TriggerMenu)),
+    };
+    let items = move || {
+        TRIGGER_CHIPS
+            .into_iter()
+            .map(|(kind, word)| {
+                let on = move || prefs.with(|p| p.triggers.contains(&kind));
+                view! {
+                    <button
+                        type="button"
+                        role="menuitemcheckbox"
+                        class="room-menu__item"
+                        aria-checked=move || on().to_string()
+                        on:click=move |_| {
+                            prefs.update(|p| {
+                                if !p.triggers.remove(&kind) {
+                                    p.triggers.insert(kind);
+                                }
+                            });
+                        }
+                    >
+                        <span class="room-menu__check" aria-hidden="true">
+                            {move || on().then_some("✓")}
+                        </span>
+                        {move || t(word)}
+                    </button>
+                }
+            })
+            .collect_view()
+    };
+    view! {
+        <span class="room-menu trigger-menu">
+            <button
+                type="button"
+                class="chip trigger-menu__button"
+                class:chip--selected=selected
+                aria-haspopup="menu"
+                aria-expanded=move || open.get().to_string()
+                on:click=toggle
+            >
+                {label}
+            </button>
+            <Show when=move || open.get()>
+                <div class="room-menu__pop" role="menu" aria-label=move || t(FlowText::TriggerType)>
+                    {items}
+                </div>
+            </Show>
+        </span>
     }
 }

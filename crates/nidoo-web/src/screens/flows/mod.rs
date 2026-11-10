@@ -1,5 +1,6 @@
-//! The Flows page: a top bar (search, sort, grouping, view, filter chips) over the flows as a
-//! list or cards, grouped in foldable room sections.
+//! The Flows page: a top bar (search, sort, grouping, view, filters) over the flows as a list or
+//! cards, grouped in foldable room or label sections. A choice's section header picks its
+//! label, a standalone label's turns all its flows on or off.
 
 mod bar;
 mod card;
@@ -7,14 +8,18 @@ mod room_menu;
 mod row;
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use leptos_router::components::A;
+use nidoo_core::flow::LabelAction;
 
+use crate::components::toast::Toasts;
 use crate::flow_list::{
-    self, Filters, FlowListPrefs, Grouping, ListRow, Section, ViewMode, decode_prefs, encode_prefs,
+    self, Filters, FlowListPrefs, Grouping, ListRow, Section, SectionHead, ViewMode, decode_prefs,
+    encode_prefs,
 };
 use crate::house::House;
-use crate::i18n::flows::{FlowText, flow_text};
-use crate::i18n::{Key, text, use_lang};
+use crate::i18n::flows::{FlowText, flow_text, label_switch_result};
+use crate::i18n::{Key, Lang, text, use_lang};
 use bar::FlowsBar;
 use card::FlowCard;
 use room_menu::{RoomMenu, provide_open_menu};
@@ -101,7 +106,89 @@ fn block(rows: Signal<Vec<ListRow>>, mode: ViewMode) -> AnyView {
     }
 }
 
-/// A foldable room section: header button (title · count, ⚠) over its block. It is keyed by
+/// Switches `label` on the hub, then says what changed in a toast (or why it failed). The flows
+/// and the catalog follow over the WebSocket.
+fn switch_label(house: House, toasts: Toasts, lang: Lang, label: String, action: LabelAction) {
+    spawn_local(async move {
+        match crate::api::flow_labels::switch_flow_label(&label, action).await {
+            Ok(result) => toasts.push(
+                house
+                    .flow_labels
+                    .with_untracked(|v| label_switch_result(lang, &result, &v.catalog)),
+            ),
+            Err(e) => toasts.push(e.error),
+        }
+    });
+}
+
+/// The controls at the end of a section header: a choice's label picker (the current label
+/// pressed; "Needs two labels" below two), a label's Turn all on / off, nothing for a room or
+/// "No label".
+fn head_controls(head: SectionHead) -> AnyView {
+    let house = expect_context::<House>();
+    let toasts = expect_context::<Toasts>();
+    let lang = use_lang();
+    let switch = move |id: &str, action: LabelAction| {
+        let id = id.to_owned();
+        move |_| switch_label(house, toasts, lang(), id.clone(), action)
+    };
+    match head {
+        SectionHead::Choice { members, .. } if members.len() < 2 => view! {
+            <span class="label-pick__incomplete">
+                {move || flow_text(lang(), FlowText::ChoiceIncomplete)}
+            </span>
+        }
+        .into_any(),
+        SectionHead::Choice { choice, members } => {
+            let buttons = members
+                .into_iter()
+                .map(|label| {
+                    let current = choice.current.as_deref() == Some(label.id.as_str());
+                    view! {
+                        <button
+                            type="button"
+                            class="seg__btn"
+                            class:seg__btn--on=current
+                            aria-pressed=current.to_string()
+                            on:click=switch(&label.id, LabelAction::Pick)
+                        >
+                            {label.name}
+                        </button>
+                    }
+                })
+                .collect_view();
+            view! {
+                <div class="seg label-pick" role="group" aria-label=choice.name>
+                    {buttons}
+                </div>
+            }
+            .into_any()
+        }
+        SectionHead::Label(label) => view! {
+            <div class="label-switch">
+                <button
+                    type="button"
+                    class="chip label-switch__btn"
+                    on:click=switch(&label.id, LabelAction::On)
+                >
+                    {move || flow_text(lang(), FlowText::AllOn)}
+                </button>
+                <button
+                    type="button"
+                    class="chip label-switch__btn"
+                    on:click=switch(&label.id, LabelAction::Off)
+                >
+                    {move || flow_text(lang(), FlowText::AllOff)}
+                </button>
+            </div>
+        }
+        .into_any(),
+        SectionHead::Plain | SectionHead::NoLabel => ().into_any(),
+    }
+}
+
+/// A foldable section: a header (fold button with title · count and ⚠, then the label
+/// controls) over its block. It is keyed by
 /// the room and reads its title, rows and attention from `sections`, so a run event updates it
 /// in place.
 fn section_view(
@@ -138,34 +225,42 @@ fn section_view(
             }
         });
     };
+    let head = Memo::new(move |_| {
+        section
+            .with(|s| s.as_ref().map(|s| s.head.clone()))
+            .unwrap_or(SectionHead::Plain)
+    });
     view! {
         <section class="flow-section">
-            <button
-                type="button"
-                class="flow-section__head"
-                aria-expanded=move || (!folded.get()).to_string()
-                on:click=toggle
-            >
-                <span class="flow-section__caret" class:flow-section__caret--folded=folded>
-                    "▾"
-                </span>
-                <span class="flow-section__title">{title}</span>
-                <span class="flow-section__dot" aria-hidden="true">"·"</span>
-                <span class="flow-section__count">{count}</span>
-                {move || {
-                    (attention() && folded.get())
-                        .then(|| {
-                            view! {
-                                <span
-                                    class="flow-section__warn"
-                                    title=move || flow_text(lang(), FlowText::RoomNeedsAttention)
-                                >
-                                    "⚠"
-                                </span>
-                            }
-                        })
-                }}
-            </button>
+            <div class="flow-section__head">
+                <button
+                    type="button"
+                    class="flow-section__toggle"
+                    aria-expanded=move || (!folded.get()).to_string()
+                    on:click=toggle
+                >
+                    <span class="flow-section__caret" class:flow-section__caret--folded=folded>
+                        "▾"
+                    </span>
+                    <span class="flow-section__title">{title}</span>
+                    <span class="flow-section__dot" aria-hidden="true">"·"</span>
+                    <span class="flow-section__count">{count}</span>
+                    {move || {
+                        (attention() && folded.get())
+                            .then(|| {
+                                view! {
+                                    <span
+                                        class="flow-section__warn"
+                                        title=move || flow_text(lang(), FlowText::RoomNeedsAttention)
+                                    >
+                                        "⚠"
+                                    </span>
+                                }
+                            })
+                    }}
+                </button>
+                {move || head_controls(head.get())}
+            </div>
             <Show when=move || !folded.get()>{move || block(rows, mode)}</Show>
         </section>
     }
