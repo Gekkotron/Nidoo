@@ -185,9 +185,11 @@ pub fn FlowsScreen() -> impl IntoView {
         let lang = lang();
         house.flows.with(|flows| {
             house.areas.with(|areas| {
-                house
-                    .entities
-                    .with(|entities| flow_list::rows(lang, flows, areas, entities))
+                house.entities.with(|entities| {
+                    house.flow_labels.with(|labels| {
+                        flow_list::rows(lang, flows, areas, entities, &labels.catalog)
+                    })
+                })
             })
         })
     });
@@ -220,9 +222,15 @@ pub fn FlowsScreen() -> impl IntoView {
     let sections = Memo::new(move |_| {
         let rows = shown.get();
         let lang = lang();
-        house
-            .areas
-            .with(|areas| flow_list::sections(lang, rows, areas))
+        if prefs.with(|p| p.grouping) == Grouping::Label {
+            house
+                .flow_labels
+                .with(|labels| flow_list::label_sections(lang, rows, &labels.catalog))
+        } else {
+            house
+                .areas
+                .with(|areas| flow_list::sections(lang, rows, areas))
+        }
     });
     let section_keys = Memo::new(move |_| {
         sections.with(|all| all.iter().map(|s| s.key.clone()).collect::<Vec<_>>())
@@ -242,7 +250,7 @@ pub fn FlowsScreen() -> impl IntoView {
         }
         match grouping {
             Grouping::None => block(shown.into(), mode),
-            Grouping::Room => view! {
+            Grouping::Room | Grouping::Label => view! {
                 <For each=move || section_keys.get() key=|key| key.clone() let:key>
                     {section_view(key, sections, mode, prefs)}
                 </For>

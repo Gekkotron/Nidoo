@@ -199,6 +199,7 @@ pub fn App() -> impl IntoView {
         house.refresh_solar();
         house.refresh_ambiances();
         house.refresh_home_settings();
+        house.refresh_flow_labels();
     }
     view! {
         <Router>

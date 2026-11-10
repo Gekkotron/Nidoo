@@ -39,13 +39,14 @@ pub fn connect(path: &str, house: House) {
                                         backoff = FIRST_BACKOFF_MS;
                                     }
                                     house.apply(event);
-                                    // Weather, home settings, the solar forecast and the ambiances are
+                                    // Weather, home settings, the solar forecast, the ambiances and the flow labels are
                                     // not in the snapshot: refetch them on every (re)connect.
                                     if connected {
                                         house.refresh_weather();
                                         house.refresh_solar();
                                         house.refresh_ambiances();
                                         house.refresh_home_settings();
+                                        house.refresh_flow_labels();
                                         if connected_before {
                                             house.refresh_dashboards(|_| ());
                                         }

@@ -122,6 +122,19 @@ pub enum FlowText {
     GroupBy,
     GroupRoom,
     GroupNone,
+    GroupLabel,
+    NoLabel,
+    Labels,
+    AllOn,
+    AllOff,
+    NewLabel,
+    NewChoice,
+    AddLabelInChoice,
+    TriggerMenu,
+    ChoiceIncomplete,
+    LabelPick,
+    LabelOn,
+    LabelOff,
     ViewLabel,
     ViewList,
     ViewCards,
@@ -421,6 +434,19 @@ impl FlowText {
         FlowText::GroupBy,
         FlowText::GroupRoom,
         FlowText::GroupNone,
+        FlowText::GroupLabel,
+        FlowText::NoLabel,
+        FlowText::Labels,
+        FlowText::AllOn,
+        FlowText::AllOff,
+        FlowText::NewLabel,
+        FlowText::NewChoice,
+        FlowText::AddLabelInChoice,
+        FlowText::TriggerMenu,
+        FlowText::ChoiceIncomplete,
+        FlowText::LabelPick,
+        FlowText::LabelOn,
+        FlowText::LabelOff,
         FlowText::ViewLabel,
         FlowText::ViewList,
         FlowText::ViewCards,
@@ -778,6 +804,19 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::GroupBy => ("Group", "Regroupement"),
         T::GroupRoom => ("Room", "Pièce"),
         T::GroupNone => ("None", "Aucun"),
+        T::GroupLabel => ("Label", "Étiquette"),
+        T::NoLabel => ("No label", "Sans étiquette"),
+        T::Labels => ("Labels", "Étiquettes"),
+        T::AllOn => ("Turn all on", "Tout activer"),
+        T::AllOff => ("Turn all off", "Tout désactiver"),
+        T::NewLabel => ("New label…", "Nouvelle étiquette…"),
+        T::NewChoice => ("Choice", "Choix"),
+        T::AddLabelInChoice => ("Label in this choice", "Étiquette dans ce choix"),
+        T::TriggerMenu => ("Trigger", "Déclencheur"),
+        T::ChoiceIncomplete => ("Needs two labels", "Il faut deux étiquettes"),
+        T::LabelPick => ("Pick", "Choisir"),
+        T::LabelOn => ("Turn on", "Activer"),
+        T::LabelOff => ("Turn off", "Désactiver"),
         T::ViewLabel => ("View", "Affichage"),
         T::ViewList => ("List", "Liste"),
         T::ViewCards => ("Cards", "Cartes"),
@@ -1023,6 +1062,111 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         Lang::En => en,
         Lang::Fr => fr,
     }
+}
+
+/// What a label switch did, in a sentence: « Été choisi : 5 activées, 12 désactivées. »,
+/// « Vacances : 3 désactivées. » or « … : rien à changer. », then « 1 non modifiée : Nom
+/// (invalide). » when some flows were skipped. The label reads as its catalog name, or its id
+/// when the catalog no longer has it.
+pub fn label_switch_result(
+    lang: Lang,
+    r: &nidoo_api::LabelSwitchResult,
+    catalog: &nidoo_core::flow::FlowLabelCatalog,
+) -> String {
+    use nidoo_core::flow::LabelAction;
+    let fr = lang == Lang::Fr;
+    let name = catalog
+        .label(&r.label)
+        .map_or(r.label.as_str(), |l| l.name.as_str());
+    // Spec wording: French plural for every count but 1 (« 0 désactivées »).
+    let n_fr = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let on = |n| {
+        if fr {
+            n_fr(n, "activée", "activées")
+        } else {
+            format!("{n} on")
+        }
+    };
+    let off = |n| {
+        if fr {
+            n_fr(n, "désactivée", "désactivées")
+        } else {
+            format!("{n} off")
+        }
+    };
+    let (enabled, disabled) = (r.enabled.len(), r.disabled.len());
+    let counts = if enabled + disabled == 0 {
+        (if fr {
+            "rien à changer"
+        } else {
+            "nothing to change"
+        })
+        .to_owned()
+    } else {
+        match r.action {
+            LabelAction::Pick => format!("{}, {}", on(enabled), off(disabled)),
+            LabelAction::On => on(enabled),
+            LabelAction::Off => off(disabled),
+        }
+    };
+    let head = match (r.action, fr) {
+        (LabelAction::Pick, true) => format!("{name} choisi"),
+        (LabelAction::Pick, false) => format!("{name} picked"),
+        _ => name.to_owned(),
+    };
+    let colon = if fr { "\u{a0}:" } else { ":" };
+    let mut out = format!("{head}{colon} {counts}.");
+    if !r.skipped.is_empty() {
+        let names: Vec<String> = r
+            .skipped
+            .iter()
+            .map(|s| {
+                let reason = match (s.reason.as_str(), fr) {
+                    ("invalid", true) => "invalide",
+                    (other, _) => other,
+                };
+                format!("{} ({reason})", s.name)
+            })
+            .collect();
+        let n = r.skipped.len();
+        let lead = if fr {
+            n_fr(n, "non modifiée", "non modifiées")
+        } else {
+            format!("{n} not changed")
+        };
+        out.push_str(&format!(" {lead}{colon} {}.", names.join(", ")));
+    }
+    out
+}
+
+/// The live preview of a "pick a label" card: « Active les 5 automatisations « Été », désactive
+/// les 12 « Hiver ». ». The off part is left out when nothing would be turned off.
+pub fn label_preview(lang: Lang, on: usize, label: &str, off: usize, others: &[&str]) -> String {
+    let quote = |s: &str| match lang {
+        Lang::Fr => format!("«{NBSP}{s}{NBSP}»"),
+        Lang::En => format!("\"{s}\""),
+    };
+    let label = quote(label);
+    let others: Vec<String> = others.iter().map(|o| quote(o)).collect();
+    let others = others.join(" / ");
+    let mut out = match (lang, on) {
+        (Lang::Fr, 0) => format!("Aucune automatisation {label} à activer"),
+        (Lang::Fr, 1) => format!("Active l'automatisation {label}"),
+        (Lang::Fr, n) => format!("Active les {n} automatisations {label}"),
+        (Lang::En, 0) => format!("No {label} flow to turn on"),
+        (Lang::En, 1) => format!("Turns on the {label} flow"),
+        (Lang::En, n) => format!("Turns on the {n} {label} flows"),
+    };
+    if off > 0 && !others.is_empty() {
+        out.push_str(&match (lang, off) {
+            (Lang::Fr, 1) => format!(", désactive l'automatisation {others}"),
+            (Lang::Fr, n) => format!(", désactive les {n} {others}"),
+            (Lang::En, 1) => format!(", turns off the {others} flow"),
+            (Lang::En, n) => format!(", turns off the {n} {others} flows"),
+        });
+    }
+    out.push('.');
+    out
 }
 
 /// A translator for [`FlowText`] bound to the language in context (reactive).
@@ -1776,6 +1920,132 @@ mod tests {
         assert_eq!(
             time_between(Lang::Fr, "07:00", "22:30"),
             "Entre 07:00 et 22:30"
+        );
+    }
+
+    fn switched(
+        action: nidoo_core::flow::LabelAction,
+        label: &str,
+        on: usize,
+        off: usize,
+        skipped: &[(&str, &str)],
+    ) -> nidoo_api::LabelSwitchResult {
+        nidoo_api::LabelSwitchResult {
+            label: label.into(),
+            action,
+            enabled: (0..on).map(|i| format!("on{i}")).collect(),
+            disabled: (0..off).map(|i| format!("off{i}")).collect(),
+            skipped: skipped
+                .iter()
+                .map(|(name, reason)| nidoo_api::SkippedFlow {
+                    id: name.to_lowercase(),
+                    name: (*name).into(),
+                    reason: (*reason).into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn label_switch_result_sentences() {
+        use nidoo_core::flow::{FlowLabelCatalog, LabelAction::*};
+        let catalog: FlowLabelCatalog = serde_json::from_value(serde_json::json!({
+            "labels": [
+                {"id": "ete", "name": "Été", "choice": "saison"},
+                {"id": "vacances", "name": "Vacances"}
+            ],
+            "choices": [{"id": "saison", "name": "Saison"}]
+        }))
+        .unwrap();
+        let say = |lang, r| label_switch_result(lang, &r, &catalog);
+        assert_eq!(
+            say(Lang::Fr, switched(Pick, "ete", 5, 12, &[])),
+            "Été choisi\u{a0}: 5 activées, 12 désactivées."
+        );
+        assert_eq!(
+            say(Lang::En, switched(Pick, "ete", 5, 12, &[])),
+            "Été picked: 5 on, 12 off."
+        );
+        assert_eq!(
+            say(Lang::Fr, switched(Pick, "ete", 2, 0, &[])),
+            "Été choisi\u{a0}: 2 activées, 0 désactivées."
+        );
+        assert_eq!(
+            say(Lang::Fr, switched(Pick, "ete", 1, 1, &[])),
+            "Été choisi\u{a0}: 1 activée, 1 désactivée."
+        );
+        assert_eq!(
+            say(Lang::Fr, switched(Off, "vacances", 0, 3, &[])),
+            "Vacances\u{a0}: 3 désactivées."
+        );
+        assert_eq!(
+            say(Lang::En, switched(Off, "vacances", 0, 3, &[])),
+            "Vacances: 3 off."
+        );
+        assert_eq!(
+            say(Lang::Fr, switched(On, "vacances", 3, 0, &[])),
+            "Vacances\u{a0}: 3 activées."
+        );
+        assert_eq!(
+            say(Lang::Fr, switched(Pick, "ete", 0, 0, &[])),
+            "Été choisi\u{a0}: rien à changer."
+        );
+        assert_eq!(
+            say(Lang::En, switched(Pick, "ete", 0, 0, &[])),
+            "Été picked: nothing to change."
+        );
+        assert_eq!(
+            say(
+                Lang::Fr,
+                switched(Pick, "ete", 5, 12, &[("Nom", "invalid")])
+            ),
+            "Été choisi\u{a0}: 5 activées, 12 désactivées. 1 non modifiée\u{a0}: Nom (invalide)."
+        );
+        assert_eq!(
+            say(
+                Lang::En,
+                switched(
+                    Off,
+                    "vacances",
+                    0,
+                    1,
+                    &[("A", "invalid"), ("B", "publish: broker offline")]
+                )
+            ),
+            "Vacances: 1 off. 2 not changed: A (invalid), B (publish: broker offline)."
+        );
+        // A label gone from the catalog reads as its id.
+        assert_eq!(
+            say(Lang::En, switched(On, "ghost", 1, 0, &[])),
+            "ghost: 1 on."
+        );
+    }
+
+    #[test]
+    fn label_preview_sentences() {
+        assert_eq!(
+            label_preview(Lang::Fr, 5, "Été", 12, &["Hiver"]),
+            "Active les 5 automatisations «\u{a0}Été\u{a0}», désactive les 12 «\u{a0}Hiver\u{a0}»."
+        );
+        assert_eq!(
+            label_preview(Lang::En, 5, "Été", 12, &["Hiver"]),
+            "Turns on the 5 \"Été\" flows, turns off the 12 \"Hiver\" flows."
+        );
+        assert_eq!(
+            label_preview(Lang::Fr, 1, "Été", 1, &["Hiver", "Printemps"]),
+            "Active l'automatisation «\u{a0}Été\u{a0}», désactive l'automatisation «\u{a0}Hiver\u{a0}» / «\u{a0}Printemps\u{a0}»."
+        );
+        assert_eq!(
+            label_preview(Lang::En, 0, "Été", 0, &["Hiver"]),
+            "No \"Été\" flow to turn on."
+        );
+        assert_eq!(
+            label_preview(Lang::Fr, 0, "Été", 0, &[]),
+            "Aucune automatisation «\u{a0}Été\u{a0}» à activer."
+        );
+        assert_eq!(
+            label_preview(Lang::En, 1, "Été", 0, &[]),
+            "Turns on the \"Été\" flow."
         );
     }
 
