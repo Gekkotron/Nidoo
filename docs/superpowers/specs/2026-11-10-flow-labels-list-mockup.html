@@ -1,0 +1,74 @@
+<h2>Labels through "Regroupement" — in your page's style</h2>
+<p class="subtitle">Both add <b>Étiquette</b> to the Regroupement toggle; no new row. When grouped by label, each section header carries its switch. B2 also folds the 7 trigger chips into one "Déclencheur" menu, so the page loses a row.</p>
+
+<style>
+  .nd { font: 14px/1.4 system-ui, sans-serif; background:#1b2347; color:#e8eaf3; padding:14px; border-radius:10px; }
+  .nd .r { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:9px; }
+  .nd .search { flex:1; min-width:160px; padding:7px 12px; border:1px solid #ffffff2a; border-radius:999px; background:#ffffff0d; color:#8f97b8; }
+  .nd .cap { color:#8f97b8; font-size:13px; }
+  .nd .tg { display:inline-flex; border:1px solid #ffffff2a; border-radius:999px; padding:2px; }
+  .nd .tg span { padding:3px 10px; border-radius:999px; }
+  .nd .tg .on { background:#f7c766; color:#1b2347; font-weight:600; }
+  .nd .tg .new { outline:2px dashed #f7c766; outline-offset:-2px; }
+  .nd .pill { padding:4px 11px; border:1px solid #ffffff2a; border-radius:999px; white-space:nowrap; }
+  .nd .pill.on { background:#f7c766; color:#1b2347; font-weight:600; border-color:#f7c766; }
+  .nd .n { background:#ffffff1f; border-radius:999px; padding:0 7px; margin-left:4px; font-size:12px; }
+  .nd .pill.on .n { background:#1b234722; }
+  .nd .sec { display:flex; align-items:center; gap:10px; margin:14px 0 4px; font-weight:600; }
+  .nd .sec .grow { flex:1; }
+  .nd .sec .muted { color:#8f97b8; font-weight:400; font-size:12px; }
+  .nd .row { display:flex; gap:10px; align-items:center; padding:8px 10px; border-radius:10px; background:#ffffff0a; margin-bottom:5px; }
+  .nd .row .name { flex:1; }
+  .nd .row .sub { color:#8f97b8; font-size:12px; }
+  .nd .chip { font-size:11px; padding:1px 7px; border-radius:999px; margin-left:5px; }
+  .nd .c-h { background:#60a5fa33; color:#93c5fd; }
+  .nd .c-e { background:#f7c76633; color:#f7c766; }
+  .nd .c-v { background:#34d39933; color:#6ee7b7; }
+  .nd .sw { width:30px; height:17px; border-radius:9px; background:#f7c766; position:relative; flex:none; }
+  .nd .sw::after { content:""; position:absolute; top:2px; right:2px; width:13px; height:13px; border-radius:50%; background:#1b2347; }
+  .nd .sw.off { background:#ffffff33; }
+  .nd .sw.off::after { right:auto; left:2px; background:#c9cde0; }
+  .nd .dim { opacity:.55; }
+  .nd .gear { color:#8f97b8; font-size:12px; border:1px solid #ffffff2a; border-radius:999px; padding:2px 9px; }
+</style>
+
+<div class="options">
+  <div class="option" data-choice="b1" onclick="toggleSelect(this)">
+    <div class="letter">B1</div>
+    <div class="content">
+      <h3>Just add "Étiquette" to Regroupement</h3>
+      <p>Rows above the list are unchanged (the trigger chips stay).</p>
+      <div class="mockup"><div class="mockup-body nd">
+        <div class="r"><span class="search">Rechercher une automatisation…</span><span class="cap">Regroupement</span><span class="tg"><span>Pièce</span><span class="on new">Étiquette</span><span>Aucun</span></span></div>
+        <div class="r"><span class="pill on">Toutes<span class="n">37</span></span><span class="pill">Actives<span class="n">33</span></span><span class="pill">Inactives<span class="n">4</span></span><span class="pill">⚠ À vérifier<span class="n">1</span></span></div>
+        <div class="r"><span class="pill">État d'un appareil</span><span class="pill">Programmation</span><span class="pill">Soleil</span><span class="pill">Heures creuses</span><span class="pill">…</span></div>
+        <div class="sec"><span class="grow">Saison <span class="muted">· choix</span></span><span class="tg"><span class="on">Hiver</span><span>Été</span></span><span class="gear">⚙</span></div>
+        <div class="row"><div class="name">Chauffage matin<span class="chip c-h">Hiver</span><div class="sub">Salon · Tous les jours 6:30</div></div><div class="sw"></div></div>
+        <div class="row dim"><div class="name">Store ombre 14h<span class="chip c-e">Été</span><div class="sub">Salon · Tous les jours 14:00</div></div><div class="sw off"></div></div>
+        <div class="sec"><span class="grow">Vacances</span><span class="pill">Tout activer</span><span class="pill">Tout désactiver</span><span class="gear">⚙</span></div>
+        <div class="row dim"><div class="name">Simulation présence<span class="chip c-v">Vacances</span><div class="sub">Coucher du soleil</div></div><div class="sw off"></div></div>
+        <div class="sec"><span class="grow">Sans étiquette</span><span class="pill">＋ Étiquette</span></div>
+        <div class="row"><div class="name">Passage en été<div class="sub">21 juin 00:00 · Choisir une étiquette : Saison → Été</div></div><div class="sw"></div></div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b2" onclick="toggleSelect(this)">
+    <div class="letter">B2</div>
+    <div class="content">
+      <h3>Same, and tidy: triggers become one menu</h3>
+      <p>The seven trigger chips move into a "Déclencheur ▾" menu (multi-select, shows a count when filtering). Two rows above the list instead of three.</p>
+      <div class="mockup"><div class="mockup-body nd">
+        <div class="r"><span class="search">Rechercher une automatisation…</span><span class="cap">Regroupement</span><span class="tg"><span>Pièce</span><span class="on new">Étiquette</span><span>Aucun</span></span></div>
+        <div class="r"><span class="pill on">Toutes<span class="n">37</span></span><span class="pill">Actives<span class="n">33</span></span><span class="pill">Inactives<span class="n">4</span></span><span class="pill">⚠ À vérifier<span class="n">1</span></span><span class="pill">Déclencheur ▾</span></div>
+        <div class="sec"><span class="grow">Saison <span class="muted">· choix</span></span><span class="tg"><span class="on">Hiver</span><span>Été</span></span><span class="gear">⚙</span></div>
+        <div class="row"><div class="name">Chauffage matin<span class="chip c-h">Hiver</span><div class="sub">Salon · Tous les jours 6:30</div></div><div class="sw"></div></div>
+        <div class="row dim"><div class="name">Store ombre 14h<span class="chip c-e">Été</span><div class="sub">Salon · Tous les jours 14:00</div></div><div class="sw off"></div></div>
+        <div class="sec"><span class="grow">Vacances</span><span class="pill">Tout activer</span><span class="pill">Tout désactiver</span><span class="gear">⚙</span></div>
+        <div class="row dim"><div class="name">Simulation présence<span class="chip c-v">Vacances</span><div class="sub">Coucher du soleil</div></div><div class="sw off"></div></div>
+        <div class="sec"><span class="grow">Sans étiquette</span><span class="pill">＋ Étiquette</span></div>
+        <div class="row"><div class="name">Passage en été<div class="sub">21 juin 00:00 · Choisir une étiquette : Saison → Été</div></div><div class="sw"></div></div>
+      </div></div>
+    </div>
+  </div>
+</div>
