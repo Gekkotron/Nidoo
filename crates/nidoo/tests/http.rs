@@ -2535,3 +2535,159 @@ async fn assist_wrong_unknown_is_404() {
         .unwrap();
     assert_eq!(turns["turns"][0]["wrong"], true);
 }
+
+#[tokio::test]
+async fn flow_labels_edit_list_and_switch() {
+    let server = Server::start_with_flows().await;
+    let post = |path: String, body: Value| {
+        let req = server.client.post(server.url(&path)).json(&body);
+        async move { req.send().await.expect("POST") }
+    };
+    let ok_json = |res: reqwest::Response| async move {
+        assert_eq!(res.status(), StatusCode::OK);
+        res.json::<Value>().await.expect("json")
+    };
+    let night = json!({
+        "id": "night", "name": "Night", "enabled": true,
+        "nodes": [{"id": "go", "type": "trigger.manual", "params": {}}]
+    });
+    for flow in [reference_flow(), night] {
+        let id = flow["id"].as_str().expect("id").to_owned();
+        let res = server
+            .client
+            .put(server.url(&format!("/api/v1/flows/{id}")))
+            .json(&flow)
+            .send()
+            .await
+            .expect("PUT flow");
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    let edits = "/api/v1/flow-labels".to_owned();
+    ok_json(
+        post(
+            edits.clone(),
+            json!({"op": "create_choice", "name": "Saison"}),
+        )
+        .await,
+    )
+    .await;
+    ok_json(
+        post(
+            edits.clone(),
+            json!({"op": "create_label", "name": "Hiver", "choice": "saison"}),
+        )
+        .await,
+    )
+    .await;
+    let view = ok_json(
+        post(
+            edits.clone(),
+            json!({"op": "create_label", "name": "Été", "choice": "saison"}),
+        )
+        .await,
+    )
+    .await;
+    let ids: Vec<&str> = view["catalog"]["labels"]
+        .as_array()
+        .expect("labels")
+        .iter()
+        .map(|l| l["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(ids, ["hiver", "ete"]);
+
+    let tagged = ok_json(
+        post(
+            "/api/v1/flows/living/labels".to_owned(),
+            json!({"labels": ["hiver"]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(tagged["definition"]["labels"], json!(["hiver"]));
+    ok_json(
+        post(
+            "/api/v1/flows/night/labels".to_owned(),
+            json!({"labels": ["ete"]}),
+        )
+        .await,
+    )
+    .await;
+    // The `labels` key is required: `{}` is refused, not read as "no labels".
+    let res = post("/api/v1/flows/night/labels".to_owned(), json!({})).await;
+    assert!(res.status().is_client_error(), "{}", res.status());
+    let res = post(
+        "/api/v1/flows/night/labels".to_owned(),
+        json!({"labels": ["ghost"]}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let listed = ok_json(
+        server
+            .client
+            .get(server.url("/api/v1/flow-labels"))
+            .send()
+            .await
+            .expect("GET"),
+    )
+    .await;
+    assert_eq!(listed["counts"], json!({"hiver": 1, "ete": 1}));
+
+    let switched = ok_json(
+        post(
+            "/api/v1/flow-labels/hiver/switch".to_owned(),
+            json!({"action": "pick"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(switched["label"], "hiver");
+    assert_eq!(switched["action"], "pick");
+    assert_eq!(switched["enabled"], json!([]));
+    assert_eq!(switched["disabled"], json!(["night"]));
+    assert_eq!(switched["skipped"], json!([]));
+    let night: Value = ok_json(
+        server
+            .client
+            .get(server.url("/api/v1/flows/night"))
+            .send()
+            .await
+            .expect("GET flow"),
+    )
+    .await;
+    assert_eq!(night["definition"]["enabled"], false);
+    let listed = ok_json(
+        server
+            .client
+            .get(server.url("/api/v1/flow-labels"))
+            .send()
+            .await
+            .expect("GET"),
+    )
+    .await;
+    assert_eq!(listed["catalog"]["choices"][0]["current"], "hiver");
+
+    let res = post(
+        "/api/v1/flow-labels/ghost/switch".to_owned(),
+        json!({"action": "on"}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let res = post(
+        edits.clone(),
+        json!({"op": "rename_label", "id": "ghost", "name": "X"}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    server.hub.set_connection(ConnectionStatus::Connecting);
+    let res = post(edits, json!({"op": "create_choice", "name": "Mode"})).await;
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let res = post(
+        "/api/v1/flow-labels/ete/switch".to_owned(),
+        json!({"action": "pick"}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

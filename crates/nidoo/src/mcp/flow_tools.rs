@@ -1,14 +1,14 @@
-//! The six flow tools. They live beside the eleven house tools of `tools.rs` in a second router, combined
+//! The nine flow tools (six for flows, three for their labels). They live beside the eleven house tools of `tools.rs` in a second router, combined
 //! in [`NidooMcp::new`], and share their conventions: lists are wrapped in objects, write tools
 //! go through `log_write`, and a refusal is answered in-band.
 
-use nidoo_api::{FlowView, FlowWriteOutcome, RunView};
+use nidoo_api::{FlowLabelsView, FlowView, FlowWriteOutcome, LabelSwitchResult, RunView};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{tool, tool_router};
 
 use super::params::{
-    DeleteFlowParams, Deleted, FlowList, FlowSummary, GetFlowParams, LastRun, RunFlowParams,
-    SetFlowEnabledParams, SetFlowParams,
+    DeleteFlowParams, Deleted, EditFlowLabelsParams, FlowList, FlowSummary, GetFlowParams, LastRun,
+    RunFlowParams, SetFlowEnabledParams, SetFlowParams, SwitchFlowLabelParams,
 };
 use super::tools::{ToolResult, log_write};
 use super::{NidooMcp, ToolError};
@@ -86,6 +86,43 @@ impl NidooMcp {
             self.hub.run_flow_from(&params.id, params.node.as_deref())?,
         ))
     }
+
+    /// The flow labels and choices: each label's name, colour and choice, each choice's
+    /// current label, and how many flows carry each label. A flow's `labels` (set with
+    /// `set_flow`) list the label ids it carries.
+    #[tool(name = "list_flow_labels", annotations(read_only_hint = true))]
+    async fn list_flow_labels(&self) -> Json<FlowLabelsView> {
+        Json(self.hub.flow_labels())
+    }
+
+    /// Changes the label catalog: create, rename, recolour, move or delete a label, or create,
+    /// rename or delete a choice. Returns the catalog as it now stands. No edit switches flows;
+    /// deleting a label removes it from every flow carrying it.
+    #[tool(name = "edit_flow_labels")]
+    async fn edit_flow_labels(
+        &self,
+        Parameters(params): Parameters<EditFlowLabelsParams>,
+    ) -> ToolResult<FlowLabelsView> {
+        log_write("edit_flow_labels", &params);
+        Ok(Json(self.hub.edit_flow_labels(params.edit).await?))
+    }
+
+    /// Switches a label: `pick` (a label in a choice of at least two labels) turns its flows on
+    /// and the flows of the choice's other labels off, then makes it the choice's current label;
+    /// `on` and `off` switch every flow carrying it. A flow in both labels of a pick is turned
+    /// on. Returns the flows turned on and off, and the ones skipped (invalid, or a failed write).
+    #[tool(name = "switch_flow_label", annotations(idempotent_hint = true))]
+    async fn switch_flow_label(
+        &self,
+        Parameters(params): Parameters<SwitchFlowLabelParams>,
+    ) -> ToolResult<LabelSwitchResult> {
+        log_write("switch_flow_label", &params);
+        Ok(Json(
+            self.hub
+                .switch_flow_label(&params.label, params.action, None)
+                .await?,
+        ))
+    }
 }
 
 fn summary(view: FlowView) -> FlowSummary {
@@ -94,6 +131,7 @@ fn summary(view: FlowView) -> FlowSummary {
         name: view.definition.name,
         enabled: view.definition.enabled,
         area: view.definition.area,
+        labels: view.definition.labels,
         invalid: view.invalid,
         nodes: view.definition.nodes.len(),
         last_run: view.runs.first().map(|run| LastRun {

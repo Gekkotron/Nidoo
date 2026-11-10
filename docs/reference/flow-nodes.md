@@ -37,6 +37,7 @@ The model is in [`crates/nidoo-core/src/flow`](https://github.com/Gekkotron/Nido
 | `enabled` | bool, default `true` | A disabled flow keeps its definition but never runs. |
 | `mode` | `single` (default) or `restart` | What a trigger does while a run of the same flow is still active. `single` ignores the new trigger and records a skipped run. `restart` cancels the active run and starts a new one, which is what makes "5 minutes after the last motion" work: motion coming back cancels the pending `delay`. |
 | `area` | string, optional | The room (an area id) the Flows page lists the flow under. It does not change what the flow does. The hub checks it on save: an unknown room is refused, a room name is resolved to its id, and `Unassigned` is not a room for a flow. A room id already stored and since deleted is kept as it is, so it never blocks a save. |
+| `labels` | array of strings, optional | The label ids the flow carries (see [Flow labels](#flow-labels)). They group the flow on the Flows page and let a label switch turn it on or off; they do not change what the flow does. The hub sorts and de-duplicates them on save and refuses an id the catalog does not have ("unknown label `x`"), unless the stored flow already carries it: a label deleted later never blocks a save. Changing only `labels` does not restart a run in progress. |
 | `nodes` | array | The steps. |
 | `edges` | array | The connections, followed from a trigger onwards. |
 
@@ -59,7 +60,7 @@ A flow is refused when:
 - the graph has a cycle (the error names the path);
 - a node's params are invalid (see each node below).
 
-On save the hub also checks the house: every entity a node names must exist, a `command` must map for that entity, and a `flow.enable` target must be an existing flow.
+On save the hub also checks the house: every entity a node names must exist, a `command` must map for that entity, a `flow.enable` target must be an existing flow, every id in `labels` must be a label of the catalog, and a `flow.label` must name an existing label (one in a choice for `pick`).
 
 ### How a run goes
 
@@ -451,3 +452,35 @@ Enables or disables a flow.
 | `enabled` | bool | `true` enables, `false` disables. |
 
 Outputs: one. A flow that disables itself still finishes the current run. A target must be a valid flow id and, when it is another flow, an existing one.
+
+## `flow.label`
+
+Switches a label, like the label's buttons on the Flows page.
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `label` | string | The label id. |
+| `action` | `pick` (default), `on` or `off` | `pick` turns on the flows carrying the label and turns off the flows carrying the other labels of its choice, then makes it the choice's current label; a flow carrying both is turned on. Only for a label in a choice of at least two labels. `on` / `off` turn every flow carrying the label on or off. |
+
+Outputs: one. Only flows not already in the target state are written; invalid flows are skipped and listed in the step detail. The step detail reads `picked ete: 2 on, 1 off`, `on vacances: 3 on`, `off vacances: 3 off` or `picked ete: nothing to change`, with `, N skipped (Name: reason, …)` when some flows could not be switched. A step that turns its own flow off still finishes the current run.
+
+On save, an empty `label` is refused ("node `x`: choose a label"), and so is an unknown label ("unknown label `x` in node `n`") or a `pick` of a label in no choice ("label `x` is no longer in a choice in node `n`"). A node left as it was stored passes, so a flow whose label was deleted can still be saved to fix another node; at run time the step then fails with the same reason, and a `pick` in a choice with fewer than two labels fails too.
+
+## Flow labels
+
+The catalog of labels and choices is one retained document on `nidoo/flow_labels` (the `[topics] flow_labels` key, see the [Settings reference](configuration.md)), written by the hub only:
+
+```json
+{
+  "labels": [
+    {"id": "hiver", "name": "Hiver", "color": "blue", "choice": "saison"},
+    {"id": "ete", "name": "Été", "color": "amber", "choice": "saison"},
+    {"id": "vacances", "name": "Vacances", "color": "green"}
+  ],
+  "choices": [{"id": "saison", "name": "Saison", "current": "hiver"}]
+}
+```
+
+- A label has an `id` (made from its name on creation, `[a-z0-9_-]`, never changed by a rename), a `name`, a `color` (`blue`, `amber`, `green`, `red`, `purple`, `teal`, `pink` or `slate`) and an optional `choice` (a choice id).
+- A choice groups labels of which one is current: `current` is the label picked last, absent until the first pick.
+- Unknown keys are kept. Edit the catalog with `POST /api/v1/flow-labels` ([HTTP API](http-api.md#flows)) or the `edit_flow_labels` MCP tool; deleting a label removes it from every flow carrying it, deleting a choice keeps its labels as standalone labels.
