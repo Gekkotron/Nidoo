@@ -62,10 +62,12 @@ fn RunItem(run: RunView, flow: Flow, replay: RwSignal<Option<String>>) -> impl I
             });
             house.entities.with_untracked(|entities| {
                 house.areas.with_untracked(|areas| {
+                    let catalog = house.flow_labels.with_untracked(|v| v.catalog.clone());
                     let ctx = Ctx {
                         entities,
                         areas,
                         flows: &names,
+                        labels: &catalog,
                         lang,
                     };
                     run.steps

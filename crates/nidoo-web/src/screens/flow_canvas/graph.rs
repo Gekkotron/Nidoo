@@ -94,6 +94,7 @@ fn exit_text(kind: &NodeKind, port: &str, lang: Lang, house: House) -> String {
                 entities,
                 areas,
                 flows: &[],
+                labels: &crate::flow_text::NO_LABELS,
                 lang,
             };
             exit_label(lang, kind, port, &ctx)
@@ -429,13 +430,16 @@ fn card(id: String, c: Shared, house: House) -> impl IntoView {
             let node = f.node(&node_id)?;
             house.entities.with(|entities| {
                 house.areas.with(|areas| {
-                    let ctx = Ctx {
-                        entities,
-                        areas,
-                        flows: &names,
-                        lang: lang(),
-                    };
-                    Some((title(node, &ctx), subline(node, &ctx)))
+                    house.flow_labels.with(|labels| {
+                        let ctx = Ctx {
+                            entities,
+                            areas,
+                            flows: &names,
+                            labels: &labels.catalog,
+                            lang: lang(),
+                        };
+                        Some((title(node, &ctx), subline(node, &ctx)))
+                    })
                 })
             })
         })

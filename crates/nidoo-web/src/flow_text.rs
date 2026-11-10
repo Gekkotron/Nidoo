@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use nidoo_api::{AreaView, EntityView};
 use nidoo_core::command::command_name;
 use nidoo_core::flow::{
-    Node, NodeKind, OffPeakEdge, Op, RuleOp, SunWhich, command_with_number, fields, parse_duration,
-    template,
+    FlowLabelCatalog, Node, NodeKind, OffPeakEdge, Op, RuleOp, SunWhich, command_with_number,
+    fields, parse_duration, template,
 };
 use nidoo_core::model::{Command, Hs, Kind};
 use nidoo_core::vocabulary::Reports;
@@ -56,12 +56,21 @@ pub fn role(kind: &NodeKind) -> Role {
     }
 }
 
+/// A catalog with no labels, for sentences that never name one.
+pub static NO_LABELS: FlowLabelCatalog = FlowLabelCatalog {
+    labels: Vec::new(),
+    choices: Vec::new(),
+    extra: BTreeMap::new(),
+};
+
 /// The house a sentence is read against.
 pub struct Ctx<'a> {
     pub entities: &'a BTreeMap<String, EntityView>,
     pub areas: &'a [AreaView],
     /// `(id, name)` of every flow.
     pub flows: &'a [(String, String)],
+    /// The flow labels and choices, for the label cards.
+    pub labels: &'a FlowLabelCatalog,
     /// The UI language of the sentences.
     pub lang: Lang,
 }
@@ -419,12 +428,13 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             t::flow_switch(lang, p.enabled, &target)
         }
         NodeKind::FlowLabel(p) => {
-            let colon = if lang == Lang::Fr { " : " } else { ": " };
-            format!(
-                "{}{colon}{}",
-                flow_text(lang, FlowText::NodeFlowLabel),
-                p.label
-            )
+            let label = ctx.labels.label(&p.label);
+            let choice = label
+                .and_then(|l| l.choice.as_deref())
+                .and_then(|c| ctx.labels.choice(c))
+                .map(|c| c.name.as_str());
+            let name = label.map_or(p.label.as_str(), |l| l.name.as_str());
+            t::flow_label_card(lang, p.action, name, choice)
         }
     }
 }
@@ -670,9 +680,55 @@ mod tests {
                 entities: &entities,
                 areas: &areas,
                 flows: &flows,
+                labels: &crate::flow_text::NO_LABELS,
                 lang,
             },
         )
+    }
+
+    #[test]
+    fn flow_label_sentence() {
+        let catalog: nidoo_core::flow::FlowLabelCatalog =
+            serde_json::from_value(serde_json::json!({
+                "labels": [
+                    {"id": "hiver", "name": "Hiver", "choice": "saison"},
+                    {"id": "ete", "name": "Été", "choice": "saison"},
+                    {"id": "vacances", "name": "Vacances"}
+                ],
+                "choices": [{"id": "saison", "name": "Saison"}]
+            }))
+            .unwrap();
+        let entities = house();
+        let areas = areas();
+        let say = |lang: Lang, json: &str| {
+            sentence(
+                &node(json),
+                &Ctx {
+                    entities: &entities,
+                    areas: &areas,
+                    flows: &[],
+                    labels: &catalog,
+                    lang,
+                },
+            )
+        };
+        let pick = r#"{"id":"a","type":"flow.label","params":{"label":"ete","action":"pick"}}"#;
+        assert_eq!(say(Lang::En, pick), "Pick a label: Saison → Été");
+        assert_eq!(
+            say(Lang::Fr, pick),
+            "Choisir une étiquette\u{a0}: Saison → Été"
+        );
+        let on = r#"{"id":"a","type":"flow.label","params":{"label":"vacances","action":"on"}}"#;
+        assert_eq!(say(Lang::En, on), "Turn on \"Vacances\"");
+        assert_eq!(say(Lang::Fr, on), "Activer «\u{a0}Vacances\u{a0}»");
+        let off = r#"{"id":"a","type":"flow.label","params":{"label":"vacances","action":"off"}}"#;
+        assert_eq!(say(Lang::En, off), "Turn off \"Vacances\"");
+        assert_eq!(say(Lang::Fr, off), "Désactiver «\u{a0}Vacances\u{a0}»");
+        // A label the catalog lost reads as its id; an unset one as the card's name.
+        let gone = r#"{"id":"a","type":"flow.label","params":{"label":"gone","action":"pick"}}"#;
+        assert_eq!(say(Lang::En, gone), "Pick a label: gone");
+        let unset = r#"{"id":"a","type":"flow.label","params":{"label":"","action":"pick"}}"#;
+        assert_eq!(say(Lang::En, unset), "Pick a label");
     }
 
     #[test]
@@ -754,6 +810,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang,
         };
         exit_label(lang, &node(json).kind, port, &ctx)
@@ -977,6 +1034,7 @@ mod tests {
             entities: &entities,
             areas: &areas,
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         };
         let n = node(
@@ -993,6 +1051,7 @@ mod tests {
             entities: &entities,
             areas: &[],
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         };
         let n = node(r#"{"id":"a","type":"delay","params":{"for":"5m"}}"#);
@@ -1056,6 +1115,7 @@ mod generic_tests {
             entities,
             areas: &[],
             flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         }
     }
