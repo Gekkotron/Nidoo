@@ -296,3 +296,146 @@ async fn catalog_topic_is_configurable() {
     hub.ingest("home/labels", seasons().to_string().as_bytes());
     assert_eq!(hub.flow_labels().catalog.labels.len(), 3);
 }
+
+/// A valid flow with a manual trigger and, when given, a `flow.label` node `season`.
+fn flow_with(id: &str, labels: &[&str], node: Option<(&str, &str)>) -> Flow {
+    let mut value = json!({
+        "id": id, "name": id.to_uppercase(), "labels": labels,
+        "nodes": [{"id": "go", "type": "trigger.manual", "params": {}}],
+        "edges": []
+    });
+    if let Some((label, action)) = node {
+        value["nodes"].as_array_mut().unwrap().push(json!({
+            "id": "season", "type": "flow.label",
+            "params": {"label": label, "action": action}
+        }));
+        value["edges"] = json!([{"from": "go", "to": "season"}]);
+    }
+    Flow::decode(value.to_string().as_bytes()).expect("flow")
+}
+
+fn invalid_flow(result: Result<impl std::fmt::Debug, HubError>, needle: &str) {
+    match result {
+        Err(HubError::InvalidFlow(reason)) => assert!(reason.contains(needle), "{reason}"),
+        other => panic!("expected InvalidFlow({needle}), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn set_flow_labels_sets_sorts_and_dedupes() {
+    let (hub, mut rx) = with_seasons();
+    ingest_flow(&hub, "a", true, &[]);
+    drain(&mut rx);
+    let view = hub
+        .set_flow_labels("a", vec!["hiver".into(), "ete".into(), "hiver".into()])
+        .await
+        .expect("labels");
+    assert_eq!(view.definition.labels, ["ete", "hiver"]);
+    let published = drain(&mut rx);
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].topic, "nidoo/automation/a");
+    let saved = hub
+        .set_flow(flow_with("b", &["vacances", "ete", "ete"], None))
+        .await
+        .expect("set_flow");
+    assert_eq!(saved.flow.definition.labels, ["ete", "vacances"]);
+}
+
+#[tokio::test]
+async fn unknown_label_is_rejected() {
+    let (hub, _rx) = with_seasons();
+    ingest_flow(&hub, "a", true, &[]);
+    invalid_flow(
+        hub.set_flow_labels("a", vec!["nope".into()]).await,
+        "unknown label `nope`",
+    );
+    invalid_flow(
+        hub.set_flow(flow_with("b", &["nope"], None)).await,
+        "unknown label `nope`",
+    );
+    hub.ingest(
+        "nidoo/automation/bad",
+        br#"{"id":"bad","name":"Bad","nodes":"oops"}"#,
+    );
+    let err = hub.set_flow_labels("bad", vec!["ete".into()]).await;
+    assert!(matches!(err, Err(HubError::InvalidFlow(_))), "{err:?}");
+    let err = hub.set_flow_labels("ghost", vec![]).await;
+    assert!(matches!(err, Err(HubError::UnknownFlow(_))), "{err:?}");
+}
+
+#[tokio::test]
+async fn stale_label_is_kept_on_resave() {
+    let (hub, _rx) = with_seasons();
+    ingest_flow(&hub, "a", true, &["vacances"]);
+    // The catalog loses `vacances` without the flow being rewritten.
+    let mut catalog = seasons();
+    catalog["labels"].as_array_mut().unwrap().pop();
+    hub.ingest(LABELS_TOPIC, catalog.to_string().as_bytes());
+    let saved = hub
+        .set_flow(flow_with("a", &["vacances"], None))
+        .await
+        .expect("an unchanged stale label passes");
+    assert_eq!(saved.flow.definition.labels, ["vacances"]);
+    let view = hub
+        .set_flow_labels("a", vec!["vacances".into(), "ete".into()])
+        .await
+        .expect("still passes");
+    assert_eq!(view.definition.labels, ["ete", "vacances"]);
+}
+
+#[tokio::test]
+async fn deleted_label_cannot_be_added_back() {
+    let (hub, _rx) = with_seasons();
+    let stale = flow_with("a", &["ete"], None);
+    hub.set_flow(stale.clone()).await.expect("first save");
+    hub.edit_flow_labels(LabelEdit::DeleteLabel { id: "ete".into() })
+        .await
+        .expect("delete");
+    assert!(hub.flow("a").unwrap().definition.labels.is_empty());
+    // A save that read the flow before the delete still carries the label.
+    invalid_flow(hub.set_flow(stale).await, "unknown label `ete`");
+    assert!(hub.flow("a").unwrap().definition.labels.is_empty());
+}
+
+#[tokio::test]
+async fn set_flow_rejects_flow_label_unknown_or_standalone_pick() {
+    let (hub, _rx) = with_seasons();
+    invalid_flow(
+        hub.set_flow(flow_with("a", &[], Some(("nope", "on"))))
+            .await,
+        "unknown label `nope` in node `season`",
+    );
+    invalid_flow(
+        hub.set_flow(flow_with("a", &[], Some(("vacances", "pick"))))
+            .await,
+        "label `vacances` is no longer in a choice in node `season`",
+    );
+    hub.set_flow(flow_with("a", &[], Some(("vacances", "off"))))
+        .await
+        .expect("on/off works for a standalone label");
+    hub.set_flow(flow_with("b", &[], Some(("ete", "pick"))))
+        .await
+        .expect("pick in a choice");
+}
+
+#[tokio::test]
+async fn broken_flow_label_node_still_saves_when_unchanged() {
+    let (hub, _rx) = with_seasons();
+    let flow = flow_with("a", &[], Some(("ete", "pick")));
+    hub.set_flow(flow.clone()).await.expect("first save");
+    hub.edit_flow_labels(LabelEdit::DeleteChoice {
+        id: "saison".into(),
+    })
+    .await
+    .expect("delete choice");
+    let mut renamed = flow.clone();
+    renamed.name = "Renamed".into();
+    hub.set_flow(renamed)
+        .await
+        .expect("the unchanged node is exempt");
+    invalid_flow(
+        hub.set_flow(flow_with("a", &[], Some(("hiver", "pick"))))
+            .await,
+        "label `hiver` is no longer in a choice in node `season`",
+    );
+}
