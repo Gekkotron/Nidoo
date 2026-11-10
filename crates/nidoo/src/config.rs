@@ -79,6 +79,8 @@ pub struct TopicsConfig {
     pub z2m_base: String,
     /// Where flow definitions live: `<prefix>/<flow id>`, retained, one JSON document each.
     pub automation_prefix: String,
+    /// The retained flow label catalog (one JSON document); never under `automation_prefix`.
+    pub flow_labels: String,
 }
 
 impl Default for TopicsConfig {
@@ -88,7 +90,30 @@ impl Default for TopicsConfig {
             ui_prefix: "nidoo/ui".into(),
             z2m_base: "zigbee2mqtt".into(),
             automation_prefix: "nidoo/automation".into(),
+            flow_labels: "nidoo/flow_labels".into(),
         }
+    }
+}
+
+impl TopicsConfig {
+    /// Checks `flow_labels`: a plain topic (no wildcard) outside the flow definitions' prefix.
+    pub fn validate(&self) -> Result<(), String> {
+        let topic = self.flow_labels.trim();
+        if topic.trim_matches('/').is_empty() {
+            return Err("[topics] flow_labels must not be empty".to_owned());
+        }
+        if topic.contains(['+', '#']) {
+            return Err(format!(
+                "[topics] flow_labels `{topic}` must not contain `+` or `#`"
+            ));
+        }
+        let automation = self.automation_prefix.trim().trim_end_matches('/');
+        if topic == automation || topic.starts_with(&format!("{automation}/")) {
+            return Err(format!(
+                "[topics] flow_labels `{topic}` must not sit under automation_prefix `{automation}`"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -807,6 +832,7 @@ pub const STRING_ENV_KEYS: &[&str] = &[
     "topics.ui_prefix",
     "topics.z2m_base",
     "topics.automation_prefix",
+    "topics.flow_labels",
     "http.bind",
     "log.level",
     "push.prefix",
@@ -857,6 +883,7 @@ pub fn merge_env(mut figment: Figment, keep: fn(&str) -> bool) -> Figment {
 impl Config {
     /// Runs every section validator, first error wins.
     pub fn validate_all(&self) -> Result<(), String> {
+        self.topics.validate()?;
         self.flows.validate()?;
         self.watchdog.validate()?;
         self.climate.validate()?;
@@ -1047,5 +1074,52 @@ mod flows_config_tests {
         let configured: FlowsConfig = toml::from_str("latitude = 45.75\nlongitude = 4.85").unwrap();
         assert_eq!(configured.house_point(), (45.75, 4.85));
         assert!(!configured.fallback_active());
+    }
+}
+
+#[cfg(test)]
+mod topics_config_tests {
+    use super::*;
+
+    #[test]
+    fn flow_labels_defaults() {
+        let topics = TopicsConfig::default();
+        assert_eq!(topics.flow_labels, "nidoo/flow_labels");
+        assert_eq!(topics.validate(), Ok(()));
+    }
+
+    #[test]
+    fn flow_labels_from_toml() {
+        let cfg: Config = toml::from_str("[topics]\nflow_labels = \"home/labels\"").unwrap();
+        assert_eq!(cfg.topics.flow_labels, "home/labels");
+        assert_eq!(cfg.topics.automation_prefix, "nidoo/automation");
+        assert_eq!(cfg.validate_all(), Ok(()));
+    }
+
+    #[test]
+    fn flow_labels_rejects() {
+        for bad in [
+            "",
+            "/",
+            "nidoo/+/x",
+            "nidoo/#",
+            "nidoo/automation",
+            "nidoo/automation/labels",
+        ] {
+            let topics = TopicsConfig {
+                flow_labels: bad.to_owned(),
+                ..TopicsConfig::default()
+            };
+            let err = topics.validate().expect_err(bad);
+            assert!(err.contains("flow_labels"), "{bad}: {err}");
+        }
+        let cfg = Config {
+            topics: TopicsConfig {
+                flow_labels: String::new(),
+                ..TopicsConfig::default()
+            },
+            ..Config::default()
+        };
+        assert!(cfg.validate_all().is_err());
     }
 }
