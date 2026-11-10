@@ -105,10 +105,10 @@ Each evaluation, with a usable room-thermometer value `r` (§6.3):
 - `r > target + band` → the offset jumps to `−(r − target)` rounded to the nearest `step`, at
   once, whatever the interval, when that is deeper than the offset held. Otherwise, with at least
   `interval` since the last step → offset −= step.
-- `r < target − band` and at least `interval` since the last step → offset += step, either when
-  the warm-up is over or, during it, while the offset is still negative (the raise then stops at
-  0). The warm-up is over once the room has reached the band (`r ≥ target − band`) since the
-  target began, or `warmup` after the target began at the latest.
+- `r < target − band`: during the warm-up, a negative offset goes to 0 at once, whatever the
+  interval, and a zero or positive one stays. Once the warm-up is over, with at least `interval`
+  since the last step → offset += step. The warm-up is over once the room has reached the band
+  (`r ≥ target − band`) since the target began, or `warmup` after the target began at the latest.
 - Otherwise the offset stays.
 
 *Changed 2026-11-05:* the saving side used to move one `step` per `interval` too, so a room 2 °C
@@ -124,6 +124,14 @@ target went to 20 °C with the room at 19.1 °C, and the AC stayed at 18 °C for
 warm-up before stepping back up (20 °C only after ~1 h 45). The warm-up only exists to stop a push
 past the target while the room heats up, so it now holds raises above 0 only; a negative offset
 unwinds one `step` per `interval` from the start (20 °C ~50 min after the return). Cool mirrors it.
+
+*Changed 2026-11-10:* unwinding one `step` per `interval` was still too slow for a short target. A
+1-hour boost to 21 °C started with a −2.5 cut and the room at 20.4 °C: the AC got 18.5 °C, and five
+steps of 15 min would have reached 21 °C only after the boost ended. During the warm-up a cut
+always comes from another target, and a room under the band contradicts it, so it now drops to 0
+at once. After the warm-up, recovery under the same target stays one `step` per `interval`, so a
+room swinging around its target does not swing the setpoint with it. Cool mirrors it. No new
+setting.
 
 Limits, applied to the result (heat):
 - lowest: `target + offset ≥ max(target − max_below, base of the rules, frost)`;

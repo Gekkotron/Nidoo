@@ -98,7 +98,8 @@ pub fn correct(input: &CorrectionInput) -> Correction {
     // interval, when that is deeper than the offset held; otherwise it steps once per interval.
     let gap = nearest_step(r - target, input.step);
     // The warm-up only holds a push past the target (heat: above zero, cool: below). A cut still
-    // held on the saving side, often one made under another target, unwinds once per interval.
+    // held on the saving side during it was made under another target: the room on the far side
+    // of the band contradicts it, so it drops to 0 at once, whatever the interval.
     let saving = |o: f64| match input.mode {
         Mode::Heat => o < -1e-9,
         Mode::Cool => o > 1e-9,
@@ -113,21 +114,21 @@ pub fn correct(input: &CorrectionInput) -> Correction {
                 } else if ready {
                     offset -= input.step;
                 }
-            } else if below && ready && (warm || saving(offset)) {
-                offset = if warm {
-                    offset + input.step
-                } else {
-                    (offset + input.step).min(0.0)
-                };
+            } else if below {
+                if !warm && saving(offset) {
+                    offset = 0.0;
+                } else if warm && ready {
+                    offset += input.step;
+                }
             }
         }
         Mode::Cool => {
-            if above && ready && (warm || saving(offset)) {
-                offset = if warm {
-                    offset - input.step
-                } else {
-                    (offset - input.step).max(0.0)
-                };
+            if above {
+                if !warm && saving(offset) {
+                    offset = 0.0;
+                } else if warm && ready {
+                    offset -= input.step;
+                }
             } else if below {
                 if -gap > offset + 1e-9 {
                     offset = -gap;
@@ -440,15 +441,18 @@ mod tests {
     fn warmup_never_holds_a_cut_below_target() {
         // The room emptied: 18 °C with the room at 19.8 cut -2. Someone comes back 11 min later:
         // 20 °C, room 19.1. The new target restarts the warm-up, but the warm-up only holds raises
-        // above the target, so the cut unwinds at once, one step per interval.
+        // above the target. The room under the band contradicts the cut, so it drops at once.
+        // (Changed 2026-11-10: it unwound one step per interval, 50 min for -2.0.)
         let p = state(18.0, -2.0, NOW - 660, Some(NOW - 900));
         let c = run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false);
-        assert_eq!(c.offset, -1.5);
-        // Still one step per interval.
-        let p = state(20.0, -1.5, NOW - 600, Some(NOW - 600));
-        let c = run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false);
-        assert_eq!(c.offset, -1.5);
-        // The last step stops at zero; going above waits for the warm-up.
+        assert_eq!(c.offset, 0.0);
+        // A 1-hour boost to 21 °C with the room at 20.4 and a -2.5 cut stepped a minute ago:
+        // the AC goes to 21 °C now, not 18.5 °C for 75 min.
+        let p = state(18.0, -2.5, NOW - 3600, Some(NOW - 60));
+        let c = run(Mode::Heat, 21.0, Some(15.0), 20.4, 0, Some(&p), false);
+        assert_eq!(c.offset, 0.0);
+        assert_eq!(c.note.as_deref(), Some("room below 20.5 °C: AC 21.0 °C"));
+        // At zero, going above waits for the warm-up.
         let p = state(20.0, -0.5, NOW - 1800, Some(NOW - 900));
         assert_eq!(
             run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false).offset,
@@ -459,11 +463,11 @@ mod tests {
             run(Mode::Heat, 20.0, Some(15.0), 19.1, 0, Some(&p), false).offset,
             0.0
         );
-        // Cool, mirrored: a raise held above the target unwinds during the warm-up.
-        let p = state(24.0, 1.5, NOW - 600, Some(NOW - 900));
+        // Cool, mirrored: a raise held above the target drops during the warm-up.
+        let p = state(24.0, 1.5, NOW - 600, Some(NOW - 60));
         assert_eq!(
             run(Mode::Cool, 26.0, None, 27.0, 0, Some(&p), false).offset,
-            1.0
+            0.0
         );
     }
 
