@@ -433,6 +433,7 @@ fn local_storage() -> web_sys::Storage {
 struct Labelled {
     _mounted: Box<dyn std::any::Any>,
     toasts: Toasts,
+    house: House,
 }
 
 impl Drop for Labelled {
@@ -463,6 +464,7 @@ fn mount_labelled(host: &web_sys::Element, flows: Vec<FlowView>, grouping: &str)
     Labelled {
         _mounted: Box::new(mounted),
         toasts,
+        house,
     }
 }
 
@@ -984,4 +986,65 @@ async fn row_menu_labels_wait_for_an_invalid_flow_to_be_fixed() {
         let item: web_sys::Element = all.item(i).unwrap().unchecked_into();
         assert!(item.has_attribute("disabled"), "{}", item.outer_html());
     }
+}
+
+#[wasm_bindgen_test]
+async fn manager_forms_survive_a_run_event() {
+    let host = host();
+    let page = mount_labelled(&host, season_flows(), "label");
+    tick().await;
+    open_manager(&host, ".flow-section__head .flow-section__manage", None).await;
+    // A run of any flow replaces the flow list, as a run event does.
+    let run_event = || {
+        page.house
+            .flows
+            .update(|f| f[0].active_run = Some("r1".into()))
+    };
+    click_text(&host, ".label-manager button", "＋ Choice");
+    tick().await;
+    type_into(&host, ".label-manager__new input", "Pres");
+    let field: web_sys::HtmlInputElement = host
+        .query_selector(".label-manager__new input")
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    run_event();
+    tick().await;
+    assert!(
+        field.is_connected(),
+        "the name field was rebuilt mid-typing"
+    );
+    assert_eq!(field.value(), "Pres");
+    // The edit form's choice keeps what was picked.
+    click(
+        &host,
+        ".label-manager__line[data-label=ete] .label-manager__edit",
+    );
+    tick().await;
+    let select: web_sys::HtmlSelectElement = host
+        .query_selector(".label-manager__choice")
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    assert_eq!(select.value(), "saison");
+    select.set_value("");
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    select
+        .dispatch_event(&web_sys::Event::new_with_event_init_dict("change", &init).unwrap())
+        .unwrap();
+    page.house
+        .flows
+        .update(|f| f[1].active_run = Some("r2".into()));
+    tick().await;
+    let shown: web_sys::HtmlSelectElement = host
+        .query_selector(".label-manager__choice")
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    assert_eq!(
+        shown.value(),
+        "",
+        "the select shows the choice that Save sends"
+    );
 }

@@ -74,9 +74,12 @@ fn EditControls(
         house
             .areas
             .with_untracked(|areas| clear_stale_area(&mut snapshot, areas));
-        house
-            .flow_labels
-            .with_untracked(|labels| clear_stale_labels(&mut snapshot, &labels.catalog));
+        // Until the catalog is loaded, an unknown id may be a real label: keep it.
+        if house.flow_labels_loaded.get_untracked() {
+            house
+                .flow_labels
+                .with_untracked(|labels| clear_stale_labels(&mut snapshot, &labels.catalog));
+        }
         stamp_notify_lang(&mut snapshot, lang().core());
         let is_new = snapshot.id.is_empty();
         if is_new {

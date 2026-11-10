@@ -9,7 +9,8 @@ use std::mem::discriminant;
 
 use nidoo_api::{AreaView, EntityView, FlowView, RunStatus};
 use nidoo_core::flow::{
-    Flow, FlowChoice, FlowLabel, FlowLabelCatalog, FlowMode, LabelColor, NodeKind,
+    Flow, FlowChoice, FlowLabel, FlowLabelCatalog, FlowMode, LabelAction, LabelColor, NodeKind,
+    plan_switch,
 };
 use nidoo_core::model::UNASSIGNED_AREA;
 use serde::{Deserialize, Serialize};
@@ -452,13 +453,10 @@ pub fn clear_stale_area(flow: &mut Flow, areas: &[AreaView]) {
     }
 }
 
-/// Drops the label ids the catalog no longer has, so a save never carries a stale one. An empty
-/// catalog drops nothing: it may simply not have loaded yet, and the hub keeps a stored stale id
-/// anyway.
+/// Drops the label ids the catalog no longer has, so a save never carries a stale one. Call it
+/// with the hub's catalog only (see `House::flow_labels_loaded`): an empty placeholder would drop
+/// every label.
 pub fn clear_stale_labels(flow: &mut Flow, catalog: &FlowLabelCatalog) {
-    if catalog.labels.is_empty() {
-        return;
-    }
     flow.labels.retain(|id| catalog.label(id).is_some());
 }
 
@@ -487,6 +485,44 @@ pub fn label_flow_counts(flows: &[FlowView]) -> BTreeMap<String, usize> {
         }
     }
     counts
+}
+
+/// What a label action reaches, for its card's preview: the valid flows it would turn on and
+/// off, counted whatever state they are in now (the card usually runs later). `None` when the
+/// action cannot run (an unknown label, or a pick outside a complete choice).
+pub fn label_reach(
+    catalog: &FlowLabelCatalog,
+    flows: &[FlowView],
+    label: &str,
+    action: LabelAction,
+) -> Option<(usize, usize)> {
+    let pairs: Vec<(&Flow, bool)> = flows
+        .iter()
+        .map(|f| (&f.definition, f.invalid.is_some()))
+        .collect();
+    let plan = plan_switch(catalog, &pairs, label, action).ok()?;
+    let valid = || flows.iter().filter(|f| f.invalid.is_none());
+    let carries = |f: &FlowView, id: &str| f.definition.labels.iter().any(|l| l == id);
+    let on = valid().filter(|f| carries(f, label)).count();
+    Some(match action {
+        LabelAction::Pick => {
+            let others: Vec<&str> = plan
+                .choice
+                .as_deref()
+                .map(|c| catalog.members(c))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|l| l.id.as_str())
+                .filter(|id| *id != label)
+                .collect();
+            let off = valid()
+                .filter(|f| !carries(f, label) && others.iter().any(|o| carries(f, o)))
+                .count();
+            (on, off)
+        }
+        LabelAction::On => (on, 0),
+        LabelAction::Off => (0, on),
+    })
 }
 
 /// The id of the label a create added: the first label of `after` that `before` lacks.
@@ -713,12 +749,13 @@ mod tests {
     }
 
     #[test]
-    fn clear_stale_labels_keeps_known_ids_unless_the_catalog_is_empty() {
+    fn clear_stale_labels_keeps_known_ids_only() {
         let mut flow = picking("a", &["ete", "gone"], None).definition;
-        clear_stale_labels(&mut flow, &FlowLabelCatalog::default());
-        assert_eq!(flow.labels, ["ete", "gone"]);
         clear_stale_labels(&mut flow, &two_labels());
         assert_eq!(flow.labels, ["ete"]);
+        // A catalog emptied by deleting its last label drops that label too.
+        clear_stale_labels(&mut flow, &FlowLabelCatalog::default());
+        assert!(flow.labels.is_empty());
     }
 
     #[test]
@@ -764,6 +801,47 @@ mod tests {
             ["ete", "hiver", "vacances"]
         );
         assert_eq!(toggled_labels(&labels, "hiver"), ["ete"]);
+    }
+
+    #[test]
+    fn label_reach_counts_carried_flows_whatever_their_state() {
+        let catalog: FlowLabelCatalog = serde_json::from_value(serde_json::json!({
+            "labels": [
+                {"id": "hiver", "name": "Hiver", "choice": "saison"},
+                {"id": "ete", "name": "Été", "choice": "saison"},
+                {"id": "vacances", "name": "Vacances"}
+            ],
+            "choices": [{"id": "saison", "name": "Saison"}]
+        }))
+        .unwrap();
+        let mut off = picking("fan", &["ete"], None);
+        off.definition.enabled = false;
+        let mut broken = picking("broken", &["ete"], None);
+        broken.invalid = Some("bad".into());
+        let flows = [
+            picking("heat", &["hiver"], None),
+            picking("both", &["hiver", "ete"], None),
+            off,
+            broken,
+        ];
+        // Été: "both" and "fan" (off now) on; "heat" off; the invalid one is skipped.
+        assert_eq!(
+            label_reach(&catalog, &flows, "ete", LabelAction::Pick),
+            Some((2, 1))
+        );
+        assert_eq!(
+            label_reach(&catalog, &flows, "ete", LabelAction::Off),
+            Some((0, 2))
+        );
+        assert_eq!(
+            label_reach(&catalog, &flows, "hiver", LabelAction::On),
+            Some((2, 0))
+        );
+        assert_eq!(
+            label_reach(&catalog, &flows, "vacances", LabelAction::Pick),
+            None
+        );
+        assert_eq!(label_reach(&catalog, &flows, "gone", LabelAction::On), None);
     }
 
     #[test]

@@ -514,14 +514,15 @@ fn flow_enable_fields(
 }
 
 /// The `flow.label` editor: what to do (pick, turn on, turn off); for a pick the choice then one
-/// of its labels, otherwise any label; and a live preview of what it would switch right now.
+/// of its labels, otherwise any label; and a live preview of the flows it reaches.
 fn flow_label_fields(
     form: Form,
     id: String,
     p: nidoo_core::flow::FlowLabelParams,
 ) -> impl IntoView {
-    use nidoo_core::flow::{Flow, LabelAction, plan_switch};
+    use nidoo_core::flow::LabelAction;
 
+    use crate::flow_list::label_reach;
     use crate::i18n::flows::{label_off_preview, label_preview};
 
     let house = expect_context::<House>();
@@ -621,6 +622,7 @@ fn flow_label_fields(
             view! { {stray} {options} }
         })
     };
+    // What the card reaches: the flows each label carries, whatever their state now.
     let preview = move || {
         let current = label.get();
         let act = action.get();
@@ -628,15 +630,11 @@ fn flow_label_fields(
         house.flow_labels.with(|v| {
             house.flows.with(|flows| {
                 let catalog = &v.catalog;
-                let pairs: Vec<(&Flow, bool)> = flows
-                    .iter()
-                    .map(|f| (&f.definition, f.invalid.is_some()))
-                    .collect();
-                let plan = plan_switch(catalog, &pairs, &current, act).ok()?;
-                let name = catalog.label(&current)?.name.clone();
+                let (on, off) = label_reach(catalog, flows, &current, act)?;
+                let found = catalog.label(&current)?;
                 Some(match act {
                     LabelAction::Pick => {
-                        let others: Vec<&str> = plan
+                        let others: Vec<&str> = found
                             .choice
                             .as_deref()
                             .map(|c| catalog.members(c))
@@ -645,10 +643,10 @@ fn flow_label_fields(
                             .filter(|l| l.id != current)
                             .map(|l| l.name.as_str())
                             .collect();
-                        label_preview(lang, plan.enable.len(), &name, plan.disable.len(), &others)
+                        label_preview(lang, on, &found.name, off, &others)
                     }
-                    LabelAction::On => label_preview(lang, plan.enable.len(), &name, 0, &[]),
-                    LabelAction::Off => label_off_preview(lang, plan.disable.len(), &name),
+                    LabelAction::On => label_preview(lang, on, &found.name, 0, &[]),
+                    LabelAction::Off => label_off_preview(lang, off, &found.name),
                 })
             })
         })

@@ -2822,7 +2822,7 @@ async fn saved_flow(host: &web_sys::Element, view: &FlowView) -> serde_json::Val
 async fn editor_labels_field_saves_with_the_flow() {
     let view = reference_view(None, vec![]);
     let (host, _mounted, house) = editing(view.clone()).await;
-    house.flow_labels.set(season_labels());
+    house.set_flow_labels(season_labels());
     tick().await;
     assert!(label_names(&host).is_empty());
     // A known name (any case) adds that label; ✕ takes one off again.
@@ -2844,7 +2844,7 @@ async fn editor_drops_stale_labels_on_save() {
     let mut view = reference_view(None, vec![]);
     view.definition.labels = vec!["ete".into(), "gone".into()];
     let (host, _mounted, house) = editing(view.clone()).await;
-    house.flow_labels.set(season_labels());
+    house.set_flow_labels(season_labels());
     tick().await;
     // A label the catalog no longer has is not shown, and the save leaves it out.
     assert_eq!(label_names(&host), ["Été"]);
@@ -2853,9 +2853,9 @@ async fn editor_drops_stale_labels_on_save() {
 }
 
 /// A flow with a manual trigger carrying `labels`, for the label previews.
-fn labelled_view(id: &str, labels: &[&str]) -> FlowView {
+fn labelled_view(id: &str, enabled: bool, labels: &[&str]) -> FlowView {
     let flow = serde_json::json!({
-        "id": id, "name": id, "enabled": true, "labels": labels,
+        "id": id, "name": id, "enabled": enabled, "labels": labels,
         "nodes": [{"id": "go", "type": "trigger.manual", "params": {}}]
     });
     FlowView {
@@ -2867,7 +2867,7 @@ fn labelled_view(id: &str, labels: &[&str]) -> FlowView {
 }
 
 /// An editing canvas whose `season` card is the label action `params`, with the season labels
-/// and three tagged flows (one Hiver, two Été; all on).
+/// and three tagged flows (Hiver on; Été: one on, one off).
 async fn editing_label_card(params: &str) -> (web_sys::Element, Box<dyn std::any::Any>, FlowView) {
     let view = line_view(&format!(
         r#"[
@@ -2876,11 +2876,11 @@ async fn editing_label_card(params: &str) -> (web_sys::Element, Box<dyn std::any
         ]"#
     ));
     let (host, mounted, house) = editing(view.clone()).await;
-    house.flow_labels.set(season_labels());
+    house.set_flow_labels(season_labels());
     house.flows.update(|f| {
-        f.push(labelled_view("heat", &["hiver"]));
-        f.push(labelled_view("fan", &["ete"]));
-        f.push(labelled_view("blinds", &["ete"]));
+        f.push(labelled_view("heat", true, &["hiver"]));
+        f.push(labelled_view("fan", true, &["ete"]));
+        f.push(labelled_view("blinds", false, &["ete"]));
     });
     tick().await;
     select_card(&host, "season").await;
@@ -2907,13 +2907,14 @@ async fn flow_label_card_saves_pick() {
     assert_eq!(drawer_select(&host, "Choice").value(), "saison");
     let label = drawer_select(&host, "Label");
     assert_eq!(option_texts(&label), ["Hiver", "Été"]);
-    // Été's two flows are on already: picking it turns only Hiver's flow off.
+    // The preview counts the flows each label carries, whatever their state now: the card
+    // usually runs later.
     label.set_value("ete");
     change(&label);
     tick().await;
     assert_eq!(
         text(&host, ".flow-drawer .flow-label-preview"),
-        "No \"Été\" flow to turn on, turns off the \"Hiver\" flow."
+        "Turns on the 2 \"Été\" flows, turns off the \"Hiver\" flow."
     );
     assert_eq!(
         text(&host, "[data-node=season] .flow-node__title"),
@@ -2953,4 +2954,22 @@ async fn flow_label_card_turns_a_label_off() {
         serde_json::json!({"label": "ete", "action": "off"})
     );
     settle_history().await;
+}
+
+#[wasm_bindgen_test]
+async fn editor_drops_a_label_deleted_last_on_save() {
+    let mut view = reference_view(None, vec![]);
+    view.definition.labels = vec!["gone".into()];
+    let (host, _mounted, house) = editing(view.clone()).await;
+    // Not loaded yet: the label is kept (the hub keeps a stored one anyway).
+    let sent = saved_flow(&host, &view).await;
+    assert_eq!(sent["labels"], serde_json::json!(["gone"]), "{sent}");
+    settle_history().await;
+    click(&host, ".flow-toolbar__edit");
+    tick().await;
+    // Loaded and empty: its last label was deleted, so the save leaves it out.
+    house.set_flow_labels(nidoo_api::FlowLabelsView::default());
+    tick().await;
+    let sent = saved_flow(&host, &view).await;
+    assert!(sent.get("labels").is_none(), "{sent}");
 }

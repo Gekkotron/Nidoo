@@ -493,7 +493,7 @@ pub fn LabelManager(focus: Option<String>, on_close: Callback<()>) -> impl IntoV
             let mut ok = true;
             for edit in edits {
                 match edit_flow_labels(&edit).await {
-                    Ok(view) => house.flow_labels.set(view),
+                    Ok(view) => house.set_flow_labels(view),
                     Err(e) => {
                         toasts.push(e.error);
                         ok = false;

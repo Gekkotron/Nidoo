@@ -36,6 +36,9 @@ pub struct House {
     /// The flow label catalog; empty until the first fetch answers. Its `counts` is a snapshot:
     /// count a flow's labels from [`House::flows`].
     pub flow_labels: RwSignal<FlowLabelsView>,
+    /// Whether [`House::flow_labels`] holds the hub's catalog yet (a fetch answered or the hub
+    /// pushed it): an empty catalog then means no labels, not "not known yet".
+    pub flow_labels_loaded: RwSignal<bool>,
     /// The ambiances as the hub lists them, unreadable ones included.
     pub ambiances: RwSignal<Vec<AmbianceView>>,
     /// Whether the first ambiance fetch (or push) has landed; the Home row waits for it.
@@ -82,6 +85,7 @@ impl House {
             solar_loaded: RwSignal::new(false),
             home_settings: RwSignal::new(HomeSettings::default()),
             flow_labels: RwSignal::new(FlowLabelsView::default()),
+            flow_labels_loaded: RwSignal::new(false),
             ambiances: RwSignal::new(Vec::new()),
             ambiances_loaded: RwSignal::new(false),
             ambiance_reports: RwSignal::new(BTreeMap::new()),
@@ -164,12 +168,18 @@ impl House {
 
     /// Fetches the flow label catalog into [`House::flow_labels`]; a failure leaves the last value.
     pub fn refresh_flow_labels(&self) {
-        let flow_labels = self.flow_labels;
+        let house = *self;
         leptos::task::spawn_local(async move {
             if let Ok(view) = crate::api::flow_labels::get_flow_labels().await {
-                flow_labels.set(view);
+                house.set_flow_labels(view);
             }
         });
+    }
+
+    /// Takes the hub's catalog (a fetch, a push or an edit's reply), which marks it loaded.
+    pub fn set_flow_labels(&self, view: FlowLabelsView) {
+        self.flow_labels.set(view);
+        self.flow_labels_loaded.set(true);
     }
 
     /// Fetches the dashboards into [`House::dashboards`]; a failure leaves the last list and is
@@ -274,8 +284,7 @@ impl House {
             WsEvent::AssistTurnAdded { .. } => self.assist_rev.update(|r| *r += 1),
             WsEvent::WeatherChanged => self.refresh_weather(),
             WsEvent::HomeSettingsChanged { settings } => self.home_settings.set(settings),
-            // The Flows page does not read labels yet.
-            WsEvent::FlowLabelsChanged { labels } => self.flow_labels.set(labels),
+            WsEvent::FlowLabelsChanged { labels } => self.set_flow_labels(labels),
             WsEvent::AmbiancesChanged { ambiances } => {
                 self.ambiances.set(ambiances);
                 self.ambiances_loaded.set(true);
@@ -369,10 +378,12 @@ mod tests {
         let house = House::new();
         let mut labels = nidoo_api::FlowLabelsView::default();
         labels.counts.insert("hiver".into(), 2);
+        assert!(!house.flow_labels_loaded.get_untracked());
         house.apply(WsEvent::FlowLabelsChanged {
             labels: labels.clone(),
         });
         assert_eq!(house.flow_labels.get_untracked(), labels);
+        assert!(house.flow_labels_loaded.get_untracked());
     }
 
     #[test]
