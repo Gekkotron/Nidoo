@@ -2539,6 +2539,8 @@ async fn assist_wrong_unknown_is_404() {
 #[tokio::test]
 async fn flow_labels_edit_list_and_switch() {
     let server = Server::start_with_flows().await;
+    // The broker had no retained label catalog: an empty one.
+    server.hub.ingest("nidoo/flow_labels", b"");
     let post = |path: String, body: Value| {
         let req = server.client.post(server.url(&path)).json(&body);
         async move { req.send().await.expect("POST") }

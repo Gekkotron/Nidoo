@@ -4,6 +4,8 @@
 //! flows inside it, so a flow save never brings back a label deleted meanwhile.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use nidoo_api::{
     ConnectionStatus, FlowLabelsView, LabelEdit, LabelSwitchResult, SkippedFlow, WsEvent,
@@ -26,6 +28,7 @@ impl Hub {
                 return;
             }
         };
+        self.flow_labels_loaded.store(true, Ordering::SeqCst);
         {
             let mut slot = self.flow_label_slot();
             if *slot == next {
@@ -62,6 +65,7 @@ impl Hub {
     pub async fn edit_flow_labels(&self, edit: LabelEdit) -> Result<FlowLabelsView, HubError> {
         let _pass = self.labels_pass.lock().await;
         self.require_online()?;
+        self.require_catalog_loaded()?;
         let mut catalog = self.flow_label_catalog();
         let mut deleted = None;
         match edit {
@@ -237,6 +241,23 @@ impl Hub {
         Ok(())
     }
 
+    /// Refuses a catalog edit until the retained catalog was applied (or the broker had none, a
+    /// settle after the subscription): an edit on the empty placeholder would overwrite it.
+    fn require_catalog_loaded(&self) -> Result<(), HubError> {
+        let loaded = self.flow_labels_loaded.load(Ordering::SeqCst);
+        let subscribed_at = *self
+            .subscribed_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if catalog_ready(loaded, subscribed_at, Instant::now()) {
+            Ok(())
+        } else {
+            Err(HubError::Publish(
+                "the label catalog is not loaded yet, try again in a moment".to_owned(),
+            ))
+        }
+    }
+
     /// `broker offline` unless the broker link is up: label writers check before any write.
     pub(crate) fn require_online(&self) -> Result<(), HubError> {
         if matches!(*self.connection().borrow(), ConnectionStatus::Online) {
@@ -245,6 +266,14 @@ impl Hub {
             Err(HubError::Publish("broker offline".to_owned()))
         }
     }
+}
+
+/// How long after the subscription a missing retained catalog means there is none.
+const CATALOG_SETTLE: Duration = Duration::from_secs(3);
+
+/// Whether the catalog can be edited: it was applied, or the subscription settled without one.
+fn catalog_ready(loaded: bool, subscribed_at: Option<Instant>, now: Instant) -> bool {
+    loaded || subscribed_at.is_some_and(|at| now.saturating_duration_since(at) >= CATALOG_SETTLE)
 }
 
 /// A trimmed, non-empty name.
@@ -342,6 +371,24 @@ pub(crate) fn switch_detail(result: &LabelSwitchResult) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn catalog_ready_after_load_or_settle() {
+        use std::time::{Duration, Instant};
+        let at = Instant::now();
+        assert!(!super::catalog_ready(false, None, at));
+        assert!(super::catalog_ready(true, None, at));
+        assert!(!super::catalog_ready(
+            false,
+            Some(at),
+            at + Duration::from_secs(1)
+        ));
+        assert!(super::catalog_ready(
+            false,
+            Some(at),
+            at + super::CATALOG_SETTLE
+        ));
+    }
+
     use super::*;
 
     fn result(action: LabelAction, on: usize, off: usize, skipped: usize) -> LabelSwitchResult {

@@ -236,6 +236,12 @@ pub struct Hub {
     flow_labels: Mutex<nidoo_core::flow::FlowLabelCatalog>,
     /// `[topics] flow_labels`.
     pub(crate) flow_labels_topic: String,
+    /// Whether the retained catalog (or its absence, an empty payload) has been applied once:
+    /// until then the slot is a placeholder and a catalog edit would overwrite the real one.
+    pub(crate) flow_labels_loaded: std::sync::atomic::AtomicBool,
+    /// When the broker first acknowledged the on-connect subscription; a broker with no
+    /// retained catalog sends nothing, so the catalog counts as loaded a settle later.
+    pub(crate) subscribed_at: Mutex<Option<std::time::Instant>>,
     /// Held by every write that touches labels across flows (catalog edits, label switches,
     /// flow saves), so each one reads the flows and the catalog as the last one left them.
     pub(crate) labels_pass: tokio::sync::Mutex<()>,
@@ -468,6 +474,8 @@ impl Hub {
             automation_prefix: cfg.topics.automation_prefix.clone(),
             flow_labels: Mutex::default(),
             flow_labels_topic: cfg.topics.flow_labels.trim().to_owned(),
+            flow_labels_loaded: std::sync::atomic::AtomicBool::new(false),
+            subscribed_at: Mutex::new(None),
             labels_pass: tokio::sync::Mutex::new(()),
             zone: crate::flows::house_zone(&cfg.flows),
             house_point: cfg.flows.house_point(),
@@ -1071,6 +1079,10 @@ impl Hub {
     /// The broker acknowledged the full on-connect subscription (push filters included): the
     /// retained tokens are on their way, the push service starts its settle delay.
     pub fn on_suback(&self) {
+        self.subscribed_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_or_insert_with(std::time::Instant::now);
         self.push.on_subscribed();
         self.solar_subscribed.send_replace(true);
     }

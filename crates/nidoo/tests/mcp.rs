@@ -1797,6 +1797,8 @@ async fn speak_tool_without_speech_is_an_error() {
 #[tokio::test]
 async fn switch_flow_label_over_mcp() {
     let server = Server::start_with_flows().await;
+    // The broker had no retained label catalog: an empty one.
+    server.hub.ingest("nidoo/flow_labels", b"");
     let client = server.client().await;
     for name in ["Saison"] {
         json_of(
