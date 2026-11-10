@@ -228,7 +228,7 @@ pub fn RoomMenu(
             match edit_flow_labels(&LabelEdit::CreateLabel { name, choice: None }).await {
                 Ok(view) => {
                     let label = new_label_id(&before, &view.catalog);
-                    house.flow_labels.set(view);
+                    house.set_flow_labels(view);
                     if let Some(label) = label {
                         toggle(label);
                     }

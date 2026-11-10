@@ -127,7 +127,7 @@ pub fn LabelsField(editor: Editor) -> impl IntoView {
             match edit_flow_labels(&LabelEdit::CreateLabel { name, choice: None }).await {
                 Ok(view) => {
                     let id = new_label_id(&before, &view.catalog);
-                    house.flow_labels.set(view);
+                    house.set_flow_labels(view);
                     if let Some(id) = id {
                         add_id(id);
                     }
