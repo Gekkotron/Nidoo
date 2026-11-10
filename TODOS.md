@@ -51,7 +51,9 @@ What `nidoo-sound` does not support yet (see Supported features in `crates/nidoo
 
 ### Flows
 
-- [ ] Bulk actions on the Flows page — enable, disable, delete or move several flows at once from the list. Deferred from the flow-list redesign (2026-10-22): the list acts on one flow at a time.
+- [x] Bulk actions on the Flows page — replaced by flow labels and choices: tag flows, then turn a label's flows on or off, or pick a label in a choice (winter/summer). Spec: `docs/superpowers/specs/2026-11-10-flow-labels-design.md`. Done on branch feat/flow-labels (2026-11-10).
+- [ ] Switch a flow label by voice — "passe en mode été" through the Assistant; the hub and MCP already switch labels (`switch_flow_label`). Out of scope of the labels spec; needs its own brainstorm.
+- [ ] Android app support for flow labels — the app does not read or write a flow's `labels`, the label catalog or the label switch yet; the hub contract is additive.
 - [ ] Automatic room detection for flows — suggest a flow's `area` from its trigger and action entities instead of leaving it unassigned; today the room is set by hand only.
 - [ ] Android app support for a flow's `area` — the app does not read or write it yet; the hub and web UI do.
 - [ ] Android app: localise `hub.restarted_unexpectedly` and the `service.unreachable` / `service.reachable_again` texts for the new services `broker`, `zigbee2mqtt` and `database` (the hub sends the keys with their arguments; see [System health](docs/users/system-health.md)).

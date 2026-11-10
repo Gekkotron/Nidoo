@@ -51,6 +51,7 @@ The parameters of each node are in [Flow nodes](../reference/flow-nodes.md).
   - `speak` says a sentence out loud on the speaker satellites of one room, or of every room (see [Sound satellites](sound.md#speak-in-a-room)).
   - `ask` asks a question out loud and branches on the answer (see [Ask a question](#ask-a-question)).
   - `flow.enable` enables or disables a flow, its own by default.
+  - `flow.label` picks a label in a choice, or turns every flow carrying a label on or off (see [Labels and choices](#labels-and-choices)).
 - **Waits** pause the run:
   - `delay` waits for `for`, for example `90s`, `5m` or `1h30m`. With an optional `up_to` it waits a random time between the two.
 
@@ -274,6 +275,53 @@ How it behaves:
 
 A flow can sit in a room: its optional `area` is an area id, and it only decides where the Flows page lists the flow; what the flow runs does not change. The hub checks it on save. An unknown room is refused, a room name is resolved to its id, and `Unassigned` is not a room for a flow. A room id already stored and since deleted is kept as it is, so it never blocks a save. Invalid flows keep their real name and room in listings.
 
+## Labels and choices
+
+A label is a name you give to a group of flows, such as "Winter" or "Holidays", with a colour. A flow can carry several labels. Labels only group and switch flows; they do not change what a flow does.
+
+A choice is a set of two or more labels where one is current, such as "Season: Winter | Summer". A label belongs to at most one choice; a label in no choice is a standalone label.
+
+- **Picking** a label in a choice turns on every flow carrying it and turns off every flow carrying another label of that choice. That label becomes the current one. Flows with no label of the choice are left alone, and a flow carrying both the picked label and another one is turned on.
+- **Turning a label on or off** switches every flow carrying it, in a choice or not.
+
+A switch acts once. Afterwards you can still turn any flow on or off by hand, and it stays that way until the next switch. Only flows not already in the right state are written. Invalid flows are skipped, and the result names every flow it could not switch: "Summer picked: 5 on, 12 off. 1 not changed: Old heater (invalid)."
+
+### Winter and summer
+
+1. On the Flows page, set **Group** to **Label**, then press **＋ Label** on the "No label" section. The label manager opens.
+2. Press **＋ Choice**, name it "Season", then **＋ Label in this choice** twice: "Winter" and "Summer".
+3. Tag your heating flows with "Winter" and your cooling flows with "Summer": from a row's **⋯** menu, under **Labels**, or from the **Labels** field next to the room in the flow editor.
+4. The "Season" section header now shows **Winter | Summer**. Press **Summer**: the cooling flows turn on, the heating flows turn off, and a toast gives the counts.
+
+To switch on 21 June by itself, make a flow with a Schedule card set to `0 0 21 6 *` and a **Pick a label** card on Season → Summer:
+
+```json
+{
+  "id": "summer_starts",
+  "name": "Summer starts",
+  "nodes": [
+    { "id": "june", "type": "trigger.schedule", "params": { "cron": "0 0 21 6 *" } },
+    { "id": "pick", "type": "flow.label", "params": { "label": "summer", "action": "pick" } }
+  ],
+  "edges": [{ "from": "june", "to": "pick" }]
+}
+```
+
+A second flow on `0 0 21 12 *` picks Winter back. The card shows a live preview of what it would switch now, and the run log gives the counts. A label action can turn off its own flow: the run still finishes its steps.
+
+### The label manager
+
+The label manager lists each choice with its labels, then the standalone labels. Each line shows the colour, the name and how many flows carry it. Open it from **⚙** on a label or choice section, or from **＋ Label** on "No label".
+
+- **✎** renames a label, changes its colour, or moves it into or out of a choice. A new label gets the least used colour.
+- **🗑** deletes it, after asking. The label is removed from every flow carrying it. If a flow's **Pick a label** card names it, the question lists those flows: their card then fails at run time, and the flow cannot be saved until the card is fixed.
+- Deleting a choice keeps its labels, as standalone labels.
+- A choice with fewer than two labels shows "Needs two labels" and cannot be picked yet.
+
+No edit in the manager switches flows. Label ids are made from the name and never change on a rename. The catalog is stored by the hub on its own MQTT topic, `nidoo/flow_labels` by default (`[topics] flow_labels`).
+
+The assistant reads and switches labels with the `list_flow_labels`, `edit_flow_labels` and `switch_flow_label` MCP tools. See [MCP tools](../reference/mcp-tools.md).
+
 ## The Flows page
 
 ![The Flows page: a search box, sort, group and view toggles, filter chips, and flows grouped by room with an enable switch and a ⋯ menu on each row](/img/screens/flows.webp#gh-dark-mode-only)
@@ -281,12 +329,12 @@ A flow can sit in a room: its optional `area` is an area id, and it only decides
 
 The Flows page (`/flows`) has a **New flow** button and a bar to find flows:
 
-- A search box over name, description, trigger summary (which names the trigger devices) and room, ignoring case and accents.
-- **Sort** by Name or Last run, **Group** by Room or None, and a List / Cards toggle.
+- A search box over name, description, trigger summary (which names the trigger devices), room and label names, ignoring case and accents.
+- **Sort** by Name or Last run, **Group** by Room, Label or None, and a List / Cards toggle.
 - Status chips, each with a count: All, On (enabled and valid), Off, and ⚠ Needs attention (invalid, or the latest finished run failed).
-- Trigger chips, any of which you can combine: Device state, Schedule, Sun, Button / event, Manual.
+- A **Trigger ▾** menu on the same row, where you can tick any mix of trigger kinds: Device state, Schedule, Sun, Off-peak, Silent for, Button / event, Manual. The button shows how many are ticked.
 
-Each row shows an icon for the trigger, the name, a "restart" tag for flows in `restart` mode, a red "Invalid" tag (the reason is its tooltip) for a flow that does not validate, a trigger summary, the last run ("Done · 2 min ago", or "No runs yet"; failed runs show red), the enable switch and a **⋯** menu. Rooms are sections, with a "No room" section last; a section folds, and a folded section that hides a flow needing attention shows ⚠. The **⋯** menu opens the flow, moves it to another room (the flow editor has the same room picker; an invalid flow cannot be moved) or deletes it: **Delete flow…** asks first, and a deleted flow cannot be brought back. The view, grouping, sort, filters and folded sections are remembered per browser; the search is not.
+Each row shows an icon for the trigger, the name, a "restart" tag for flows in `restart` mode, a red "Invalid" tag (the reason is its tooltip) for a flow that does not validate, its labels as coloured chips, a trigger summary, the last run ("Done · 2 min ago", or "No runs yet"; failed runs show red), the enable switch and a **⋯** menu. Rooms are sections, with a "No room" section last; a section folds, and a folded section that hides a flow needing attention shows ⚠. Grouped by label, each choice is a section (its header picks the current label), then each standalone label (its header has **Turn all on** and **Turn all off**), then "No label"; a flow with several labels shows in each of their sections. The **⋯** menu opens the flow, moves it to another room (the flow editor has the same room picker; an invalid flow cannot be moved), ticks its labels (**＋ New label…** makes one and tags the flow) or deletes it: **Delete flow…** asks first, and a deleted flow cannot be brought back. The view, grouping, sort, filters and folded sections are remembered per browser; the search is not.
 
 The outdoor weather is available to flows as entities (`weather_temperature`, `weather_wind_gusts`, `weather_rain_next_hour` and more): see [Weather](weather.md).
 
