@@ -852,6 +852,28 @@ async fn moving_to_another_room_keeps_the_run() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn relabelling_keeps_the_run() {
+    let (hub, publisher, _engine) = engine_hub();
+    let (mut events, log, run) = waiting_flow(&hub, publisher).await;
+    let mut flow = reference_flow();
+    flow.labels = vec!["ete".to_owned()];
+    hub.ingest(FLOW_TOPIC, flow.encode().as_bytes());
+    assert_run_survives(&hub, &mut events, &log, &run).await;
+}
+
+#[tokio::test]
+async fn invalid_flow_keeps_its_labels() {
+    let (hub, _rx) = hub();
+    hub.ingest(
+        "nidoo/automation/bad",
+        br#"{"id":"bad","name":"Bad","labels":["ete",3],"nodes":"oops"}"#,
+    );
+    let view = hub.flow("bad").expect("stub");
+    assert!(view.invalid.is_some());
+    assert_eq!(view.definition.labels, ["ete"]);
+}
+
+#[tokio::test(start_paused = true)]
 async fn renaming_keeps_the_run() {
     let (hub, publisher, _engine) = engine_hub();
     let (mut events, log, run) = waiting_flow(&hub, publisher).await;

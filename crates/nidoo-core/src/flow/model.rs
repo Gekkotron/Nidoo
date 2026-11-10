@@ -35,6 +35,9 @@ pub struct Flow {
     /// The room the UI lists the flow under (an area id); it does not change what the flow does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area: Option<String>,
+    /// Label ids the UI groups the flow under; they do not change what the flow does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
     /// A disabled flow keeps its definition but never runs. Defaults to `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -60,6 +63,7 @@ impl Default for Flow {
             name: String::new(),
             description: None,
             area: None,
+            labels: Vec::new(),
             enabled: true,
             mode: FlowMode::default(),
             nodes: Vec::new(),
@@ -830,6 +834,17 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn labels_default_empty_and_are_omitted() {
+        let flow = Flow::decode(br#"{"id":"a","name":"A"}"#).unwrap();
+        assert!(flow.labels.is_empty());
+        assert!(!flow.encode().contains("labels"));
+        let flow = Flow::decode(br#"{"id":"a","name":"A","labels":["ete","hiver"]}"#).unwrap();
+        assert_eq!(flow.labels, ["ete", "hiver"]);
+        let again = Flow::decode(flow.encode().as_bytes()).unwrap();
+        assert_eq!(again, flow);
+    }
 
     #[test]
     fn ask_node_round_trips_and_lists_ports() {

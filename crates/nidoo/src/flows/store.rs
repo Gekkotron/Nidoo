@@ -27,6 +27,8 @@ enum Entry {
         name: Option<String>,
         /// The `area` the payload carried, when it was readable.
         area: Option<String>,
+        /// The string entries of the payload's `labels` array, when it was readable.
+        labels: Vec<String>,
     },
 }
 
@@ -118,7 +120,8 @@ impl FlowStore {
     }
 
     /// An invalid entry that still remembers the payload's `name` and `area` when they are
-    /// JSON strings, so the list can show and place the stub.
+    /// JSON strings (and the strings of its `labels` array), so the list can show and place the
+    /// stub.
     fn invalid(payload: &[u8], reason: String) -> Entry {
         let value: Option<serde_json::Value> = serde_json::from_slice(payload).ok();
         let text = |key: &str| {
@@ -132,6 +135,18 @@ impl FlowStore {
             reason,
             name: text("name"),
             area: text("area"),
+            labels: value
+                .as_ref()
+                .and_then(|v| v.get("labels"))
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
@@ -156,11 +171,17 @@ impl FlowStore {
         let entry = self.entries.get(id)?;
         let (definition, invalid) = match entry {
             Entry::Valid(flow) => (flow.clone(), None),
-            Entry::Invalid { reason, name, area } => (
+            Entry::Invalid {
+                reason,
+                name,
+                area,
+                labels,
+            } => (
                 Flow {
                     id: id.to_owned(),
                     name: name.clone().unwrap_or_else(|| id.to_owned()),
                     area: area.clone(),
+                    labels: labels.clone(),
                     ..Default::default()
                 },
                 Some(reason.clone()),
