@@ -34,12 +34,13 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::{AbortHandle, JoinSet};
 
 use super::EngineRequest;
+use super::labels::switch_detail;
 use super::schedule::{Armed, Now, now_in, rearm, timer_clock};
 use super::sun::{ArmedSun, next_sun_fire};
 use crate::assist::stt::ask::{ASK_LIMIT, AskOutcome};
 use crate::clock;
 use crate::home::OffPeakNow;
-use crate::hub::{Hub, StateTouched};
+use crate::hub::{Hub, HubError, StateTouched};
 use crate::sound::SpeakTarget;
 use nidoo_api::ConnectionStatus;
 
@@ -1368,7 +1369,17 @@ async fn run_node(
                 Err(err) => failed(err.to_string()),
             }
         }
-        NodeKind::FlowLabel(_) => failed("flow.label not supported yet".to_owned()),
+        NodeKind::FlowLabel(params) => {
+            match hub
+                .switch_flow_label(&params.label, params.action, Some((flow_id, run_id)))
+                .await
+            {
+                Ok(result) => (StepOutcome::Ok, switch_detail(&result), Vec::new()),
+                // The reason alone: "unknown label `x`" reads better than "rejected: …".
+                Err(HubError::Rejected(reason)) => failed(reason),
+                Err(err) => failed(err.to_string()),
+            }
+        }
         NodeKind::Math(params) => match run_math(hub, now, params, trigger, results).await {
             Ok(detail) => (StepOutcome::Ok, detail, Vec::new()),
             Err(reason) => failed(reason),

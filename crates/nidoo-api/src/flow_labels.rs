@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use nidoo_core::flow::{FlowLabelCatalog, LabelColor};
+use nidoo_core::flow::{FlowLabelCatalog, LabelAction, LabelColor};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -44,4 +44,33 @@ pub enum LabelEdit {
     DeleteLabel { id: String },
     /// Deletes a choice; its labels stay, as standalone labels.
     DeleteChoice { id: String },
+}
+
+/// A flow a label switch did not change, and why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SkippedFlow {
+    pub id: String,
+    pub name: String,
+    /// `invalid`, or the error of the failed write.
+    pub reason: String,
+}
+
+/// What a label switch did: the flows it turned on and off (only those that changed), and the
+/// ones it could not switch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LabelSwitchResult {
+    pub label: String,
+    pub action: LabelAction,
+    /// Flow ids turned on.
+    pub enabled: Vec<String>,
+    /// Flow ids turned off.
+    pub disabled: Vec<String>,
+    #[serde(default)]
+    pub skipped: Vec<SkippedFlow>,
+}
+
+/// The body of `POST /api/v1/flow-labels/{id}/switch`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LabelSwitchBody {
+    pub action: LabelAction,
 }
