@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use nidoo::config::Config;
 use nidoo::hub::{Hub, HubError};
-use nidoo_api::{ConnectionStatus, LabelEdit, WsEvent};
+use nidoo_api::{ConnectionStatus, LabelEdit, RunStatus, RunView, WsEvent};
 use nidoo_core::command::Publish;
-use nidoo_core::flow::{Flow, FlowLabelCatalog, LabelColor};
+use nidoo_core::flow::{Flow, FlowLabelCatalog, LabelAction, LabelColor};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -438,4 +438,284 @@ async fn broken_flow_label_node_still_saves_when_unchanged() {
             .await,
         "label `hiver` is no longer in a choice in node `season`",
     );
+}
+
+/// The season house: winter flows on, summer flows off, one flow in both, one on holiday.
+fn season_flows(hub: &Hub) {
+    ingest_flow(hub, "heat", true, &["hiver"]);
+    ingest_flow(hub, "heat2", false, &["hiver"]);
+    ingest_flow(hub, "fan", false, &["ete"]);
+    ingest_flow(hub, "fan2", true, &["ete"]);
+    ingest_flow(hub, "both", false, &["ete", "hiver"]);
+    ingest_flow(hub, "away", true, &["vacances"]);
+}
+
+fn enabled(hub: &Hub, id: &str) -> bool {
+    hub.flow(id).expect("flow").definition.enabled
+}
+
+#[tokio::test]
+async fn pick_switches_only_what_changes() {
+    let (hub, mut rx) = with_seasons();
+    season_flows(&hub);
+    drain(&mut rx);
+    let result = hub
+        .switch_flow_label("ete", LabelAction::Pick, None)
+        .await
+        .expect("pick");
+    assert_eq!(result.label, "ete");
+    assert_eq!(result.action, LabelAction::Pick);
+    assert_eq!(result.enabled, ["both", "fan"]);
+    assert_eq!(result.disabled, ["heat"]);
+    assert!(result.skipped.is_empty());
+    let published = drain(&mut rx);
+    let topics: Vec<&str> = published.iter().map(|p| p.topic.as_str()).collect();
+    assert_eq!(
+        topics,
+        [
+            "nidoo/automation/both",
+            "nidoo/automation/fan",
+            "nidoo/automation/heat",
+            LABELS_TOPIC
+        ]
+    );
+    let catalog = catalog_of(&published[3]);
+    assert_eq!(
+        catalog.choice("saison").unwrap().current.as_deref(),
+        Some("ete")
+    );
+    assert!(enabled(&hub, "fan") && enabled(&hub, "both") && enabled(&hub, "away"));
+    assert!(!enabled(&hub, "heat") && !enabled(&hub, "heat2"));
+}
+
+#[tokio::test]
+async fn pick_again_reapplies_after_hand_changes() {
+    let (hub, mut rx) = with_seasons();
+    season_flows(&hub);
+    hub.switch_flow_label("ete", LabelAction::Pick, None)
+        .await
+        .expect("pick");
+    hub.set_flow_enabled("heat", true).await.expect("by hand");
+    drain(&mut rx);
+    let result = hub
+        .switch_flow_label("ete", LabelAction::Pick, None)
+        .await
+        .expect("pick again");
+    assert!(result.enabled.is_empty());
+    assert_eq!(result.disabled, ["heat"]);
+    // `current` is already `ete`: only the flow is written.
+    let topics: Vec<String> = drain(&mut rx).into_iter().map(|p| p.topic).collect();
+    assert_eq!(topics, ["nidoo/automation/heat"]);
+    let nothing = hub
+        .switch_flow_label("ete", LabelAction::Pick, None)
+        .await
+        .expect("pick a third time");
+    assert!(nothing.enabled.is_empty() && nothing.disabled.is_empty());
+}
+
+#[tokio::test]
+async fn on_off_standalone_label() {
+    let (hub, _rx) = with_seasons();
+    season_flows(&hub);
+    let off = hub
+        .switch_flow_label("vacances", LabelAction::Off, None)
+        .await
+        .expect("off");
+    assert_eq!(off.disabled, ["away"]);
+    assert!(!enabled(&hub, "away"));
+    let on = hub
+        .switch_flow_label("vacances", LabelAction::On, None)
+        .await
+        .expect("on");
+    assert_eq!(on.enabled, ["away"]);
+    // On and off never touch a choice's current label.
+    let catalog = hub.flow_labels().catalog;
+    assert_eq!(
+        catalog.choice("saison").unwrap().current.as_deref(),
+        Some("hiver")
+    );
+    let off = hub
+        .switch_flow_label("ete", LabelAction::Off, None)
+        .await
+        .expect("off works in a choice too");
+    // `both` is already off.
+    assert_eq!(off.disabled, ["fan2"]);
+}
+
+#[tokio::test]
+async fn switch_refused_offline() {
+    let (hub, mut rx) = with_seasons();
+    season_flows(&hub);
+    drain(&mut rx);
+    hub.set_connection(ConnectionStatus::Connecting);
+    let err = hub.switch_flow_label("ete", LabelAction::Pick, None).await;
+    assert!(matches!(err, Err(HubError::Publish(_))), "{err:?}");
+    assert!(drain(&mut rx).is_empty());
+    assert!(enabled(&hub, "heat"));
+}
+
+#[tokio::test]
+async fn invalid_flows_reported_as_skipped() {
+    let (hub, _rx) = with_seasons();
+    season_flows(&hub);
+    hub.ingest(
+        "nidoo/automation/bad",
+        br#"{"id":"bad","name":"Broken","labels":["hiver"],"nodes":"oops"}"#,
+    );
+    let result = hub
+        .switch_flow_label("ete", LabelAction::Pick, None)
+        .await
+        .expect("pick");
+    assert_eq!(result.skipped.len(), 1);
+    assert_eq!(result.skipped[0].id, "bad");
+    assert_eq!(result.skipped[0].name, "Broken");
+    assert_eq!(result.skipped[0].reason, "invalid");
+    let catalog = hub.flow_labels().catalog;
+    assert_eq!(
+        catalog.choice("saison").unwrap().current.as_deref(),
+        Some("ete")
+    );
+}
+
+#[tokio::test]
+async fn incomplete_choice_is_refused() {
+    let (hub, _rx) = with_seasons();
+    let err = hub.switch_flow_label("nope", LabelAction::On, None).await;
+    assert!(
+        matches!(&err, Err(HubError::Rejected(m)) if m == "unknown label `nope`"),
+        "{err:?}"
+    );
+    let err = hub
+        .switch_flow_label("vacances", LabelAction::Pick, None)
+        .await;
+    assert!(
+        matches!(&err, Err(HubError::Rejected(m)) if m == "label `vacances` is no longer in a choice"),
+        "{err:?}"
+    );
+    hub.edit_flow_labels(LabelEdit::MoveLabel {
+        id: "ete".into(),
+        choice: None,
+    })
+    .await
+    .expect("move out");
+    let err = hub
+        .switch_flow_label("hiver", LabelAction::Pick, None)
+        .await;
+    assert!(
+        matches!(&err, Err(HubError::Rejected(m)) if m == "choice `saison` has fewer than two labels"),
+        "{err:?}"
+    );
+}
+
+/// A hub with the seasons catalog and a running engine; its publishes are drained in the
+/// background so the queue never fills.
+fn engine_hub() -> (Arc<Hub>, tokio::task::JoinHandle<()>) {
+    let (hub, mut rx) = with_seasons();
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let engine = hub.start_engine();
+    (hub, engine)
+}
+
+/// A flow: manual trigger `t`, then each of `steps` in a chain.
+fn chain(id: &str, labels: &[&str], steps: Vec<serde_json::Value>) -> String {
+    let mut nodes = vec![json!({"id": "t", "type": "trigger.manual", "params": {}})];
+    nodes.extend(steps);
+    let edges: Vec<_> = nodes
+        .windows(2)
+        .map(|pair| json!({"from": pair[0]["id"], "to": pair[1]["id"]}))
+        .collect();
+    json!({"id": id, "name": id.to_uppercase(), "enabled": true, "labels": labels,
+           "nodes": nodes, "edges": edges})
+    .to_string()
+}
+
+fn label_step(id: &str, label: &str, action: &str) -> serde_json::Value {
+    json!({"id": id, "type": "flow.label", "params": {"label": label, "action": action}})
+}
+
+async fn settle() {
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn finished_run(
+    events: &mut tokio::sync::broadcast::Receiver<WsEvent>,
+    flow: &str,
+) -> RunView {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Ok(WsEvent::FlowRunChanged { flow_id, run }) = events.recv().await
+                && flow_id == flow
+                && run.status != RunStatus::Running
+            {
+                return run;
+            }
+        }
+    })
+    .await
+    .expect("the run ends within 2 s")
+}
+
+#[tokio::test]
+async fn flow_label_step_picks_and_reports() {
+    let (hub, _engine) = engine_hub();
+    ingest_flow(&hub, "heat", true, &["hiver"]);
+    ingest_flow(&hub, "fan", false, &["ete"]);
+    hub.ingest(
+        "nidoo/automation/summer",
+        chain("summer", &[], vec![label_step("go", "ete", "pick")]).as_bytes(),
+    );
+    settle().await;
+    let mut events = hub.subscribe();
+    hub.run_flow("summer").expect("run");
+    let run = finished_run(&mut events, "summer").await;
+    assert_eq!(run.status, RunStatus::Done, "{run:?}");
+    assert_eq!(run.steps[1].detail, "picked ete: 1 on, 1 off");
+    assert!(enabled(&hub, "fan") && !enabled(&hub, "heat"));
+}
+
+#[tokio::test]
+async fn flow_label_self_disable_keeps_the_run() {
+    let (hub, _engine) = engine_hub();
+    ingest_flow(&hub, "fan", false, &["ete"]);
+    ingest_flow(&hub, "b", false, &[]);
+    let after = json!({"id": "after", "type": "flow.enable",
+                       "params": {"flow": "b", "enabled": true}});
+    hub.ingest(
+        "nidoo/automation/a",
+        chain(
+            "a",
+            &["hiver"],
+            vec![label_step("go", "ete", "pick"), after],
+        )
+        .as_bytes(),
+    );
+    settle().await;
+    let mut events = hub.subscribe();
+    hub.run_flow("a").expect("run");
+    let run = finished_run(&mut events, "a").await;
+    assert_eq!(run.status, RunStatus::Done, "{run:?}");
+    let nodes: Vec<&str> = run.steps.iter().map(|s| s.node.as_str()).collect();
+    assert_eq!(nodes, ["t", "go", "after"]);
+    assert_eq!(run.steps[1].detail, "picked ete: 1 on, 1 off");
+    assert_eq!(run.steps[2].detail, "enabled b");
+    assert!(!enabled(&hub, "a") && enabled(&hub, "b") && enabled(&hub, "fan"));
+}
+
+#[tokio::test]
+async fn flow_label_unknown_label_fails_the_step() {
+    let (hub, _engine) = engine_hub();
+    hub.ingest(
+        "nidoo/automation/a",
+        chain("a", &[], vec![label_step("go", "nope", "on")]).as_bytes(),
+    );
+    settle().await;
+    let mut events = hub.subscribe();
+    hub.run_flow("a").expect("run");
+    let run = finished_run(&mut events, "a").await;
+    assert_eq!(run.status, RunStatus::Failed, "{run:?}");
+    let last = run.steps.last().expect("a step");
+    assert_eq!(last.node, "go");
+    assert_eq!(last.detail, "unknown label `nope`");
 }

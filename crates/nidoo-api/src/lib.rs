@@ -41,7 +41,7 @@ pub use dashboards::{
 };
 pub use energy::{energy_entities, energy_entity};
 pub use events::{ApiError, CommandResponse, ConnectionStatus, OverridePatch, WsEvent};
-pub use flow_labels::{FlowLabelsView, LabelEdit};
+pub use flow_labels::{FlowLabelsView, LabelEdit, LabelSwitchBody, LabelSwitchResult, SkippedFlow};
 pub use flows::{
     FlowView, FlowWriteOutcome, FlowsConfigView, RunStatus, RunView, SchedulePreview, StepOutcome,
     StepView, TriggerInfo,
