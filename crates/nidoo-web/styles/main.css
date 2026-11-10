@@ -7277,6 +7277,192 @@ html:has(.flow-canvas-screen) {
 
 /* Climate */
 /* The engine is in beta: the badge sits on the title's baseline. */
+/* A chip the editor can take off: the ✕ is pressable, unlike a list chip. */
+.label-chip--removable {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.label-chip__remove {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.label-chip__remove:hover {
+  opacity: 1;
+}
+
+/* The flow's labels beside its room in the editor's title bar. */
+.flow-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.flow-labels__add {
+  width: 9em;
+  min-height: 32px;
+}
+
+/* ⚙ and "＋ Label" at the end of a label section header. */
+.flow-section__manage {
+  flex: none;
+}
+
+.flow-section__add-label {
+  min-height: 32px;
+}
+
+/* A label's choice, in grey after its name in the ⋯ menu. */
+.room-menu__choice {
+  opacity: 0.6;
+}
+
+.room-menu__new {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+}
+
+.room-menu__new .input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The label manager dialog: choices, then standalone labels, then the add buttons. */
+.label-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.label-manager__group {
+  padding: 8px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-nav);
+}
+
+.label-manager__group--focus,
+.label-manager__line--focus {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 2px;
+}
+
+.label-manager__heading {
+  margin: 4px 0;
+  font: 600 10px/14px var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.label-manager__line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+.label-manager__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--label);
+}
+
+.label-manager__name,
+.label-manager__choice-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label-manager__choice-name {
+  flex: none;
+  font-weight: 600;
+}
+
+.label-manager__hint {
+  flex: 1;
+  font: var(--type-label);
+  opacity: 0.6;
+}
+
+.label-manager__count {
+  font: var(--type-label);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.label-manager__form,
+.label-manager__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.label-manager__field {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.label-manager__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.label-manager__swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--label);
+  cursor: pointer;
+}
+
+.label-manager__swatch[aria-checked="true"] {
+  border-color: var(--ink);
+}
+
+.label-manager__prompt {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.label-manager__form-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.label-manager__add-in-choice {
+  margin-top: 4px;
+}
+
+.label-manager__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .climate__beta {
   margin-left: 8px;
   vertical-align: middle;

@@ -135,6 +135,16 @@ pub enum FlowText {
     LabelPick,
     LabelOn,
     LabelOff,
+    ManageLabels,
+    ChoiceOneActive,
+    StandaloneLabels,
+    LabelNameField,
+    LabelColorField,
+    NoChoice,
+    CreateLabelButton,
+    EditLabel,
+    ChoiceDeleteNote,
+    AddLabelPlaceholder,
     ViewLabel,
     ViewList,
     ViewCards,
@@ -447,6 +457,16 @@ impl FlowText {
         FlowText::LabelPick,
         FlowText::LabelOn,
         FlowText::LabelOff,
+        FlowText::ManageLabels,
+        FlowText::ChoiceOneActive,
+        FlowText::StandaloneLabels,
+        FlowText::LabelNameField,
+        FlowText::LabelColorField,
+        FlowText::NoChoice,
+        FlowText::CreateLabelButton,
+        FlowText::EditLabel,
+        FlowText::ChoiceDeleteNote,
+        FlowText::AddLabelPlaceholder,
         FlowText::ViewLabel,
         FlowText::ViewList,
         FlowText::ViewCards,
@@ -817,6 +837,19 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::LabelPick => ("Pick", "Choisir"),
         T::LabelOn => ("Turn on", "Activer"),
         T::LabelOff => ("Turn off", "Désactiver"),
+        T::ManageLabels => ("Manage labels", "Gérer les étiquettes"),
+        T::ChoiceOneActive => ("choice · one at a time", "choix · une seule active"),
+        T::StandaloneLabels => ("Standalone labels", "Étiquettes seules"),
+        T::LabelNameField => ("Name", "Nom"),
+        T::LabelColorField => ("Colour", "Couleur"),
+        T::NoChoice => ("No choice", "Aucun choix"),
+        T::CreateLabelButton => ("Create", "Créer"),
+        T::EditLabel => ("Edit", "Modifier"),
+        T::ChoiceDeleteNote => (
+            "Its labels stay, as standalone labels.",
+            "Ses étiquettes restent, comme étiquettes seules.",
+        ),
+        T::AddLabelPlaceholder => ("＋ add…", "＋ ajouter…"),
         T::ViewLabel => ("View", "Affichage"),
         T::ViewList => ("List", "Liste"),
         T::ViewCards => ("Cards", "Cartes"),
@@ -1734,6 +1767,57 @@ pub fn delete_flow_prompt(lang: Lang, name: &str) -> String {
     )
 }
 
+/// "12 flows" / "12 automatisations": how many flows carry a label, in the label manager.
+pub fn label_flow_count(lang: Lang, n: usize) -> String {
+    super::format::count(
+        lang,
+        n,
+        ("flow", "automatisation"),
+        ("flows", "automatisations"),
+    )
+}
+
+/// The warning under a label's delete prompt when label actions name it: "Used by the label
+/// action of: A, B. Those actions will fail until fixed."
+pub fn label_used_by(lang: Lang, flows: &[String]) -> String {
+    let names = flows.join(", ");
+    pick(
+        lang,
+        format!("Used by the label action of: {names}. Those actions will fail until fixed."),
+        format!(
+            "Utilisée par l'action d'étiquette de{NBSP}: {names}. Ces actions échoueront tant qu'elles ne sont pas corrigées."
+        ),
+    )
+}
+
+/// "Remove “Été”" / "Retirer «\u{A0}Été\u{A0}»": the ✕ of a label chip in the editor.
+pub fn remove_label(lang: Lang, name: &str) -> String {
+    pick(
+        lang,
+        format!("Remove “{name}”"),
+        format!("Retirer «{NBSP}{name}{NBSP}»"),
+    )
+}
+
+/// A label colour's name, for its swatch in the label manager.
+pub fn label_color_word(lang: Lang, color: nidoo_core::flow::LabelColor) -> &'static str {
+    use nidoo_core::flow::LabelColor as C;
+    let (en, fr) = match color {
+        C::Blue => ("Blue", "Bleu"),
+        C::Amber => ("Amber", "Ambre"),
+        C::Green => ("Green", "Vert"),
+        C::Red => ("Red", "Rouge"),
+        C::Purple => ("Purple", "Violet"),
+        C::Teal => ("Teal", "Bleu canard"),
+        C::Pink => ("Pink", "Rose"),
+        C::Slate => ("Slate", "Ardoise"),
+    };
+    match lang {
+        Lang::En => en,
+        Lang::Fr => fr,
+    }
+}
+
 /// "Couldn't save: <hub text>" / "Enregistrement impossible\u{A0}: <hub text>"; the hub's own
 /// text comes as received.
 pub fn save_failed(lang: Lang, hub: &str) -> String {
@@ -2018,6 +2102,28 @@ mod tests {
         assert_eq!(
             say(Lang::En, switched(On, "ghost", 1, 0, &[])),
             "ghost: 1 on."
+        );
+    }
+
+    #[test]
+    fn label_manager_sentences() {
+        assert_eq!(label_flow_count(Lang::En, 1), "1 flow");
+        assert_eq!(label_flow_count(Lang::En, 12), "12 flows");
+        assert_eq!(label_flow_count(Lang::Fr, 12), "12 automatisations");
+        let names = ["Summer switch".to_owned(), "Morning".to_owned()];
+        assert_eq!(
+            label_used_by(Lang::En, &names),
+            "Used by the label action of: Summer switch, Morning. Those actions will fail until fixed."
+        );
+        assert!(
+            label_used_by(Lang::Fr, &names)
+                .starts_with("Utilisée par l'action d'étiquette de\u{a0}: Summer switch, Morning.")
+        );
+        assert_eq!(remove_label(Lang::En, "Été"), "Remove “Été”");
+        assert_eq!(remove_label(Lang::Fr, "Été"), "Retirer «\u{a0}Été\u{a0}»");
+        assert_eq!(
+            label_color_word(Lang::Fr, nidoo_core::flow::LabelColor::Slate),
+            "Ardoise"
         );
     }
 

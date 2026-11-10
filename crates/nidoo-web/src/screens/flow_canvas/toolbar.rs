@@ -1,5 +1,5 @@
 //! The floating bars over the canvas: top-left the back link, the flow's name and its mode
-//! (a text field and a single/restart select while editing);
+//! (a text field and a single/restart select while editing), its room and its labels;
 //! top-right the enable switch, Run, Edit and Runs (Tidy, Undo, Cancel and Save while editing).
 
 use leptos::prelude::*;
@@ -11,13 +11,14 @@ use nidoo_api::FlowView;
 use nidoo_core::flow::{Flow, FlowMode};
 use nidoo_core::model::UNASSIGNED_AREA;
 
+use super::labels_field::{LabelChips, LabelsField};
 use super::{Editor, Panel, Selection};
 use crate::api;
 use crate::components::flow_switch::FlowSwitch;
 use crate::components::toast::Toasts;
 use crate::flow_edit::{flow_uuid, stamp_notify_lang};
 use crate::flow_layout::{tidy, with_resolved_positions};
-use crate::flow_list::clear_stale_area;
+use crate::flow_list::{clear_stale_area, clear_stale_labels};
 use crate::house::House;
 use crate::i18n::flows::{FlowText, save_failed, use_flow_text};
 use crate::i18n::use_lang;
@@ -73,6 +74,9 @@ fn EditControls(
         house
             .areas
             .with_untracked(|areas| clear_stale_area(&mut snapshot, areas));
+        house
+            .flow_labels
+            .with_untracked(|labels| clear_stale_labels(&mut snapshot, &labels.catalog));
         stamp_notify_lang(&mut snapshot, lang().core());
         let is_new = snapshot.id.is_empty();
         if is_new {
@@ -302,6 +306,7 @@ pub fn Toolbar(
         })
     };
     let original = Signal::derive(move || view.with(|v| v.definition.clone()));
+    let saved_labels = Signal::derive(move || view.with(|v| v.definition.labels.clone()));
     let back = use_back();
     view! {
         <div class="flow-toolbar flow-toolbar--title">
@@ -378,6 +383,12 @@ pub fn Toolbar(
                             })
                     }}
                 </select>
+            </Show>
+            <Show
+                when=move || editing.get()
+                fallback=move || view! { <LabelChips labels=saved_labels /> }
+            >
+                <LabelsField editor=editor />
             </Show>
         </div>
         <div class="flow-toolbar flow-toolbar--actions">

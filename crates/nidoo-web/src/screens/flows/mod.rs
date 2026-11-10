@@ -4,6 +4,7 @@
 
 mod bar;
 mod card;
+mod label_manager;
 mod room_menu;
 mod row;
 
@@ -22,6 +23,7 @@ use crate::i18n::flows::{FlowText, flow_text, label_switch_result};
 use crate::i18n::{Key, Lang, text, use_lang};
 use bar::FlowsBar;
 use card::FlowCard;
+use label_manager::{FOCUS_NEW_LABEL, LabelManager};
 use room_menu::{RoomMenu, provide_open_menu};
 use row::FlowRow;
 
@@ -60,7 +62,7 @@ fn save_prefs(prefs: &FlowListPrefs) {
     let _ = encode_prefs;
 }
 
-/// The ⋯ menu of a row: open the flow, move it to a room, or delete it.
+/// The ⋯ menu of a row: open the flow, move it to a room, tag it, or delete it.
 fn menu_for(row: &ListRow) -> AnyView {
     let id = row.view.definition.id.clone();
     let name = row.view.definition.name.clone();
@@ -71,6 +73,7 @@ fn menu_for(row: &ListRow) -> AnyView {
             name=name
             href=href
             current=row.room.clone()
+            labels=row.view.definition.labels.clone()
             invalid=row.view.invalid.is_some()
         />
     }
@@ -187,6 +190,38 @@ fn head_controls(head: SectionHead) -> AnyView {
     }
 }
 
+/// The header's way into the label manager: ⚙ on a choice or a label (opening on it), "＋ Label"
+/// on "No label"; nothing on a room.
+fn manage_button(head: SectionHead, key: String, manage: RwSignal<Option<String>>) -> AnyView {
+    let lang = use_lang();
+    match head {
+        SectionHead::Choice { .. } | SectionHead::Label(_) => view! {
+            <button
+                type="button"
+                class="btn btn--ghost btn--icon flow-section__manage"
+                aria-label=move || flow_text(lang(), FlowText::ManageLabels)
+                title=move || flow_text(lang(), FlowText::ManageLabels)
+                on:click=move |_| manage.set(Some(key.clone()))
+            >
+                "⚙"
+            </button>
+        }
+        .into_any(),
+        SectionHead::NoLabel => view! {
+            <button
+                type="button"
+                class="chip flow-section__add-label"
+                on:click=move |_| manage.set(Some(FOCUS_NEW_LABEL.to_owned()))
+            >
+                "＋ "
+                {move || flow_text(lang(), FlowText::GroupLabel)}
+            </button>
+        }
+        .into_any(),
+        SectionHead::Plain => ().into_any(),
+    }
+}
+
 /// A foldable section: a header (fold button with title · count and ⚠, then the label
 /// controls) over its block. It is keyed by
 /// the room and reads its title, rows and attention from `sections`, so a run event updates it
@@ -196,6 +231,7 @@ fn section_view(
     sections: Memo<Vec<Section>>,
     mode: ViewMode,
     prefs: RwSignal<FlowListPrefs>,
+    manage: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let lang = use_lang();
     let section = {
@@ -218,6 +254,7 @@ fn section_view(
         let key = key.clone();
         Memo::new(move |_| prefs.with(|p| p.folded.contains(&key)))
     };
+    let focus = key.clone();
     let toggle = move |_| {
         prefs.update(|p| {
             if !p.folded.remove(&key) {
@@ -260,6 +297,7 @@ fn section_view(
                     }}
                 </button>
                 {move || head_controls(head.get())}
+                {move || manage_button(head.get(), focus.clone(), manage)}
             </div>
             <Show when=move || !folded.get()>{move || block(rows, mode)}</Show>
         </section>
@@ -271,6 +309,8 @@ pub fn FlowsScreen() -> impl IntoView {
     let house = expect_context::<House>();
     provide_open_menu();
     let prefs = RwSignal::new(load_prefs());
+    // The label manager, open on this section key (or on a new label) while set.
+    let manage = RwSignal::new(None::<String>);
     // The search text is never remembered.
     let query = RwSignal::new(String::new());
     Effect::new(move |_| prefs.with(save_prefs));
@@ -347,7 +387,7 @@ pub fn FlowsScreen() -> impl IntoView {
             Grouping::None => block(shown.into(), mode),
             Grouping::Room | Grouping::Label => view! {
                 <For each=move || section_keys.get() key=|key| key.clone() let:key>
-                    {section_view(key, sections, mode, prefs)}
+                    {section_view(key, sections, mode, prefs, manage)}
                 </For>
             }
             .into_any(),
@@ -376,6 +416,18 @@ pub fn FlowsScreen() -> impl IntoView {
                 <FlowsBar prefs=prefs query=query counts=counts />
                 {body}
             </Show>
+            {move || {
+                manage
+                    .get()
+                    .map(|focus| {
+                        view! {
+                            <LabelManager
+                                focus=Some(focus)
+                                on_close=Callback::new(move |()| manage.set(None))
+                            />
+                        }
+                    })
+            }}
         </div>
     }
 }
