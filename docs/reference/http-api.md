@@ -145,6 +145,10 @@ See [Flow nodes](flow-nodes.md) for the document format.
 | `POST /api/v1/flows/{id}/enabled` | `{"enabled": bool}`; returns the flow. |
 | `POST /api/v1/flows/{id}/run` | Starts a run by hand; `202` with the run. Optional JSON body `{"node": "<card id>"}` starts from that `trigger.manual` card and the run carries its value. `422` when the flow is disabled, invalid or already running (a card press on a `restart` flow replaces the active run instead), or when `<card id>` is not a manual trigger of this flow. |
 | `POST /api/v1/flows/{id}/area` | `{"area": "<id>" \| null}` sets the room the flow is listed under (`null` clears it; the key is required); returns the flow. `422` for an unknown room, a body without `area` or an invalid flow, `404` for an unknown flow. |
+| `POST /api/v1/flows/{id}/labels` | `{"labels": ["<label id>", …]}` sets the labels the flow carries (sorted and de-duplicated; the key is required); returns the flow. `422` for a label that is not in the catalog (a label already on the flow is kept even after it was deleted), a body without `labels` or an invalid flow, `404` for an unknown flow, `503` while the broker link is down. |
+| `GET /api/v1/flow-labels` | The label catalog and how many flows carry each label: `{catalog: {labels: [{id, name, color, choice?}], choices: [{id, name, current?}]}, counts: {"<label id>": n}}`. A label no flow carries is absent from `counts`. |
+| `POST /api/v1/flow-labels` | One catalog edit, `{"op": …}`: `create_label` (`name`, optional `choice`), `create_choice` (`name`), `rename_label` (`id`, `name`), `recolor_label` (`id`, `color`), `move_label` (`id`, optional `choice`), `rename_choice` (`id`, `name`), `delete_label` (`id`; removed from every flow carrying it) or `delete_choice` (`id`; its labels stay). Ids are made from the name and never change. No edit switches flows. Returns the catalog as `GET` does. `422` for an unknown id or an empty name, `503` while the broker link is down. |
+| `POST /api/v1/flow-labels/{id}/switch` | `{"action": "pick" \| "on" \| "off"}`. `pick` (a label in a choice of at least two labels) turns its flows on and the flows of the choice's other labels off, then makes it the choice's current label; a flow in both is turned on. `on` / `off` switch every flow carrying the label. Returns `{label, action, enabled: [flow id], disabled: [flow id], skipped: [{id, name, reason}]}`: only the flows that changed, and the ones it could not switch (`invalid`, or the write error). `422` for an unknown label or a `pick` the label does not allow, `503` while the broker link is down. |
 | `GET /api/v1/schedule?cron=…&count=…` | Previews a 5-field cron in the house time zone: `{timezone, next: […]}` with the next `count` ticks as RFC 3339 (default 3, at most 10). `422` for a bad cron. |
 | `GET /api/v1/config/flows` | The home location as the UI needs it: `{latitude, longitude, timezone, fallback_active}`. |
 
@@ -292,6 +296,7 @@ Energies are kWh (the day figures), powers kW (the period values, the means over
 | `devices_changed` | `{devices}`. |
 | `alerts_changed` | `{alerts}`. |
 | `flows_changed` | `{flows}`. |
+| `flow_labels_changed` | `{labels}`: the label catalog (the same shape as `GET /api/v1/flow-labels`) after a catalog edit or a pick. Its `counts` is as of that change; count a flow's labels from the flow list as flows change. |
 | `flow_run_changed` | `{flow_id, run}`. |
 | `bridge_changed` | The Zigbee2MQTT bridge view. |
 | `connection_changed` | The broker link status. |

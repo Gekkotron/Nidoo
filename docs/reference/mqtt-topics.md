@@ -20,6 +20,7 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | `nidoo/ui/dashboards/<id>` | in, out | yes | A dashboard definition; empty removes it | `[topics] ui_prefix` |
 | `nidoo/ui/ambiances/<id>` | in, out | yes | An ambiance definition; empty deletes it | `[topics] ui_prefix` |
 | `nidoo/automation/<flow id>` | in, out | yes | A [flow](flow-nodes.md) document; empty removes it | `[topics] automation_prefix` |
+| `nidoo/flow_labels` | in, out | yes | The [flow label catalog](flow-nodes.md#flow-labels) (`{"labels": […], "choices": […]}`), written by the hub only | `[topics] flow_labels` |
 | `<first discovery prefix>/<switch\|number\|button\|select>/virtual/<id>/config` | out | yes | Discovery of a virtual entity | `[topics] discovery_prefixes` (first entry) |
 | `<first discovery prefix>/virtual/<id>` | in, out | yes for a switch, number or select; no for a button | `ON` / `OFF`, a number, an option name, or `PRESS`; the state and the command topic | `[topics] discovery_prefixes` (first entry) |
 | `<first discovery prefix>/<sensor\|binary_sensor>/weather/<key>/config` | out | yes | Discovery of a weather entity (19 keys, one device) | `[topics] discovery_prefixes` (first entry), `[weather]` |
@@ -64,9 +65,9 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 
 ## Notes
 
-- **Reserved sub-trees.** Under a discovery prefix, the segments `ui`, `automation`, `virtual`, `push`, `weather` and `solar` are reserved: never publish discovery there. A topic in them is never read as discovery and never shows under `GET /api/v1/ignored`.
+- **Reserved sub-trees.** Under a discovery prefix, the segments `ui`, `automation`, `virtual`, `push`, `weather`, `solar`, `network` and `flow_labels` are reserved: never publish discovery there. A topic in them is never read as discovery and never shows under `GET /api/v1/ignored`.
 - **Climate documents never end in `/config`.** They cannot be read as discovery. The hub subscribes to `<prefix>/house`, `<prefix>/zone/+/+` and `<prefix>/zone/+/hold/set`, never `<prefix>/#`. `nidoo/push/responses` is always subscribed: a reply whose id starts with `alarm-` goes to the alarm, and the others (a tapped proposal button, for example) go to the climate engine when it is on.
-- **Overlapping subscriptions.** The hub subscribes to `<discovery prefix>/#`, `<z2m_base>/bridge/#`, `<ui_prefix>/#` and `<automation_prefix>/#`. A push filter that falls inside one of those wildcards (the default `nidoo/push/…` under `nidoo/#`) is left out, so the broker does not deliver a notification twice.
+- **Overlapping subscriptions.** The hub subscribes to `<discovery prefix>/#`, `<z2m_base>/bridge/#`, `<ui_prefix>/#`, `<automation_prefix>/#` and the flow label catalog topic (left out when one of those wildcards covers it, as the default `nidoo/flow_labels` is under `nidoo/#`). A push filter that falls inside one of those wildcards (the default `nidoo/push/…` under `nidoo/#`) is left out, so the broker does not deliver a notification twice.
 - **Alerts raised inside the hub** (the Frigate bridge, watchdogs, flows, MCP) go to the push service in process, without the broker.
 - **Retained history.** `nidoo/push/history` is the history itself: the hub adopts it at its first sync.
 - **After each (re)connect** the hub waits for its subscription to be acknowledged, then 2 s more for the retained tokens, before it sends; alerts arriving meanwhile wait in the queue.

@@ -53,6 +53,9 @@ const EXPECTED_TOOLS: &[&str] = &[
     "delete_flow",
     "set_flow_enabled",
     "run_flow",
+    "list_flow_labels",
+    "edit_flow_labels",
+    "switch_flow_label",
     "set_virtual",
     "delete_virtual",
     "list_groups",
@@ -239,6 +242,7 @@ async fn lists_the_expected_tools() {
     assert!(instructions.contains("`notify`"), "{instructions}");
     assert!(instructions.contains("climate_status"), "{instructions}");
     assert!(instructions.contains("nidoo_alarm_house"), "{instructions}");
+    assert!(instructions.contains("switch_flow_label"), "{instructions}");
 
     let tools = client.list_all_tools().await.expect("list tools");
     let mut names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
@@ -1788,4 +1792,90 @@ async fn speak_tool_without_speech_is_an_error() {
         "{}",
         text_of(&result)
     );
+}
+
+#[tokio::test]
+async fn switch_flow_label_over_mcp() {
+    let server = Server::start_with_flows().await;
+    let client = server.client().await;
+    for name in ["Saison"] {
+        json_of(
+            "edit_flow_labels",
+            &call(
+                &client,
+                "edit_flow_labels",
+                json!({"op": "create_choice", "name": name}),
+            )
+            .await,
+        );
+    }
+    for name in ["Hiver", "Été"] {
+        json_of(
+            "edit_flow_labels",
+            &call(
+                &client,
+                "edit_flow_labels",
+                json!({"op": "create_label", "name": name, "choice": "saison"}),
+            )
+            .await,
+        );
+    }
+    let mut winter = reference_flow();
+    winter["labels"] = json!(["hiver"]);
+    json_of(
+        "set_flow",
+        &call(&client, "set_flow", json!({ "flow": winter })).await,
+    );
+    let summer = json!({
+        "id": "summer", "name": "Summer", "enabled": true, "labels": ["ete"],
+        "nodes": [{"id": "go", "type": "trigger.manual", "params": {}}]
+    });
+    json_of(
+        "set_flow",
+        &call(&client, "set_flow", json!({ "flow": summer })).await,
+    );
+
+    let listed = json_of(
+        "list_flow_labels",
+        &call(&client, "list_flow_labels", json!({})).await,
+    );
+    assert_eq!(listed["counts"], json!({"hiver": 1, "ete": 1}));
+    assert_eq!(listed["catalog"]["choices"][0]["id"], "saison");
+
+    let flows = json_of("list_flows", &call(&client, "list_flows", json!({})).await);
+    let rows = flows["flows"].as_array().expect("flows");
+    let living = rows.iter().find(|f| f["id"] == "living").expect("living");
+    assert_eq!(living["labels"], json!(["hiver"]));
+
+    let switched = json_of(
+        "switch_flow_label",
+        &call(
+            &client,
+            "switch_flow_label",
+            json!({"label": "ete", "action": "pick"}),
+        )
+        .await,
+    );
+    assert_eq!(switched["enabled"], json!([]));
+    assert_eq!(switched["disabled"], json!(["living"]));
+    let got = json_of(
+        "get_flow",
+        &call(&client, "get_flow", json!({ "id": "living" })).await,
+    );
+    assert_eq!(got["definition"]["enabled"], false);
+
+    let unknown = call(
+        &client,
+        "switch_flow_label",
+        json!({"label": "ghost", "action": "on"}),
+    )
+    .await;
+    assert_eq!(unknown.is_error, Some(true));
+    assert!(
+        text_of(&unknown).contains("unknown label"),
+        "{}",
+        text_of(&unknown)
+    );
+
+    client.cancel().await.expect("close");
 }

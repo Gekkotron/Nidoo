@@ -184,7 +184,8 @@ pub struct SetFlowParams {
     /// `nidoo/automation/<id>`) and is checked before it is saved, so a refusal names what to
     /// fix. Fields: `id` (1 to 64 characters of `a-z`, `0-9`, `_` and `-`), `name` (free text),
     /// `description` (optional), `enabled` (default `true`; a disabled flow is kept but never
-    /// runs), `mode`, `nodes` and `edges`.
+    /// runs), `labels` (optional label ids from `list_flow_labels`; they group the flow and
+    /// let `switch_flow_label` switch it), `mode`, `nodes` and `edges`.
     ///
     /// `mode` is `single` (the default: a trigger that fires while a run is active is ignored)
     /// or `restart` (it cancels the active run and starts over). Use `restart` for "N minutes
@@ -235,6 +236,10 @@ pub struct SetFlowParams {
     ///   `value_from` (a math card's name) replaces the number of `set_number`, `set_temperature`,
     ///   `set_position` or `turn_on`'s brightness with that card's result; the literal number
     ///   stays in the JSON and is ignored then. Other commands refuse `value_from`.
+    /// - `flow.label` switches a label, as `switch_flow_label` does. params: `label` (a label id)
+    ///   and `action` (`pick`, the default, for a label in a choice of at least two labels;
+    ///   `on`; `off`). A step that turns its own flow off still finishes the run. It has no
+    ///   ports.
     /// - `math` computes one number and can save it. params: `inputs`, 0 to 10 of
     ///   `{"name", "entity", "average"?}`: `name` is how the formula refers to the entity's value
     ///   (`[a-z][a-z0-9_]{0,31}`, unique in the card), `average` (`15m`, at most `24h`) reads the
@@ -294,6 +299,30 @@ pub struct RunFlowParams {
     pub node: Option<String>,
 }
 
+/// One change to the flow label catalog, flattened: `op` names it and the other fields are its
+/// own. No edit switches flows.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct EditFlowLabelsParams {
+    /// `op` is one of `create_label` (`name`, optional `choice`: a choice id; the id is made
+    /// from the name), `create_choice` (`name`), `rename_label` (`id`, `name`),
+    /// `recolor_label` (`id`, `color`: `blue`, `amber`, `green`, `red`, `purple`, `teal`,
+    /// `pink` or `slate`), `move_label` (`id`, optional `choice`; absent takes it out of its
+    /// choice), `rename_choice` (`id`, `name`), `delete_label` (`id`; it is removed from every
+    /// flow carrying it) and `delete_choice` (`id`; its labels stay, standalone).
+    #[serde(flatten)]
+    pub edit: nidoo_api::LabelEdit,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchFlowLabelParams {
+    /// The label id, as `list_flow_labels` returns it.
+    pub label: String,
+    /// `pick` (a label in a choice: its flows on, the choice's other labels' flows off, and it
+    /// becomes the choice's current label), `on` or `off` (every flow carrying the label).
+    pub action: nidoo_core::flow::LabelAction,
+}
+
 /// The flows, one summary each; `get_flow` has the definition and the run history.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct FlowList {
@@ -308,6 +337,8 @@ pub struct FlowSummary {
     pub enabled: bool,
     /// The room the flow is listed under (an area id), if any.
     pub area: Option<String>,
+    /// The label ids the flow carries (`list_flow_labels` names them), sorted.
+    pub labels: Vec<String>,
     /// Why the flow cannot run, when it cannot (a stored flow that no longer validates).
     pub invalid: Option<String>,
     /// How many nodes the flow has.

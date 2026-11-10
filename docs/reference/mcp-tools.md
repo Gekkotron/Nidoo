@@ -51,15 +51,18 @@ See [Flow nodes](flow-nodes.md) for the document format.
 
 | Tool | What it does |
 | --- | --- |
-| `list_flows` | The flows, one summary each: `id`, `name`, `enabled`, `area`, `invalid` (why it cannot run), `nodes` (count) and `last_run`. |
+| `list_flows` | The flows, one summary each: `id`, `name`, `enabled`, `area`, `labels` (label ids), `invalid` (why it cannot run), `nodes` (count) and `last_run`. |
 | `get_flow` | One flow in full: definition, why it is invalid, the run in progress and the recent runs (newest first) with each node's outcome. Args: `id`. |
 | `set_flow` | Creates or replaces a flow, validated against the house and saved retained on `nidoo/automation/<id>`. Args: `flow` (the whole document). Returns `{flow, warning}`; `warning` is set when the flow reads the sun against the Paris fallback. |
 | `delete_flow` | Removes a flow, valid or not. Args: `id`. |
 | `set_flow_enabled` | Turns a flow on or off without touching its definition. Args: `id`, `enabled`. |
 | `run_flow` | Starts a manual run and returns the run as it starts. Refused when the flow is disabled, invalid or already running, except that a card press (`node`) on a `restart` flow replaces the active run instead. Args: `id`, optional `node` (the id of a `trigger.manual` card to start from; the run carries its value, and a card that is not a manual trigger of the flow is refused). |
+| `list_flow_labels` | The label catalog (`labels` with `id`, `name`, `color`, `choice`; `choices` with `id`, `name`, `current`) and `counts`, how many flows carry each label. Read-only. |
+| `edit_flow_labels` | One catalog edit, `op` plus its fields: `create_label` (`name`, optional `choice`), `create_choice` (`name`), `rename_label`, `recolor_label`, `move_label`, `rename_choice`, `delete_label` (removed from every flow carrying it) or `delete_choice` (its labels stay). No edit switches flows. Returns the catalog as `list_flow_labels` does. A flow's labels are set with `set_flow` (its `labels` field). |
+| `switch_flow_label` | Switches a label. Args: `label`, `action` (`pick` for a label in a choice of at least two labels: its flows on, the choice's other labels' flows off, and it becomes the current label; `on` / `off`: every flow carrying it). Returns `{label, action, enabled, disabled, skipped}`: the flows turned on and off and the ones it could not switch. |
 
 :::note
-The argument schema of `set_flow` that the server advertises describes the node types `trigger.state`, `if`, `switch`, `time.between`, `delay`, `command` and `math`. The server accepts all sixteen; the server instructions it sends name the others (`trigger.schedule`, `trigger.sun`, `trigger.off_peak`, `trigger.signal`, `trigger.manual`, `trigger.silent`, `limit`, `flow.enable`, `notify`).
+The argument schema of `set_flow` that the server advertises describes the node types `trigger.state`, `if`, `switch`, `time.between`, `delay`, `command`, `math` and `flow.label`. The server accepts all of them; the server instructions it sends name the others (`trigger.schedule`, `trigger.sun`, `trigger.off_peak`, `trigger.signal`, `trigger.manual`, `trigger.silent`, `limit`, `flow.enable`, `notify`).
 :::
 
 ## Groups
@@ -165,4 +168,4 @@ The native alarm (optional, off by default). Its settings are a whole document a
 
 ## Count
 
-Thirty tools live in `tools.rs` (house, system, overrides, command, groups, network, virtual, history, notifications, weather, solar, home settings), six in `flow_tools.rs`, eleven in `climate_tools.rs`, four in `ambiance_tools.rs` and two in `alarm_tools.rs`: 30 + 6 + 11 + 4 + 2 = 53.
+Thirty-one tools live in `tools.rs` (house, system, overrides, command, groups, network, virtual, history, notifications, weather, solar, home settings), nine in `flow_tools.rs`, eleven in `climate_tools.rs`, four in `ambiance_tools.rs` and two in `alarm_tools.rs`: 31 + 9 + 11 + 4 + 2 = 57.

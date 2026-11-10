@@ -16,10 +16,11 @@ use nidoo_alarm::view::AlarmView;
 use nidoo_api::{
     AlertView, Ambiance, AmbianceView, ApiError, ApplyReport, AreaView, CameraInfo, CamerasView,
     CommandResponse, ConnectionStatus, Dashboard, DashboardReorder, DashboardView, EnergyKind,
-    EntityView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec, GroupView,
-    HistoryDaily, HistoryRange, HistorySeries, HistoryToday, HomeSettings, IgnoredView, LastChange,
-    NetworkWatchSpec, NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview,
-    Snapshot, SystemView, VirtualSpec, WeatherView,
+    EntityView, FlowLabelsView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec,
+    GroupView, HistoryDaily, HistoryRange, HistorySeries, HistoryToday, HomeSettings, IgnoredView,
+    LabelEdit, LabelSwitchBody, LabelSwitchResult, LastChange, NetworkWatchSpec, NetworkWatchView,
+    NotifyInput, OverridePatch, RunView, SchedulePreview, Snapshot, SystemView, VirtualSpec,
+    WeatherView,
 };
 use nidoo_climate::doc::{HouseSettings, Rules, ZoneSettings};
 use nidoo_climate::view::{ClimateView, DecisionLog, LearnStatus, OverrideRequest, RoomEcoRequest};
@@ -66,6 +67,9 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         )
         .route("/flows/{id}/enabled", post(set_flow_enabled))
         .route("/flows/{id}/area", post(set_flow_area))
+        .route("/flows/{id}/labels", post(set_flow_labels))
+        .route("/flow-labels", get(flow_labels).post(edit_flow_labels))
+        .route("/flow-labels/{id}/switch", post(switch_flow_label))
         .route("/flows/{id}/run", post(run_flow))
         .route("/groups", get(list_groups))
         .route("/groups/{id}", put(put_group).delete(delete_group))
@@ -767,6 +771,49 @@ async fn set_flow_area(
 ) -> Result<Json<FlowView>, HttpError> {
     let Json(AreaBody { area }) = body?;
     Ok(Json(hub.set_flow_area(&id, area).await?))
+}
+
+/// The `POST /flows/{id}/labels` body: the flow's whole label list. The key is required (`{}`
+/// is a `422`, not a silent "no labels").
+#[derive(serde::Deserialize)]
+struct LabelsBody {
+    labels: Vec<String>,
+}
+
+/// Sets a flow's labels (sorted, de-duplicated, each in the catalog or already on the flow) and
+/// returns it as it now stands.
+async fn set_flow_labels(
+    State(hub): HubState,
+    Path(id): Path<String>,
+    body: Body<LabelsBody>,
+) -> Result<Json<FlowView>, HttpError> {
+    let Json(LabelsBody { labels }) = body?;
+    Ok(Json(hub.set_flow_labels(&id, labels).await?))
+}
+
+/// The label catalog, with how many flows carry each label.
+async fn flow_labels(State(hub): HubState) -> Json<FlowLabelsView> {
+    Json(hub.flow_labels())
+}
+
+/// Applies one catalog edit and returns the catalog as it now stands.
+async fn edit_flow_labels(
+    State(hub): HubState,
+    body: Body<LabelEdit>,
+) -> Result<Json<FlowLabelsView>, HttpError> {
+    let Json(edit) = body?;
+    Ok(Json(hub.edit_flow_labels(edit).await?))
+}
+
+/// Switches a label (`pick`, `on` or `off`) and reports the flows it turned on and off and the
+/// ones it skipped.
+async fn switch_flow_label(
+    State(hub): HubState,
+    Path(id): Path<String>,
+    body: Body<LabelSwitchBody>,
+) -> Result<Json<LabelSwitchResult>, HttpError> {
+    let Json(LabelSwitchBody { action }) = body?;
+    Ok(Json(hub.switch_flow_label(&id, action, None).await?))
 }
 
 /// The optional body of a run request: the `trigger.manual` card to start from.

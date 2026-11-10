@@ -143,7 +143,7 @@ fn instructions() -> String {
          as one JSON document. Automations are flows: `list_flows` and `get_flow` read them, \
          `set_flow` creates or replaces one (validated against the house, saved retained on \
          `nidoo/automation/<id>`, the prefix being configurable), `set_flow_enabled` \
-         switches it and `delete_flow` removes it; `run_flow` starts a manual run. A flow's optional `area` (an area id; a room name is resolved) is the room the UI lists it under; it does not change what the flow does. `set_virtual` and `delete_virtual` manage virtual \
+         switches it and `delete_flow` removes it; `run_flow` starts a manual run. A flow's optional `area` (an area id; a room name is resolved) is the room the UI lists it under; it does not change what the flow does. A flow's `labels` group it for the user; picking a label in a choice (`switch_flow_label`) turns its flows on and the choice's other labels' flows off. `list_flow_labels` reads the labels and choices, `edit_flow_labels` changes them, and `set_flow` sets a flow's `labels` (label ids). `set_virtual` and `delete_virtual` manage virtual \
          entities (a `switch`, `number`, `button` or `select` the hub owns, as `virtual_<id>`) for flows \
          to read and write. `list_groups`, `set_group` and `delete_group` manage flexible \
          groups (hub-published entities as `group_<id>` whose definition — kind, members, \
