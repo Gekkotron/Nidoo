@@ -48,6 +48,8 @@ pub enum FlowError {
     FieldWithoutEntity { node: String },
     #[error("node `{node}`: `{flow}` is not a valid flow id")]
     BadFlowTarget { node: String, flow: String },
+    #[error("node `{node}`: choose a label")]
+    MissingLabel { node: String },
     #[error("node `{node}`: offset_minutes {offset_minutes} is outside [-720, 720]")]
     BadSunOffset { node: String, offset_minutes: i32 },
     #[error("node `{node}`: {reason}")]
@@ -182,6 +184,13 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                     return Err(FlowError::BadFlowTarget {
                         node: node.id.clone(),
                         flow: target.to_owned(),
+                    });
+                }
+            }
+            NodeKind::FlowLabel(p) => {
+                if p.label.trim().is_empty() {
+                    return Err(FlowError::MissingLabel {
+                        node: node.id.clone(),
                     });
                 }
             }
@@ -694,7 +703,9 @@ fn find_cycle(flow: &Flow) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flow::{AskAnswer, AskParams, Edge, MathParams, Node, NodeKind, reference_flow};
+    use crate::flow::{
+        AskAnswer, AskParams, Edge, FlowLabelParams, MathParams, Node, NodeKind, reference_flow,
+    };
     use crate::flow::{command_with_number, parse_formula};
 
     fn edge(from: &str, to: &str, port: Option<&str>) -> Edge {
@@ -1134,6 +1145,24 @@ mod tests {
             err.to_string(),
             "node `stop`: `Bad Id` is not a valid flow id"
         );
+    }
+
+    #[test]
+    fn flow_label_needs_a_label() {
+        let mut f = schedule_flow("*/10 * * * *", "act");
+        f.nodes.push(
+            serde_json::from_str(
+                r#"{"id":"season","type":"flow.label","params":{"label":" ","action":"on"}}"#,
+            )
+            .unwrap(),
+        );
+        let err = validate(&f).unwrap_err();
+        assert_eq!(err.to_string(), "node `season`: choose a label");
+        f.nodes.last_mut().unwrap().kind = NodeKind::FlowLabel(FlowLabelParams {
+            label: "ete".into(),
+            ..FlowLabelParams::default()
+        });
+        assert!(validate(&f).is_ok());
     }
 
     #[test]

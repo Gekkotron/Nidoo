@@ -1368,6 +1368,7 @@ async fn run_node(
                 Err(err) => failed(err.to_string()),
             }
         }
+        NodeKind::FlowLabel(_) => failed("flow.label not supported yet".to_owned()),
         NodeKind::Math(params) => match run_math(hub, now, params, trigger, results).await {
             Ok(detail) => (StepOutcome::Ok, detail, Vec::new()),
             Err(reason) => failed(reason),

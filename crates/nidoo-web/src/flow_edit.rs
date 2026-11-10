@@ -405,6 +405,7 @@ pub fn next_node_id(flow: &Flow, kind: &NodeKind) -> String {
         NodeKind::Delay(_) => "delay",
         NodeKind::Command(_) => "command",
         NodeKind::FlowEnable(_) => "flow_switch",
+        NodeKind::FlowLabel(_) => "flow_label",
         NodeKind::Notify(_) => "notify",
         NodeKind::Speak(_) => "speak",
         NodeKind::Ask(_) => "ask",
@@ -541,7 +542,7 @@ fn push_capped(stack: &mut Vec<Flow>, flow: Flow) {
 #[cfg(test)]
 mod tests {
     use nidoo_core::flow::{
-        CommandParams, DelayParams, FlowEnableParams, IfParams, NotifyParams, Op,
+        CommandParams, DelayParams, FlowEnableParams, FlowLabelParams, IfParams, NotifyParams, Op,
         TriggerScheduleParams, TriggerStateParams,
     };
     use nidoo_core::flow::{RuleOp, SwitchParams, SwitchRule, TimeBetweenParams};
@@ -1092,6 +1093,10 @@ mod tests {
             (
                 NodeKind::FlowEnable(FlowEnableParams::default()),
                 "flow_switch_1",
+            ),
+            (
+                NodeKind::FlowLabel(FlowLabelParams::default()),
+                "flow_label_1",
             ),
         ];
         for (kind, want) in cases {

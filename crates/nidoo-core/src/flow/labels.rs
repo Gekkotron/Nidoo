@@ -125,12 +125,13 @@ impl FlowLabelCatalog {
 }
 
 /// What switching a label does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum LabelAction {
     /// Turn the label's flows on and the flows of its choice's other labels off; only for a
     /// label in a choice.
+    #[default]
     Pick,
     /// Turn every flow carrying the label on.
     On,

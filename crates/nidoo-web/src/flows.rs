@@ -79,6 +79,9 @@ fn summary_label(lang: Lang, node: &Node) -> String {
         }
         NodeKind::Command(p) => command_label(lang, command_name(&p.command)),
         NodeKind::FlowEnable(p) => flow_switch_text(lang, p),
+        NodeKind::FlowLabel(p) => {
+            format!("{}: {}", flow_text(lang, FlowText::NodeFlowLabel), p.label)
+        }
         NodeKind::Notify(_) => flow_text(lang, FlowText::Notify).into(),
         NodeKind::Speak(_) => flow_text(lang, FlowText::Speak).into(),
         NodeKind::Ask(_) => flow_text(lang, FlowText::Ask).into(),
