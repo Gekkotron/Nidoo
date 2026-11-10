@@ -13,7 +13,8 @@ use tokio::sync::mpsc;
 
 const LABELS_TOPIC: &str = "nidoo/flow_labels";
 
-fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+/// An online hub that has not received the retained catalog yet.
+fn fresh_hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let mut cfg = Config::default();
     cfg.commands.confirm_timeout_ms = 50;
     cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
@@ -21,6 +22,37 @@ fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let hub = Hub::new(&cfg, tx);
     hub.set_connection(ConnectionStatus::Online);
     (hub, rx)
+}
+
+/// An online hub whose broker had no retained catalog: an empty one.
+fn hub() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+    let (hub, rx) = fresh_hub();
+    hub.ingest(LABELS_TOPIC, b"");
+    (hub, rx)
+}
+
+#[tokio::test]
+async fn catalog_edits_wait_for_the_retained_catalog() {
+    let (hub, mut rx) = fresh_hub();
+    let create = |name: &str| LabelEdit::CreateLabel {
+        name: name.to_owned(),
+        choice: None,
+    };
+    // Online, but the retained catalog has not arrived: an edit now would overwrite it.
+    let refused = hub.edit_flow_labels(create("Jardin")).await;
+    assert!(
+        matches!(&refused, Err(HubError::Publish(m)) if m.contains("not loaded")),
+        "{refused:?}"
+    );
+    // Just subscribed: the retained messages are still on their way.
+    hub.on_suback();
+    assert!(hub.edit_flow_labels(create("Jardin")).await.is_err());
+    assert!(rx.try_recv().is_err(), "nothing was published");
+    // Once it arrives, an edit builds on it.
+    hub.ingest(LABELS_TOPIC, seasons().to_string().as_bytes());
+    let view = hub.edit_flow_labels(create("Jardin")).await.expect("edit");
+    let ids: Vec<&str> = view.catalog.labels.iter().map(|l| l.id.as_str()).collect();
+    assert_eq!(ids, ["hiver", "ete", "vacances", "jardin"]);
 }
 
 /// The house of the examples: a season choice (current: winter) and a standalone label.
