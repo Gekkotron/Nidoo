@@ -14,8 +14,8 @@ use nidoo_api::{
 use nidoo_core::command::{Publish, map_command};
 use nidoo_core::flow::template::parse;
 use nidoo_core::flow::{
-    Flow, FlowMode, NodeKind, Reading, Scalar, field_scalar, fields, headline_scalar, math_names,
-    uses_sun_or_is_dark, validate,
+    Flow, FlowMode, LabelAction, LabelError, NodeKind, Reading, Scalar, field_scalar, fields,
+    headline_scalar, math_names, uses_sun_or_is_dark, validate,
 };
 use nidoo_core::model::{Command, Kind, UNASSIGNED_AREA};
 use nidoo_core::types::{Placement, type_def};
@@ -109,7 +109,11 @@ impl Hub {
     /// Paris fallback.
     pub async fn set_flow(&self, mut flow: Flow) -> Result<FlowWriteOutcome, HubError> {
         validate(&flow).map_err(|err| HubError::InvalidFlow(err.to_string()))?;
+        // Held until the write: a label deleted meanwhile cannot come back with this save.
+        let _pass = self.labels_pass.lock().await;
         self.check_house(&flow)?;
+        self.check_label_nodes(&flow)?;
+        self.check_labels(&mut flow)?;
         self.check_area(&mut flow)?;
         self.check_speak_rooms(&mut flow)?;
         let warning = (self.fallback_active() && uses_sun_or_is_dark(&flow))
@@ -164,6 +168,27 @@ impl Hub {
         let mut flow = view.definition;
         flow.area = area;
         self.check_area(&mut flow)?;
+        self.write_flow(&flow)
+    }
+
+    /// Sets a flow's labels without touching the rest. Like [`Self::set_flow_area`] it skips
+    /// the entity checks; the labels are sorted and de-duplicated, and each must be in the
+    /// catalog or already on the flow.
+    pub async fn set_flow_labels(
+        &self,
+        id: &str,
+        labels: Vec<String>,
+    ) -> Result<FlowView, HubError> {
+        let _pass = self.labels_pass.lock().await;
+        let view = self
+            .flow(id)
+            .ok_or_else(|| HubError::UnknownFlow(id.to_owned()))?;
+        if let Some(reason) = view.invalid {
+            return Err(HubError::InvalidFlow(reason));
+        }
+        let mut flow = view.definition;
+        flow.labels = labels;
+        self.check_labels(&mut flow)?;
         self.write_flow(&flow)
     }
 
@@ -389,6 +414,67 @@ impl Hub {
         } else {
             Err(HubError::InvalidFlow(format!("unknown area `{raw}`")))
         }
+    }
+
+    /// Sorts and de-duplicates `flow.labels` and refuses a label the catalog does not have,
+    /// unless the stored flow already carries it (a label deleted later never blocks a save).
+    fn check_labels(&self, flow: &mut Flow) -> Result<(), HubError> {
+        flow.labels.sort();
+        flow.labels.dedup();
+        let stored = self
+            .flow_store()
+            .get(&flow.id)
+            .map(|view| view.definition.labels)
+            .unwrap_or_default();
+        let catalog = self.flow_label_catalog();
+        match flow
+            .labels
+            .iter()
+            .find(|id| catalog.label(id).is_none() && !stored.contains(id))
+        {
+            Some(id) => Err(HubError::InvalidFlow(format!("unknown label `{id}`"))),
+            None => Ok(()),
+        }
+    }
+
+    /// Refuses a `flow.label` node whose label is unknown, or that picks a label in no choice.
+    /// A node identical to the one stored on this flow passes, so a flow broken by a catalog
+    /// edit can still be saved to fix another node.
+    fn check_label_nodes(&self, flow: &Flow) -> Result<(), HubError> {
+        let stored = self.flow_store().get(&flow.id).map(|view| view.definition);
+        let catalog = self.flow_label_catalog();
+        for node in &flow.nodes {
+            let NodeKind::FlowLabel(params) = &node.kind else {
+                continue;
+            };
+            let unchanged = stored
+                .as_ref()
+                .and_then(|stored| stored.node(&node.id))
+                .is_some_and(|old| old.kind == node.kind);
+            if unchanged {
+                continue;
+            }
+            let error = match catalog.label(&params.label) {
+                None => Some(LabelError::UnknownLabel(params.label.clone())),
+                Some(label)
+                    if params.action == LabelAction::Pick
+                        && label
+                            .choice
+                            .as_deref()
+                            .is_none_or(|choice| catalog.choice(choice).is_none()) =>
+                {
+                    Some(LabelError::NotInChoice(params.label.clone()))
+                }
+                Some(_) => None,
+            };
+            if let Some(error) = error {
+                return Err(HubError::InvalidFlow(format!(
+                    "{error} in node `{}`",
+                    node.id
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Resolves the room of every `speak` and `ask` node to an area id (a name is accepted, as for
