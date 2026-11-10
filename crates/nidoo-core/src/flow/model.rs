@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::labels::LabelAction;
 use super::scalar::Scalar;
 use super::template::Lang;
 use crate::model::Command;
@@ -178,6 +179,9 @@ pub enum NodeKind {
     /// Enables or disables a flow (its own by default).
     #[serde(rename = "flow.enable")]
     FlowEnable(FlowEnableParams),
+    /// Picks a label of a choice, or turns every flow carrying a label on or off.
+    #[serde(rename = "flow.label")]
+    FlowLabel(FlowLabelParams),
     /// Sends a phone push notification.
     #[serde(rename = "notify")]
     Notify(NotifyParams),
@@ -215,6 +219,7 @@ impl NodeKind {
             NodeKind::Limit(_) => "limit",
             NodeKind::Command(_) => "command",
             NodeKind::FlowEnable(_) => "flow.enable",
+            NodeKind::FlowLabel(_) => "flow.label",
             NodeKind::Notify(_) => "notify",
             NodeKind::Speak(_) => "speak",
             NodeKind::Ask(_) => "ask",
@@ -568,6 +573,20 @@ pub struct FlowEnableParams {
     pub flow: Option<String>,
     /// The state to set: `true` enables, `false` disables.
     pub enabled: bool,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Params of `flow.label`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct FlowLabelParams {
+    /// The label id (see `list_flow_labels`).
+    pub label: String,
+    /// `pick` turns the label's flows on and the flows of its choice's other labels off (only
+    /// for a label in a choice); `on` / `off` switch every flow carrying the label.
+    #[serde(default)]
+    pub action: LabelAction,
     #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
 }
@@ -962,6 +981,27 @@ mod tests {
                 r#"{"id":"n","type":"notify","params":{"title":"T","lang":"de"}}"#
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn flow_label_round_trips() {
+        let text =
+            r#"{"id":"season","type":"flow.label","params":{"label":"ete","action":"pick"}}"#;
+        let node: Node = serde_json::from_str(text).unwrap();
+        assert_eq!(node.kind.type_name(), "flow.label");
+        assert_eq!(
+            node.kind,
+            NodeKind::FlowLabel(FlowLabelParams {
+                label: "ete".into(),
+                action: LabelAction::Pick,
+                extra: BTreeMap::new(),
+            })
+        );
+        assert!(!node.kind.is_trigger());
+        assert_eq!(
+            serde_json::to_value(&node).unwrap(),
+            serde_json::from_str::<Value>(text).unwrap()
         );
     }
 

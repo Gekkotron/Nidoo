@@ -348,7 +348,7 @@ pub fn node_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Delay(_) => NODE_HOURGLASS,
         NodeKind::Limit(_) => NODE_LIMIT,
         NodeKind::Command(_) => NODE_PLAY,
-        NodeKind::FlowEnable(_) => NODE_SWITCH,
+        NodeKind::FlowEnable(_) | NodeKind::FlowLabel(_) => NODE_SWITCH,
         NodeKind::Notify(_) => CHANNEL_ALARM,
         NodeKind::Speak(_) | NodeKind::Ask(_) => SPEAKER,
         NodeKind::Math(_) => NODE_MATH,

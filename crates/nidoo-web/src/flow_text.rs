@@ -47,6 +47,7 @@ pub fn role(kind: &NodeKind) -> Role {
         NodeKind::If(_) | NodeKind::Switch(_) | NodeKind::TimeBetween(_) => Role::Check,
         NodeKind::Command(_)
         | NodeKind::FlowEnable(_)
+        | NodeKind::FlowLabel(_)
         | NodeKind::Notify(_)
         | NodeKind::Speak(_)
         | NodeKind::Ask(_)
@@ -416,6 +417,14 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
                     .map_or_else(|| id.clone(), |(_, name)| name.clone()),
             };
             t::flow_switch(lang, p.enabled, &target)
+        }
+        NodeKind::FlowLabel(p) => {
+            let colon = if lang == Lang::Fr { " : " } else { ": " };
+            format!(
+                "{}{colon}{}",
+                flow_text(lang, FlowText::NodeFlowLabel),
+                p.label
+            )
         }
     }
 }
