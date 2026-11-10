@@ -205,6 +205,7 @@ Where the hub looks for discovery and where it keeps its own retained documents.
 | `ui_prefix` | `"nidoo/ui"` | Entity overrides (`<ui_prefix>/<id>`), rooms (`<ui_prefix>/_areas`), the type table (`<ui_prefix>/_types`) and dashboards (`<ui_prefix>/dashboards/<id>`). |
 | `z2m_base` | `"zigbee2mqtt"` | Zigbee2MQTT base topic. The one in `hub.json` (the MQTT step's Advanced field) wins when it is set. |
 | `automation_prefix` | `"nidoo/automation"` | Flow definitions: one retained JSON document per flow at `<automation_prefix>/<flow id>`. |
+| `flow_labels` | `"nidoo/flow_labels"` | The flow label catalog: one retained JSON document with every label and choice. It must not contain `+` or `#`, and must not sit under `automation_prefix`. |
 
 Until Zigbee2MQTT publishes under `nidoo`, list the Home Assistant prefix next to it so the discovery topics it still retains under `homeassistant/` are picked up too: `"discovery_prefixes": ["nidoo", "homeassistant"]`.
 
