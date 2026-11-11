@@ -338,6 +338,7 @@ impl Hub {
             stale_after_min,
             range: HeatRange { min, max },
             now,
+            lang: req.lang(),
         };
         let text = req.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
         let mut simulate = req.simulate;

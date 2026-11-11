@@ -62,6 +62,7 @@ pub fn default_ask() -> AskFn {
                 text: Some(text),
                 reply: None,
                 simulate: false,
+                lang: None,
             };
             match hub.assist(request).await {
                 Ok(turn) => {

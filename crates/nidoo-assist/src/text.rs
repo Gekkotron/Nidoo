@@ -107,9 +107,29 @@ fn tokens(folded: &str) -> Vec<Word> {
     out
 }
 
-/// The value of a single French number word.
+/// The value of a single French or English number word.
 fn unit(word: &str) -> Option<f64> {
     let n = match word {
+        "one" => 1,
+        "two" => 2,
+        "three" => 3,
+        "four" => 4,
+        "five" => 5,
+        "seven" => 7,
+        "eight" => 8,
+        "nine" => 9,
+        "ten" => 10,
+        "eleven" => 11,
+        "twelve" => 12,
+        "thirteen" => 13,
+        "fourteen" => 14,
+        "fifteen" => 15,
+        "sixteen" => 16,
+        "seventeen" => 17,
+        "eighteen" => 18,
+        "nineteen" => 19,
+        "twenty" => 20,
+        "thirty" => 30,
         "un" | "une" => 1,
         "deux" => 2,
         "trois" => 3,
@@ -133,7 +153,8 @@ fn unit(word: &str) -> Option<f64> {
     Some(f64::from(n))
 }
 
-/// Joins number words into one number: `dix neuf` (19), `vingt et un` (21), `vingt cinq` (25).
+/// Joins number words into one number: `dix neuf` (19), `vingt et un` (21), `vingt cinq` (25),
+/// `twenty one` (21), `nineteen point five` (19.5).
 fn merge_numbers(tokens: Vec<Word>) -> Vec<Word> {
     let text = |i: usize| tokens.get(i).and_then(Word::text);
     let mut out: Vec<Word> = Vec::new();
@@ -154,10 +175,20 @@ fn merge_numbers(tokens: Vec<Word>) -> Vec<Word> {
             if text(i) == Some("et") && matches!(text(i + 1), Some("un" | "une")) {
                 n += 1.0;
                 i += 2;
-            } else if let Some(u) = text(i).and_then(unit).filter(|u| (2.0..=9.0).contains(u)) {
+            } else if let Some(u) = text(i)
+                .and_then(unit)
+                .filter(|u| (2.0..=9.0).contains(u) || text(i) == Some("one"))
+            {
                 n += u;
                 i += 1;
             }
+        }
+        // "nineteen point five": one decimal, said as a word.
+        if text(i) == Some("point")
+            && let Some(d) = text(i + 1).and_then(unit).filter(|d| *d < 10.0)
+        {
+            n += d / 10.0;
+            i += 2;
         }
         out.push(Word::Number(n));
     }
@@ -204,6 +235,15 @@ mod tests {
             vec![t("d"), Word::Number(1.0), t("degre")]
         );
         assert_eq!(words("l'entrée"), vec![t("l"), t("entree")]);
+    }
+
+    #[test]
+    fn reads_english_number_words() {
+        assert_eq!(words("nineteen"), vec![Word::Number(19.0)]);
+        assert_eq!(words("twenty-one"), vec![Word::Number(21.0)]);
+        assert_eq!(words("twenty five"), vec![Word::Number(25.0)]);
+        assert_eq!(words("nineteen point five"), vec![Word::Number(19.5)]);
+        assert_eq!(words("Tom's room"), vec![t("tom"), t("s"), t("room")]);
     }
 
     #[test]
