@@ -180,6 +180,8 @@ struct Readings {
     notify: bool,
     today: NaiveDate,
     epoch: u64,
+    /// When the last successful backup ended, from the last-backup record.
+    last_backup: Option<i64>,
 }
 
 impl Hub {
@@ -271,6 +273,7 @@ impl Hub {
             notify: self.system_notify(),
             today,
             epoch,
+            last_backup: self.last_backup().and_then(|r| r.last_ok_at),
         };
         let (alerts, configs) = {
             let mut state = self.system_state();
@@ -562,6 +565,13 @@ impl SystemState {
             (ids::BROKER, service(&self.broker)),
             (ids::ZIGBEE2MQTT, service(&self.zigbee2mqtt)),
             (ids::DATABASE, service(&self.database)),
+            (
+                ids::LAST_BACKUP,
+                readings
+                    .last_backup
+                    .and_then(|t| u64::try_from(t).ok())
+                    .and_then(iso8601),
+            ),
         ]
     }
 }
@@ -665,6 +675,7 @@ mod tests {
             notify: false,
             today,
             epoch: 0,
+            last_backup: None,
         }
     }
 

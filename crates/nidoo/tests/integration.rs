@@ -10,6 +10,7 @@ mod assist_hub;
 mod backup_archive;
 mod backup_db;
 mod backup_ftp;
+mod backup_job;
 mod climate_hub;
 mod config;
 mod dashboards;

@@ -5,6 +5,7 @@ pub mod archive;
 pub mod crypt;
 pub mod db;
 pub mod ftp;
+pub mod job;
 pub mod name;
 pub mod retained;
 pub mod settings;

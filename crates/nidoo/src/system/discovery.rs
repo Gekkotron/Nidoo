@@ -91,6 +91,7 @@ fn describe(
         ids::BROKER => ("Broker", None, Some("connectivity"), None, None),
         ids::ZIGBEE2MQTT => ("Zigbee2MQTT", None, Some("connectivity"), None, None),
         ids::DATABASE => ("Database", None, Some("connectivity"), None, None),
+        ids::LAST_BACKUP => ("Last backup", None, Some("timestamp"), None, None),
         _ => ("", None, None, None, None),
     }
 }
@@ -149,7 +150,7 @@ mod tests {
     #[test]
     fn configs_cover_every_id() {
         let all = configs("nidoo");
-        assert_eq!(all.len(), 15);
+        assert_eq!(all.len(), 16);
         for ((topic, config), id) in all.iter().zip(ids::ALL) {
             assert_eq!(config["unique_id"], id);
             assert_eq!(config["entity_category"], "diagnostic", "{id}");
@@ -193,6 +194,10 @@ mod tests {
         }
         assert_eq!(config_of(ids::COMMANDS)["state_class"], "total_increasing");
         assert_eq!(config_of(ids::STARTED)["device_class"], "timestamp");
+        let last_backup = config_of(ids::LAST_BACKUP);
+        assert_eq!(last_backup["name"], "Last backup");
+        assert_eq!(last_backup["device_class"], "timestamp");
+        assert!(last_backup.get("state_class").is_none());
     }
 
     #[test]

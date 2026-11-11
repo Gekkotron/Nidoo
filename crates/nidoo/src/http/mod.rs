@@ -2,6 +2,7 @@
 //! stream at `/ws`, the MCP server at `/mcp` and the embedded web UI for every other path.
 
 mod api;
+mod backup;
 mod sound;
 mod static_ui;
 mod stt;
