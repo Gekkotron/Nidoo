@@ -1,5 +1,5 @@
-//! FR/EN text: the Assistant page and its floating button. The assistant's own replies are
-//! French and come from the hub.
+//! FR/EN text: the Assistant page and its floating button. The assistant's own replies come
+//! from the hub, in the page's language.
 
 use super::*;
 
@@ -51,7 +51,7 @@ pub fn assistant_text(lang: Lang, k: AssistantText) -> &'static str {
         Title => ("Assistant", "Assistant"),
         Open => ("Open the assistant", "Ouvrir l'assistant"),
         Placeholder => (
-            "Type a sentence in French, e.g. « allume la lumière du salon »",
+            "Type a sentence, e.g. \"turn on the living room lights\"",
             "Écrivez une phrase, par exemple « allume la lumière du salon »",
         ),
         Send => ("Send", "Envoyer"),
@@ -61,8 +61,8 @@ pub fn assistant_text(lang: Lang, k: AssistantText) -> &'static str {
             "Comprendre et répondre sans rien envoyer à la maison",
         ),
         Hint => (
-            "Lights on or off, heating setpoints and temperatures, in French.",
-            "Lumières, consignes de chauffage et températures.",
+            "Lights, shutters, heating setpoints, temperatures and music.",
+            "Lumières, volets, consignes de chauffage, températures et musique.",
         ),
         Yes => ("Yes", "Oui"),
         No => ("No", "Non"),

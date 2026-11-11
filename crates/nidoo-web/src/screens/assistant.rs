@@ -1,6 +1,6 @@
-//! `/assistant`: type a French sentence, read the hub's reply, answer its question with a tap,
-//! and see how the sentence was understood. The replies are French and written by the hub;
-//! the page chrome follows the language setting. When the hub has a speech model in use, each
+//! `/assistant`: type a sentence, read the hub's reply, answer its question with a tap, and see
+//! how the sentence was understood. Sentences are read, and replies written by the hub, in the
+//! page's language (French or English). When the hub has a speech model for that language, each
 //! new reply is read aloud (a header switch turns that off, per browser) and ▶ reads one again.
 
 use leptos::prelude::*;
@@ -18,10 +18,15 @@ use crate::i18n::{
 };
 use crate::icons::{GEAR, PLAY, SPEAKER, SPEAKER_OFF};
 
-/// The id this browser gives the hub, so its pending question is its own.
-/// The language the Assistant's replies are written in, and so spoken in.
-const REPLY_LANGUAGE: &str = "fr";
+/// The language code a reply in `lang` is spoken in.
+fn speech_code(lang: Lang) -> &'static str {
+    match lang {
+        Lang::En => "en",
+        Lang::Fr => "fr",
+    }
+}
 
+/// The id this browser gives the hub, so its pending question is its own.
 const CLIENT_KEY: &str = "nidoo.assist.client";
 /// Whether the Simulation switch is on, per browser.
 const SIMULATE_KEY: &str = "nidoo.assist.simulate";
@@ -314,6 +319,7 @@ pub fn trace_rows(lang: Lang, trace: &Trace) -> Vec<(&'static str, String)> {
 #[component]
 pub fn AssistantScreen() -> impl IntoView {
     let lang = use_lang();
+    let lang_untracked = move || untrack(lang);
     let t = move |k| assistant_text(lang(), k);
     let toasts = use_context::<Toasts>();
     let client = StoredValue::new(client_id());
@@ -343,19 +349,25 @@ pub fn AssistantScreen() -> impl IntoView {
     let received = RwSignal::new(None::<(String, f64)>);
     let input = NodeRef::<leptos::html::Input>::new();
     let history = StoredValue::new(stored_history());
-    // Whether the hub can speak the replies (French, with a model) and whether this browser
+    // The languages the hub can speak the replies in (with a model), and whether this browser
     // wants it.
-    let can_speak = RwSignal::new(false);
+    let speakable = RwSignal::new(Vec::<String>::new());
+    let can_speak =
+        Memo::new(move |_| speakable.with(|codes| codes.iter().any(|c| c == speech_code(lang()))));
     let speak_on = RwSignal::new(stored_speak());
     let audio = NodeRef::<leptos::html::Audio>::new();
 
     spawn_local(async move {
-        if let Ok(status) = tts::get_status().await {
-            let french = status
+        if let Ok(status) = tts::get_status().await
+            && status.speech_built
+        {
+            let codes = status
                 .languages
                 .iter()
-                .any(|l| l.code == REPLY_LANGUAGE && l.model.is_some());
-            let _ = can_speak.try_set(status.speech_built && french);
+                .filter(|l| l.model.is_some())
+                .map(|l| l.code.clone())
+                .collect();
+            let _ = speakable.try_set(codes);
         }
     });
     Effect::new(move |_| {
@@ -390,10 +402,11 @@ pub fn AssistantScreen() -> impl IntoView {
         if text.trim().is_empty() {
             return;
         }
+        let lang_now = lang_untracked();
         spawn_local(async move {
             let failed = match tts::speak(&SpeechRequest {
                 text,
-                language: Some(REPLY_LANGUAGE.to_owned()),
+                language: Some(speech_code(lang_now).to_owned()),
                 voice: None,
             })
             .await
@@ -506,7 +519,7 @@ pub fn AssistantScreen() -> impl IntoView {
             text: Some(sentence),
             reply: None,
             simulate: simulate.get_untracked(),
-            lang: None,
+            lang: Some(lang_untracked().core()),
         });
     };
     let answer = move |reply: PendingReply| {
@@ -519,7 +532,7 @@ pub fn AssistantScreen() -> impl IntoView {
             text: None,
             reply: Some(reply),
             simulate: simulate.get_untracked(),
-            lang: None,
+            lang: Some(lang_untracked().core()),
         });
     };
 
