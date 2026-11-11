@@ -63,3 +63,28 @@ pub async fn fresh_db() -> Option<TestDb> {
         url: url.to_string(),
     })
 }
+
+/// Compresses every chunk of `table`, returning how many there are. The test rows are old, so
+/// the database's own compression policy may compress a chunk at the same moment;
+/// `if_not_compressed` only checks first, so "already compressed" (42710) still means the chunk
+/// is compressed, which is all a test needs.
+pub async fn compress_chunks(pool: &PgPool, table: &str) -> usize {
+    let chunks: Vec<String> =
+        sqlx::query_scalar(&format!("SELECT c::text FROM show_chunks('{table}') c"))
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    for chunk in &chunks {
+        let compressed = sqlx::query(&format!(
+            "SELECT compress_chunk('{chunk}'::regclass, if_not_compressed => true)"
+        ))
+        .execute(pool)
+        .await;
+        match compressed {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42710") => {}
+            Err(err) => panic!("compress {chunk}: {err}"),
+        }
+    }
+    chunks.len()
+}

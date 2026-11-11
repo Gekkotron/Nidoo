@@ -52,12 +52,28 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub async fn begin(pool: &PgPool) -> Result<Snapshot, sqlx::Error> {
+        let names: Vec<String> = exported_tables(pool)
+            .await?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         let mut tx = pool.acquire().await?;
         tx.close_on_drop();
         tx.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
-        // A REPEATABLE READ snapshot is taken by the first statement, not by BEGIN: take it now
-        // so writes made after `begin` returns are not seen.
+        // Lock the tables before the snapshot is taken. TimescaleDB's compression (the hub's
+        // policy runs it on its own) ends by truncating the chunk it compressed, and TRUNCATE is
+        // not MVCC-safe: a chunk truncated after the snapshot is taken reads as empty to it, and
+        // the backup would silently miss those rows. ACCESS SHARE on a hypertable also locks its
+        // chunks (they inherit from it), so a compression in progress waits for the backup to
+        // end before it truncates. LOCK itself takes no snapshot.
+        if !names.is_empty() {
+            let list = ident_list(&names);
+            tx.execute(format!("LOCK TABLE {list} IN ACCESS SHARE MODE").as_str())
+                .await?;
+        }
+        // A REPEATABLE READ snapshot is taken by the first statement that needs one, not by BEGIN
+        // or LOCK: take it now so writes made after `begin` returns are not seen.
         tx.execute("SELECT 1").await?;
         Ok(Snapshot { tx })
     }
@@ -91,6 +107,10 @@ impl Snapshot {
     }
 
     /// The table's rows in `COPY` text format, in chunks as the server sends them.
+    ///
+    /// Read the stream to its end before the next call on this `Snapshot`. A stream dropped
+    /// half-read leaves the rest of the `COPY` on the connection, so the `Snapshot` must not be
+    /// used again: drop it (its connection is closed, not returned to the pool) and begin anew.
     pub fn copy_out(&mut self, t: &TableInfo) -> BoxStream<'_, Result<Bytes, sqlx::Error>> {
         let sql = format!(
             "COPY (SELECT {} FROM {}) TO STDOUT",
@@ -104,7 +124,8 @@ impl Snapshot {
     }
 }
 
-/// The target table's columns, in table order, generated columns left out.
+/// The target table's columns, in table order, generated columns left out; empty when the
+/// table does not exist.
 pub async fn target_columns(pool: &PgPool, table: &str) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT column_name::text FROM information_schema.columns
@@ -132,6 +153,9 @@ fn map_with(
     backup: &[String],
     target: &[String],
 ) -> Result<Vec<String>, String> {
+    if target.is_empty() {
+        return Err(format!("table `{table}` of the backup no longer exists"));
+    }
     backup
         .iter()
         .map(|c| {
@@ -173,29 +197,17 @@ impl CopyIn {
         columns: &[String],
     ) -> Result<CopyIn, sqlx::Error> {
         let sql = format!("COPY {} ({}) FROM STDIN", ident(table), ident_list(columns));
-        let (tx, mut rx) = mpsc::channel::<Msg>(4);
+        let (tx, rx) = mpsc::channel::<Msg>(4);
         let (ready, started) = oneshot::channel();
         let task = tokio::spawn(async move {
-            let mut copy = match conn.copy_in_raw(&sql).await {
-                Ok(copy) => {
-                    let _ = ready.send(Ok(()));
-                    copy
-                }
-                Err(e) => {
-                    let _ = ready.send(Err(e));
-                    return Ok(0);
-                }
-            };
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    Msg::Data(data) => {
-                        copy.send(data).await?;
-                    }
-                    Msg::Finish => return copy.finish().await,
-                }
+            let result = run_copy(&mut conn, &sql, ready, rx).await;
+            if result.is_err() {
+                // Only a finished copy is known to leave the connection in step with the
+                // server (an aborted one after a rejected row leaves a reply unread): close any
+                // other instead of handing it back to the pool.
+                conn.close_on_drop();
             }
-            copy.abort("restore stopped").await?;
-            Err(stopped())
+            result
         });
         match started.await {
             Ok(Ok(())) => Ok(CopyIn {
@@ -230,6 +242,36 @@ impl CopyIn {
             Err(e) => Err(sqlx::Error::Protocol(format!("copy task failed: {e}"))),
         }
     }
+}
+
+/// The body of a [`CopyIn`] task: start the copy, pass the data on, end it as told.
+async fn run_copy(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    ready: oneshot::Sender<Result<(), sqlx::Error>>,
+    mut rx: mpsc::Receiver<Msg>,
+) -> Result<u64, sqlx::Error> {
+    let mut copy = match conn.copy_in_raw(sql).await {
+        Ok(copy) => {
+            let _ = ready.send(Ok(()));
+            copy
+        }
+        Err(e) => {
+            let _ = ready.send(Err(e));
+            return Err(stopped());
+        }
+    };
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            Msg::Data(data) => {
+                copy.send(data).await?;
+            }
+            Msg::Finish => return copy.finish().await,
+        }
+    }
+    // Dropped without `finish`: the server discards the whole COPY.
+    let _ = copy.abort("restore stopped").await;
+    Err(stopped())
 }
 
 /// The error a copy task ended with, when it should not have ended yet.
@@ -383,6 +425,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mapped, ["time", "zone"]);
+    }
+
+    #[test]
+    fn map_columns_refuses_a_dropped_table() {
+        let err = map_columns("old_table", &cols(&["time"]), &[]).unwrap_err();
+        assert_eq!(err, "table `old_table` of the backup no longer exists");
     }
 
     #[test]
