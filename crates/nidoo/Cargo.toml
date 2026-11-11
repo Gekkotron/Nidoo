@@ -68,6 +68,10 @@ tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+age = { version = "0.11", features = ["async"] }
+async-compression = { version = "0.4", features = ["tokio", "zstd"] }
+tokio-util = { version = "0.7", features = ["io", "compat"] }
+suppaftp = { version = "7", features = ["tokio"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true
@@ -77,3 +81,7 @@ tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 tempfile = "3"
 toml = "0.8"
+libunftp = "0.24.0"
+unftp-sbe-fs = "0.4.1"
+async-trait = "0.1.92"
+zstd = "0.14.3"
