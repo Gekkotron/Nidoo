@@ -1329,7 +1329,8 @@ impl Hub {
 
     /// Maps `cmd`, publishes it and waits up to `confirm_timeout_ms` for the entity's value to
     /// change or for a report on one of its state topics (a no-op command is echoed
-    /// unchanged). An availability message alone confirms nothing. An unknown or offline
+    /// unchanged). A button press, or a generic control with no state to report, is accepted
+    /// once published. An availability message alone confirms nothing. An unknown or offline
     /// entity is rejected before anything is published, and a broker link that is down is
     /// [`HubError::Publish`] right away rather than a wait for an echo that cannot come.
     pub async fn send_command(&self, id: &str, cmd: Command) -> Result<CommandResponse, HubError> {
@@ -1361,9 +1362,10 @@ impl Hub {
             if state.availability == Availability::Offline {
                 return Err(HubError::Rejected("entity is offline".to_owned()));
             }
-            // A generic control with no state topic to echo on (a press, a scene) is done
-            // once published.
+            // A button press, or a generic control with no state topic to echo on (a press,
+            // a scene), is done once published: nothing will ever report it.
             let no_echo_expected = match &cmd {
+                Command::Press => entity.kind == Kind::Button,
                 Command::Control { control, .. } if entity.kind == Kind::Generic => {
                     nidoo_core::types::type_def(&entity.component)
                         .is_some_and(|def| !expects_echo(def, entity, control))
