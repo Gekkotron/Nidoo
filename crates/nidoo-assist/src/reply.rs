@@ -1,13 +1,14 @@
-//! The French replies, written from templates. Every reply names the room, the action and
-//! the value.
+//! The replies, written from templates, in French or in English (the house's language). Every
+//! reply names the room, the action and the value.
 
 use nidoo_api::search::fold;
 
+use nidoo_core::flow::Lang;
 use nidoo_core::model::{MediaPlayerState, SwitchType};
 
 use crate::house::House;
 use crate::intent::MediaIntent;
-use crate::lexicon::{Class, class};
+use crate::lexicon::{Class, class, class_in};
 use crate::plan::Done;
 use crate::room::{name_words, named_after_person};
 
@@ -27,11 +28,21 @@ pub enum ActionResult {
 /// The French reason the hub gives when a device never echoed (see the hub's `reason_fr`).
 pub const NO_ANSWER: &str = "pas de réponse de l'appareil";
 
+/// [`NO_ANSWER`] in English.
+pub const NO_ANSWER_EN: &str = "no answer from the device";
+
 /// A number with a decimal comma, one decimal at most, no ",0": `18,2`, `20`.
 pub fn number(x: f64) -> String {
+    number_in(x, Lang::Fr)
+}
+
+/// [`number`] in `lang`: a decimal point in English (`18.2`), a comma in French (`18,2`).
+pub fn number_in(x: f64, lang: Lang) -> String {
     let r = (x * 10.0).round() / 10.0;
     if r.fract() == 0.0 {
         format!("{}", r as i64)
+    } else if lang == Lang::En {
+        format!("{r:.1}")
     } else {
         format!("{r:.1}").replace('.', ",")
     }
@@ -39,7 +50,20 @@ pub fn number(x: f64) -> String {
 
 /// A temperature: `18,2 °C`, `20 °C`.
 pub fn temp(c: f64) -> String {
-    format!("{} °C", number(c))
+    temp_in(c, Lang::Fr)
+}
+
+/// [`temp`] in `lang`: `18.2 °C` in English.
+pub fn temp_in(c: f64, lang: Lang) -> String {
+    format!("{} °C", number_in(c, lang))
+}
+
+/// A name in the quotes of `lang`: « Baie » in French, "Desk" in English.
+pub fn quoted(name: &str, lang: Lang) -> String {
+    match lang {
+        Lang::En => format!("\"{name}\""),
+        Lang::Fr => format!("« {name} »"),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -141,6 +165,15 @@ pub fn room(name: &str) -> String {
     }
 }
 
+/// [`room`] in `lang`: `Kitchen`, `Tom's room` in English.
+pub fn room_in(name: &str, lang: Lang) -> String {
+    match lang {
+        Lang::Fr => room(name),
+        Lang::En if person_en(name) => format!("{name}'s room"),
+        Lang::En => name.to_string(),
+    }
+}
+
 /// `le Salon`, `la Chambre Léa`, `l'Entrée`, `la chambre de Léa`.
 pub fn le(name: &str) -> String {
     match gender(name) {
@@ -149,6 +182,53 @@ pub fn le(name: &str) -> String {
         Gender::Elided => format!("l'{name}"),
         Gender::Person => format!("la chambre de {name}"),
         Gender::Bare => name.to_string(),
+    }
+}
+
+/// The English room with its article: `the Kitchen`, `Tom's room` for a room named after its
+/// person, and the bare name when it has its own article or is a possessive (`The Den`,
+/// `Tom's Den`).
+pub fn the(name: &str) -> String {
+    if own_article(name) {
+        name.to_string()
+    } else if person_en(name) {
+        format!("{name}'s room")
+    } else {
+        format!("the {name}")
+    }
+}
+
+/// An English room named after its person ("Tom"): not one with its own article, nor one
+/// that says it is a room ("TV room").
+fn person_en(name: &str) -> bool {
+    !own_article(name)
+        && named_after_person(name)
+        && !name_words(name)
+            .iter()
+            .any(|w| matches!(w.as_str(), "room" | "rooms"))
+}
+
+/// An English name that takes no article: it starts with "the" or is a possessive.
+fn own_article(name: &str) -> bool {
+    let lower = name.trim().to_lowercase();
+    lower == "the" || lower.starts_with("the ") || lower.contains("'s") || lower.contains("’s")
+}
+
+/// [`the`] as a sentence starts it: `The Kitchen`, `Tom's room`.
+pub fn the_start(name: &str) -> String {
+    capitalised(&the(name))
+}
+
+/// `in the Kitchen`, `in Tom's room`.
+pub fn in_the(name: &str) -> String {
+    format!("in {}", the(name))
+}
+
+/// Where in a room, in `lang`: `dans le Salon`, `in the Kitchen`.
+pub fn place(name: &str, lang: Lang) -> String {
+    match lang {
+        Lang::Fr => dans(name),
+        Lang::En => in_the(name),
     }
 }
 
@@ -177,8 +257,20 @@ pub fn agree<'a>(name: &str, masculine: &'a str, feminine: &'a str) -> &'a str {
     }
 }
 
-/// The reply after acting: what was done, what was already so, what did not answer.
+/// The first letter in upper case.
+fn capitalised(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// The reply after acting: what was done, what was already so, what did not answer, in the
+/// house's language.
 pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool) -> String {
+    let lang = house.lang;
+    let en = lang == Lang::En;
     let text = match done {
         Done::Lights {
             area,
@@ -193,18 +285,25 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
                 colour.as_deref(),
                 names,
                 results,
+                lang,
             );
-            match unable.as_slice() {
-                [] => {}
-                [one] => text.push_str(&format!(" « {one} » ne prend pas de couleur.")),
-                many => text.push_str(&format!(
+            match (unable.as_slice(), en) {
+                ([], _) => {}
+                ([one], false) => text.push_str(&format!(" « {one} » ne prend pas de couleur.")),
+                ([one], true) => text.push_str(&format!(" \"{one}\" can't take a colour.")),
+                (many, false) => text.push_str(&format!(
                     " Ne prennent pas de couleur : {}.",
                     many.join(", ")
                 )),
+                (many, true) => {
+                    text.push_str(&format!(" Can't take a colour: {}.", many.join(", ")))
+                }
             }
             text
         }
-        Done::Setpoint { zone, from, to } => setpoint(house.area_name(zone), *from, *to, results),
+        Done::Setpoint { zone, from, to } => {
+            setpoint(house.area_name(zone), *from, *to, results, lang)
+        }
         Done::Covers {
             area,
             open,
@@ -218,6 +317,7 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
             names,
             unable,
             results,
+            lang,
         ),
         Done::Switches {
             what,
@@ -230,32 +330,51 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
             *on,
             names,
             results,
+            lang,
         ),
-        Done::Media { what, .. } => media(what, results.first()),
-        Done::Volume { area, level } => speakers(
-            house.area_name(area),
-            &level.map_or_else(|| "Volume changé".into(), |l| format!("Volume à {l} %")),
-            "Volume déjà là",
-            results,
-        ),
-        Done::Mute { area, on } => {
-            let (done, already) = if *on {
-                ("Son coupé", "Son déjà coupé")
+        Done::Media { what, .. } => media(what, results.first(), lang),
+        Done::Volume { area, level } => {
+            let (changed, already) = if en {
+                ("Volume changed", "Volume already set")
             } else {
-                ("Son remis", "Son déjà remis")
+                ("Volume changé", "Volume déjà là")
             };
-            speakers(house.area_name(area), done, already, results)
+            let at = if en { "Volume at" } else { "Volume à" };
+            speakers(
+                house.area_name(area),
+                &level.map_or_else(|| changed.into(), |l| format!("{at} {l} %")),
+                already,
+                results,
+                lang,
+            )
+        }
+        Done::Mute { area, on } => {
+            let (done, already) = match (*on, en) {
+                (true, false) => ("Son coupé", "Son déjà coupé"),
+                (false, false) => ("Son remis", "Son déjà remis"),
+                (true, true) => ("Sound muted", "Sound already muted"),
+                (false, true) => ("Sound back on", "Sound already on"),
+            };
+            speakers(house.area_name(area), done, already, results, lang)
         }
     };
-    if simulate {
-        format!("Simulation : {text}")
-    } else {
-        text
+    match (simulate, en) {
+        (false, _) => text,
+        (true, false) => format!("Simulation : {text}"),
+        (true, true) => format!("Simulation: {text}"),
     }
 }
 
+/// Whether a hub failure reason means the device never echoed.
+fn no_answer(why: &str) -> bool {
+    why == NO_ANSWER || why == NO_ANSWER_EN
+}
+
 /// A media player's reply, from its echo when there is one.
-fn media(what: &MediaIntent, result: Option<&ActionResult>) -> String {
+fn media(what: &MediaIntent, result: Option<&ActionResult>, lang: Lang) -> String {
+    if lang == Lang::En {
+        return media_en(what, result);
+    }
     let plain = || match what {
         MediaIntent::Pause => "Musique en pause.".to_string(),
         MediaIntent::Play { resume: true } => "Je reprends la musique.".into(),
@@ -280,16 +399,48 @@ fn media(what: &MediaIntent, result: Option<&ActionResult>) -> String {
             _ => "La musique joue déjà.".into(),
         },
         Some(ActionResult::Offline) => "Le lecteur ne répond pas.".into(),
-        Some(ActionResult::Failed(why)) if why == NO_ANSWER => "Le lecteur n'a pas répondu.".into(),
+        Some(ActionResult::Failed(why)) if no_answer(why) => "Le lecteur n'a pas répondu.".into(),
         Some(ActionResult::Failed(why)) => format!("Le lecteur n'a pas répondu : {why}."),
+        Some(ActionResult::Ok) | None => plain(),
+    }
+}
+
+/// [`media`] in English.
+fn media_en(what: &MediaIntent, result: Option<&ActionResult>) -> String {
+    let plain = || match what {
+        MediaIntent::Pause => "Music paused.".to_string(),
+        MediaIntent::Play { resume: true } => "Resuming the music.".into(),
+        MediaIntent::Play { resume: false } => "Starting the music.".into(),
+        MediaIntent::PlayMedia { query } => format!("Looking for \"{query}\"."),
+        MediaIntent::Next => "Next song.".into(),
+        MediaIntent::Previous => "Previous song.".into(),
+        MediaIntent::NowPlaying => String::new(),
+    };
+    match result {
+        Some(ActionResult::Echo(state)) => match (what, &state.title) {
+            (MediaIntent::Pause, _) | (_, None) => plain(),
+            (MediaIntent::Play { resume: true }, Some(title)) => format!("Resuming {title}."),
+            (MediaIntent::Next | MediaIntent::Previous, Some(title)) => match &state.artist {
+                Some(artist) => format!("{title}, {artist}."),
+                None => format!("{title}."),
+            },
+            (_, Some(title)) => format!("Playing {title}."),
+        },
+        Some(ActionResult::Skipped) => match what {
+            MediaIntent::Pause => "The music is already paused.".into(),
+            _ => "The music is already playing.".into(),
+        },
+        Some(ActionResult::Offline) => "The player isn't responding.".into(),
+        Some(ActionResult::Failed(why)) if no_answer(why) => "The player didn't answer.".into(),
+        Some(ActionResult::Failed(why)) => format!("The player didn't answer: {why}."),
         Some(ActionResult::Ok) | None => plain(),
     }
 }
 
 /// A room's speakers: `done` when one of them did it, `already` when all were already there,
 /// else what went wrong.
-fn speakers(area: &str, done: &str, already: &str, results: &[ActionResult]) -> String {
-    let place = dans(area);
+fn speakers(area: &str, done: &str, already: &str, results: &[ActionResult], lang: Lang) -> String {
+    let place = place(area, lang);
     let ok = |r: &ActionResult| matches!(r, ActionResult::Ok | ActionResult::Echo(_));
     if results.iter().any(ok) {
         return format!("{done} {place}.");
@@ -297,12 +448,15 @@ fn speakers(area: &str, done: &str, already: &str, results: &[ActionResult]) -> 
     if !results.is_empty() && results.iter().all(|r| *r == ActionResult::Skipped) {
         return format!("{already} {place}.");
     }
-    match results.iter().find_map(|r| match r {
+    let why = results.iter().find_map(|r| match r {
         ActionResult::Failed(why) => Some(why.as_str()),
         _ => None,
-    }) {
-        Some(why) => format!("L'enceinte n'a pas répondu {place} : {why}."),
-        None => format!("L'enceinte ne répond pas {place}."),
+    });
+    match (why, lang) {
+        (Some(why), Lang::Fr) => format!("L'enceinte n'a pas répondu {place} : {why}."),
+        (None, Lang::Fr) => format!("L'enceinte ne répond pas {place}."),
+        (Some(why), Lang::En) => format!("The speaker didn't answer {place}: {why}."),
+        (None, Lang::En) => format!("The speaker isn't responding {place}."),
     }
 }
 
@@ -314,15 +468,26 @@ fn device_label(kind: &str, same: impl Fn(&str) -> bool, name: &str) -> String {
     let words = name_words(name);
     if words.first().is_some_and(|w| same(w)) {
         if words.len() == 1 {
-            let mut chars = name.trim().chars();
-            return match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-                None => String::new(),
-            };
+            return capitalised(name.trim());
         }
         return format!("« {name} »");
     }
     format!("{kind} « {name} »")
+}
+
+/// The English label of one device: the name alone when one of its words says the kind of
+/// device ("Desk lamp", "Volet"), else the kind word and the quoted name (`Shutter "Baie"`).
+fn device_label_en(kind: &str, kinds: &[Class], name: &str) -> String {
+    let says_kind = |w: &String| {
+        [Lang::En, Lang::Fr]
+            .iter()
+            .any(|l| class_in(w, *l).is_some_and(|c| kinds.contains(&c)))
+    };
+    if name_words(name).iter().any(says_kind) {
+        capitalised(name.trim())
+    } else {
+        format!("{kind} \"{name}\"")
+    }
 }
 
 /// A light word that is feminine like « Lumière » (« allumée » agrees with it): « Lampe »,
@@ -346,13 +511,79 @@ fn feminine_light(word: &str) -> bool {
     )
 }
 
+/// The devices that failed, with why: the hub's reason, or offline.
+fn failures<'a>(
+    names: &'a [String],
+    results: &'a [ActionResult],
+    lang: Lang,
+) -> Vec<(&'a str, &'a str)> {
+    let offline = match lang {
+        Lang::Fr => "hors ligne",
+        Lang::En => "offline",
+    };
+    names
+        .iter()
+        .zip(results)
+        .filter_map(|(name, r)| match r {
+            ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
+            ActionResult::Offline => Some((name.as_str(), offline)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// " 1 sur 3 n'a pas répondu : Led." / " 1 of 3 didn't answer: Led.", empty when none failed.
+fn some_failed(failed: &[(&str, &str)], n: usize, lang: Lang) -> String {
+    if failed.is_empty() {
+        return String::new();
+    }
+    let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
+    match lang {
+        Lang::Fr => {
+            let verb = if failed.len() == 1 { "n'a" } else { "n'ont" };
+            format!(
+                " {} sur {n} {verb} pas répondu : {}.",
+                failed.len(),
+                list.join(", ")
+            )
+        }
+        Lang::En => format!(
+            " {} of {n} didn't answer: {}.",
+            failed.len(),
+            list.join(", ")
+        ),
+    }
+}
+
+/// "Rien n'a répondu dans le Salon : Baie, Fenêtre." when every device failed; `place` starts
+/// with a space or is empty.
+fn none_answered(failed: &[(&str, &str)], place: &str, lang: Lang) -> String {
+    let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
+    match lang {
+        Lang::Fr => format!("Rien n'a répondu{place} : {}.", list.join(", ")),
+        Lang::En => format!("Nothing answered{place}: {}.", list.join(", ")),
+    }
+}
+
+/// "« Baie » n'a pas répondu dans le Salon : refusé."; `place` starts with a space or is empty.
+fn one_failed(name: &str, why: &str, place: &str, lang: Lang) -> String {
+    match lang {
+        Lang::Fr => format!("« {name} » n'a pas répondu{place} : {why}."),
+        Lang::En => format!("\"{name}\" didn't answer{place}: {why}."),
+    }
+}
+
 fn lights(
     area: &str,
     on: bool,
     colour: Option<&str>,
     names: &[String],
     results: &[ActionResult],
+    lang: Lang,
 ) -> String {
+    if lang == Lang::En {
+        return lights_en(area, on, colour, names, results);
+    }
     let n = names.len();
     let (verb_m, verb_f) = match (on, colour) {
         (true, Some(c)) => (format!("allumé en {c}"), format!("allumée en {c}")),
@@ -360,15 +591,7 @@ fn lights(
         (false, _) => ("éteint".into(), "éteinte".into()),
     };
     let (verb_m, verb_f) = (verb_m.as_str(), verb_f.as_str());
-    let failed: Vec<(&str, &str)> = names
-        .iter()
-        .zip(results)
-        .filter_map(|(name, r)| match r {
-            ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
-            ActionResult::Offline => Some((name.as_str(), "hors ligne")),
-            _ => None,
-        })
-        .collect();
+    let failed = failures(names, results, lang);
     let skipped = results
         .iter()
         .filter(|r| **r == ActionResult::Skipped)
@@ -382,14 +605,13 @@ fn lights(
         let name = &names[0];
         let label = device_label("Lumière", feminine_light, name);
         return match failed.first() {
-            Some((_, why)) => format!("« {name} » n'a pas répondu {} : {why}.", dans(area)),
+            Some((_, why)) => one_failed(name, why, &format!(" {}", dans(area)), lang),
             None if skipped == 1 => format!("{label} déjà {verb_f} {}.", dans(area)),
             None => format!("{label} {verb_f} {}.", dans(area)),
         };
     }
     if !failed.is_empty() && failed.len() == n {
-        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
-        return format!("Rien n'a répondu {} : {}.", dans(area), list.join(", "));
+        return none_answered(&failed, &format!(" {}", dans(area)), lang);
     }
     let verb = agree(area, verb_m, verb_f);
     let mut text = if skipped == n {
@@ -397,15 +619,49 @@ fn lights(
     } else {
         format!("{} {verb} ({count}).", room(area))
     };
-    if !failed.is_empty() {
-        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
-        let verb = if failed.len() == 1 { "n'a" } else { "n'ont" };
-        text.push_str(&format!(
-            " {} sur {n} {verb} pas répondu : {}.",
-            failed.len(),
-            list.join(", ")
-        ));
+    text.push_str(&some_failed(&failed, n, lang));
+    text
+}
+
+/// [`lights`] in English: "Desk lamp on in the Office.", "Living room lights on (3 lights)."
+fn lights_en(
+    area: &str,
+    on: bool,
+    colour: Option<&str>,
+    names: &[String],
+    results: &[ActionResult],
+) -> String {
+    let lang = Lang::En;
+    let n = names.len();
+    let verb = match (on, colour) {
+        (true, Some(c)) => format!("on in {c}"),
+        (true, None) => "on".into(),
+        (false, _) => "off".into(),
+    };
+    let failed = failures(names, results, lang);
+    let skipped = results
+        .iter()
+        .filter(|r| **r == ActionResult::Skipped)
+        .count();
+    let place = format!(" {}", in_the(area));
+    if n == 1 {
+        let name = &names[0];
+        let label = device_label_en("Light", &[Class::Light, Class::LightNamed], name);
+        return match failed.first() {
+            Some((_, why)) => one_failed(name, why, &place, lang),
+            None if skipped == 1 => format!("{label} already {verb}{place}."),
+            None => format!("{label} {verb}{place}."),
+        };
     }
+    if !failed.is_empty() && failed.len() == n {
+        return none_answered(&failed, &place, lang);
+    }
+    let already = if skipped == n { "already " } else { "" };
+    let mut text = format!(
+        "{} lights {already}{verb} ({n} lights).",
+        room_in(area, lang)
+    );
+    text.push_str(&some_failed(&failed, n, lang));
     text
 }
 
@@ -417,128 +673,167 @@ fn covers(
     names: &[String],
     unable: &[String],
     results: &[ActionResult],
+    lang: Lang,
 ) -> String {
+    let en = lang == Lang::En;
     let n = names.len();
-    let (one, many) = match (open, position) {
-        (true, Some(p)) => (format!("ouvert à {p} %"), format!("ouverts à {p} %")),
-        (true, None) => ("ouvert".to_string(), "ouverts".to_string()),
-        (false, _) => ("fermé".to_string(), "fermés".to_string()),
+    let (one, many) = match (open, position, en) {
+        (true, Some(p), false) => (format!("ouvert à {p} %"), format!("ouverts à {p} %")),
+        (true, None, false) => ("ouvert".to_string(), "ouverts".to_string()),
+        (false, _, false) => ("fermé".to_string(), "fermés".to_string()),
+        (true, Some(p), true) => (format!("open at {p} %"), format!("open at {p} %")),
+        (true, None, true) => ("open".to_string(), "open".to_string()),
+        (false, _, true) => ("closed".to_string(), "closed".to_string()),
     };
     // " dans le Salon" after a room, nothing for the whole house.
-    let place = area.map(|a| format!(" {}", dans(a))).unwrap_or_default();
-    let failed: Vec<(&str, &str)> = names
-        .iter()
-        .zip(results)
-        .filter_map(|(name, r)| match r {
-            ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
-            ActionResult::Offline => Some((name.as_str(), "hors ligne")),
-            _ => None,
-        })
-        .collect();
+    let place = area
+        .map(|a| format!(" {}", self::place(a, lang)))
+        .unwrap_or_default();
+    let failed = failures(names, results, lang);
     let skipped = results
         .iter()
         .filter(|r| **r == ActionResult::Skipped)
         .count();
     let mut text = if n == 1 {
         let name = &names[0];
-        let label = device_label("Volet", |w| class(w) == Some(Class::Cover), name);
+        let (label, already) = if en {
+            (device_label_en("Shutter", &[Class::Cover], name), "already")
+        } else {
+            (
+                device_label("Volet", |w| class(w) == Some(Class::Cover), name),
+                "déjà",
+            )
+        };
         match failed.first() {
-            Some((_, why)) => format!("« {name} » n'a pas répondu{place} : {why}."),
-            None if skipped == 1 => format!("{label} déjà {one}{place}."),
+            Some((_, why)) => one_failed(name, why, &place, lang),
+            None if skipped == 1 => format!("{label} {already} {one}{place}."),
             None => format!("{label} {one}{place}."),
         }
     } else if !failed.is_empty() && failed.len() == n {
-        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
-        format!("Rien n'a répondu{place} : {}.", list.join(", "))
+        none_answered(&failed, &place, lang)
     } else {
-        let already = if skipped == n { "déjà " } else { "" };
-        let mut text = match area {
-            Some(a) => format!("{a} : volets {already}{many} ({n} volets)."),
-            None => format!("Tous les volets {already}{many} ({n} volets)."),
+        let mut text = match (area, en) {
+            (Some(a), false) => {
+                let already = if skipped == n { "déjà " } else { "" };
+                format!("{a} : volets {already}{many} ({n} volets).")
+            }
+            (None, false) => {
+                let already = if skipped == n { "déjà " } else { "" };
+                format!("Tous les volets {already}{many} ({n} volets).")
+            }
+            (Some(a), true) => {
+                let already = if skipped == n { "already " } else { "" };
+                format!(
+                    "{}: shutters {already}{many} ({n} shutters).",
+                    room_in(a, lang)
+                )
+            }
+            (None, true) => {
+                let already = if skipped == n { "already " } else { "" };
+                format!("All shutters {already}{many} ({n} shutters).")
+            }
         };
-        if !failed.is_empty() {
-            let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
-            let verb = if failed.len() == 1 { "n'a" } else { "n'ont" };
-            text.push_str(&format!(
-                " {} sur {n} {verb} pas répondu : {}.",
-                failed.len(),
-                list.join(", ")
-            ));
-        }
+        text.push_str(&some_failed(&failed, n, lang));
         text
     };
     if !unable.is_empty() {
         text.push(' ');
-        text.push_str(&cannot(unable, open, position));
+        text.push_str(&cannot_in(unable, open, position, lang));
     }
     text
 }
 
 /// TVs or plugs of a room (`area`) or of the whole house (`None`), shaped like the shutters'
-/// reply. Both words are feminine.
+/// reply. Both French words are feminine.
 fn switches(
     what: SwitchType,
     area: Option<&str>,
     on: bool,
     names: &[String],
     results: &[ActionResult],
+    lang: Lang,
 ) -> String {
+    let en = lang == Lang::En;
     let n = names.len();
-    let (kind, kind_class, plural) = match what {
-        SwitchType::Tv => ("Télé", Class::Tv, "télés"),
-        _ => ("Prise", Class::Plug, "prises"),
+    let (kind, kind_class, plural) = match (what, en) {
+        (SwitchType::Tv, false) => ("Télé", Class::Tv, "télés"),
+        (_, false) => ("Prise", Class::Plug, "prises"),
+        (SwitchType::Tv, true) => ("TV", Class::Tv, "TVs"),
+        (_, true) => ("Plug", Class::Plug, "plugs"),
     };
-    let (one, many) = if on {
-        ("allumée", "allumées")
-    } else {
-        ("éteinte", "éteintes")
+    let (one, many) = match (on, en) {
+        (true, false) => ("allumée", "allumées"),
+        (false, false) => ("éteinte", "éteintes"),
+        (true, true) => ("on", "on"),
+        (false, true) => ("off", "off"),
     };
-    let place = area.map(|a| format!(" {}", dans(a))).unwrap_or_default();
-    let failed: Vec<(&str, &str)> = names
-        .iter()
-        .zip(results)
-        .filter_map(|(name, r)| match r {
-            ActionResult::Failed(why) => Some((name.as_str(), why.as_str())),
-            ActionResult::Offline => Some((name.as_str(), "hors ligne")),
-            _ => None,
-        })
-        .collect();
+    let place = area
+        .map(|a| format!(" {}", self::place(a, lang)))
+        .unwrap_or_default();
+    let failed = failures(names, results, lang);
     let skipped = results
         .iter()
         .filter(|r| **r == ActionResult::Skipped)
         .count();
     if n == 1 {
         let name = &names[0];
-        let label = device_label(kind, |w| class(w) == Some(kind_class), name);
+        let (label, already) = if en {
+            (device_label_en(kind, &[kind_class], name), "already")
+        } else {
+            (
+                device_label(kind, |w| class(w) == Some(kind_class), name),
+                "déjà",
+            )
+        };
         return match failed.first() {
-            Some((_, why)) => format!("« {name} » n'a pas répondu{place} : {why}."),
-            None if skipped == 1 => format!("{label} déjà {one}{place}."),
+            Some((_, why)) => one_failed(name, why, &place, lang),
+            None if skipped == 1 => format!("{label} {already} {one}{place}."),
             None => format!("{label} {one}{place}."),
         };
     }
     if !failed.is_empty() && failed.len() == n {
-        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
-        return format!("Rien n'a répondu{place} : {}.", list.join(", "));
+        return none_answered(&failed, &place, lang);
     }
-    let already = if skipped == n { "déjà " } else { "" };
-    let mut text = match area {
-        Some(a) => format!("{a} : {plural} {already}{many} ({n} {plural})."),
-        None => format!("Toutes les {plural} {already}{many} ({n} {plural})."),
+    let mut text = match (area, en) {
+        (Some(a), false) => {
+            let already = if skipped == n { "déjà " } else { "" };
+            format!("{a} : {plural} {already}{many} ({n} {plural}).")
+        }
+        (None, false) => {
+            let already = if skipped == n { "déjà " } else { "" };
+            format!("Toutes les {plural} {already}{many} ({n} {plural}).")
+        }
+        (Some(a), true) => {
+            let already = if skipped == n { "already " } else { "" };
+            format!(
+                "{}: {plural} {already}{many} ({n} {plural}).",
+                room_in(a, lang)
+            )
+        }
+        (None, true) => {
+            let already = if skipped == n { "already " } else { "" };
+            format!("All {plural} {already}{many} ({n} {plural}).")
+        }
     };
-    if !failed.is_empty() {
-        let list: Vec<&str> = failed.iter().map(|(name, _)| *name).collect();
-        let verb = if failed.len() == 1 { "n'a" } else { "n'ont" };
-        text.push_str(&format!(
-            " {} sur {n} {verb} pas répondu : {}.",
-            failed.len(),
-            list.join(", ")
-        ));
-    }
+    text.push_str(&some_failed(&failed, n, lang));
     text
 }
 
 /// The shutters that cannot do what was asked: « Volet ne sait pas se mettre à une position. »
 pub fn cannot(names: &[String], open: bool, position: Option<u8>) -> String {
+    cannot_in(names, open, position, Lang::Fr)
+}
+
+/// [`cannot`] in `lang`: "Volet can't be set to a position."
+pub fn cannot_in(names: &[String], open: bool, position: Option<u8>, lang: Lang) -> String {
+    if lang == Lang::En {
+        let what = match (position, open) {
+            (Some(_), _) => "be set to a position",
+            (None, true) => "open",
+            (None, false) => "close",
+        };
+        return format!("{} can't {what}.", names.join(", "));
+    }
     let what = match (position, open) {
         (Some(_), _) => "se mettre à une position",
         (None, true) => "s'ouvrir",
@@ -552,7 +847,29 @@ pub fn cannot(names: &[String], open: bool, position: Option<u8>) -> String {
     format!("{} {verb} pas {what}.", names.join(", "))
 }
 
-fn setpoint(area: &str, from: Option<f64>, to: f64, results: &[ActionResult]) -> String {
+fn setpoint(
+    area: &str,
+    from: Option<f64>,
+    to: f64,
+    results: &[ActionResult],
+    lang: Lang,
+) -> String {
+    if lang == Lang::En {
+        let shown = temp_in(to, lang);
+        let at = in_the(area);
+        return match results.first() {
+            Some(ActionResult::Failed(why)) => {
+                format!("The heating {at} wasn't set to {shown}: {why}.")
+            }
+            Some(ActionResult::Skipped) => format!("Heating {at} already at {shown}."),
+            _ => match from {
+                Some(from) if from != to => {
+                    format!("Heating {at} set to {shown} (was {}).", temp_in(from, lang))
+                }
+                _ => format!("Heating {at} set to {shown}."),
+            },
+        };
+    }
     match results.first() {
         Some(ActionResult::Failed(why)) => format!(
             "Le chauffage {} n'a pas été réglé à {} : {why}.",
@@ -1097,5 +1414,328 @@ mod tests {
             said(&mute(true), &[ActionResult::Skipped]),
             "Son déjà coupé dans le Salon."
         );
+    }
+
+    fn said_en(d: &Done, results: &[ActionResult]) -> String {
+        let f = fixture::house();
+        done(d, results, &f.house_en(), false)
+    }
+
+    #[test]
+    fn english_numbers_take_a_point() {
+        assert_eq!(number_in(18.25, Lang::En), "18.3");
+        assert_eq!(number_in(20.0, Lang::En), "20");
+        assert_eq!(temp_in(19.5, Lang::En), "19.5 °C");
+        assert_eq!(temp_in(-0.5, Lang::En), "-0.5 °C");
+        assert_eq!(temp_in(19.5, Lang::Fr), "19,5 °C");
+        assert_eq!(quoted("Desk", Lang::En), "\"Desk\"");
+        assert_eq!(quoted("Baie", Lang::Fr), "« Baie »");
+    }
+
+    #[test]
+    fn english_room_phrases() {
+        assert_eq!(the("Kitchen"), "the Kitchen");
+        assert_eq!(in_the("Kitchen"), "in the Kitchen");
+        assert_eq!(the_start("Kitchen"), "The Kitchen");
+        assert_eq!(the("Tom"), "Tom's room");
+        assert_eq!(in_the("Tom"), "in Tom's room");
+        assert_eq!(the("The Den"), "The Den");
+        assert_eq!(the("Tom's Den"), "Tom's Den");
+        assert_eq!(the("living room"), "the living room");
+        assert_eq!(the("TV room"), "the TV room");
+        assert_eq!(room_in("Tom", Lang::En), "Tom's room");
+        assert_eq!(room_in("Tom's Den", Lang::En), "Tom's Den");
+        assert_eq!(room_in("Living room", Lang::En), "Living room");
+        assert_eq!(room_in("Léa", Lang::Fr), "Chambre de Léa");
+        assert_eq!(place("Salon", Lang::Fr), "dans le Salon");
+        assert_eq!(place("Salon", Lang::En), "in the Salon");
+    }
+
+    #[test]
+    fn english_cannot() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            cannot_in(&names(&["Volet"]), true, Some(30), Lang::En),
+            "Volet can't be set to a position."
+        );
+        assert_eq!(
+            cannot_in(&names(&["Bay", "Door"]), false, None, Lang::En),
+            "Bay, Door can't close."
+        );
+        assert_eq!(
+            cannot(&names(&["Volet"]), true, None),
+            cannot_in(&names(&["Volet"]), true, None, Lang::Fr)
+        );
+    }
+
+    #[test]
+    fn english_lights_replies() {
+        use ActionResult::{Failed, Offline, Ok, Skipped};
+        let many = lights_done(true, &["Plafonnier", "Lampe table", "Led"]);
+        assert_eq!(said_en(&many, &[Ok, Ok, Ok]), "Salon lights on (3 lights).");
+        assert_eq!(
+            said_en(&many, &[Skipped, Skipped, Skipped]),
+            "Salon lights already on (3 lights)."
+        );
+        assert_eq!(
+            said_en(&many, &[Ok, Offline, Ok]),
+            "Salon lights on (3 lights). 1 of 3 didn't answer: Lampe table."
+        );
+        assert_eq!(
+            said_en(&many, &[Offline, Offline, Offline]),
+            "Nothing answered in the Salon: Plafonnier, Lampe table, Led."
+        );
+        assert_eq!(
+            said_en(&lights_done(false, &["Desk lamp"]), &[Skipped]),
+            "Desk lamp already off in the Salon."
+        );
+        assert_eq!(
+            said_en(&lights_done(false, &["Glow"]), &[Ok]),
+            "Light \"Glow\" off in the Salon."
+        );
+        assert_eq!(
+            said_en(&lights_done(true, &["Led"]), &[Failed("refused".into())]),
+            "\"Led\" didn't answer in the Salon: refused."
+        );
+        assert_eq!(
+            said_en(&lights_done(true, &["Led"]), &[Offline]),
+            "\"Led\" didn't answer in the Salon: offline."
+        );
+    }
+
+    #[test]
+    fn english_colour_replies() {
+        let coloured = |names: &[&str], unable: &[&str]| Done::Lights {
+            area: "salon".into(),
+            on: true,
+            names: names.iter().map(|n| n.to_string()).collect(),
+            colour: Some("red".into()),
+            unable: unable.iter().map(|n| n.to_string()).collect(),
+        };
+        assert_eq!(
+            said_en(&coloured(&["Led"], &[]), &[ActionResult::Ok]),
+            "Led on in red in the Salon."
+        );
+        assert_eq!(
+            said_en(
+                &coloured(&["Led", "Lampe table"], &["Plafonnier"]),
+                &[ActionResult::Ok, ActionResult::Ok]
+            ),
+            "Salon lights on in red (2 lights). \"Plafonnier\" can't take a colour."
+        );
+        assert_eq!(
+            said_en(
+                &coloured(&["Led"], &["Plafonnier", "Lamp"]),
+                &[ActionResult::Ok]
+            ),
+            "Led on in red in the Salon. Can't take a colour: Plafonnier, Lamp."
+        );
+    }
+
+    #[test]
+    fn english_setpoint_replies() {
+        let f = fixture::house();
+        let h = f.house_en();
+        let d = |from| Done::Setpoint {
+            zone: "chambre_lea".into(),
+            from,
+            to: 19.5,
+        };
+        assert_eq!(
+            done(&d(Some(17.0)), &[ActionResult::Ok], &h, false),
+            "Heating in the Chambre Léa set to 19.5 °C (was 17 °C)."
+        );
+        assert_eq!(
+            done(&d(None), &[ActionResult::Ok], &h, false),
+            "Heating in the Chambre Léa set to 19.5 °C."
+        );
+        assert_eq!(
+            done(&d(Some(19.5)), &[ActionResult::Skipped], &h, false),
+            "Heating in the Chambre Léa already at 19.5 °C."
+        );
+        assert_eq!(
+            done(
+                &d(Some(17.0)),
+                &[ActionResult::Failed("refused".into())],
+                &h,
+                false
+            ),
+            "The heating in the Chambre Léa wasn't set to 19.5 °C: refused."
+        );
+        let f = fixture::person_rooms();
+        let h = f.house_en();
+        let d = Done::Setpoint {
+            zone: "tom".into(),
+            from: None,
+            to: 20.0,
+        };
+        assert_eq!(
+            done(&d, &[ActionResult::Ok], &h, false),
+            "Heating in Tom's room set to 20 °C."
+        );
+    }
+
+    #[test]
+    fn english_covers_and_switches_replies() {
+        use ActionResult::{Offline, Ok, Skipped};
+        let salon = Some("salon");
+        assert_eq!(
+            said_en(&covers_done(salon, false, None, &["Bay"]), &[Ok]),
+            "Shutter \"Bay\" closed in the Salon."
+        );
+        assert_eq!(
+            said_en(
+                &covers_done(salon, true, Some(30), &["Bay shutter"]),
+                &[Skipped]
+            ),
+            "Bay shutter already open at 30 % in the Salon."
+        );
+        assert_eq!(
+            said_en(
+                &covers_done(salon, false, None, &["Bay", "Window"]),
+                &[Ok, Ok]
+            ),
+            "Salon: shutters closed (2 shutters)."
+        );
+        assert_eq!(
+            said_en(
+                &covers_done(None, false, None, &["Bay", "Window", "Volet"]),
+                &[Ok, Offline, Ok]
+            ),
+            "All shutters closed (3 shutters). 1 of 3 didn't answer: Window."
+        );
+        let mut d = covers_done(None, true, Some(30), &["Bay"]);
+        if let Done::Covers { unable, .. } = &mut d {
+            unable.push("Volet".into());
+        }
+        assert_eq!(
+            said_en(&d, &[Ok]),
+            "Shutter \"Bay\" open at 30 %. Volet can't be set to a position."
+        );
+        use SwitchType::{Plug, Tv};
+        assert_eq!(
+            said_en(&switches_done(Tv, salon, true, &["Screen"]), &[Ok]),
+            "TV \"Screen\" on in the Salon."
+        );
+        assert_eq!(
+            said_en(
+                &switches_done(Plug, Some("bureau"), false, &["Coffee plug"]),
+                &[Skipped]
+            ),
+            "Coffee plug already off in the Bureau."
+        );
+        assert_eq!(
+            said_en(
+                &switches_done(Plug, Some("bureau"), false, &["Coffee", "Charger"]),
+                &[Ok, Ok]
+            ),
+            "Bureau: plugs off (2 plugs)."
+        );
+        assert_eq!(
+            said_en(
+                &switches_done(Tv, None, true, &["Screen", "Projector"]),
+                &[Skipped, Skipped]
+            ),
+            "All TVs already on (2 TVs)."
+        );
+    }
+
+    #[test]
+    fn english_media_and_speakers_replies() {
+        use crate::intent::MediaIntent as M;
+        let lucky = echo("playing", Some("Get Lucky"), Some("Daft Punk"));
+        let cases: Vec<(M, ActionResult, &str)> = vec![
+            (M::Pause, ActionResult::Ok, "Music paused."),
+            (
+                M::Pause,
+                ActionResult::Skipped,
+                "The music is already paused.",
+            ),
+            (
+                M::Play { resume: true },
+                lucky.clone(),
+                "Resuming Get Lucky.",
+            ),
+            (
+                M::Play { resume: false },
+                ActionResult::Ok,
+                "Starting the music.",
+            ),
+            (
+                M::Play { resume: false },
+                lucky.clone(),
+                "Playing Get Lucky.",
+            ),
+            (
+                M::PlayMedia {
+                    query: "daft punk".into(),
+                },
+                ActionResult::Ok,
+                "Looking for \"daft punk\".",
+            ),
+            (M::Next, lucky.clone(), "Get Lucky, Daft Punk."),
+            (M::Previous, ActionResult::Ok, "Previous song."),
+            (
+                M::Pause,
+                ActionResult::Offline,
+                "The player isn't responding.",
+            ),
+            (
+                M::Next,
+                ActionResult::Failed(NO_ANSWER_EN.into()),
+                "The player didn't answer.",
+            ),
+            (
+                M::Next,
+                ActionResult::Failed("offline".into()),
+                "The player didn't answer: offline.",
+            ),
+        ];
+        for (what, result, want) in cases {
+            assert_eq!(
+                said_en(&media_done(what.clone()), &[result]),
+                want,
+                "{what:?}"
+            );
+        }
+        let volume = Done::Volume {
+            area: "bureau".into(),
+            level: Some(30),
+        };
+        assert_eq!(
+            said_en(&volume, &[ActionResult::Ok]),
+            "Volume at 30 % in the Bureau."
+        );
+        assert_eq!(
+            said_en(&volume, &[ActionResult::Offline]),
+            "The speaker isn't responding in the Bureau."
+        );
+        assert_eq!(
+            said_en(&volume, &[ActionResult::Failed("refused".into())]),
+            "The speaker didn't answer in the Bureau: refused."
+        );
+        let mute = |on| Done::Mute {
+            area: "salon".into(),
+            on,
+        };
+        assert_eq!(
+            said_en(&mute(true), &[ActionResult::Ok]),
+            "Sound muted in the Salon."
+        );
+        assert_eq!(
+            said_en(&mute(false), &[ActionResult::Skipped]),
+            "Sound already on in the Salon."
+        );
+    }
+
+    #[test]
+    fn english_simulation_prefix() {
+        let f = fixture::house();
+        let d = lights_done(true, &["Led"]);
+        assert_eq!(
+            done(&d, &[ActionResult::Ok], &f.house_en(), true),
+            "Simulation: Led on in the Salon."
+        );
+        assert!(done(&d, &[ActionResult::Ok], &f.house(), true).starts_with("Simulation : "));
     }
 }
