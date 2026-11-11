@@ -73,6 +73,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: mozilla-actions/sccache-action@v0.0.9
+      # rust-cache deletes the files under target/sherpa-onnx-prebuilt but keeps
+      # the empty folders, and sherpa-onnx-sys's build script then skips the
+      # download. When a lockfile change makes cargo rebuild it, the link fails.
+      # Drop the folder and the crate's build output so the libs are fetched again.
+      - run: rm -rf target/sherpa-onnx-prebuilt && cargo clean -p sherpa-onnx-sys
       - run: cargo test --workspace
       - if: always()
         run: sccache --show-stats
@@ -117,6 +122,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: mozilla-actions/sccache-action@v0.0.9
+      # rust-cache deletes the files under target/sherpa-onnx-prebuilt but keeps
+      # the empty folders, and sherpa-onnx-sys's build script then skips the
+      # download. When a lockfile change makes cargo rebuild it, the link fails.
+      # Drop the folder and the crate's build output so the libs are fetched again.
+      - run: rm -rf target/sherpa-onnx-prebuilt && cargo clean -p sherpa-onnx-sys
       - run: tools/tests/update_test.sh
       - run: shellcheck tools/*.sh tools/ci/*.sh tools/tests/*.sh
       - run: tools/ci/brand-check.sh
