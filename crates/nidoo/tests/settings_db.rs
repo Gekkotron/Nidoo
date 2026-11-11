@@ -192,6 +192,33 @@ mod put {
         tdb.drop_db().await;
     }
 
+    #[tokio::test]
+    async fn backup_section_is_live_and_write_only() {
+        let Some(tdb) = fresh_db().await else { return };
+        let s = serve(&tdb.url, Sections::default()).await;
+        let body = json!({"password": "correct-horse", "keep": 3,
+            "ftp": {"host": "nas.local", "user": "u", "password": "ftp-pw", "folder": "/backups"},
+            "notify_failure": true});
+        let (code, view) = s.put("backup", body).await;
+        assert_eq!(code, StatusCode::OK);
+        assert_eq!(view["password"], json!({"set": true}));
+        assert_eq!(view["ftp"]["password"], json!({"set": true}));
+        assert_eq!(view["ftp"]["port"], 21);
+        assert_eq!(s.restarts.load(Ordering::SeqCst), 0, "no restart");
+        let got = s.get("backup").await;
+        assert_eq!(got["password"], json!({"set": true}));
+        for text in [view.to_string(), got.to_string()] {
+            assert!(!text.contains("correct-horse") && !text.contains("ftp-pw"));
+        }
+        let stored = load_sections(&tdb.db).await.unwrap();
+        assert_eq!(stored.backup.password.as_deref(), Some("correct-horse"));
+        assert_eq!(stored.backup.keep, 3);
+        let (code, _) = s.put("backup", json!({"password": null})).await;
+        assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+        drop(s.dir);
+        tdb.drop_db().await;
+    }
+
     const GW: &str = "https://house.example.ts.net";
 
     #[tokio::test]

@@ -3,6 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::setup::{Secret, SecretView};
+
 /// The part of the file a backup or restore is working on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -39,6 +41,54 @@ pub struct FtpCheck {
     pub step: FtpStep,
     pub ok: bool,
     pub detail: Option<String>,
+}
+
+/// The backup section as a read shows it: neither password is sent back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BackupView {
+    pub password: SecretView,
+    pub ftp: FtpView,
+    pub keep: u32,
+    pub notify_failure: bool,
+}
+
+/// Where the backups are copied, as a read shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FtpView {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub password: SecretView,
+    pub folder: String,
+}
+
+/// The backup section in a `PUT`. A `PUT` replaces the whole section: a left-out `keep`,
+/// `port` or `folder` takes its default. Only the passwords follow `Secret`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BackupInput {
+    #[serde(default)]
+    pub password: Secret,
+    #[serde(default)]
+    pub ftp: FtpInput,
+    #[serde(default)]
+    pub keep: Option<u32>,
+    #[serde(default)]
+    pub notify_failure: bool,
+}
+
+/// The FTP part of [`BackupInput`]. An empty `host` means FTP is not configured.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FtpInput {
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub password: Secret,
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 #[cfg(test)]
