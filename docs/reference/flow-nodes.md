@@ -405,7 +405,7 @@ Sends a command to an entity.
 
 With `value_from`, the number in `command` stays in the JSON (the web editor shows it when the option is switched off) and is ignored. A result that is missing from the run fails the node (`no result x in this run`). On a `set_number` command the number is fitted to the target entity like a math card's `save_to`: rounded to its `step` and kept inside its `min` and `max`, and the step detail reads `accepted (kept in range)` when it was clamped.
 
-Outputs: one. The command goes through the hub's command path, confirmed by the entity's state echo within the `commands.confirm_timeout_ms` setting (default 5000), exactly like `send_command`. No echo, a rejection or an offline entity fails the node.
+Outputs: one. The command goes through the hub's command path, confirmed by the entity's state echo within the `commands.confirm_timeout_ms` setting (default 5000), exactly like `send_command`. A button press, or a control with no state to echo, succeeds once it is published. No echo, a rejection or an offline entity fails the node.
 
 On save the hub refuses a command the entity cannot take. It also refuses `arm` and `disarm` with a `code`: flows are retained on the broker in clear, so alarm codes are not allowed. Arm and disarm from a flow only on a panel that needs none.
 

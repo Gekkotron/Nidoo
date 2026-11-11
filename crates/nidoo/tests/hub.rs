@@ -1310,6 +1310,59 @@ async fn scene_activate_is_accepted_without_echo() {
 }
 
 #[tokio::test]
+async fn discovered_button_press_is_accepted_without_echo() {
+    let (hub, mut publisher) = hub_with_timeout(5_000);
+    let id = feed_generic(
+        &hub,
+        "button",
+        serde_json::json!({"name": "Wake NAS", "unique_id": "u1",
+                           "command_topic": "nas-waker/button/wake_nas/command"}),
+    );
+    let mut events = hub.subscribe();
+    let started = std::time::Instant::now();
+    let response = hub
+        .send_command(&id, Command::Press)
+        .await
+        .expect("accepted");
+    assert!(response.accepted, "{response:?}");
+    assert_eq!(response.reason, None);
+    assert_eq!(response.state, None);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let sent = publisher.try_recv().expect("published");
+    assert_eq!(sent.topic, "nas-waker/button/wake_nas/command");
+    assert_eq!(sent.payload, "PRESS");
+    while let Ok(event) = events.try_recv() {
+        assert!(!matches!(event, WsEvent::CommandFailed { .. }), "{event:?}");
+    }
+}
+
+#[tokio::test]
+async fn virtual_button_press_is_accepted_without_echo() {
+    let (hub, mut publisher) = hub_with_timeout(5_000);
+    let spec = VirtualSpec {
+        kind: VirtualKind::Button,
+        name: "Boost".to_owned(),
+        min: None,
+        max: None,
+        step: None,
+        unit: None,
+        options: None,
+        initial: None,
+    };
+    let view = hub.set_virtual("boost", spec).await.expect("button");
+    drain(&mut publisher);
+    let started = std::time::Instant::now();
+    let response = hub
+        .send_command(&view.id, Command::Press)
+        .await
+        .expect("accepted");
+    assert!(response.accepted, "{response:?}");
+    assert_eq!(response.state, None);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(publisher.try_recv().expect("published").payload, "PRESS");
+}
+
+#[tokio::test]
 async fn lock_command_waits_for_echo() {
     let (hub, _publisher) = hub();
     let id = feed_generic(
