@@ -1044,6 +1044,12 @@ a.chip {
   box-shadow: 0 0 0 2px var(--accent-amber);
 }
 
+/* The room's climate card (its zone is active), above the device cards. */
+.room__climate {
+  max-width: 640px;
+  margin-bottom: 12px;
+}
+
 .room__empty {
   margin: 24px 0;
   opacity: 0.6;

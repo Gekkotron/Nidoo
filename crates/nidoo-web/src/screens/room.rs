@@ -8,6 +8,7 @@ use nidoo_core::model::UNASSIGNED_AREA;
 use serde_json::json;
 
 use crate::api::{encode_id, rename_area, set_override};
+use crate::climate::home::HomeClimateCard;
 use crate::components::card_place::{CardPlace, provide_card_place};
 use crate::components::room_title::{RoomEdit, RoomTitle};
 use crate::components::toast::Toasts;
@@ -186,6 +187,8 @@ pub(crate) fn RoomSection(id: String, #[prop(optional)] anchored: bool) -> impl 
     // Favorites mixes rooms and has no order of its own: it cannot be edited. Unassigned can be
     // reordered, not renamed.
     let editable = id != FAVORITES;
+    // A room whose climate zone is active shows its climate card first; Favorites has no zone.
+    let climate_area = editable.then(|| id.clone());
     let renamable = (editable && id != UNASSIGNED_AREA).then(|| id.clone());
 
     let toasts = expect_context::<Toasts>();
@@ -309,6 +312,7 @@ pub(crate) fn RoomSection(id: String, #[prop(optional)] anchored: bool) -> impl 
     view! {
         <section class="room" class:room--editing=move || editing.get() id=anchor on:click=on_click>
             <RoomTitle id=renamable name=title edit=edit />
+            {climate_area.map(|area| view! { <HomeClimateCard area=area /> })}
             <Show
                 when=move || items.with(|v| !v.is_empty())
                 fallback=move || {
