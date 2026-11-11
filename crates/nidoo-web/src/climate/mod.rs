@@ -3,6 +3,7 @@
 pub mod correction_card;
 pub mod eco_pill;
 pub mod entity_field;
+pub mod home;
 pub mod presence_card;
 pub mod proposal;
 pub mod room_card;
