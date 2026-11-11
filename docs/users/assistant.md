@@ -19,6 +19,12 @@ Rooms are your own rooms, by name ("salon", "la chambre de Léa", "chez Léa", "
 
 A room's lights are the ones a mood's "lights" action uses: every light of the room, the ones hidden from the dashboard included, but not groups. Lights already in the wanted state are left alone; an offline light gets no command and the reply says it did not answer.
 
+**Light colours**, said after "en", switch the lights on in that colour:
+
+- « allume la lumière du salon en rouge », « mets la led en bleu », « passe le salon en vert »
+
+The colours are blanc, rouge, orange, jaune, vert, cyan (turquoise), bleu, violet (mauve), magenta and rose, in any gender or number. Only lights that take a colour get one; the others in the room are left as they are and the reply names them. A colour word without "en" is part of a light's name (« allume la lampe rose »), and a colour with an off order, heating, shutters or music is not understood.
+
 **Heating setpoints**, for a room whose [climate](climate.md) zone is active:
 
 - an exact value: « mets le salon à 20 », « règle la chambre de Léa à 19,5 degrés »

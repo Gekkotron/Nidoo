@@ -1,6 +1,6 @@
 //! What a sentence asks for, before looking at the house.
 
-use crate::lexicon::{Class, class};
+use crate::lexicon::{Class, Colour, class, colour_of};
 use crate::text::{Word, number_text};
 use nidoo_api::search::fold;
 use nidoo_core::model::SwitchType;
@@ -8,12 +8,14 @@ use nidoo_core::model::SwitchType;
 /// What the sentence asks, with the words left that may name a room or a light.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Intent {
-    /// `names`: words that may name lights; `room`: words that may name the room.
+    /// `names`: words that may name lights; `room`: words that may name the room; `colour`:
+    /// "en rouge", only ever with `on`.
     Lights {
         on: bool,
         all: bool,
         names: Vec<String>,
         room: Vec<String>,
+        colour: Option<Colour>,
     },
     SetTemp {
         change: Change,
@@ -110,6 +112,8 @@ enum Tok {
     Number(f64),
     Signed(f64),
     Free(String),
+    /// "en rouge": a colour, the "en" included.
+    Colour(Colour),
 }
 
 fn tag(words: &[Word]) -> Vec<Tok> {
@@ -127,6 +131,15 @@ fn tag(words: &[Word]) -> Vec<Tok> {
             Word::Signed(n) => out.push(Tok::Signed(*n)),
             Word::Text(t) if t == "pour" && next.is_some_and(|w| w.is("cent")) => {
                 out.push(Tok::Known(Class::Percent, "%".into()));
+                i += 2;
+                continue;
+            }
+            Word::Text(t)
+                if t == "en" && next.and_then(Word::text).and_then(colour_of).is_some() =>
+            {
+                if let Some(c) = next.and_then(Word::text).and_then(colour_of) {
+                    out.push(Tok::Colour(c));
+                }
                 i += 2;
                 continue;
             }
@@ -197,6 +210,45 @@ fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
 /// all give `None` (a temperature question is read, never acted on).
 pub fn parse(words: &[Word]) -> Option<Intent> {
     let mut toks = tag(words);
+    // "en rouge": taken out of the sentence, which then parses as before; only lights switched
+    // on take it. Two different colours are not understood.
+    let mut colour = None;
+    for t in &toks {
+        if let Tok::Colour(c) = t {
+            if colour.is_some_and(|seen: Colour| seen != *c) {
+                return None;
+            }
+            colour = Some(*c);
+        }
+    }
+    toks.retain(|t| !matches!(t, Tok::Colour(_)));
+    let intent = parse_toks(toks, colour.is_some())?;
+    match (intent, colour) {
+        (intent, None) => Some(intent),
+        (
+            Intent::Lights {
+                on: true,
+                all,
+                names,
+                room,
+                colour: None,
+            },
+            Some(c),
+        ) => Some(Intent::Lights {
+            on: true,
+            all,
+            names,
+            room,
+            colour: Some(c),
+        }),
+        // A colour for heating, shutters, music or an off order would be ignored: not a guess.
+        _ => None,
+    }
+}
+
+/// [`parse`] without the colour words; `coloured`: a colour was said, so "mets" alone switches
+/// lights on ("mets le salon en bleu").
+fn parse_toks(mut toks: Vec<Tok>, coloured: bool) -> Option<Intent> {
     // A light, shutter, heating or temperature word decides the sentence: a TV or plug word is
     // then part of a name ("la lumière du salon tv", "le volet tv").
     let decided = toks.iter().any(|t| {
@@ -369,6 +421,9 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
         return None;
     }
 
+    if coloured && set && !off && !valued {
+        return Some(lights(&toks, &roles, true, has(Class::All)));
+    }
     if set && !light && !on {
         if let Some(n) = after_a {
             return Some(Intent::SetTemp {
@@ -802,6 +857,7 @@ fn lights(toks: &[Tok], roles: &[Option<Role>], on: bool, all: bool) -> Intent {
         all,
         names,
         room,
+        colour: None,
     }
 }
 
@@ -850,7 +906,65 @@ mod tests {
             all,
             names: v(names),
             room: v(room),
+            colour: None,
         })
+    }
+
+    fn coloured(names: &[&str], room: &[&str], colour: &str) -> Option<Intent> {
+        Some(Intent::Lights {
+            on: true,
+            all: false,
+            names: v(names),
+            room: v(room),
+            colour: colour_of(colour),
+        })
+    }
+
+    #[test]
+    fn colour_after_en() {
+        assert_eq!(
+            p("allume la lumière du salon en rouge"),
+            coloured(&[], &["salon"], "rouge")
+        );
+        assert_eq!(
+            p("allume la led en bleu dans le salon"),
+            coloured(&["led"], &["salon"], "bleu")
+        );
+        assert_eq!(
+            p("mets la lampe de la chambre en vert"),
+            coloured(&["lampe"], &["chambre"], "vert")
+        );
+        assert_eq!(
+            p("mets le salon en rose"),
+            coloured(&[], &["salon"], "rose")
+        );
+        assert_eq!(
+            p("passe les lumières du salon en blanc"),
+            coloured(&[], &["salon"], "blanc")
+        );
+        assert_eq!(p("Allume en Violette"), coloured(&[], &[], "violet"));
+    }
+
+    #[test]
+    fn colour_never_guessed() {
+        // Off, heating, shutters, music or two colours: not understood.
+        assert_eq!(p("éteins le salon en rouge"), None);
+        assert_eq!(p("mets le chauffage en rouge"), None);
+        assert_eq!(p("ouvre les volets en bleu"), None);
+        assert_eq!(p("mets la musique en bleu"), None);
+        assert_eq!(p("allume le salon en rouge et en bleu"), None);
+        assert_eq!(p("ne mets pas le salon en rouge"), None);
+        assert_eq!(p("mets le salon en rouge à 20"), None);
+        // The same colour twice is one colour.
+        assert_eq!(
+            p("allume le salon en rouge, en rouge"),
+            coloured(&[], &["salon"], "rouge")
+        );
+        // Without "en" a colour word is part of a name, as before.
+        assert_eq!(
+            p("allume la lampe rose"),
+            lights(true, false, &["lampe"], &["rose"])
+        );
     }
 
     fn set(change: Change, room: &[&str]) -> Option<Intent> {

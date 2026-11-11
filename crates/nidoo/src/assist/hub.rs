@@ -190,10 +190,13 @@ fn what(action: &Action) -> (String, String) {
     match action {
         Action::Light { entity, command } => {
             let what = match command {
-                Command::TurnOff => "éteindre",
-                _ => "allumer",
+                Command::TurnOff => "éteindre".into(),
+                Command::TurnOn {
+                    color: Some(hs), ..
+                } => format!("allumer en couleur (teinte {} °)", reply::number(hs.h)),
+                _ => "allumer".into(),
             };
-            (entity.clone(), what.into())
+            (entity.clone(), what)
         }
         Action::Switch { entity, command } => {
             let what = match command {

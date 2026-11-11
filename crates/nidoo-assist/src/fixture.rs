@@ -98,6 +98,12 @@ pub fn light(id: &str, name: &str, area: &str, on: bool) -> EntityView {
     e
 }
 
+/// A light that takes a colour (Zigbee2MQTT's `xy`).
+pub fn coloured(mut light: EntityView) -> EntityView {
+    light.capabilities.color_modes.insert("xy".into());
+    light
+}
+
 /// A shutter, open; `can_position` adds a position (0–100 %) to open/close.
 pub fn cover(id: &str, name: &str, area: &str, can_position: bool) -> EntityView {
     let mut e = entity(id, name, Kind::Cover, area);
@@ -216,7 +222,7 @@ pub fn zone(
     }
 }
 
-/// Salon (4 lights, a hidden one, plus a group; two shutters with a position; a TV), Salon TV,
+/// Salon (4 lights, the lamp and the led in colour, a hidden one, plus a group; two shutters with a position; a TV), Salon TV,
 /// Bureau (a thermometer, no heating; a plug and a plain switch), Chambre Léa (heated, an
 /// open/close-only shutter) and Chambre Tom (heated; a plug), Garage (a siren switch).
 pub fn house() -> Fixture {
@@ -243,8 +249,8 @@ pub fn house() -> Fixture {
         ],
         entities: vec![
             light("light_plafonnier", "Plafonnier", "salon", false),
-            light("light_lampe_table", "Lampe table", "salon", true),
-            light("light_led", "Led", "salon", false),
+            coloured(light("light_lampe_table", "Lampe table", "salon", true)),
+            coloured(light("light_led", "Led", "salon", false)),
             hidden,
             group,
             light("light_lampe_lea", "Lampe", "chambre_lea", false),

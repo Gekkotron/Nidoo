@@ -2,7 +2,7 @@
 //! (no house needed); checks against the house belong to the hub.
 
 use crate::views::EntityView;
-use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue};
+use nidoo_core::model::{Availability, Command, EntityCategory, Hs, Kind, StateValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -374,6 +374,12 @@ fn member_command(action: &CategoryAction, e: &EntityView) -> Option<Command> {
     }
 }
 
+/// Two colours a few degrees and points apart; any hue is the same white.
+fn same_colour(a: Hs, b: Hs) -> bool {
+    let hue = (a.h - b.h).rem_euclid(360.0);
+    (a.s - b.s).abs() <= 5.0 && (a.s.max(b.s) <= 5.0 || hue.min(360.0 - hue) <= 5.0)
+}
+
 /// True when the entity's known state already matches what `cmd` would set.
 pub fn already_there(view: &EntityView, cmd: &Command) -> bool {
     let value = &view.state.value;
@@ -385,13 +391,19 @@ pub fn already_there(view: &EntityView, cmd: &Command) -> bool {
     match cmd {
         Command::TurnOff => is_on == Some(false),
         Command::TurnOn {
-            brightness: None, ..
-        } => is_on == Some(true),
-        Command::TurnOn {
-            brightness: Some(b),
+            brightness: None,
+            color: None,
             ..
+        } => is_on == Some(true),
+        // A brightness or a colour must match too: a lit lamp asked for red is not there yet.
+        Command::TurnOn {
+            brightness, color, ..
         } => match value {
-            StateValue::Light(l) => l.on && l.brightness.is_some_and(|cur| cur.abs_diff(*b) <= 5),
+            StateValue::Light(l) => {
+                l.on && brightness
+                    .is_none_or(|b| l.brightness.is_some_and(|cur| cur.abs_diff(b) <= 5))
+                    && color.is_none_or(|c| l.hs.is_some_and(|cur| same_colour(cur, c)))
+            }
             _ => false,
         },
         // A known position wins: a half-open shutter is "open" by its state word, yet an open
@@ -868,6 +880,30 @@ mod tests {
         assert!(already_there(&light(true, Some(250)), &on(Some(255))));
         assert!(!already_there(&light(true, Some(240)), &on(Some(255))));
         assert!(!already_there(&light(false, Some(255)), &on(Some(255))));
+        let red = Hs { h: 0.0, s: 100.0 };
+        let coloured = |on, hs| {
+            let mut e = light(on, None);
+            if let StateValue::Light(l) = &mut e.state.value {
+                l.hs = hs;
+            }
+            e
+        };
+        let on_red = Command::TurnOn {
+            brightness: None,
+            color: Some(red),
+            effect: None,
+        };
+        assert!(already_there(
+            &coloured(true, Some(Hs { h: 358.0, s: 98.0 })),
+            &on_red
+        ));
+        assert!(!already_there(
+            &coloured(true, Some(Hs { h: 225.0, s: 100.0 })),
+            &on_red
+        ));
+        assert!(!already_there(&coloured(true, None), &on_red));
+        assert!(!already_there(&coloured(false, Some(red)), &on_red));
+        assert!(!already_there(&plug(true), &on_red));
         assert!(already_there(&cover(None, Some(0)), &Command::Close));
         assert!(already_there(&cover(Some("closed"), None), &Command::Close));
         assert!(!already_there(&cover(None, Some(50)), &Command::Close));

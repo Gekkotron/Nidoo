@@ -9,6 +9,7 @@ use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue,
 
 use crate::house::House;
 use crate::intent::{Change, Intent, MediaIntent, parse, play_by_name};
+use crate::lexicon::Colour;
 use crate::reply::{cannot, dans, de, le, number, temp};
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
@@ -85,10 +86,14 @@ pub enum Action {
 /// What the actions do, for the reply. `names` are in the actions' order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Done {
+    /// `colour`: the colour's French name ("rouge"); `unable`: the room's lights left as they
+    /// were because they take no colour.
     Lights {
         area: String,
         on: bool,
         names: Vec<String>,
+        colour: Option<String>,
+        unable: Vec<String>,
     },
     Setpoint {
         zone: String,
@@ -210,8 +215,12 @@ pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> 
 pub fn plan_request(req: &Request, house: &House) -> Plan {
     match &req.intent {
         Intent::Lights {
-            on, names, room, ..
-        } => lights(req, *on, names, room, house),
+            on,
+            names,
+            room,
+            colour,
+            ..
+        } => lights(req, *on, *colour, names, room, house),
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
         Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
@@ -325,11 +334,34 @@ fn areas_of(lights: &[&EntityView], house: &House) -> Vec<String> {
         .collect()
 }
 
-fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &House) -> Plan {
+/// Whether a light takes a colour. Zigbee2MQTT lights advertise `xy` rather than `hs`; the hub
+/// sends the hue and saturation whatever the mode.
+fn takes_colour(light: &EntityView) -> bool {
+    ["hs", "xy", "rgb", "rgbw", "rgbww"]
+        .iter()
+        .any(|m| light.capabilities.color_modes.contains(*m))
+}
+
+fn lights(
+    req: &Request,
+    on: bool,
+    colour: Option<Colour>,
+    names: &[String],
+    room: &[String],
+    house: &House,
+) -> Plan {
     let mut trace = Trace {
-        intent: Some(if on { "lights_on" } else { "lights_off" }.into()),
+        intent: Some(
+            match (on, colour) {
+                (true, Some(_)) => "lights_colour",
+                (true, None) => "lights_on",
+                (false, _) => "lights_off",
+            }
+            .into(),
+        ),
         ..Default::default()
     };
+    let coloured = |l: &&EntityView| colour.is_none() || takes_colour(l);
     // Words before a linker that name no light but do name a room are the room
     // ("allume le salon" said with a linker after it).
     let (names, room) = if room.is_empty()
@@ -345,11 +377,21 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
     } else {
         (names, room)
     };
-    let candidates: Vec<&EntityView> = light_members(on, None, house)
+    let all_named: Vec<&EntityView> = light_members(on, None, house)
         .into_iter()
         .filter(|l| names.is_empty() || named(l, names))
         .collect();
-    let none = if names.is_empty() {
+    let candidates: Vec<&EntityView> = all_named.iter().copied().filter(coloured).collect();
+    let none = if colour.is_some() && !all_named.is_empty() {
+        match all_named.as_slice() {
+            _ if names.is_empty() => "Aucune lumière ne prend de couleur.".to_string(),
+            [one] => format!("« {} » ne prend pas de couleur.", one.name),
+            _ => format!(
+                "Aucune lumière « {} » ne prend de couleur.",
+                names.join(" ")
+            ),
+        }
+    } else if names.is_empty() {
         "Pas de lumière dans la maison.".to_string()
     } else {
         format!("Je ne trouve pas de lumière « {} ».", names.join(" "))
@@ -389,6 +431,7 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
     if chosen.is_empty() {
         let choices = members
             .iter()
+            .filter(|l| coloured(l))
             .take(MAX_CHOICES)
             .map(|l| {
                 let mut next = req.clone();
@@ -396,17 +439,33 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
                 next.lights = Some(vec![l.id.clone()]);
                 (l.name.clone(), next)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if choices.is_empty() {
+            return answer(
+                format!("Aucune lumière ne prend de couleur {}.", dans(&area_name)),
+                trace,
+            );
+        }
         return Plan::Ask {
             question: format!("Quelle lumière {} ?", de(&area_name)),
             choices,
             trace,
         };
     }
+    // A colour goes to the lights that take one; the others are left as they are.
+    let (chosen, unable): (Vec<&EntityView>, Vec<&EntityView>) =
+        chosen.into_iter().partition(coloured);
+    if chosen.is_empty() {
+        let reply = match unable.as_slice() {
+            [one] => format!("« {} » ne prend pas de couleur.", one.name),
+            _ => format!("Aucune lumière ne prend de couleur {}.", dans(&area_name)),
+        };
+        return answer(reply, trace);
+    }
     let command = if on {
         Command::TurnOn {
             brightness: None,
-            color: None,
+            color: colour.map(Colour::hs),
             effect: None,
         }
     } else {
@@ -425,6 +484,8 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
             area,
             on,
             names: chosen.iter().map(|l| l.name.clone()).collect(),
+            colour: colour.map(|c| c.name().to_string()),
+            unable: unable.iter().map(|l| l.name.clone()).collect(),
         },
         trace,
     }
@@ -1734,9 +1795,63 @@ mod tests {
             Done::Lights {
                 area: "salon".into(),
                 on: false,
-                names: vec!["Led".into()]
+                names: vec!["Led".into()],
+                colour: None,
+                unable: vec![],
             }
         );
+    }
+
+    #[test]
+    fn colour_goes_to_the_lights_that_take_one() {
+        let red = Command::TurnOn {
+            brightness: None,
+            color: Some(nidoo_core::model::Hs { h: 0.0, s: 100.0 }),
+            effect: None,
+        };
+        let plan = p("allume le salon en rouge");
+        assert_eq!(
+            lights_of(&plan),
+            vec![
+                ("light_lampe_table".to_string(), red.clone()),
+                ("light_led".to_string(), red.clone()),
+            ]
+        );
+        let Plan::Act { done, trace, .. } = &plan else {
+            unreachable!()
+        };
+        assert_eq!(trace.intent.as_deref(), Some("lights_colour"));
+        assert_eq!(
+            *done,
+            Done::Lights {
+                area: "salon".into(),
+                on: true,
+                names: vec!["Lampe table".into(), "Led".into()],
+                colour: Some("rouge".into()),
+                unable: vec!["Plafonnier".into(), "Ambiance TV".into()],
+            }
+        );
+        assert_eq!(
+            lights_of(&p("mets la led en rouge")),
+            vec![("light_led".to_string(), red)]
+        );
+    }
+
+    #[test]
+    fn colour_without_a_colour_light_answers() {
+        assert_eq!(
+            reply_of(&p("allume le plafonnier en bleu")),
+            "« Plafonnier » ne prend pas de couleur."
+        );
+        assert_eq!(
+            reply_of(&p("allume la chambre de Léa en bleu")),
+            "« Lampe » ne prend pas de couleur."
+        );
+        // No room said: only rooms with a colour light are possible.
+        assert!(matches!(
+            p("allume en vert"),
+            Plan::Act { done: Done::Lights { area, .. }, .. } if area == "salon"
+        ));
     }
 
     fn reply_of(plan: &Plan) -> String {
@@ -2348,6 +2463,7 @@ mod tests {
             all: false,
             names: vec!["salon".into()],
             room: vec![],
+            colour: None,
         });
         let plan = plan_request(&req, &h);
         assert_eq!(
