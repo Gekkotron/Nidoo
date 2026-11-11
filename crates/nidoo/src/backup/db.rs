@@ -348,6 +348,15 @@ pub async fn history_bytes(pool: &PgPool) -> Result<u64, sqlx::Error> {
     Ok(bytes.max(0) as u64)
 }
 
+/// The tables a backup carries and a restore may write, sorted by name.
+pub async fn exported_table_names(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    Ok(exported_tables(pool)
+        .await?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
+}
+
 /// The first exported table that holds a row, if any.
 pub async fn holds_history(pool: &PgPool) -> Result<Option<String>, sqlx::Error> {
     for (name, _) in exported_tables(pool).await? {
