@@ -62,6 +62,12 @@ const ROWS: &[(&str, Expect)] = &[
     ),
     ("éteins la led du salon", Lights(false, &["light_led"])),
     (
+        "allume le plafonnier en bleu",
+        Answer("« Plafonnier » ne prend pas de couleur."),
+    ),
+    ("éteins le salon en rouge", NotUnderstood),
+    ("mets le chauffage du salon en rouge", NotUnderstood),
+    (
         "allumme la lampe de la chambre de Léa",
         Lights(true, &["light_lampe_lea"]),
     ),

@@ -1,6 +1,8 @@
 //! The French word tables, folded to ASCII lowercase. Generic only: room and device names come
 //! from the house, never from here.
 
+use nidoo_core::model::Hs;
+
 /// What a known word means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Class {
@@ -352,6 +354,89 @@ const TABLE: &[(Class, &[&str])] = &[
     ),
 ];
 
+/// A light colour said after "en" ("allume la lampe en rouge"). The hues are the colour
+/// picker's swatches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Colour {
+    White,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Cyan,
+    Blue,
+    Purple,
+    Magenta,
+    Pink,
+}
+
+impl Colour {
+    /// The French name, as the reply says it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Colour::White => "blanc",
+            Colour::Red => "rouge",
+            Colour::Orange => "orange",
+            Colour::Yellow => "jaune",
+            Colour::Green => "vert",
+            Colour::Cyan => "cyan",
+            Colour::Blue => "bleu",
+            Colour::Purple => "violet",
+            Colour::Magenta => "magenta",
+            Colour::Pink => "rose",
+        }
+    }
+
+    /// The hue and saturation sent to the light.
+    pub fn hs(self) -> Hs {
+        let (h, s) = match self {
+            Colour::White => (0.0, 0.0),
+            Colour::Red => (0.0, 100.0),
+            Colour::Orange => (30.0, 100.0),
+            Colour::Yellow => (55.0, 100.0),
+            Colour::Green => (120.0, 100.0),
+            Colour::Cyan => (180.0, 100.0),
+            Colour::Blue => (225.0, 100.0),
+            Colour::Purple => (270.0, 100.0),
+            Colour::Magenta => (300.0, 100.0),
+            Colour::Pink => (335.0, 100.0),
+        };
+        Hs { h, s }
+    }
+}
+
+/// The colour words, folded, with every gender and number form.
+const COLOURS: &[(&[&str], Colour)] = &[
+    (&["blanc", "blanche", "blancs", "blanches"], Colour::White),
+    (&["rouge", "rouges"], Colour::Red),
+    (&["orange", "oranges"], Colour::Orange),
+    (&["jaune", "jaunes"], Colour::Yellow),
+    (&["vert", "verte", "verts", "vertes"], Colour::Green),
+    (&["cyan", "cyans", "turquoise", "turquoises"], Colour::Cyan),
+    (&["bleu", "bleue", "bleus", "bleues"], Colour::Blue),
+    (
+        &[
+            "violet",
+            "violette",
+            "violets",
+            "violettes",
+            "mauve",
+            "mauves",
+        ],
+        Colour::Purple,
+    ),
+    (&["magenta", "magentas"], Colour::Magenta),
+    (&["rose", "roses"], Colour::Pink),
+];
+
+/// The colour a folded word names, exact words only: a typo never picks a colour.
+pub fn colour_of(word: &str) -> Option<Colour> {
+    COLOURS
+        .iter()
+        .find(|(words, _)| words.contains(&word))
+        .map(|(_, c)| *c)
+}
+
 /// Words for a bedroom, which a room named after its person leaves out ("chambre de Léa" for a
 /// room named "Léa"). Kept out of the table: they still reach the room words.
 pub const BEDROOM: &[&str] = &["chambre", "chambres"];
@@ -480,6 +565,15 @@ mod tests {
         assert_eq!(class("salon"), None);
         // Exact entries beat typos: "montre" is not "monte".
         assert_eq!(class("montre"), Some(Class::Noise));
+    }
+
+    #[test]
+    fn colour_words_fold_every_form() {
+        assert_eq!(colour_of("bleue").map(Colour::name), Some("bleu"));
+        assert_eq!(colour_of("rouges").map(Colour::name), Some("rouge"));
+        assert_eq!(colour_of("blanche").map(|c| c.hs().s), Some(0.0));
+        assert_eq!(colour_of("rougee"), None);
+        assert_eq!(colour_of("salon"), None);
     }
 
     #[test]

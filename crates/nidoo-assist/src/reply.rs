@@ -180,7 +180,30 @@ pub fn agree<'a>(name: &str, masculine: &'a str, feminine: &'a str) -> &'a str {
 /// The reply after acting: what was done, what was already so, what did not answer.
 pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool) -> String {
     let text = match done {
-        Done::Lights { area, on, names } => lights(house.area_name(area), *on, names, results),
+        Done::Lights {
+            area,
+            on,
+            names,
+            colour,
+            unable,
+        } => {
+            let mut text = lights(
+                house.area_name(area),
+                *on,
+                colour.as_deref(),
+                names,
+                results,
+            );
+            match unable.as_slice() {
+                [] => {}
+                [one] => text.push_str(&format!(" « {one} » ne prend pas de couleur.")),
+                many => text.push_str(&format!(
+                    " Ne prennent pas de couleur : {}.",
+                    many.join(", ")
+                )),
+            }
+            text
+        }
         Done::Setpoint { zone, from, to } => setpoint(house.area_name(zone), *from, *to, results),
         Done::Covers {
             area,
@@ -323,13 +346,20 @@ fn feminine_light(word: &str) -> bool {
     )
 }
 
-fn lights(area: &str, on: bool, names: &[String], results: &[ActionResult]) -> String {
+fn lights(
+    area: &str,
+    on: bool,
+    colour: Option<&str>,
+    names: &[String],
+    results: &[ActionResult],
+) -> String {
     let n = names.len();
-    let (verb_m, verb_f) = if on {
-        ("allumé", "allumée")
-    } else {
-        ("éteint", "éteinte")
+    let (verb_m, verb_f) = match (on, colour) {
+        (true, Some(c)) => (format!("allumé en {c}"), format!("allumée en {c}")),
+        (true, None) => ("allumé".into(), "allumée".into()),
+        (false, _) => ("éteint".into(), "éteinte".into()),
     };
+    let (verb_m, verb_f) = (verb_m.as_str(), verb_f.as_str());
     let failed: Vec<(&str, &str)> = names
         .iter()
         .zip(results)
@@ -558,7 +588,40 @@ mod tests {
             area: "salon".into(),
             on,
             names: names.iter().map(|n| n.to_string()).collect(),
+            colour: None,
+            unable: vec![],
         }
+    }
+
+    #[test]
+    fn colour_reply_shapes() {
+        use ActionResult::{Ok, Skipped};
+        let coloured = |names: &[&str], unable: &[&str]| Done::Lights {
+            area: "salon".into(),
+            on: true,
+            names: names.iter().map(|n| n.to_string()).collect(),
+            colour: Some("rouge".into()),
+            unable: unable.iter().map(|n| n.to_string()).collect(),
+        };
+        assert_eq!(
+            said(&coloured(&["Led"], &[]), &[Ok]),
+            "Led allumée en rouge dans le Salon."
+        );
+        assert_eq!(
+            said(&coloured(&["Led"], &[]), &[Skipped]),
+            "Led déjà allumée en rouge dans le Salon."
+        );
+        assert_eq!(
+            said(
+                &coloured(&["Led", "Lampe table"], &["Plafonnier"]),
+                &[Ok, Ok]
+            ),
+            "Salon allumé en rouge (2 lumières). « Plafonnier » ne prend pas de couleur."
+        );
+        assert_eq!(
+            said(&coloured(&["Led"], &["Plafonnier", "Lampe"]), &[Ok]),
+            "Led allumée en rouge dans le Salon. Ne prennent pas de couleur : Plafonnier, Lampe."
+        );
     }
 
     fn covers_done(area: Option<&str>, open: bool, position: Option<u8>, names: &[&str]) -> Done {
