@@ -7,6 +7,7 @@ mod alarm_hub;
 mod ambiances;
 mod assist_db;
 mod assist_hub;
+mod backup_db;
 mod climate_hub;
 mod config;
 mod dashboards;
