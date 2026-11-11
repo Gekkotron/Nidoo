@@ -2063,6 +2063,66 @@ mod english {
         );
     }
 
+    /// The table of docs/users/assistant.md, both columns.
+    #[test]
+    fn the_documented_sentences_parse() {
+        let en = [
+            "turn on the kitchen lights",
+            "turn off the lamp in the office",
+            "turn everything off",
+            "turn the living room lights red",
+            "turn on the lamp in blue",
+            "set the bedroom to 19.5",
+            "turn up the heating in the office",
+            "turn the heat down a bit",
+            "what's the temperature in the kitchen?",
+            "how cold is it outside?",
+            "open the shutters to 30%",
+            "close all the blinds",
+            "turn off the TV",
+            "switch on the coffee plug",
+            "play Shape of You",
+            "pause",
+            "next song",
+            "turn the volume up",
+            "mute the kitchen",
+            "what's playing?",
+        ];
+        for s in en {
+            assert!(m(s).is_some(), "{s}");
+        }
+        let fr = [
+            "allume la lumière de la cuisine",
+            "éteins la lampe du bureau",
+            "éteins tout",
+            "passe le salon en rouge",
+            "allume la lampe en bleu",
+            "règle la chambre à 19,5",
+            "monte le chauffage du bureau",
+            "baisse un peu le chauffage",
+            "quelle température dans la cuisine ?",
+            "il fait combien dehors ?",
+            "ouvre les volets à 30 %",
+            "ferme tous les volets",
+            "éteins la télé",
+            "allume la prise café",
+            "joue Shape of You",
+            "pause",
+            "chanson suivante",
+            "monte le son",
+            "coupe le son de la cuisine",
+            "qu'est-ce qu'on écoute ?",
+        ];
+        for s in fr {
+            assert!(
+                super::play_by_name(s)
+                    .or_else(|| parse(&words(s)))
+                    .is_some(),
+                "{s}"
+            );
+        }
+    }
+
     #[test]
     fn play_by_name() {
         let query = |q: &str| media(MediaIntent::PlayMedia { query: q.into() });
