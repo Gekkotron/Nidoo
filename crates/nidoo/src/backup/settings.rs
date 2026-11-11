@@ -128,19 +128,36 @@ pub fn apply_input(old: &BackupSection, input: BackupInput) -> Result<BackupSect
     {
         return Err(SHORT_PASSWORD.into());
     }
-    let keep = input.keep.unwrap_or(7);
+    let defaults = BackupSection::default();
+    let keep = input.keep.unwrap_or(defaults.keep);
     if keep == 0 {
         return Err(NO_KEEP.into());
+    }
+    let host = input.ftp.host.trim().to_owned();
+    let port = input.ftp.port.unwrap_or(defaults.ftp.port);
+    if !host.is_empty() {
+        let old_address =
+            (!old.ftp.host.is_empty()).then(|| format!("{}:{}", old.ftp.host, old.ftp.port));
+        secret::require_for_new_address(
+            old_address.as_deref(),
+            &format!("{host}:{port}"),
+            &input.ftp.password,
+            old.ftp.password.is_some(),
+        )?;
     }
     let folder = input.ftp.folder.as_deref().map(str::trim).unwrap_or("");
     Ok(BackupSection {
         password: secret::apply(old.password.clone(), input.password),
         ftp: FtpSection {
-            host: input.ftp.host.trim().to_owned(),
-            port: input.ftp.port.unwrap_or(21),
+            host,
+            port,
             user: input.ftp.user.trim().to_owned(),
             password: secret::apply(old.ftp.password.clone(), input.ftp.password),
-            folder: if folder.is_empty() { "/" } else { folder }.to_owned(),
+            folder: if folder.is_empty() {
+                defaults.ftp.folder
+            } else {
+                folder.to_owned()
+            },
         },
         keep,
         notify_failure: input.notify_failure,
@@ -218,6 +235,37 @@ mod tests {
             },
             ..input()
         };
+        // Same address: Keep is fine. A new host or port needs the password again.
+        old.ftp.host = "nas.local".into();
+        let same = |password, host: &str, port| BackupInput {
+            ftp: FtpInput {
+                host: host.into(),
+                port: Some(port),
+                password,
+                ..FtpInput::default()
+            },
+            ..input()
+        };
+        assert!(apply_input(&old, same(Secret::Keep, "nas.local", 21)).is_ok());
+        let msg = "Enter the password for the new address";
+        assert_eq!(
+            apply_input(&old, same(Secret::Keep, "evil.lan", 21)).unwrap_err(),
+            msg
+        );
+        assert_eq!(
+            apply_input(&old, same(Secret::Keep, "nas.local", 2121)).unwrap_err(),
+            msg
+        );
+        assert!(apply_input(&old, same(Secret::Set("x".into()), "evil.lan", 21)).is_ok());
+        old.ftp.host.clear();
+        let kept = apply_input(&old, with(Secret::Keep));
+        assert_eq!(
+            kept.unwrap_err(),
+            msg,
+            "no stored host but a stored password"
+        );
+        old.ftp.host = "nas.local".into();
+        old.ftp.port = 2121;
         let kept = apply_input(&old, with(Secret::Keep)).unwrap();
         assert_eq!(kept.ftp.password.as_deref(), Some("ftp-pass"));
         assert_eq!(kept.ftp.host, "nas.local");

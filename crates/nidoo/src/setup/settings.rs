@@ -66,8 +66,8 @@ fn unprocessable(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message)
 }
 
-/// The sections the generic routes edit (and restart for). "system" (`Hub::set_system_notify`)
-/// and "mobile" (`save_live`) are stored without a restart, so they are not among them.
+/// The sections the generic routes edit (and restart for). "system" (`Hub::set_system_notify`),
+/// "mobile" and "backup" (`save_live`) are stored without a restart, so they are not among them.
 fn known(section: &str) -> bool {
     !matches!(section, "system" | "mobile" | "backup") && SECTION_KEYS.contains(&section)
 }

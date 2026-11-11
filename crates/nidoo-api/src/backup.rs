@@ -64,7 +64,7 @@ pub struct FtpView {
 
 /// The backup section in a `PUT`. A `PUT` replaces the whole section: a left-out `keep`,
 /// `port` or `folder` takes its default. Only the passwords follow `Secret`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BackupInput {
     #[serde(default)]
     pub password: Secret,
@@ -72,8 +72,23 @@ pub struct BackupInput {
     pub ftp: FtpInput,
     #[serde(default)]
     pub keep: Option<u32>,
-    #[serde(default)]
+    #[serde(default = "on")]
     pub notify_failure: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+impl Default for BackupInput {
+    fn default() -> Self {
+        Self {
+            password: Secret::default(),
+            ftp: FtpInput::default(),
+            keep: None,
+            notify_failure: true,
+        }
+    }
 }
 
 /// The FTP part of [`BackupInput`]. An empty `host` means FTP is not configured.
@@ -105,6 +120,14 @@ mod tests {
             serde_json::from_str::<BackupPart>("\"download\"").unwrap(),
             BackupPart::Download
         );
+    }
+
+    #[test]
+    fn backup_input_notify_failure_defaults_on() {
+        let input: BackupInput = serde_json::from_str("{}").unwrap();
+        assert!(input.notify_failure);
+        let off: BackupInput = serde_json::from_str(r#"{"notify_failure": false}"#).unwrap();
+        assert!(!off.notify_failure);
     }
 
     #[test]
