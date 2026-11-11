@@ -335,7 +335,7 @@ fn reason_en(english: &str) -> &'static str {
     let e = english.to_lowercase();
     let has = |needle: &str| e.contains(needle);
     if has("no state change") || has("no echo") {
-        "no answer from the device"
+        reply::NO_ANSWER_EN
     } else if has("groups disabled") {
         "groups are disabled"
     } else if has("no reachable member") {

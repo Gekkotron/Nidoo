@@ -9,7 +9,7 @@ use nidoo_core::flow::Lang;
 use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue, SwitchType};
 
 use crate::house::House;
-use crate::intent::{Change, Intent, MediaIntent, parse, play_by_name};
+use crate::intent::{Change, Intent, MediaIntent, parse_in, play_by_name_in};
 use crate::lexicon::Colour;
 use crate::reply::{
     cannot_in, dans, de, le, number, number_in, place, room_in, temp, temp_in, the,
@@ -202,7 +202,8 @@ pub fn plan(sentence: &str, house: &House) -> Plan {
 /// music and volume intents use that room.
 pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> Plan {
     let ws = words(sentence);
-    let mut plan = match play_by_name(sentence).or_else(|| parse(&ws)) {
+    let mut plan = match play_by_name_in(sentence, house.lang).or_else(|| parse_in(&ws, house.lang))
+    {
         Some(intent) => {
             let mut req = Request::new(intent);
             req.speaker_room = speaker_room.map(str::to_owned);
