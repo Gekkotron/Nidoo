@@ -4,6 +4,7 @@ pub mod alarm;
 pub mod alerts;
 pub mod ambiances;
 pub mod assist;
+pub mod backup;
 pub mod cli;
 pub mod climate;
 pub mod clock;
