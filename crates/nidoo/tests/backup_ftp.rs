@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use chrono::{DateTime, TimeZone, Utc};
 use common::ftp::ftp_server;
 use nidoo::backup::BackupError;
-use nidoo::backup::ftp::{FtpSettings, FtpStore};
+use nidoo::backup::ftp::{FtpSettings, FtpStore, Timeouts};
 use nidoo::backup::name::file_name;
 use nidoo_api::FtpStep;
 use tokio::io::AsyncReadExt;
@@ -255,4 +255,56 @@ async fn failed_upload_leaves_nothing_and_the_store_stays_usable() {
     assert_eq!(err, BackupError::Io("source broke".into()));
     assert!(names(dir.path()).is_empty(), "no backup and no .partial");
     assert!(store.list().await.unwrap().is_empty());
+}
+
+/// Accepts connections, says hello, then never answers again.
+async fn silent_server() -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        let mut held = Vec::new();
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let _ = sock.write_all(b"220 hello\r\n").await;
+            held.push(sock);
+        }
+    });
+    port
+}
+
+fn quick() -> Timeouts {
+    Timeouts {
+        connect: Duration::from_millis(300),
+        control: Duration::from_millis(300),
+        stall: Duration::from_millis(300),
+    }
+}
+
+#[tokio::test]
+async fn a_stalled_server_times_out_instead_of_hanging() {
+    let port = silent_server().await;
+    let overall = Duration::from_secs(5);
+
+    let err = tokio::time::timeout(
+        overall,
+        FtpStore::connect_with(&settings(port, "/"), quick()),
+    )
+    .await
+    .expect("connect returned")
+    .err()
+    .unwrap();
+    assert_eq!(err, BackupError::Unreachable("timed out".into()));
+
+    let checks = tokio::time::timeout(overall, FtpStore::probe_with(&settings(port, "/"), quick()))
+        .await
+        .expect("probe returned");
+    let seen: Vec<_> = checks.iter().map(|c| (c.step, c.ok)).collect();
+    assert_eq!(
+        seen,
+        vec![(FtpStep::Connect, true), (FtpStep::Login, false)]
+    );
+    assert_eq!(
+        checks[1].detail.as_deref(),
+        Some("can't reach the FTP server (timed out)")
+    );
 }
