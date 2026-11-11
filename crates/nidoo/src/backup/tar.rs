@@ -58,6 +58,11 @@ impl<R: AsyncRead + Unpin> TarReader<R> {
         Self { r }
     }
 
+    /// The reader, positioned after the last block read.
+    pub fn into_inner(self) -> R {
+        self.r
+    }
+
     /// The next entry, or `None` at the closing zero block. A stream that ends before it, a bad
     /// header checksum or an entry over [`MAX_ENTRY`] is an error.
     pub async fn next(&mut self) -> io::Result<Option<(String, Vec<u8>)>> {

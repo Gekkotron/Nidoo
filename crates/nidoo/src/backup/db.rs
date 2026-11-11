@@ -329,6 +329,25 @@ pub async fn fix_sequences(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// The on-disk size of the history, in bytes: every table of schema `public` but
+/// `_sqlx_migrations` and `settings`, with indexes and TOAST, plus TimescaleDB's chunks (which
+/// live in `_timescaledb_internal`, compressed ones included). An estimate of the work a backup
+/// does, not of the file it writes.
+pub async fn history_bytes(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let bytes: i64 = sqlx::query_scalar(
+        "SELECT coalesce(sum(pg_total_relation_size(c.oid)), 0)::bigint
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind = 'r'
+           AND (n.nspname = '_timescaledb_internal'
+                OR (n.nspname = 'public' AND NOT (c.relname::text = ANY($1))))",
+    )
+    .bind(SKIPPED.as_slice())
+    .fetch_one(pool)
+    .await?;
+    Ok(bytes.max(0) as u64)
+}
+
 /// The first exported table that holds a row, if any.
 pub async fn holds_history(pool: &PgPool) -> Result<Option<String>, sqlx::Error> {
     for (name, _) in exported_tables(pool).await? {

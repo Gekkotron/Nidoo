@@ -64,6 +64,19 @@ impl fmt::Debug for HubFile {
     }
 }
 
+/// The `hub.json` values a backup carries: the house's place and the hub's own HTTP and log
+/// settings. What ties the file to one machine (`mqtt`, `database_url`) and the setup's progress
+/// stay out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HubFields {
+    pub location: Option<Location>,
+    pub timezone: Option<String>,
+    pub http: HttpConfig,
+    pub log: LogConfig,
+    pub z2m_base: Option<String>,
+}
+
 /// Just the keys env vars may override, laid out like `Config` so figment paths match.
 #[derive(Serialize, Deserialize)]
 struct BootstrapView {
@@ -106,6 +119,31 @@ impl HubFile {
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         crate::setup::fs::write_private_atomic(&Self::path(dir), &json)
+    }
+
+    /// The values a backup carries.
+    pub fn fields(&self) -> HubFields {
+        HubFields {
+            location: self.location.clone(),
+            timezone: self.timezone.clone(),
+            http: self.http.clone(),
+            log: self.log.clone(),
+            z2m_base: self.z2m_base.clone(),
+        }
+    }
+
+    /// Takes a backup's values. `mqtt`, `database_url`, `step` and `finished` are left as they
+    /// are. A restored `location` also drops a city still waiting to be geocoded, which would
+    /// otherwise replace it.
+    pub fn apply_fields(&mut self, fields: HubFields) {
+        if fields.location.is_some() {
+            self.pending_city = None;
+        }
+        self.location = fields.location;
+        self.timezone = fields.timezone;
+        self.http = fields.http;
+        self.log = fields.log;
+        self.z2m_base = fields.z2m_base;
     }
 
     pub fn is_complete(&self) -> bool {
@@ -217,6 +255,52 @@ mod tests {
         assert!(f.is_complete());
         f.mqtt = None;
         assert!(!f.is_complete());
+    }
+
+    #[test]
+    fn apply_fields_keeps_the_machine_fields() {
+        let source = HubFile {
+            z2m_base: Some("z2m-source".into()),
+            timezone: Some("Europe/Berlin".into()),
+            http: HttpConfig {
+                bind: "0.0.0.0:9000".into(),
+            },
+            log: LogConfig {
+                level: "debug".into(),
+                json: true,
+            },
+            ..full()
+        };
+        let fields = source.fields();
+        assert_eq!(fields.z2m_base.as_deref(), Some("z2m-source"));
+        assert_eq!(fields.location, source.location);
+
+        let mut target = HubFile {
+            mqtt: Some(MqttConfig {
+                host: "192.0.2.9".into(),
+                ..MqttConfig::default()
+            }),
+            database_url: Some("postgres://u:other@h/target".into()),
+            step: SetupStep::Database,
+            finished: false,
+            pending_city: Some(("Lyon".into(), None)),
+            ..HubFile::default()
+        };
+        let machine = target.clone();
+        target.apply_fields(fields);
+
+        assert_eq!(target.mqtt, machine.mqtt);
+        assert_eq!(target.database_url, machine.database_url);
+        assert_eq!(target.step, machine.step);
+        assert_eq!(target.finished, machine.finished);
+        assert_eq!(target.location, source.location);
+        assert_eq!(target.timezone, source.timezone);
+        assert_eq!(target.http, source.http);
+        assert_eq!(target.log, source.log);
+        assert_eq!(target.z2m_base, source.z2m_base);
+        // The restored place wins over a city still waiting to be geocoded.
+        assert_eq!(target.pending_city, None);
+        assert_eq!(target.fields(), source.fields());
     }
 
     #[test]
