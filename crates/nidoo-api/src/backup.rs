@@ -16,6 +16,64 @@ pub enum BackupPart {
     Download,
 }
 
+/// Where a backup job is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupState {
+    Running,
+    Done,
+    Failed,
+    Cancelled,
+}
+
+/// Where a backup goes: the FTP server, or the browser that asked for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupDestination {
+    Ftp,
+    Download,
+}
+
+/// The running backup job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BackupProgress {
+    pub state: BackupState,
+    pub destination: BackupDestination,
+    pub part: BackupPart,
+    /// Bytes of the backup written so far, before compression.
+    pub bytes: u64,
+    /// Unix seconds.
+    pub started_at: i64,
+    pub file: String,
+    pub error: Option<String>,
+}
+
+/// The last backup that ended, whatever its outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LastBackup {
+    /// Unix seconds.
+    pub started_at: i64,
+    /// Unix seconds.
+    pub ended_at: i64,
+    pub destination: BackupDestination,
+    pub file: String,
+    /// Bytes of the file sent (all of it on success).
+    pub size: u64,
+    pub ok: bool,
+    pub error: Option<String>,
+    /// When the last successful backup ended, unix seconds; kept across failures.
+    pub last_ok_at: Option<i64>,
+}
+
+/// A finished FTP backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BackupDone {
+    pub file: String,
+    pub size: u64,
+    /// The FTP server it went to.
+    pub host: String,
+}
+
 /// One backup file found on the FTP server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RemoteBackup {
@@ -128,6 +186,29 @@ mod tests {
         assert!(input.notify_failure);
         let off: BackupInput = serde_json::from_str(r#"{"notify_failure": false}"#).unwrap();
         assert!(!off.notify_failure);
+    }
+
+    #[test]
+    fn last_backup_wire_shape() {
+        let last = LastBackup {
+            started_at: 10,
+            ended_at: 20,
+            destination: BackupDestination::Download,
+            file: "f".into(),
+            size: 3,
+            ok: false,
+            error: Some("cancelled".into()),
+            last_ok_at: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&last).unwrap(),
+            serde_json::json!({"started_at": 10, "ended_at": 20, "destination": "download",
+                "file": "f", "size": 3, "ok": false, "error": "cancelled", "last_ok_at": null})
+        );
+        assert_eq!(
+            serde_json::to_string(&BackupState::Cancelled).unwrap(),
+            "\"cancelled\""
+        );
     }
 
     #[test]

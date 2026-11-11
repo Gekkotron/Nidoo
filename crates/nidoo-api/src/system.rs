@@ -142,8 +142,10 @@ pub mod ids {
     pub const BROKER: &str = "system_broker";
     pub const ZIGBEE2MQTT: &str = "system_zigbee2mqtt";
     pub const DATABASE: &str = "system_database";
+    /// When the last successful backup ended.
+    pub const LAST_BACKUP: &str = "system_last_backup";
     /// Every system entity id.
-    pub const ALL: [&str; 15] = [
+    pub const ALL: [&str; 16] = [
         CPU,
         CPU_HUB,
         RAM_USED,
@@ -159,6 +161,7 @@ pub mod ids {
         BROKER,
         ZIGBEE2MQTT,
         DATABASE,
+        LAST_BACKUP,
     ];
 }
 

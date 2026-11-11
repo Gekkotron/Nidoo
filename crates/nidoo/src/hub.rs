@@ -341,6 +341,8 @@ pub struct Hub {
     spoken: broadcast::Sender<crate::sound::Spoken>,
     /// The setup context, set once at startup in Run mode; the settings MCP tools use it.
     pub(crate) setup: OnceLock<Arc<crate::setup::SetupCtx>>,
+    /// The one backup job slot.
+    pub(crate) backups: crate::backup::job::Backups,
 }
 
 impl Hub {
@@ -495,12 +497,18 @@ impl Hub {
             voice_asks: OnceLock::new(),
             spoken: broadcast::channel(64).0,
             setup: OnceLock::new(),
+            backups: crate::backup::job::Backups::new(cfg),
         })
     }
 
     /// Hands the recorder to the hub; the second call is a no-op.
     pub fn set_history(&self, history: Arc<History>) {
         let _ = self.history.set(history);
+    }
+
+    /// The broker backups read the retained documents from, instead of the hub's own (tests).
+    pub fn set_backup_broker(&self, broker: Arc<dyn crate::backup::retained::RetainedBroker>) {
+        self.backups.set_broker(broker);
     }
 
     /// Hands the setup context to the hub; the second call is a no-op.
