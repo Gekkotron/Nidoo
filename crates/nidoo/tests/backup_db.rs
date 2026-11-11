@@ -7,7 +7,7 @@
 use crate::common;
 
 use bytes::Bytes;
-use common::db::fresh_db;
+use common::db::{compress_chunks, fresh_db};
 use futures_util::TryStreamExt;
 use nidoo::backup::db::{
     CopyIn, Snapshot, TableInfo, fix_sequences, holds_history, map_columns, migration_level,
@@ -204,12 +204,7 @@ async fn compressed_chunks_export() {
     let pa = a.db.pool();
     let pb = b.db.pool();
     fill(pa, &a.db).await;
-    let compressed: Vec<String> =
-        sqlx::query_scalar("SELECT compress_chunk(c)::text FROM show_chunks('entity_state') c")
-            .fetch_all(pa)
-            .await
-            .unwrap();
-    assert!(!compressed.is_empty());
+    assert!(compress_chunks(pa, "entity_state").await > 0);
     let before = contents(pa, "entity_state").await;
 
     let data = export(pa).await;
@@ -279,6 +274,37 @@ async fn sequences_move_past_restored_rows() {
     b.drop_db().await;
 }
 
+/// A serial table the backup had no rows for keeps its fresh counter: the next row gets 1.
+#[tokio::test]
+async fn sequences_of_empty_tables_start_at_one() {
+    let Some(a) = fresh_db().await else { return };
+    let Some(b) = fresh_db().await else { return };
+    let pa = a.db.pool();
+    let pb = b.db.pool();
+    a.db.insert(&Rows {
+        values: vec![value_row("sensor.a", T0, 1.0)],
+        availability: vec![],
+    })
+    .await
+    .unwrap();
+    import(pb, &export(pa).await).await;
+    fix_sequences(pb).await.unwrap();
+
+    exec(
+        pb,
+        "INSERT INTO assist_turn (id, at, client, text, simulate, outcome, reply, trace)
+         VALUES ('first', '2025-02-01T00:00:00Z', 'c', 't', false, 'done', 'r', '{}')",
+    )
+    .await;
+    let seq: i64 = sqlx::query_scalar("SELECT seq FROM assist_turn WHERE id = 'first'")
+        .fetch_one(pb)
+        .await
+        .unwrap();
+    assert_eq!(seq, 1);
+    a.drop_db().await;
+    b.drop_db().await;
+}
+
 #[tokio::test]
 async fn snapshot_ignores_later_writes() {
     let Some(a) = fresh_db().await else { return };
@@ -339,11 +365,7 @@ async fn holds_history_and_wipe() {
     );
 
     fill(pa, &a.db).await;
-    exec(
-        pa,
-        "SELECT compress_chunk(c) FROM show_chunks('entity_state') c",
-    )
-    .await;
+    compress_chunks(pa, "entity_state").await;
     wipe(pa).await.unwrap();
     assert_eq!(holds_history(pa).await.unwrap(), None);
     let settings: i64 = sqlx::query_scalar("SELECT count(*) FROM settings")
