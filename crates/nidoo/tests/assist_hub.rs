@@ -345,6 +345,69 @@ async fn typed_oui_answers_confirm() {
     );
 }
 
+fn english(s: &str) -> AssistRequest {
+    AssistRequest {
+        lang: Some(nidoo_core::flow::Lang::En),
+        ..text(s)
+    }
+}
+
+#[tokio::test]
+async fn english_sentences_get_english_replies() {
+    let (hub, rx) = house().await;
+    let log = echo(rx, Arc::clone(&hub));
+    let turn = hub
+        .assist(english("turn on the lights in the salon"))
+        .await
+        .unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert!(log.lock().unwrap().iter().any(|t| t == LED_COMMAND_TOPIC));
+    assert!(turn.reply.contains("Salon"), "{}", turn.reply);
+    assert!(!turn.reply.contains("allum"), "{}", turn.reply);
+
+    // A question asked in English is answered with a typed "yes".
+    let turn = hub.assist(english("set the salon to 25")).await.unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::Confirming, "{turn:?}");
+    let turn = hub.assist(english("yes please")).await.unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(
+        overrides(&hub, "living")[0].setpoint,
+        Some(Setpoint::Temp(25.0))
+    );
+
+    let turn = hub.assist(english("open the curtains")).await.unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::NotUnderstood);
+    assert_eq!(turn.reply, "I didn't understand.");
+
+    let turn = hub
+        .assist(AssistRequest {
+            simulate: true,
+            ..english("turn off the salon")
+        })
+        .await
+        .unwrap();
+    assert!(turn.reply.starts_with("Simulation: "), "{}", turn.reply);
+}
+
+#[tokio::test]
+async fn an_english_choice_is_tapped_and_said_in_english() {
+    let (hub, _rx) = house().await;
+    let turn = hub.assist(english("set the heating to 20")).await.unwrap();
+    assert_eq!(turn.outcome, OutcomeKind::Asked, "{turn:?}");
+    assert!(turn.reply.contains(" or "), "{}", turn.reply);
+    let turn = hub
+        .assist(AssistRequest {
+            lang: Some(nidoo_core::flow::Lang::En),
+            ..reply(PendingReply::No {
+                pending: pending_id(&turn),
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(turn.text, "No");
+    assert_eq!(turn.reply, "OK, I won't do anything.");
+}
+
 #[tokio::test]
 async fn choice_reply_acts() {
     let (hub, _rx) = house().await;
