@@ -3428,6 +3428,7 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "unftp-core",
  "unftp-sbe-fs",
  "url",
  "xn",
