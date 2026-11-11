@@ -13,10 +13,12 @@ use bytes::Bytes;
 use common::db::fresh_db;
 use nidoo::backup::BackupError;
 use nidoo::backup::archive::{
-    Manifest, Sources, check_compatible, read_backup, read_manifest, write_backup,
+    Manifest, Sources, TableManifest, check_compatible, read_backup, read_manifest, write_backup,
 };
+use nidoo::backup::crypt::seal;
 use nidoo::backup::db::{holds_history, migration_level};
 use nidoo::backup::retained::{Layout, MemBroker};
+use nidoo::backup::tar::TarWriter;
 use nidoo::config::{Config, HttpConfig, LogConfig};
 use nidoo::setup::hub_file::HubFields;
 use nidoo_api::{BackupPart, Location};
@@ -24,6 +26,7 @@ use nidoo_core::history::{Rows, ValueRow};
 use nidoo_core::model::StateValue;
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio::io::AsyncWriteExt;
 
 const PASSWORD: &str = "correct horse battery";
 
@@ -186,12 +189,7 @@ async fn backup_then_restore_brings_everything_back() {
     assert_eq!(restored.hub, hub_fields());
     assert_eq!(restored.settings, settings_rows(pa).await);
     assert_eq!(settings_rows(pb).await, settings_rows(pa).await);
-    assert_eq!(
-        restored.settings["home"],
-        json!({"name": "Maison"}),
-        "{:?}",
-        restored.settings
-    );
+    assert_eq!(restored.settings["home"], json!({"name": "Maison"}));
     for table in manifest.tables.keys() {
         assert_eq!(
             contents(pb, table).await,
@@ -314,23 +312,95 @@ async fn newer_backup_is_refused() {
     b.drop_db().await;
 }
 
+/// The file spans many age chunks and `entity_state` two tar entries, so a cut at 90 % falls
+/// inside the second one: the settings, topics and `climate_decision` are already written, and the
+/// `entity_state` copy is under way when the cut is found.
 #[tokio::test]
 async fn truncated_file_fails() {
     let Some(a) = fresh_db().await else { return };
-    fill(a.db.pool(), &a.db).await;
-    let (file, _) = backup(a.db.pool(), &source_broker()).await;
-    let cut = &file[..file.len() * 7 / 10];
-
-    let Some(b) = fresh_db().await else { return };
-    let result = read_backup(
-        cut,
-        PASSWORD,
-        b.db.pool(),
-        &MemBroker::default(),
-        &|_, _| {},
+    let pa = a.db.pool();
+    fill(pa, &a.db).await;
+    // About 13 MB of COPY text that zstd can't shrink much.
+    exec(
+        pa,
+        "INSERT INTO entity_state (time, entity_id, num, value)
+         SELECT '2025-02-01T00:00:00Z'::timestamptz + g * interval '1 second', 'sensor.noise',
+                random(), to_jsonb(md5(random()::text))
+         FROM generate_series(1, 150000) g",
     )
     .await;
-    assert!(result.is_err(), "a file cut at 70 % restored");
+    let (file, _) = backup(pa, &source_broker()).await;
+    assert!(file.len() > 10 * (64 * 1024 + 16), "{}", file.len());
+    let cut = &file[..file.len() * 9 / 10];
+
+    let Some(b) = fresh_db().await else { return };
+    let pb = b.db.pool();
+    let target = MemBroker::default();
+    let err = read_backup(cut, PASSWORD, pb, &target, &|_, _| {})
+        .await
+        .expect_err("a file cut at 90 % restored");
+    assert!(matches!(err, BackupError::Corrupt(_)), "{err:?}");
+    // It got as far as writing: clearing up is the restore job's.
+    assert!(!settings_rows(pb).await.is_empty());
+    assert_eq!(broker_docs(&target).len(), 3);
+    // The copy cut short left no rows behind.
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM entity_state")
+        .fetch_one(pb)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
     a.drop_db().await;
+    b.drop_db().await;
+}
+
+/// A manifest may only name tables a backup carries: `settings` travels as its own entry.
+#[tokio::test]
+async fn manifest_tables_must_be_exported() {
+    let Some(b) = fresh_db().await else { return };
+    let pb = b.db.pool();
+    let manifest = Manifest {
+        format: 1,
+        nidoo_version: "0.0.0".into(),
+        migration: migration_level(pb).await.unwrap(),
+        created_at: "2026-11-11T00:00:00Z".into(),
+        host: "nas.local".into(),
+        tables: [(
+            "settings".to_owned(),
+            TableManifest {
+                columns: vec!["key".into(), "value".into()],
+                rows: 1,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        retained: 0,
+        flows: 0,
+        dashboards: 0,
+        history_bytes: 0,
+    };
+    let mut file = Vec::new();
+    let mut tw = TarWriter::new(seal(&mut file, PASSWORD));
+    for (path, data) in [
+        ("manifest.json", serde_json::to_vec(&manifest).unwrap()),
+        ("hub.json", b"{}".to_vec()),
+        ("settings.json", b"{}".to_vec()),
+        ("retained/000001.json", b"[]".to_vec()),
+        ("db/settings/000001.copy", b"mobile\t{}\n".to_vec()),
+        ("end.json", br#"{"tables": {"settings": 1}}"#.to_vec()),
+    ] {
+        tw.entry(path, &data).await.unwrap();
+    }
+    tw.finish().await.unwrap().shutdown().await.unwrap();
+
+    let target = MemBroker::default();
+    let err = read_backup(&file[..], PASSWORD, pb, &target, &|_, _| {})
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(
+        err,
+        BackupError::Corrupt("table settings can't be restored".into())
+    );
+    assert_untouched(pb, &target).await;
     b.drop_db().await;
 }

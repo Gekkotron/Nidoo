@@ -23,8 +23,15 @@ impl<W: AsyncWrite + Unpin> TarWriter<W> {
         Self { w }
     }
 
-    /// Append one regular file (mode 0600, modified now).
+    /// Append one regular file (mode 0600, modified now). An entry over [`MAX_ENTRY`] is refused
+    /// before anything is written: the reader would refuse it.
     pub async fn entry(&mut self, path: &str, data: &[u8]) -> io::Result<()> {
+        if data.len() > MAX_ENTRY {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("tar entry {path} is over {MAX_ENTRY} bytes"),
+            ));
+        }
         let mut header = tar::Header::new_gnu();
         header.set_path(path)?;
         header.set_size(data.len() as u64);
@@ -161,8 +168,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversized_entry_is_refused_by_the_writer() {
+        let mut out = Vec::new();
+        let mut w = TarWriter::new(&mut out);
+        let err = w.entry("x", &vec![0u8; MAX_ENTRY + 1]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(out.is_empty(), "nothing written");
+    }
+
+    #[tokio::test]
     async fn oversized_entry_is_an_error() {
-        let bytes = write_all(&[("x", vec![0u8; MAX_ENTRY + 1])]).await;
+        // Written by the `tar` crate, which has no such limit.
+        let mut b = tar::Builder::new(Vec::new());
+        let data = vec![0u8; MAX_ENTRY + 1];
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o600);
+        header.set_cksum();
+        b.append_data(&mut header, "x", &data[..]).unwrap();
+        let bytes = b.into_inner().unwrap();
         let mut r = TarReader::new(&bytes[..]);
         assert!(r.next().await.is_err());
     }

@@ -4,12 +4,15 @@
 //! - `manifest.json`: the [`Manifest`], first so a restore can check a file from its head;
 //! - `hub.json`: the [`HubFields`];
 //! - `settings.json`: the `settings` rows, `key → value`;
-//! - `retained.json`: `[{"topic", "payload_b64"}]`, the backed-up retained documents;
+//! - `retained/<n>.json`: the backed-up retained documents, as compact JSON arrays of
+//!   `{"topic", "payload_b64"}` of at most [`MAX_ENTRY`] bytes each (`n` from `000001`; there is
+//!   always a first one, `[]` when there are no documents);
 //! - `db/<table>/<n>.copy`: each table's `COPY` text, cut into entries of at most
 //!   [`MAX_ENTRY`] bytes (`n` from `000001`); a table without rows has none;
 //! - `end.json`: `{"tables": {name: rows}}`, the rows each table's entries hold.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::io;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,7 +43,6 @@ pub const FORMAT: u32 = 1;
 const MANIFEST: &str = "manifest.json";
 const HUB: &str = "hub.json";
 const SETTINGS: &str = "settings.json";
-const RETAINED: &str = "retained.json";
 const END: &str = "end.json";
 
 const BLOCK: usize = 512;
@@ -81,11 +83,22 @@ pub struct Sources<'a> {
 }
 
 /// What a restore hands back for its caller to apply: `hub.json` is the caller's to write.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Restored {
     pub hub: HubFields,
     pub settings: BTreeMap<String, Value>,
     pub manifest: Manifest,
+}
+
+/// Settings rows may hold secrets: only their keys are shown.
+impl fmt::Debug for Restored {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Restored")
+            .field("hub", &self.hub)
+            .field("settings", &self.settings.keys().collect::<Vec<_>>())
+            .field("manifest", &self.manifest)
+            .finish()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -208,15 +221,10 @@ async fn write_archive<W: AsyncWrite + Unpin + Send, S: TableSource>(
     w.json(BackupPart::Settings, MANIFEST, c.manifest).await?;
     w.json(BackupPart::Settings, HUB, c.hub).await?;
     w.json(BackupPart::Settings, SETTINGS, c.settings).await?;
-    let docs: Vec<RetainedDoc> = c
-        .docs
-        .iter()
-        .map(|(topic, payload)| RetainedDoc {
-            topic: topic.clone(),
-            payload_b64: STANDARD.encode(payload),
-        })
-        .collect();
-    w.json(BackupPart::Retained, RETAINED, &docs).await?;
+    for (i, data) in retained_entries(c.docs, MAX_ENTRY)?.iter().enumerate() {
+        w.entry(BackupPart::Retained, &retained_path(i as u32 + 1), data)
+            .await?;
+    }
     let mut end = BTreeMap::new();
     for t in c.tables {
         let rows = w.table(&t.name, source.copy_out(t)).await?;
@@ -303,12 +311,58 @@ impl<W: AsyncWrite + Unpin> ArchiveWriter<'_, W> {
     }
 }
 
+/// The retained documents as compact JSON arrays of at most `limit` bytes each; at least one
+/// (`[]` when there are none). A document too large for an entry of its own fails the backup.
+fn retained_entries(docs: &[(String, Bytes)], limit: usize) -> Result<Vec<Vec<u8>>, BackupError> {
+    let mut entries = Vec::new();
+    let mut buf = b"[".to_vec();
+    for (topic, payload) in docs {
+        let doc = serde_json::to_vec(&RetainedDoc {
+            topic: topic.clone(),
+            payload_b64: STANDARD.encode(payload),
+        })
+        .map_err(|e| BackupError::Io(e.to_string()))?;
+        if doc.len() + 2 > limit {
+            return Err(BackupError::Broker(format!(
+                "retained topic {topic} is too large to back up ({} bytes)",
+                payload.len()
+            )));
+        }
+        // The array so far, a comma, this document and the closing bracket.
+        if buf.len() > 1 && buf.len() + doc.len() + 2 > limit {
+            buf.push(b']');
+            entries.push(std::mem::replace(&mut buf, b"[".to_vec()));
+        }
+        if buf.len() > 1 {
+            buf.push(b',');
+        }
+        buf.extend_from_slice(&doc);
+    }
+    buf.push(b']');
+    entries.push(buf);
+    Ok(entries)
+}
+
 fn write_error(e: io::Error) -> BackupError {
     BackupError::Io(e.to_string())
 }
 
 fn copy_path(table: &str, n: u32) -> String {
     format!("db/{table}/{n:06}.copy")
+}
+
+fn retained_path(n: u32) -> String {
+    format!("retained/{n:06}.json")
+}
+
+/// `n` of a `retained/<n>.json` entry.
+fn parse_retained_path(path: &str) -> Option<u32> {
+    let n: u32 = path
+        .strip_prefix("retained/")?
+        .strip_suffix(".json")?
+        .parse()
+        .ok()?;
+    (retained_path(n) == path).then_some(n)
 }
 
 /// `(table, n)` of a `db/<table>/<n>.copy` entry.
@@ -420,17 +474,24 @@ struct DbTarget<'a> {
 }
 
 impl<'a> DbTarget<'a> {
-    /// Maps every table's columns before anything is written.
+    /// Maps every table's columns before anything is written. A table that still exists but is
+    /// not one a backup carries (`settings`, `_sqlx_migrations`, a view) is refused.
     async fn prepare(
         pool: &'a PgPool,
         broker: &'a dyn RetainedBroker,
         m: &Manifest,
     ) -> Result<DbTarget<'a>, BackupError> {
+        let exported = db::exported_table_names(pool).await?;
         let mut columns = BTreeMap::new();
         for (name, t) in &m.tables {
             let target = db::target_columns(pool, name).await?;
             let mapped =
                 db::map_columns(name, &t.columns, &target).map_err(BackupError::Database)?;
+            if !exported.contains(name) {
+                return Err(BackupError::Corrupt(format!(
+                    "table {name} can't be restored"
+                )));
+            }
             columns.insert(name.clone(), mapped);
         }
         Ok(DbTarget {
@@ -507,37 +568,51 @@ async fn restore_into<R: AsyncRead + Unpin, T: Target>(
     target.settings(&settings).await?;
     report(BackupPart::Settings);
 
-    let docs: Vec<RetainedDoc> = parse(RETAINED, &expect(&mut tar, RETAINED).await?)?;
-    let docs = docs
-        .into_iter()
-        .map(|d| {
-            let payload = STANDARD
-                .decode(&d.payload_b64)
-                .map_err(|_| BackupError::Corrupt(format!("{RETAINED} is not valid")))?;
-            Ok((d.topic, Bytes::from(payload)))
-        })
-        .filter(|d| !matches!(d, Ok((_, p)) if p.is_empty()))
-        .collect::<Result<Vec<_>, BackupError>>()?;
+    // `retained/000001.json` onwards; the entry after them is the first table's (or the end).
+    let mut docs = Vec::new();
+    let mut last = 0u32;
+    let after_retained = loop {
+        let (path, data) = next(&mut tar).await?.ok_or_else(ends_early)?;
+        match parse_retained_path(&path) {
+            Some(n) if n == last + 1 => {
+                last = n;
+                let entry: Vec<RetainedDoc> = parse(&path, &data)?;
+                for d in entry {
+                    let payload = STANDARD
+                        .decode(&d.payload_b64)
+                        .map_err(|_| BackupError::Corrupt(format!("{path} is not valid")))?;
+                    if !payload.is_empty() {
+                        docs.push((d.topic, Bytes::from(payload)));
+                    }
+                }
+            }
+            None if last > 0 => break (path, data),
+            _ => return Err(unexpected(&path)),
+        }
+    };
     target.retained(docs).await?;
     report(BackupPart::Retained);
 
     let mut restored: BTreeMap<String, u64> = BTreeMap::new();
     // The table being copied and the number of its last entry.
     let mut current: Option<(String, u32)> = None;
+    let mut pending = Some(after_retained);
     let end = loop {
-        let (path, data) = next(&mut tar).await?.ok_or_else(ends_early)?;
+        let (path, data) = match pending.take() {
+            Some(entry) => entry,
+            None => next(&mut tar).await?.ok_or_else(ends_early)?,
+        };
         if path == END {
             break data;
         }
-        let unexpected = || BackupError::Corrupt(format!("unexpected entry {path}"));
-        let (table, n) = parse_copy_path(&path).ok_or_else(unexpected)?;
+        let (table, n) = parse_copy_path(&path).ok_or_else(|| unexpected(&path))?;
         let continues = matches!(&current, Some((t, last)) if t == table && n == last + 1);
         if !continues {
             if let Some((t, _)) = current.take() {
                 end_table(target, manifest, &mut restored, t).await?;
             }
             if n != 1 || restored.contains_key(table) || !manifest.tables.contains_key(table) {
-                return Err(unexpected());
+                return Err(unexpected(&path));
             }
             target.begin_table(table).await?;
         }
@@ -587,6 +662,10 @@ async fn end_table<T: Target>(
     }
     restored.insert(name, rows);
     Ok(())
+}
+
+fn unexpected(path: &str) -> BackupError {
+    BackupError::Corrupt(format!("unexpected entry {path}"))
 }
 
 fn rows_differ(table: &str, rows: u64, expected: u64) -> BackupError {
@@ -957,7 +1036,7 @@ mod tests {
                 "manifest.json",
                 "hub.json",
                 "settings.json",
-                "retained.json",
+                "retained/000001.json",
                 "db/big/000001.copy",
                 "db/big/000002.copy",
                 "db/small/000001.copy",
@@ -1147,18 +1226,111 @@ mod tests {
         assert_eq!(err, ends_early());
     }
 
+    /// A sealed file holding exactly `entries`.
+    async fn file_with(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut tw = TarWriter::new(crypt::seal(&mut out, PASSWORD));
+        for (path, data) in entries {
+            tw.entry(path, data).await.unwrap();
+        }
+        tw.finish().await.unwrap().shutdown().await.unwrap();
+        out
+    }
+
+    #[test]
+    fn retained_entries_stay_under_the_limit() {
+        assert_eq!(retained_entries(&[], 100).unwrap(), [b"[]".to_vec()]);
+
+        let docs: Vec<(String, Bytes)> = (0..20)
+            .map(|i| {
+                (
+                    format!("nidoo/automation/f{i}"),
+                    Bytes::from(vec![i as u8; 40]),
+                )
+            })
+            .collect();
+        let limit = 300;
+        let entries = retained_entries(&docs, limit).unwrap();
+        assert!(entries.len() > 3, "{}", entries.len());
+        let mut back = Vec::new();
+        for e in &entries {
+            assert!(e.len() <= limit, "{} > {limit}", e.len());
+            let part: Vec<RetainedDoc> = serde_json::from_slice(e).unwrap();
+            assert!(!part.is_empty());
+            back.extend(part.into_iter().map(|d| {
+                (
+                    d.topic,
+                    Bytes::from(STANDARD.decode(d.payload_b64).unwrap()),
+                )
+            }));
+        }
+        assert_eq!(back, docs);
+        // Compact JSON, no pretty-printing.
+        assert!(!entries[0].contains(&b'\n'));
+
+        let huge = [(
+            "nidoo/ui/dashboards/big".to_owned(),
+            Bytes::from(vec![0u8; 400]),
+        )];
+        let err = retained_entries(&huge, limit).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "broker: retained topic nidoo/ui/dashboards/big is too large to back up (400 bytes)"
+        );
+    }
+
+    #[tokio::test]
+    async fn retained_entries_are_read_in_order() {
+        let mut s = sample(10);
+        s.manifest.tables = BTreeMap::new();
+        let head = vec![
+            (MANIFEST, serde_json::to_vec(&s.manifest).unwrap()),
+            (HUB, b"{}".to_vec()),
+            (SETTINGS, b"{}".to_vec()),
+        ];
+        let doc = |topic: &str| json!([{"topic": topic, "payload_b64": "e30="}]).to_string();
+        let end = (END, br#"{"tables": {}}"#.to_vec());
+
+        let mut two = head.clone();
+        two.push(("retained/000001.json", doc("a/1").into_bytes()));
+        two.push(("retained/000002.json", doc("a/2").into_bytes()));
+        two.push(end.clone());
+        let (.., rec) = restore(&file_with(&two).await).await.unwrap();
+        let topics: Vec<&str> = rec.docs.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(topics, ["a/1", "a/2"]);
+        assert_eq!(rec.docs[0].1, Bytes::from("{}"));
+
+        let mut gap = head.clone();
+        gap.push(("retained/000001.json", doc("a/1").into_bytes()));
+        gap.push(("retained/000003.json", doc("a/3").into_bytes()));
+        gap.push(end.clone());
+        let err = restore(&file_with(&gap).await).await.err().unwrap();
+        assert_eq!(err, unexpected("retained/000003.json"));
+
+        let mut none = head;
+        none.push(end);
+        let err = restore(&file_with(&none).await).await.err().unwrap();
+        assert_eq!(err, unexpected(END));
+    }
+
+    #[test]
+    fn restored_debug_shows_only_setting_keys() {
+        let s = sample(10);
+        let restored = Restored {
+            hub: s.hub,
+            settings: [("backup".to_owned(), json!({"password": "hunter2-secret"}))]
+                .into_iter()
+                .collect(),
+            manifest: s.manifest,
+        };
+        let text = format!("{restored:?}");
+        assert!(text.contains("\"backup\""), "{text}");
+        assert!(!text.contains("hunter2-secret"), "{text}");
+    }
+
     /// A tar ending without `end.json`, or with fewer rows than the manifest says, is damaged.
     #[tokio::test]
     async fn missing_rows_are_found() {
-        async fn file_with(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
-            let mut out = Vec::new();
-            let mut tw = TarWriter::new(crypt::seal(&mut out, PASSWORD));
-            for (path, data) in entries {
-                tw.entry(path, data).await.unwrap();
-            }
-            tw.finish().await.unwrap().shutdown().await.unwrap();
-            out
-        }
         let mut s = sample(10);
         s.manifest.tables = [(
             "t".to_owned(),
@@ -1173,7 +1345,7 @@ mod tests {
             (MANIFEST, serde_json::to_vec(&s.manifest).unwrap()),
             (HUB, b"{}".to_vec()),
             (SETTINGS, b"{}".to_vec()),
-            (RETAINED, b"[]".to_vec()),
+            ("retained/000001.json", b"[]".to_vec()),
         ];
         let end = (END, br#"{"tables": {"t": 12}}"#.to_vec());
 
