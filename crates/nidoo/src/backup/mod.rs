@@ -7,6 +7,7 @@ pub mod db;
 pub mod ftp;
 pub mod name;
 pub mod retained;
+pub mod settings;
 pub mod tar;
 
 /// Why a backup or restore stopped. The text is shown to the user as is; none carries a secret.

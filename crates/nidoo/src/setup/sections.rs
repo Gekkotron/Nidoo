@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::backup::settings::BackupSection;
 use crate::config::{
     AlarmConfig, AutomationConfig, ClimateConfig, CommandsConfig, Config, FrigateConfig,
     GroupsConfig, HistoryConfig, SolcastConfig, SystemConfig, TopicsConfig, WatchdogConfig,
@@ -15,8 +16,8 @@ use crate::setup::hub_file::HubFile;
 use crate::setup::mobile::MobileSection;
 
 /// The row keys, in the order the sections are listed.
-pub const SECTION_KEYS: [&str; 8] = [
-    "weather", "solcast", "frigate", "push", "climate", "advanced", "system", "mobile",
+pub const SECTION_KEYS: [&str; 9] = [
+    "weather", "solcast", "frigate", "push", "climate", "advanced", "system", "mobile", "backup",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -157,6 +158,7 @@ pub struct Sections {
     pub advanced: AdvancedSection,
     pub system: SystemSection,
     pub mobile: MobileSection,
+    pub backup: BackupSection,
 }
 
 impl Sections {
@@ -174,6 +176,7 @@ impl Sections {
             ("advanced", row(&self.advanced)),
             ("system", row(&self.system)),
             ("mobile", row(&self.mobile)),
+            ("backup", row(&self.backup)),
         ]
     }
 
@@ -200,6 +203,7 @@ impl Sections {
                 "advanced" => out.advanced = parse(&key, value),
                 "system" => out.system = parse(&key, value),
                 "mobile" => out.mobile = parse(&key, value),
+                "backup" => out.backup = parse(&key, value),
                 _ => {}
             }
         }
@@ -300,6 +304,8 @@ mod tests {
         s.advanced.history_buffer_rows = 5;
         s.advanced.topics.z2m_base = "z2m-x".into();
         s.system.notify = true;
+        s.backup.password = Some("backup-pass".into());
+        s.backup.ftp.host = "nas.local".into();
         s
     }
 
@@ -342,6 +348,16 @@ mod tests {
     fn row_keys_match_section_keys() {
         let keys: Vec<_> = Sections::default().to_rows().iter().map(|r| r.0).collect();
         assert_eq!(keys, SECTION_KEYS);
+    }
+
+    #[test]
+    fn sections_rows_include_backup() {
+        assert_eq!(SECTION_KEYS.last(), Some(&"backup"));
+        let rows = owned(sample().to_rows());
+        assert!(rows.iter().any(|(k, _)| k == "backup"));
+        let back = Sections::from_rows(rows);
+        assert_eq!(back.backup.ftp.host, "nas.local");
+        assert_eq!(back.backup.password.as_deref(), Some("backup-pass"));
     }
 
     #[test]

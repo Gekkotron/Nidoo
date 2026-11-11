@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use crate::backup;
 use crate::config::FrigateConfig;
 use crate::setup::SetupCtx;
 use crate::setup::routes::{RESTART_DELAY, RouteState, error};
@@ -68,7 +69,7 @@ fn unprocessable(message: &str) -> ApiError {
 /// The sections the generic routes edit (and restart for). "system" (`Hub::set_system_notify`)
 /// and "mobile" (`save_live`) are stored without a restart, so they are not among them.
 fn known(section: &str) -> bool {
-    !matches!(section, "system" | "mobile") && SECTION_KEYS.contains(&section)
+    !matches!(section, "system" | "mobile" | "backup") && SECTION_KEYS.contains(&section)
 }
 
 /// The project id a service-account key JSON names. The JSON and any parse error stay unlogged.
@@ -137,6 +138,12 @@ pub async fn read_section(ctx: &SetupCtx, section: &str) -> Result<Value, ApiErr
     if section == "mobile" {
         let held = ctx.sections.lock().await;
         return Ok(serde_json::to_value(mobile::view(&held.mobile)).expect("a view serializes"));
+    }
+    if section == "backup" {
+        let held = ctx.sections.lock().await;
+        return Ok(
+            serde_json::to_value(backup::settings::view(&held.backup)).expect("a view serializes")
+        );
     }
     if !known(section) {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown section"));
@@ -289,6 +296,9 @@ pub async fn write_section(
     if section == "mobile" {
         return write_mobile(ctx, body).await;
     }
+    if section == "backup" {
+        return write_backup(ctx, body).await;
+    }
     if !known(section) {
         return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown section"));
     }
@@ -356,6 +366,26 @@ async fn write_mobile(ctx: &Arc<SetupCtx>, body: Value) -> Result<Value, ApiErro
         .await
         .map_err(|why| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, why))?;
     Ok(serde_json::to_value(mobile::view(&saved.mobile)).expect("a view serializes"))
+}
+
+/// `backup` is stored live like `mobile`: the job reads it from the live sections.
+async fn write_backup(ctx: &Arc<SetupCtx>, body: Value) -> Result<Value, ApiError> {
+    if ctx.restarting.load(Ordering::SeqCst) {
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "restarting"));
+    }
+    if ctx.mode != Mode::Run {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "finish MQTT and database setup first",
+        ));
+    }
+    let input: nidoo_api::BackupInput = parse(body, "backup")?;
+    let stored = ctx.sections.lock().await.backup.clone();
+    let next = backup::settings::apply_input(&stored, input).map_err(|m| unprocessable(&m))?;
+    let saved = save_live(ctx, "backup", |s| s.backup = next)
+        .await
+        .map_err(|why| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, why))?;
+    Ok(serde_json::to_value(backup::settings::view(&saved.backup)).expect("a view serializes"))
 }
 
 async fn put_section(
