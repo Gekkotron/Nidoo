@@ -37,6 +37,15 @@ impl Fixture {
             stale_after_min: self.stale_after_min,
             range: self.range,
             now: self.now,
+            lang: nidoo_core::flow::Lang::Fr,
+        }
+    }
+
+    /// The house, sentences and replies in English.
+    pub fn house_en(&self) -> House<'_> {
+        House {
+            lang: nidoo_core::flow::Lang::En,
+            ..self.house()
         }
     }
 

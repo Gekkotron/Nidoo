@@ -142,6 +142,7 @@ fn text(s: &str) -> AssistRequest {
         text: Some(s.into()),
         reply: None,
         simulate: false,
+        lang: None,
     }
 }
 
@@ -151,6 +152,7 @@ fn reply(r: PendingReply) -> AssistRequest {
         text: None,
         reply: Some(r),
         simulate: false,
+        lang: None,
     }
 }
 
@@ -445,6 +447,7 @@ async fn empty_request_is_rejected() {
         text: None,
         reply: None,
         simulate: false,
+        lang: None,
     };
     assert!(matches!(
         hub.assist(empty).await,

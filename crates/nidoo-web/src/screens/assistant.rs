@@ -506,6 +506,7 @@ pub fn AssistantScreen() -> impl IntoView {
             text: Some(sentence),
             reply: None,
             simulate: simulate.get_untracked(),
+            lang: None,
         });
     };
     let answer = move |reply: PendingReply| {
@@ -518,6 +519,7 @@ pub fn AssistantScreen() -> impl IntoView {
             text: None,
             reply: Some(reply),
             simulate: simulate.get_untracked(),
+            lang: None,
         });
     };
 
