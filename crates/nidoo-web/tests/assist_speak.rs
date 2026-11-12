@@ -1,7 +1,9 @@
 #![cfg(target_arch = "wasm32")]
-//! The Assistant page reads its replies aloud with the hub's speech: the header's speaker
-//! switch (on by default, kept per browser), a reply spoken as it arrives, and ▶ on each reply.
+//! The Assistant page reads its replies aloud with the hub's speech, in the page's language: the
+//! header's speaker switch (on by default, kept per browser), a reply spoken as it arrives, and
+//! ▶ on each reply.
 
+use nidoo_web::i18n::Lang;
 use serde_json::{Value, json};
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
@@ -65,7 +67,7 @@ fn spoken(stub: &FetchStub) -> Vec<Value> {
 #[wasm_bindgen_test]
 async fn a_new_reply_is_spoken() {
     let stub = speaking_hub();
-    let m = mount();
+    let m = mount_in(Lang::Fr);
     let switch = wait_for(&m.host, ".assist__speak").await;
     assert_eq!(
         switch.get_attribute("aria-pressed").as_deref(),
@@ -77,6 +79,26 @@ async fn a_new_reply_is_spoken() {
     assert_eq!(
         spoken(&stub),
         vec![json!({ "text": "Salon allumé.", "language": "fr", "voice": null })]
+    );
+}
+
+#[wasm_bindgen_test]
+async fn an_english_page_speaks_its_reply_in_english() {
+    let stub = speaking_hub();
+    stub.reply(
+        "POST",
+        "/api/v1/assist",
+        200,
+        &turn("t1", "acted", "Living room on.", Value::Null).to_string(),
+    );
+    let m = mount();
+    wait_for(&m.host, ".assist__speak").await;
+    send(&m.host, "turn on the living room");
+    wait_for(&m.host, ".assist__reply").await;
+    settle().await;
+    assert_eq!(
+        spoken(&stub),
+        vec![json!({ "text": "Living room on.", "language": "en", "voice": null })]
     );
 }
 
@@ -102,7 +124,7 @@ async fn the_switch_turns_speech_off_and_is_remembered() {
 async fn play_speaks_that_reply_even_with_speech_off() {
     let stub = speaking_hub();
     storage().set_item(SPEAK_KEY, "0").unwrap();
-    let m = mount();
+    let m = mount_in(Lang::Fr);
     wait_for(&m.host, ".assist__speak").await;
     send(&m.host, "allume le salon");
     wait_for(&m.host, ".assist__play").await.click();
@@ -162,8 +184,8 @@ async fn the_header_tools_sit_together_after_the_hint() {
 }
 
 #[wasm_bindgen_test]
-async fn a_hub_without_french_does_not_read_replies() {
-    // Replies are French: a hub that speaks only English offers no switch.
+async fn a_hub_without_the_page_language_does_not_read_replies() {
+    // A French page's replies are French: a hub that speaks only English offers no switch.
     let _ = storage().remove_item(SPEAK_KEY);
     let _ = storage().remove_item("nidoo.assist.cleared");
     let stub = FetchStub::install();
@@ -182,7 +204,7 @@ async fn a_hub_without_french_does_not_read_replies() {
         200,
         &turn("t1", "acted", "Salon allumé.", Value::Null).to_string(),
     );
-    let m = mount();
+    let m = mount_in(Lang::Fr);
     wait_for(&m.host, ".assist__input").await;
     send(&m.host, "allume le salon");
     wait_for(&m.host, ".assist__reply").await;
