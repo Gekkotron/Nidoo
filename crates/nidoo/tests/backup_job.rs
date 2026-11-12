@@ -772,7 +772,12 @@ async fn cancelled_run_keeps_the_backup() {
         step_nodes(run) == ["go"]
     })
     .await;
-    assert_eq!(r.current().await.0, StatusCode::OK, "the job runs");
+    // The `go` step is recorded before `bk` launches the job: poll until it runs.
+    let until = tokio::time::Instant::now() + Duration::from_secs(5);
+    while r.current().await.0 != StatusCode::OK {
+        assert!(tokio::time::Instant::now() < until, "the job never started");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     r.hub
         .set_flow_enabled("nightly", false)
