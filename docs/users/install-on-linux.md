@@ -53,7 +53,7 @@ Everything the stack writes lives in `./data/` next to `compose.yml`:
 | `data/timescaledb/` | The database files. |
 | `data/system-heartbeat.json` | The hub's heartbeat, refreshed every minute, and the note of a clean stop. It tells the next start whether the last stop was clean; see [System health](system-health.md#clean-and-unexpected-stops). |
 
-Back up `./data/`, and keep `data/bundled.json`: without it `tools/update.sh` rebuilds only the hub, so you would have to use `tools/update.sh --all`. If it is lost, the database password is still in `data/bundled/db-password` and in the database URL of `data/hub.json`, but `init` refuses to write a new password for a database that already exists.
+For your settings, flows and history, use the hub's own [backup](backup.md), which also restores on a new machine from the setup wizard. Also keep a copy of `./data/`, and keep `data/bundled.json`: without it `tools/update.sh` rebuilds only the hub, so you would have to use `tools/update.sh --all`. If it is lost, the database password is still in `data/bundled/db-password` and in the database URL of `data/hub.json`, but `init` refuses to write a new password for a database that already exists.
 
 ## Point Zigbee2MQTT at the bundled broker
 

@@ -15,13 +15,15 @@ Two places, split by what the hub needs before it can reach anything:
 | Where | What it holds |
 | --- | --- |
 | `data/hub.json` | The bootstrap settings: the MQTT connection, the database URL, the home location, the HTTP bind address, the log level, the wizard's progress and a "setup finished" flag. The hub writes it, one wizard step at a time, with mode `0600`. You do not edit it, except for the rare field with no screen (below). |
-| The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate`, `advanced` and `mobile`. Secrets are stored in the same rows. |
+| The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate`, `advanced`, `mobile` and `backup`. Secrets are stored in the same rows. |
 | `data/settings-cache.json` | A copy of the settings the hub last read, mode `0600`. If the database is down when the hub starts, it starts from this copy with a warning, so the house keeps running. |
 | `data/bundled.json` | Written by the compose `init` service (`nidoo init-bundled`): the credentials of the Mosquitto and TimescaleDB that come with Nidoo, `mqtt_user`, `mqtt_password`, `db_user`, `db_password` and `db_name`, mode `0600`. The wizard reads it to pre-fill the MQTT and Database steps. It is not used once those steps are saved. |
 
+`data/backup-last.json` holds the record of the last backup (see [Backup](#backup)).
+
 The documents the hub keeps on the broker (home settings, alarm, climate schedules, flows, groups, dashboards, ambiances) are not part of this: they are edited on their own screens and routes.
 
-You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. The exception is `mobile`, which is stored without a restart. A value it could not start with is refused with the reason, and nothing is saved.
+You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. The exceptions are `mobile` and `backup`, which are stored without a restart. A value it could not start with is refused with the reason, and nothing is saved.
 
 The folder is `./data` by default. `nidoo --data <dir>` (or `NIDOO_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`.
 
@@ -190,6 +192,25 @@ The remote gateway the Android app uses away from home, carried by the phone set
 | `gateway_key` | none | The gateway key (a secret): 64 hex characters. A read shows `{"set": bool}` and `gateway_ready`, which is true when both fields are set. |
 
 `GET /api/v1/setup/mobile-code` returns `{"payload": "<json>"}`, the `v:1` JSON the phone reads from a QR code. It is built from the broker in `hub.json`, the `mobile` section and the `Host` of the request (a broker on `localhost` is replaced by that host, so the phone can reach it). It answers 409 outside Run mode or before the MQTT step is saved. The code holds secrets: the broker login and the gateway key. Show it only to someone you trust, and do not share a screenshot of it. The hub never logs it.
+
+## Backup
+
+Where and how the hub backs up. Read with `GET /api/v1/settings/backup`, change with `PUT /api/v1/settings/backup` ([HTTP API](http-api.md#setup-and-settings)); the Settings page is **Settings → Backup**. Like `mobile`, saving it does not restart the hub: the next backup reads the new values. A `PUT` replaces the whole section. See [Backup and restore](../users/backup.md).
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `password` | none | The backup password (a secret): at least 8 characters. Backups, FTP and download alike, need it. It cannot be removed once set. A read shows `{"set": bool}`. |
+| `ftp.host` | empty | The FTP server. Empty means FTP is not configured. |
+| `ftp.port` | `21` | The FTP port. Plain FTP, passive mode. |
+| `ftp.user` | empty | The FTP login. |
+| `ftp.password` | none | The FTP password (a secret). A read shows `{"set": bool}`. Changing the host or port needs it sent again. |
+| `ftp.folder` | `/` | The remote folder; an empty value is `/`. |
+| `keep` | `7` | How many backups stay on the server, at least 1. The oldest beyond it are deleted after a good backup. |
+| `notify_failure` | `true` | Send a push when an FTP backup fails. Independent of the system notifications switch. |
+
+Both passwords are write-only, as in [Secrets](#secrets): a string sets one, `null` clears the FTP one, and leaving it out, `""` or `{"set": true}` keeps it. The backup password can be replaced but not cleared. They are stored in the `settings` table like the other sections and carried by a backup, which is encrypted.
+
+The last backup's record is `data/backup-last.json` (mode `0600`), so it survives a database that is down. The time limit of a run is 2 hours for **Back up now**, and `timeout_minutes` for the [`backup.run`](flow-nodes.md#backuprun) card.
 
 ## Advanced
 

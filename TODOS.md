@@ -57,3 +57,10 @@ What `nidoo-sound` does not support yet (see Supported features in `crates/nidoo
 - [ ] Automatic room detection for flows — suggest a flow's `area` from its trigger and action entities instead of leaving it unassigned; today the room is set by hand only.
 - [ ] Android app support for a flow's `area` — the app does not read or write it yet; the hub and web UI do.
 - [ ] Android app: localise `hub.restarted_unexpectedly` and the `service.unreachable` / `service.reachable_again` texts for the new services `broker`, `zigbee2mqtt` and `database` (the hub sends the keys with their arguments; see [System health](docs/users/system-health.md)).
+
+## Backup and restore v1 (branch feat/backup, 2026-11-11)
+
+Spec: `docs/superpowers/specs/2026-11-11-backup-design.md`. User docs: `docs/users/backup.md`. Each item below is its own brainstorm.
+
+- [ ] **P2** More destinations: SFTP, FTPS, SMB, S3-compatible storage, a folder on the hub host. Each is a new way to send, list and fetch a file, not a new format.
+- [ ] **P3** MCP tools `run_backup` and `get_last_backup`.

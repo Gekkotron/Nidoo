@@ -88,8 +88,9 @@ Each figure is an entity on a device called **Nidoo hub**, in the diagnostic sec
 | `system_broker` | Broker | connectivity: on when up |
 | `system_zigbee2mqtt` | Zigbee2MQTT | connectivity: on when up |
 | `system_database` | Database | connectivity: on when up |
+| `system_last_backup` | Last backup | timestamp of the last successful [backup](backup.md) |
 
-A sensor that cannot be measured is marked unavailable rather than reading an old value. The temperature sensor is not published at all when the machine has none.
+A sensor that cannot be measured is marked unavailable rather than reading an old value. `system_last_backup` is unavailable until the first successful backup, and keeps its time when a later backup fails. The temperature sensor is not published at all when the machine has none.
 
 In a flow, a service's connectivity sensor works like a [network](network-presence.md) sensor: a **When** card on `system_database` with the value off fires when the database goes down, and the value is `false` in JSON.
 

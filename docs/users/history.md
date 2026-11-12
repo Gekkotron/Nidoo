@@ -1,7 +1,7 @@
 ---
 title: History
 sidebar_position: 11
-description: Record every entity state change in TimescaleDB, connect it in the setup wizard or Settings, query it and back it up with pg_dump.
+description: Record every entity state change in TimescaleDB, connect it in the setup wizard or Settings, query it and back it up.
 ---
 
 The hub records every entity state change (and availability change) in TimescaleDB for years, so the web UI and MCP can answer "what did this sensor read" and "how much energy today". The database is a required step of the setup wizard, because the hub keeps its settings there too: the Docker install starts a TimescaleDB for you and pre-fills the step. To point the hub at another one, use **Settings → Database** (host, port, database, user, password) and **Test connection**, which also prepares the tables. The password is write-only, and changing the host or port needs it entered again. Saving restarts the hub. See the [Settings reference](../reference/configuration.md#database-and-broker).
@@ -24,8 +24,4 @@ Nothing is deleted by age, except the [system health](system-health.md) sensors 
 
 ## Backup
 
-Back up with `pg_dump` from any client that can reach the database:
-
-```sh
-pg_dump -h <host> -p <port> -U <db-user> -Fc <db-name> > history-$(date +%F).dump
-```
+The history is part of the hub's backup, with your settings and flows. See [Backup and restore](backup.md).

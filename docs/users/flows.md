@@ -52,6 +52,7 @@ The parameters of each node are in [Flow nodes](../reference/flow-nodes.md).
   - `ask` asks a question out loud and branches on the answer (see [Ask a question](#ask-a-question)).
   - `flow.enable` enables or disables a flow, its own by default.
   - `flow.label` picks a label in a choice, or turns every flow carrying a label on or off (see [Labels and choices](#labels-and-choices)).
+  - `backup.run` (the **Back up** card) backs the hub up to the FTP server and waits until it ends, with an `ok` and a `failed` output (see [Backup and restore](backup.md#a-nightly-backup-with-a-flow)).
 - **Waits** pause the run:
   - `delay` waits for `for`, for example `90s`, `5m` or `1h30m`. With an optional `up_to` it waits a random time between the two.
 
