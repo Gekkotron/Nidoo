@@ -374,10 +374,8 @@ pub fn bounds(flow: &Flow, pos: &BTreeMap<String, Pt>) -> Rect {
 /// `failed` evenly down the card, as a switch.
 pub fn out_anchor(kind: &NodeKind, at: Pt, port: Option<&str>) -> Pt {
     let down = match (kind, port) {
-        (NodeKind::If(_), Some("true"))
-        | (NodeKind::TimeBetween(_), Some("in")) => 0.3,
-        (NodeKind::If(_), Some("false"))
-        | (NodeKind::TimeBetween(_), Some("out")) => 0.7,
+        (NodeKind::If(_), Some("true")) | (NodeKind::TimeBetween(_), Some("in")) => 0.3,
+        (NodeKind::If(_), Some("false")) | (NodeKind::TimeBetween(_), Some("out")) => 0.7,
         (NodeKind::Switch(_) | NodeKind::Ask(_) | NodeKind::BackupRun(_), Some(port)) => {
             let ports = kind.ports();
             ports

@@ -1066,15 +1066,20 @@ async fn restored_z2m_routes_show_download_and_delete() {
     let r = rig(None, mem(vec![]), |_| {}).await;
     let (info, download, delete) = (
         r.url("/backup/restored-z2m/info"),
-        r.url("/backup/restored-z2m"),
+        r.url("/backup/restored-z2m/download"),
         r.url("/backup/restored-z2m"),
     );
+    let client = reqwest::Client::new();
+    let ask = |password: Option<&str>| {
+        let body = password.map_or(json!({}), |p| json!({ "password": p }));
+        client.post(&download).json(&body).send()
+    };
     assert_eq!(
         reqwest::get(&info).await.unwrap().status(),
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        reqwest::get(&download).await.unwrap().status(),
+        ask(Some(PASSWORD)).await.unwrap().status(),
         StatusCode::NOT_FOUND
     );
 
@@ -1086,7 +1091,20 @@ async fn restored_z2m_routes_show_download_and_delete() {
     assert_eq!(body["bytes"], zip.len());
     assert!(body["saved_at"].as_i64().unwrap() > 1_600_000_000, "{body}");
 
-    let resp = reqwest::get(&download).await.unwrap();
+    // The zip holds the network key: a wrong or missing password gets nothing.
+    assert_eq!(ask(None).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let resp = ask(Some("not-the-password")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert!(!resp.text().await.unwrap().contains("PK-zigbee"));
+    // The old GET route is gone.
+    assert_ne!(
+        reqwest::get(r.url("/backup/restored-z2m"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let resp = ask(Some(PASSWORD)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.headers()["content-type"], "application/zip");
     assert_eq!(
@@ -1095,7 +1113,6 @@ async fn restored_z2m_routes_show_download_and_delete() {
     );
     assert_eq!(resp.bytes().await.unwrap().as_ref(), zip);
 
-    let client = reqwest::Client::new();
     let resp = client.delete(&delete).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     assert!(
@@ -1111,4 +1128,17 @@ async fn restored_z2m_routes_show_download_and_delete() {
     // Deleting what is already gone is fine.
     let resp = client.delete(&delete).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn restored_z2m_download_needs_a_stored_password() {
+    let r = rig(None, mem(vec![]), |s| s.password = None).await;
+    nidoo::backup::restore::save_restored_z2m(&r.ctx.data_dir, b"PK-zip").unwrap();
+    let resp = reqwest::Client::new()
+        .post(r.url("/backup/restored-z2m/download"))
+        .json(&json!({ "password": "anything" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
 }

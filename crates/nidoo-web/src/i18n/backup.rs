@@ -59,6 +59,9 @@ pub enum BackupText {
     OutcomePartial,
     Download,
     Delete,
+    RestoredPassword,
+    Confirm,
+    WrongPassword,
     RestoredZ2mTitle,
     RestoredZ2mHint,
 }
@@ -119,6 +122,9 @@ impl BackupText {
         BackupText::OutcomePartial,
         BackupText::Download,
         BackupText::Delete,
+        BackupText::RestoredPassword,
+        BackupText::Confirm,
+        BackupText::WrongPassword,
         BackupText::RestoredZ2mTitle,
         BackupText::RestoredZ2mHint,
     ];
@@ -206,6 +212,9 @@ pub fn backup_text(lang: Lang, k: BackupText) -> &'static str {
         OutcomePartial => ("Partial", "Partielle"),
         Download => ("Download", "Télécharger"),
         Delete => ("Delete", "Supprimer"),
+        RestoredPassword => ("Backup password", "Mot de passe de la sauvegarde"),
+        Confirm => ("Confirm", "Confirmer"),
+        WrongPassword => ("Wrong password", "Mot de passe incorrect"),
         RestoredZ2mTitle => (
             "Zigbee2MQTT data from the restored backup",
             "Données Zigbee2MQTT de la sauvegarde restaurée",
@@ -249,7 +258,9 @@ mod tests {
             | PartDownload | LastTitle | LastNone | LastDate | LastDestination | DestinationFtp
             | DestinationDownload | LastFile | LastSize | LastOutcome | OutcomeOk
             | OutcomeFailed | IncludeZ2m | IncludeZ2mHelp | OutcomePartial | Download | Delete
-            | RestoredZ2mTitle | RestoredZ2mHint => true,
+            | RestoredZ2mTitle | RestoredZ2mHint | RestoredPassword | Confirm | WrongPassword => {
+                true
+            }
         }
     }
 

@@ -492,6 +492,12 @@ impl Hub {
         Some(self.setup.get()?.data_dir.clone())
     }
 
+    /// The stored backup password, if there is one and a setup context.
+    pub async fn stored_backup_password(&self) -> Option<String> {
+        let ctx = self.setup.get()?;
+        ctx.sections.lock().await.backup.password.clone()
+    }
+
     /// Tries the FTP server step by step: the stored settings, or `input` with its kept
     /// password taken from the stored ones. An input the section would refuse (a new address
     /// with the password kept) fails the first step with the reason.

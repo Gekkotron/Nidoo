@@ -10,8 +10,10 @@ use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use nidoo_api::{BackupProgress, FtpCheck, FtpInput};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::api::HttpError;
 use crate::backup::BackupError;
@@ -30,7 +32,8 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/backup/runs", post(start))
         .route("/backup/current", get(current).delete(cancel))
         .route("/backup/download", get(download))
-        .route("/backup/restored-z2m", get(restored_z2m).delete(delete_z2m))
+        .route("/backup/restored-z2m", delete(delete_z2m))
+        .route("/backup/restored-z2m/download", post(restored_z2m))
         .route("/backup/restored-z2m/info", get(restored_z2m_info))
 }
 
@@ -117,7 +120,38 @@ async fn restored_z2m_info(
     read_info(&dir).map(Json).ok_or_else(not_found)
 }
 
-async fn restored_z2m(State(hub): State<Arc<Hub>>) -> Result<Response, HttpError> {
+#[derive(Deserialize)]
+struct PasswordBody {
+    #[serde(default)]
+    password: String,
+}
+
+/// Whether `given` is `stored`, compared in constant time (over the digests, so the length
+/// does not leak either).
+fn password_matches(stored: &str, given: &str) -> bool {
+    let a = Sha256::digest(stored.as_bytes());
+    let b = Sha256::digest(given.as_bytes());
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
+/// The restored zip holds the Zigbee network key: it is served only to whoever gives the
+/// backup password. The password and the zip are never logged.
+async fn restored_z2m(State(hub): State<Arc<Hub>>, body: Bytes) -> Result<Response, HttpError> {
+    let given: PasswordBody = serde_json::from_slice(&body).unwrap_or(PasswordBody {
+        password: String::new(),
+    });
+    let Some(stored) = hub.stored_backup_password().await else {
+        return Err(HttpError::new(
+            StatusCode::CONFLICT,
+            "no backup password set",
+        ));
+    };
+    if !password_matches(&stored, &given.password) {
+        return Err(HttpError::new(StatusCode::FORBIDDEN, "Wrong password"));
+    }
     let dir = hub.data_dir().ok_or_else(not_found)?;
     let bytes = match tokio::fs::read(dir.join(RESTORED_Z2M_FILE)).await {
         Ok(bytes) => bytes,
@@ -148,4 +182,17 @@ async fn delete_z2m(State(hub): State<Arc<Hub>>) -> Result<StatusCode, HttpError
             .map_err(|e| HttpError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::password_matches;
+
+    #[test]
+    fn the_password_must_match_exactly() {
+        assert!(password_matches("s3cret", "s3cret"));
+        assert!(!password_matches("s3cret", "s3cre"));
+        assert!(!password_matches("s3cret", ""));
+        assert!(!password_matches("s3cret", "S3cret"));
+    }
 }

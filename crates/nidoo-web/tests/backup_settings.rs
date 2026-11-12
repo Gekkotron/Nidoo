@@ -406,9 +406,10 @@ async fn a_browser_download_shows_its_partial_warning_when_it_ends() {
     wait_for(&m.host, ".backup__download", 1).await;
     settle().await;
     // The click must not really start a browser download in the test page.
-    let stop = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
-        |e: web_sys::Event| e.prevent_default(),
-    );
+    let stop =
+        wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(|e: web_sys::Event| {
+            e.prevent_default()
+        });
     m.host
         .add_event_listener_with_callback("click", stop.as_ref().unchecked_ref())
         .unwrap();
@@ -492,12 +493,25 @@ async fn the_restored_z2m_card_offers_download_and_delete() {
     let m = mount("/settings/backup");
     wait_for(&m.host, ".backup__z2m-restored", 1).await;
     assert!(text(&m.host, ".backup__z2m-restored").contains("2 MB"));
-    assert_eq!(
-        one(&m.host, ".backup__z2m-download")
-            .get_attribute("href")
-            .as_deref(),
-        Some("/api/v1/backup/restored-z2m")
+    // The download asks for the backup password first.
+    assert!(all(&m.host, "#backup-z2m-password").is_empty());
+    one(&m.host, ".backup__z2m-download").click();
+    wait_for(&m.host, "#backup-z2m-password", 1).await;
+    stub.reply(
+        "POST",
+        "/api/v1/backup/restored-z2m/download",
+        403,
+        &json!({"error": "Wrong password"}).to_string(),
     );
+    type_into(&m.host, "#backup-z2m-password", "nope");
+    settle().await;
+    one(&m.host, ".backup__z2m-confirm").click();
+    wait_for(&m.host, ".backup__z2m-error", 1).await;
+    assert_eq!(text(&m.host, ".backup__z2m-error"), "Wrong password");
+    let post = stub.wait_for("POST").await.expect("a POST");
+    assert_eq!(post.url, "/api/v1/backup/restored-z2m/download");
+    let body: Value = serde_json::from_str(&post.body).unwrap();
+    assert_eq!(body["password"], "nope");
     one(&m.host, ".backup__z2m-delete").click();
     stub.wait_for("DELETE").await.expect("a DELETE");
     wait_for(&m.host, ".backup__z2m-restored", 0).await;

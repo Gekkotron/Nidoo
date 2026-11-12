@@ -115,8 +115,8 @@ A partial night is the one the warning exists for. Once Zigbee2MQTT is back onli
 
 After a restore, the Zigbee2MQTT data is kept on the hub, not restored into Zigbee2MQTT. Nidoo does not restore Zigbee2MQTT by itself: you put the data back by hand, while Zigbee2MQTT is stopped.
 
-1. Restore Nidoo from the backup (see [Restore on a new machine](#restore-on-a-new-machine)). The restore summary says "Includes Zigbee2MQTT data (`<size>`). You can download it from Settings → Backup once restored."
-2. Open **Settings → Backup**. The card **Zigbee2MQTT data from the restored backup** shows the size and two buttons: **Download** (the file is named `zigbee2mqtt-backup.zip`) and **Delete**.
+1. Restore Nidoo from the backup (see [Restore on a new machine](#restore-on-a-new-machine)). The restore summary says "Includes Zigbee2MQTT data (`<size>`). You can download it from Settings → Backup once restored. To bring your Zigbee network back, put the Zigbee2MQTT data into its folder before starting it — see the backup guide."
+2. Open **Settings → Backup**. The card **Zigbee2MQTT data from the restored backup** shows the size and two buttons: **Download** and **Delete**. **Download** asks for your backup password (the zip holds your Zigbee network key); type it and press **Confirm**, and the browser saves `zigbee2mqtt-backup.zip`. A wrong password shows "Wrong password" and nothing is sent.
 3. Stop Zigbee2MQTT.
 4. Unzip `zigbee2mqtt-backup.zip` into Zigbee2MQTT's data folder, replacing the files there. That is the folder mounted as `/app/data` in Docker, or the `data/` folder of a bare-metal install.
 5. Start Zigbee2MQTT. Its devices come back without pairing again.

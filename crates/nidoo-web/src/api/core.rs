@@ -42,7 +42,7 @@ async fn send(request: Result<Request, gloo_net::Error>) -> Result<Response, Api
 }
 
 /// The error for a reply with a status of 400 and up.
-async fn reject(response: Response) -> ApiError {
+pub(crate) async fn reject(response: Response) -> ApiError {
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     decode_error(status, &body)

@@ -12,7 +12,7 @@ use nidoo_api::{
     FtpInput, FtpStep, LastBackup, RestoredZ2m, Secret,
 };
 
-use crate::api::backup::{self as api, DOWNLOAD_PATH, RESTORED_Z2M_PATH};
+use crate::api::backup::{self as api, DOWNLOAD_PATH, RestoredDownloadError};
 use crate::i18n::format::{date_time, local_date_time};
 use crate::i18n::{BackupText, backup_text, saved_without_z2m, use_backup_text, use_lang};
 use crate::screens::alarm_settings::SwitchRow;
@@ -138,6 +138,36 @@ fn TextField(
             />
         </label>
     }
+}
+
+/// Hands `bytes` to the browser as a `zigbee2mqtt-backup.zip` download.
+fn save_zip(bytes: &[u8]) {
+    use wasm_bindgen::JsCast;
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence(&parts) else {
+        return;
+    };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+        return;
+    };
+    if let Some(document) = web_sys::window().and_then(|w| w.document())
+        && let Ok(a) = document.create_element("a")
+    {
+        let _ = a.set_attribute("href", &url);
+        let _ = a.set_attribute("download", "zigbee2mqtt-backup.zip");
+        if let Some(body) = document.body() {
+            let _ = body.append_child(&a);
+            if let Ok(a) = a.clone().dyn_into::<web_sys::HtmlElement>() {
+                a.click();
+            }
+            let _ = body.remove_child(&a);
+        }
+    }
+    // Some browsers read the object only after the click returns: release it a bit later.
+    spawn_local(async move {
+        gloo_timers::future::TimeoutFuture::new(10_000).await;
+        let _ = web_sys::Url::revoke_object_url(&url);
+    });
 }
 
 /// Settings → Backup.
@@ -317,6 +347,37 @@ pub fn BackupSettingsPage() -> impl IntoView {
     let toggle_z2m = Callback::new(move |on: bool| {
         save(Box::new(move |i| i.include_z2m = on));
     });
+    // The kept zip needs the backup password: the button reveals a field, Confirm fetches it.
+    let z2m_asking = RwSignal::new(false);
+    let z2m_password = RwSignal::new(String::new());
+    let z2m_error = RwSignal::new(None::<String>);
+    let z2m_busy = RwSignal::new(false);
+    let confirm_z2m_download = move |_| {
+        if z2m_busy.get_untracked() {
+            return;
+        }
+        let given = z2m_password.get_untracked();
+        z2m_busy.set(true);
+        z2m_error.set(None);
+        spawn_local(async move {
+            match api::download_restored_z2m(&given).await {
+                Ok(bytes) => {
+                    save_zip(&bytes);
+                    z2m_password.try_set(String::new());
+                    z2m_asking.try_set(false);
+                }
+                Err(RestoredDownloadError::WrongPassword) => {
+                    z2m_error.try_set(Some(
+                        backup_text(lang(), BackupText::WrongPassword).to_owned(),
+                    ));
+                }
+                Err(RestoredDownloadError::Other(e)) => {
+                    z2m_error.try_set(Some(e));
+                }
+            }
+            z2m_busy.try_set(false);
+        });
+    };
     let delete_restored = move |_| {
         spawn_local(async move {
             match api::delete_restored_z2m().await {
@@ -539,13 +600,13 @@ pub fn BackupSettingsPage() -> impl IntoView {
                                 <p class="backup__z2m-size">{size(lang(), r.bytes)}</p>
                                 <p class="system__hint">{move || t(BackupText::RestoredZ2mHint)}</p>
                                 <div class="backup__buttons">
-                                    <a
+                                    <button
+                                        type="button"
                                         class="btn btn--primary backup__z2m-download"
-                                        href=RESTORED_Z2M_PATH
-                                        download=""
+                                        on:click=move |_| z2m_asking.set(true)
                                     >
                                         {move || t(BackupText::Download)}
-                                    </a>
+                                    </button>
                                     <button
                                         type="button"
                                         class="btn backup__z2m-delete"
@@ -554,6 +615,36 @@ pub fn BackupSettingsPage() -> impl IntoView {
                                         {move || t(BackupText::Delete)}
                                     </button>
                                 </div>
+                                <Show when=move || z2m_asking.get()>
+                                    <div class="backup__z2m-ask">
+                                        <TextField
+                                            id="backup-z2m-password"
+                                            label=BackupText::RestoredPassword
+                                            value=z2m_password
+                                            kind="password"
+                                            autocomplete="current-password"
+                                        />
+                                        <button
+                                            type="button"
+                                            class="btn btn--primary backup__z2m-confirm"
+                                            disabled=move || z2m_busy.get() || z2m_password.get().is_empty()
+                                            on:click=confirm_z2m_download
+                                        >
+                                            {move || t(BackupText::Confirm)}
+                                        </button>
+                                        {move || {
+                                            z2m_error
+                                                .get()
+                                                .map(|e| {
+                                                    view! {
+                                                        <p class="home-settings__error backup__z2m-error" role="alert">
+                                                            {e}
+                                                        </p>
+                                                    }
+                                                })
+                                        }}
+                                    </div>
+                                </Show>
                             </section>
                         }
                     })

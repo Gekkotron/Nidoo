@@ -8,13 +8,15 @@ use nidoo_api::{
 };
 use serde_json::{Map, Value, json};
 
-use super::core::{check, check_unless_404, read_json, read_json_or_none};
+use super::core::{check, check_unless_404, read_json, read_json_or_none, reject};
 
 /// Where a backup file is downloaded from; the page links to it.
 pub const DOWNLOAD_PATH: &str = "/api/v1/backup/download";
 
 /// Where the Zigbee2MQTT zip a restore kept is downloaded from; the page links to it.
 pub const RESTORED_Z2M_PATH: &str = "/api/v1/backup/restored-z2m";
+/// Where the kept zip is fetched, by `POST` with the backup password.
+pub const RESTORED_Z2M_DOWNLOAD_PATH: &str = "/api/v1/backup/restored-z2m/download";
 
 const SETTINGS: &str = "/api/v1/settings/backup";
 
@@ -111,6 +113,29 @@ pub async fn restored_z2m_info() -> Result<Option<RestoredZ2m>, ApiError> {
     match check_unless_404(Request::get("/api/v1/backup/restored-z2m/info").build()).await? {
         Some(response) => read_json(response).await.map(Some),
         None => Ok(None),
+    }
+}
+
+/// Why the kept zip could not be fetched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoredDownloadError {
+    /// The hub refused the password (403).
+    WrongPassword,
+    /// Anything else, as the hub or the network said it.
+    Other(String),
+}
+
+/// Fetches the kept Zigbee2MQTT zip with the backup password (the zip holds the network key).
+pub async fn download_restored_z2m(password: &str) -> Result<Vec<u8>, RestoredDownloadError> {
+    let other = |e: String| RestoredDownloadError::Other(e);
+    let request = Request::post(RESTORED_Z2M_DOWNLOAD_PATH)
+        .json(&json!({ "password": password }))
+        .map_err(|e| other(e.to_string()))?;
+    let response = request.send().await.map_err(|e| other(e.to_string()))?;
+    match response.status() {
+        403 => Err(RestoredDownloadError::WrongPassword),
+        status if status >= 400 => Err(other(reject(response).await.error)),
+        _ => response.binary().await.map_err(|e| other(e.to_string())),
     }
 }
 

@@ -480,10 +480,10 @@ pub fn use_setup_text() -> impl Fn(SetupText) -> &'static str + Copy + 'static {
 pub fn restore_includes_z2m(lang: Lang, size: &str) -> String {
     match lang {
         Lang::En => format!(
-            "Includes Zigbee2MQTT data ({size}). You can download it from Settings → Backup once restored."
+            "Includes Zigbee2MQTT data ({size}). You can download it from Settings → Backup once restored. To bring your Zigbee network back, put the Zigbee2MQTT data into its folder before starting it — see the backup guide."
         ),
         Lang::Fr => format!(
-            "Contient les données Zigbee2MQTT ({size}). Vous pourrez les télécharger dans Réglages → Sauvegarde après la restauration."
+            "Contient les données Zigbee2MQTT ({size}). Vous pourrez les télécharger dans Réglages → Sauvegarde après la restauration. Pour retrouver votre réseau Zigbee, remettez les données Zigbee2MQTT dans son dossier avant de le démarrer — voir le guide des sauvegardes."
         ),
     }
 }
@@ -663,11 +663,10 @@ mod restore_z2m_tests {
     fn the_summary_line_names_the_size_in_both_languages() {
         assert_eq!(
             restore_includes_z2m(Lang::En, "2 MB"),
-            "Includes Zigbee2MQTT data (2 MB). You can download it from Settings → Backup once restored."
+            "Includes Zigbee2MQTT data (2 MB). You can download it from Settings → Backup once restored. To bring your Zigbee network back, put the Zigbee2MQTT data into its folder before starting it — see the backup guide."
         );
-        assert!(
-            restore_includes_z2m(Lang::Fr, "2 Mo")
-                .starts_with("Contient les données Zigbee2MQTT (2 Mo).")
-        );
+        let fr = restore_includes_z2m(Lang::Fr, "2 Mo");
+        assert!(fr.starts_with("Contient les données Zigbee2MQTT (2 Mo)."));
+        assert!(fr.ends_with("voir le guide des sauvegardes."), "{fr}");
     }
 }
