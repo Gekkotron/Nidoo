@@ -138,6 +138,10 @@ const NODE_PLAY_CIRCLE: &str =
     svg!(r#"<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/>"#);
 // A plus over an equals sign, the math card.
 const NODE_MATH: &str = svg!(r#"<path d="M12 4v8M8 8h8M8 16.5h8M8 20h8"/>"#);
+// A cloud with an arrow rising out of it, the back-up card.
+const NODE_BACKUP: &str = svg!(
+    r#"<path d="M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 9.5a4.2 4.2 0 0 1-1 8.5"/><path d="M12 20v-7"/><path d="m9 15.5 3-3 3 3"/>"#
+);
 const NODE_PLAY: &str = svg!(r#"<path d="M7 4.5v15l12-7.5z"/>"#);
 
 // Energy and Security glyphs.
@@ -349,7 +353,7 @@ pub fn node_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Limit(_) => NODE_LIMIT,
         NodeKind::Command(_) => NODE_PLAY,
         NodeKind::FlowEnable(_) | NodeKind::FlowLabel(_) => NODE_SWITCH,
-        NodeKind::BackupRun(_) => NODE_PLAY,
+        NodeKind::BackupRun(_) => NODE_BACKUP,
         NodeKind::Notify(_) => CHANNEL_ALARM,
         NodeKind::Speak(_) | NodeKind::Ask(_) => SPEAKER,
         NodeKind::Math(_) => NODE_MATH,

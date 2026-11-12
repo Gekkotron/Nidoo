@@ -437,7 +437,7 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             let name = label.map_or(p.label.as_str(), |l| l.name.as_str());
             t::flow_label_card(lang, p.action, name, choice)
         }
-        NodeKind::BackupRun(_) => flow_text(lang, FlowText::NodeBackupRun).to_owned(),
+        NodeKind::BackupRun(_) => flow_text(lang, FlowText::BackupRunSentence).to_owned(),
     }
 }
 
@@ -738,6 +738,18 @@ mod tests {
         assert_eq!(say(Lang::En, gone), "Pick a label: gone");
         let unset = r#"{"id":"a","type":"flow.label","params":{"label":"","action":"pick"}}"#;
         assert_eq!(say(Lang::En, unset), "Pick a label");
+    }
+
+    #[test]
+    fn backup_run_sentence_and_ports() {
+        let json =
+            r#"{"id":"b","type":"backup.run","params":{"destination":"ftp","timeout_minutes":30}}"#;
+        assert_eq!(text_in(Lang::En, json), "Back up to the FTP server");
+        assert_eq!(text_in(Lang::Fr, json), "Sauvegarder sur le serveur FTP");
+        assert_eq!(label(Lang::En, json, "ok"), "Backed up");
+        assert_eq!(label(Lang::En, json, "failed"), "Failed");
+        assert_eq!(label(Lang::Fr, json, "ok"), "Sauvegardé");
+        assert_eq!(label(Lang::Fr, json, "failed"), "Échec");
     }
 
     #[test]
