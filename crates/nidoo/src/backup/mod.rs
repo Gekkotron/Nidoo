@@ -35,6 +35,8 @@ pub enum BackupError {
     WrongPassword,
     #[error("This file is not a Nidoo backup")]
     NotABackup,
+    #[error("{}", crypt::TOO_COSTLY)]
+    TooCostly,
     #[error("This backup comes from a newer Nidoo; update this hub first")]
     TooNew,
     #[error("the backup is damaged: {0}")]
@@ -54,6 +56,7 @@ impl From<crypt::OpenError> for BackupError {
         match e {
             crypt::OpenError::WrongPassword => Self::WrongPassword,
             crypt::OpenError::NotABackup => Self::NotABackup,
+            crypt::OpenError::TooCostly => Self::TooCostly,
             crypt::OpenError::Io(e) => Self::Io(e),
         }
     }
@@ -89,6 +92,10 @@ mod tests {
             (BackupError::WrongPassword, "Wrong password"),
             (BackupError::NotABackup, "This file is not a Nidoo backup"),
             (
+                BackupError::TooCostly,
+                "This backup's password protection is too costly for this machine to open",
+            ),
+            (
                 BackupError::TooNew,
                 "This backup comes from a newer Nidoo; update this hub first",
             ),
@@ -119,6 +126,10 @@ mod tests {
         assert_eq!(
             BackupError::from(OpenError::NotABackup),
             BackupError::NotABackup
+        );
+        assert_eq!(
+            BackupError::from(OpenError::TooCostly),
+            BackupError::TooCostly
         );
         assert_eq!(
             BackupError::from(OpenError::Io("reset".into())),

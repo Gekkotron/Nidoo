@@ -77,6 +77,7 @@ fn refused(e: BackupError) -> Response {
         BackupError::Busy | BackupError::HoldsData(_) => StatusCode::CONFLICT,
         BackupError::WrongPassword
         | BackupError::NotABackup
+        | BackupError::TooCostly
         | BackupError::TooNew
         | BackupError::Corrupt(_)
         | BackupError::LoginRefused
