@@ -72,7 +72,7 @@ fn typed_secret(text: &str) -> Secret {
     }
 }
 
-fn part_text(part: BackupPart) -> BackupText {
+pub(crate) fn part_text(part: BackupPart) -> BackupText {
     match part {
         BackupPart::Settings => BackupText::PartSettings,
         BackupPart::Retained => BackupText::PartRetained,

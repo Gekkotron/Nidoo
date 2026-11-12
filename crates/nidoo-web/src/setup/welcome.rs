@@ -6,7 +6,7 @@ use nidoo_api::{GeoPlace, Location, SetupStatus, SetupStep};
 
 use super::wizard::WizardNav;
 use super::{Applying, SetupState, setup_href};
-use crate::api::setup::{SaveError, geocode, put_location};
+use crate::api::setup::{SaveError, geocode, put_location, restore_pending};
 use crate::i18n::setup::{SetupText, use_setup_text};
 use crate::i18n::{Lang, use_lang};
 
@@ -317,14 +317,47 @@ pub fn LocationForm(
     }
 }
 
-/// The Welcome step: a greeting, the language and the home's place. Needs [`WizardNav`] and
-/// [`Applying`] in context.
+/// The Welcome step: a greeting, the language and the home's place, and a way into the restore
+/// path. Needs [`WizardNav`] and [`Applying`] in context.
 #[component]
 pub fn WelcomeStep() -> impl IntoView {
     let t = use_setup_text();
     let nav = expect_context::<WizardNav>();
+    let applying = expect_context::<Applying>();
     let lang = use_context::<RwSignal<Lang>>();
     let state = use_context::<SetupState>();
+    let choosing = RwSignal::new(false);
+    let restore_failure = RwSignal::new(None::<String>);
+    let restore = move |_| {
+        if choosing.get_untracked() {
+            return;
+        }
+        choosing.set(true);
+        restore_failure.set(None);
+        let message_lang = lang.map_or(Lang::En, |l| l.get_untracked());
+        leptos::task::spawn_local(async move {
+            match restore_pending(true).await {
+                Ok(status) if status.restarting => {
+                    applying.start(&setup_href(SetupStep::Mqtt));
+                    return;
+                }
+                Err(SaveError::Restarting) => {
+                    applying.start(&setup_href(SetupStep::Mqtt));
+                    return;
+                }
+                Ok(status) => {
+                    if let Some(st) = state {
+                        st.0.try_set(Some(status));
+                    }
+                    nav.step.try_set(SetupStep::Mqtt);
+                }
+                Err(e) => {
+                    restore_failure.try_set(Some(e.message(message_lang)));
+                }
+            }
+            choosing.try_set(false);
+        });
+    };
     let chip = move |value: Lang, label: SetupText| {
         view! {
             <button
@@ -364,6 +397,17 @@ pub fn WelcomeStep() -> impl IntoView {
                 }
                 wizard=true
             />
+            <button
+                type="button"
+                class="btn welcome__restore"
+                prop:disabled=move || choosing.get()
+                on:click=restore
+            >
+                {move || t(SetupText::RestoreFromBackup)}
+            </button>
+            <p class="loc__problem" role="alert">
+                {move || restore_failure.get()}
+            </p>
         </div>
     }
 }

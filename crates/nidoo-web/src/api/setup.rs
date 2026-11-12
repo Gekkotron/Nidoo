@@ -138,24 +138,44 @@ pub async fn restore_pending(pending: bool) -> Result<SetupStatus, SaveError> {
     save_status(Request::put("/api/v1/setup/restore").json(&json!({ "pending": pending }))).await
 }
 
+/// Why a call that reaches the FTP server did not go through.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FtpError {
+    /// 502: the hub could not reach the FTP server.
+    Unreachable,
+    Api(ApiError),
+}
+
+/// Sends a call that reaches the FTP server; a 502 is [`FtpError::Unreachable`] whatever its
+/// body says, so the page can word it in the language in use.
+async fn check_ftp(request: Result<Request, gloo_net::Error>) -> Result<Response, FtpError> {
+    let network = |e: gloo_net::Error| FtpError::Api(WebError::Network(e.to_string()).into());
+    let response = request.map_err(network)?.send().await.map_err(network)?;
+    let status = response.status();
+    if status == 502 {
+        return Err(FtpError::Unreachable);
+    }
+    if status >= 400 {
+        let body = response.text().await.unwrap_or_default();
+        return Err(FtpError::Api(
+            serde_json::from_str::<ApiError>(&body)
+                .unwrap_or_else(|_| WebError::Http(status).into()),
+        ));
+    }
+    Ok(response)
+}
+
 /// The backup files on an FTP server.
-pub async fn restore_ftp_list(source: &FtpSource) -> Result<Vec<RemoteBackup>, ApiError> {
-    let response = check(
-        Request::post("/api/v1/setup/restore/ftp/list").json(source),
-        None,
-    )
-    .await?;
-    read_json(response).await
+pub async fn restore_ftp_list(source: &FtpSource) -> Result<Vec<RemoteBackup>, FtpError> {
+    let response = check_ftp(Request::post("/api/v1/setup/restore/ftp/list").json(source)).await?;
+    read_json(response).await.map_err(FtpError::Api)
 }
 
 /// What a backup file on an FTP server holds; a wrong password is refused here.
-pub async fn restore_ftp_inspect(request: &RestoreFromFtp) -> Result<BackupSummary, ApiError> {
-    let response = check(
-        Request::post("/api/v1/setup/restore/ftp/inspect").json(request),
-        None,
-    )
-    .await?;
-    read_json(response).await
+pub async fn restore_ftp_inspect(request: &RestoreFromFtp) -> Result<BackupSummary, FtpError> {
+    let response =
+        check_ftp(Request::post("/api/v1/setup/restore/ftp/inspect").json(request)).await?;
+    read_json(response).await.map_err(FtpError::Api)
 }
 
 /// What an uploaded backup holds, read from the first megabyte of `file`.

@@ -249,3 +249,23 @@ async fn a_restart_already_underway_shows_the_overlay_not_an_error() {
     assert!(!host.text_content().unwrap().contains("Applying"));
     assert!(button(&host, ".loc__save").disabled(), "no second save");
 }
+
+#[wasm_bindgen_test]
+async fn welcome_offers_restore() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "PUT",
+        "/api/v1/setup/restore",
+        200,
+        r#"{"mode":"setup","step":"welcome","finished":false,"bundled":false,"location":null,"mqtt":null,"database":null,"restarting":false,"restore_pending":true}"#,
+    );
+    let m = mount();
+    tick().await;
+    let offer = button(&m.host, ".welcome__restore");
+    assert_eq!(offer.text_content().unwrap(), "Restore from a backup");
+    offer.click();
+    settle().await;
+    let put = stub.wait_for("PUT").await.expect("a PUT");
+    assert_eq!(put.body, r#"{"pending":true}"#);
+    assert_eq!(m.step.get_untracked(), SetupStep::Mqtt);
+}

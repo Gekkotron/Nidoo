@@ -21,6 +21,8 @@ pub struct Recorded {
     pub url: String,
     /// The body as text, empty for a GET.
     pub body: String,
+    /// The request headers, one `name: value` per line, names in lower case.
+    pub headers: String,
 }
 
 /// The installed stub; see the module docs.
@@ -36,7 +38,8 @@ const STUB_SOURCE: &str = r#"
         const u = new URL(req.url);
         const url = u.pathname + u.search;
         const body = await req.clone().text();
-        state.log.push({ method: req.method, url, body });
+        const headers = [...req.headers].map(([k, v]) => k + ": " + v).join("\n");
+        state.log.push({ method: req.method, url, body, headers });
         const route = state.routes[req.method + " " + url];
         if (!route) {
             return new Response(JSON.stringify({ error: "no stub for " + req.method + " " + url }), {
@@ -133,6 +136,7 @@ impl FetchStub {
                     method: text("method"),
                     url: text("url"),
                     body: text("body"),
+                    headers: text("headers"),
                 }
             })
             .collect()
