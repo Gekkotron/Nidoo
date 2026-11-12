@@ -1,7 +1,8 @@
 //! The setup API under `/api/v1/setup`: location, MQTT, database, progress.
 //!
 //! Every write goes through [`SetupCtx::update_file`] and answers `503` once a restart is
-//! pending. No response carries a password.
+//! pending. In restore mode, the writes that restart answer `409` while a restore runs. No
+//! response carries a password.
 
 // The `Err` side is an axum `Response`, built at most once per request.
 #![allow(clippy::result_large_err)]
@@ -16,8 +17,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use nidoo_api::{
-    DatabaseInput, DatabaseView, GeoPlace, Location, MobileCode, MqttInput, MqttView, Secret,
-    SecretView, SetupStatus, SetupStep, TestResult,
+    BackupState, DatabaseInput, DatabaseView, GeoPlace, Location, MobileCode, MqttInput, MqttView,
+    RestoreProgress, Secret, SecretView, SetupStatus, SetupStep, TestResult,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -90,6 +91,22 @@ pub(super) fn restarting(ctx: &SetupCtx) -> Option<Response> {
     ctx.restarting
         .load(Ordering::SeqCst)
         .then(|| error(StatusCode::SERVICE_UNAVAILABLE, "restarting"))
+}
+
+fn runs(restore: &Option<RestoreProgress>) -> bool {
+    restore
+        .as_ref()
+        .is_some_and(|p| p.state == BackupState::Running)
+}
+
+fn restore_runs_refusal() -> Response {
+    error(StatusCode::CONFLICT, "a restore is running")
+}
+
+/// `409` while a restore runs: the setup must not change its database or broker, nor restart
+/// the hub mid-copy. Checked first, so a refused write probes nothing.
+async fn restore_running(ctx: &SetupCtx) -> Option<Response> {
+    runs(&*ctx.restore.lock().await).then(restore_runs_refusal)
 }
 
 fn save_failed() -> Response {
@@ -229,6 +246,17 @@ async fn geocode(State(s): State<RouteState>, Query(q): Query<GeocodeQuery>) -> 
 /// it answers 422 with the reason and saves nothing.
 async fn finish_write(s: &RouteState, restarts: bool, edit: impl FnOnce(&mut HubFile)) -> Response {
     let in_run = s.ctx.mode == Mode::Run;
+    // In restore mode the restore slot is held through a write that restarts, so a restore
+    // cannot start between the check and the restart.
+    let restore_slot = if restarts && s.ctx.mode == Mode::Restore {
+        let held = s.ctx.restore.lock().await;
+        if runs(&held) {
+            return restore_runs_refusal();
+        }
+        Some(held)
+    } else {
+        None
+    };
     // The settings lock comes first (the lock order) and is held through the write, so the
     // check sees the settings the restart boots with. Setup mode is not checked: its settings
     // can only be edited once the hub runs.
@@ -256,6 +284,7 @@ async fn finish_write(s: &RouteState, restarts: bool, edit: impl FnOnce(&mut Hub
         )
         .await;
     drop(sections);
+    drop(restore_slot);
     match saved {
         Err(_) => save_failed(),
         Ok(Written::Restarting) => error(StatusCode::SERVICE_UNAVAILABLE, "restarting"),
@@ -266,6 +295,9 @@ async fn finish_write(s: &RouteState, restarts: bool, edit: impl FnOnce(&mut Hub
 
 async fn put_location(State(s): State<RouteState>, Json(loc): Json<Location>) -> Response {
     if let Some(r) = restarting(&s.ctx) {
+        return r;
+    }
+    if let Some(r) = restore_running(&s.ctx).await {
         return r;
     }
     if loc.city.trim().is_empty()
@@ -357,6 +389,9 @@ async fn test_mqtt(State(s): State<RouteState>, Json(input): Json<MqttInput>) ->
 
 async fn put_mqtt(State(s): State<RouteState>, Json(input): Json<MqttInput>) -> Response {
     if let Some(r) = restarting(&s.ctx) {
+        return r;
+    }
+    if let Some(r) = restore_running(&s.ctx).await {
         return r;
     }
     let cfg = match mqtt_candidate(&s.ctx, &input).await {
@@ -470,6 +505,9 @@ async fn put_database(State(s): State<RouteState>, Json(input): Json<DatabaseInp
     if let Some(r) = restarting(&s.ctx) {
         return r;
     }
+    if let Some(r) = restore_running(&s.ctx).await {
+        return r;
+    }
     let url = match database_candidate(&s.ctx, &input).await {
         Ok(url) => url,
         Err(r) => return r,
@@ -519,6 +557,9 @@ struct RestoreBody {
 /// pending, which sends the hub back to the devices step and restarts it into Run.
 async fn put_restore(State(s): State<RouteState>, Json(body): Json<RestoreBody>) -> Response {
     if let Some(r) = restarting(&s.ctx) {
+        return r;
+    }
+    if let Some(r) = restore_running(&s.ctx).await {
         return r;
     }
     match (s.ctx.mode, body.pending) {
