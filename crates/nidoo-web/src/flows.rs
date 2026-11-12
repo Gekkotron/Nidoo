@@ -82,6 +82,7 @@ fn summary_label(lang: Lang, node: &Node) -> String {
         NodeKind::FlowLabel(p) => {
             format!("{}: {}", flow_text(lang, FlowText::NodeFlowLabel), p.label)
         }
+        NodeKind::BackupRun(_) => flow_text(lang, FlowText::NodeBackupRun).into(),
         NodeKind::Notify(_) => flow_text(lang, FlowText::Notify).into(),
         NodeKind::Speak(_) => flow_text(lang, FlowText::Speak).into(),
         NodeKind::Ask(_) => flow_text(lang, FlowText::Ask).into(),

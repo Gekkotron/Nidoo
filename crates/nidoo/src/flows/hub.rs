@@ -586,6 +586,7 @@ impl Hub {
                 NodeKind::Delay(_)
                 | NodeKind::Limit(_)
                 | NodeKind::FlowLabel(_)
+                | NodeKind::BackupRun(_)
                 | NodeKind::Notify(_)
                 | NodeKind::Speak(_)
                 | NodeKind::Ask(_)

@@ -79,6 +79,7 @@ fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::TriggerManual(_) => "inject injecter button bouton",
         NodeKind::FlowLabel(_) => "choice choix season saison tag",
+        NodeKind::BackupRun(_) => "backup sauvegarde ftp",
         _ => "",
     }
 }

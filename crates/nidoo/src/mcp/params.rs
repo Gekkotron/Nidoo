@@ -240,6 +240,10 @@ pub struct SetFlowParams {
     ///   and `action` (`pick`, the default, for a label in a choice of at least two labels;
     ///   `on`; `off`). A step that turns its own flow off still finishes the run. It has no
     ///   ports.
+    /// - `backup.run` backs up the hub to the FTP server set in Settings → Backup and waits
+    ///   until it ends. params: `destination` (`ftp`, the default) and `timeout_minutes` (1 to
+    ///   1440, default 120; the time limit of the backup, or how long to wait for one already
+    ///   running). Ports: `ok` (backed up) and `failed` (an edge from each continues the flow).
     /// - `math` computes one number and can save it. params: `inputs`, 0 to 10 of
     ///   `{"name", "entity", "average"?}`: `name` is how the formula refers to the entity's value
     ///   (`[a-z][a-z0-9_]{0,31}`, unique in the card), `average` (`15m`, at most `24h`) reads the

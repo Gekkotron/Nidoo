@@ -50,6 +50,8 @@ pub enum FlowError {
     BadFlowTarget { node: String, flow: String },
     #[error("node `{node}`: choose a label")]
     MissingLabel { node: String },
+    #[error("timeout must be 1 to 1440 minutes in node `{node}`")]
+    BadBackup { node: String },
     #[error("node `{node}`: offset_minutes {offset_minutes} is outside [-720, 720]")]
     BadSunOffset { node: String, offset_minutes: i32 },
     #[error("node `{node}`: {reason}")]
@@ -190,6 +192,13 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
             NodeKind::FlowLabel(p) => {
                 if p.label.trim().is_empty() {
                     return Err(FlowError::MissingLabel {
+                        node: node.id.clone(),
+                    });
+                }
+            }
+            NodeKind::BackupRun(p) => {
+                if !(1..=1440).contains(&p.timeout_minutes) {
+                    return Err(FlowError::BadBackup {
                         node: node.id.clone(),
                     });
                 }
@@ -1163,6 +1172,30 @@ mod tests {
             ..FlowLabelParams::default()
         });
         assert!(validate(&f).is_ok());
+    }
+
+    #[test]
+    fn backup_run_timeout_bounds() {
+        let mut f = schedule_flow("*/10 * * * *", "act");
+        f.nodes
+            .push(serde_json::from_str(r#"{"id":"bk","type":"backup.run","params":{}}"#).unwrap());
+        assert!(validate(&f).is_ok());
+        for (minutes, ok) in [(0, false), (1, true), (1440, true), (1441, false)] {
+            f.nodes.last_mut().unwrap().kind = NodeKind::BackupRun(crate::flow::BackupRunParams {
+                timeout_minutes: minutes,
+                ..Default::default()
+            });
+            match validate(&f) {
+                Ok(()) => assert!(ok, "{minutes} should be refused"),
+                Err(err) => {
+                    assert!(!ok, "{minutes} should pass");
+                    assert_eq!(
+                        err.to_string(),
+                        "timeout must be 1 to 1440 minutes in node `bk`"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
