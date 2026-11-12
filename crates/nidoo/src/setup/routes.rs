@@ -25,7 +25,7 @@ use url::Url;
 
 use crate::config::MqttConfig;
 use crate::setup::bundled::{self, Bundled};
-use crate::setup::hub_file::RestoreState;
+use crate::setup::hub_file::{DatabaseTarget, RestoreState};
 use crate::setup::{HubFile, Mode, SetupCtx, Written, probe, secret, settings};
 use crate::weather::open_meteo::{self, Endpoints};
 
@@ -96,11 +96,7 @@ fn save_failed() -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save hub.json")
 }
 
-pub(super) fn decode(s: &str) -> String {
-    percent_encoding::percent_decode_str(s)
-        .decode_utf8_lossy()
-        .into_owned()
-}
+pub(super) use crate::setup::hub_file::decode;
 
 fn encode(s: &str) -> String {
     percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string()
@@ -427,14 +423,8 @@ async fn database_candidate(ctx: &SetupCtx, input: &DatabaseInput) -> Result<Str
 /// user and password, decoded (a re-saved URL may encode them differently).
 fn same_database(a: &str, b: &str) -> bool {
     let target = |u: &str| {
-        let u = Url::parse(u).ok()?;
-        Some((
-            u.host_str()?.to_ascii_lowercase(),
-            u.port().unwrap_or(BUNDLED_DB_PORT),
-            decode(u.path().trim_start_matches('/')),
-            decode(u.username()),
-            u.password().map(decode),
-        ))
+        let password = Url::parse(u).ok()?.password().map(decode);
+        Some((DatabaseTarget::parse(u)?, password))
     };
     matches!((target(a), target(b)), (Some(x), Some(y)) if x == y)
 }

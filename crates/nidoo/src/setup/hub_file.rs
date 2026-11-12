@@ -55,6 +55,70 @@ pub struct HubFile {
 pub struct RestoreState {
     /// Whether a restore has been started on this hub.
     pub attempted: bool,
+    /// The database and broker the first attempt found empty. Absent in files written before it
+    /// was recorded.
+    #[serde(default)]
+    pub target: Option<RestoreTarget>,
+}
+
+impl RestoreState {
+    /// Whether a retry may clear what `file` points at (the target after the env overrides):
+    /// only the database and broker an attempt checked for data. Anything else, such as a
+    /// target an override or a hand edit changed since, is checked again first.
+    pub fn retry_clears(&self, file: &HubFile) -> bool {
+        self.attempted && self.target.is_some() && self.target == RestoreTarget::of(file)
+    }
+}
+
+/// The PostgreSQL port a URL without one uses.
+const PG_PORT: u16 = 5432;
+
+/// Which database a URL reaches, as which user: decoded (a re-saved URL may encode them
+/// differently), the host in lower case. No password.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DatabaseTarget {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
+}
+
+impl DatabaseTarget {
+    pub fn parse(url: &str) -> Option<DatabaseTarget> {
+        let u = url::Url::parse(url).ok()?;
+        Some(DatabaseTarget {
+            host: u.host_str()?.to_ascii_lowercase(),
+            port: u.port().unwrap_or(PG_PORT),
+            database: decode(u.path().trim_start_matches('/')),
+            user: decode(u.username()),
+        })
+    }
+}
+
+/// What a restore checked for data: the database and the broker address. No secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreTarget {
+    pub database: DatabaseTarget,
+    pub broker_host: String,
+    pub broker_port: u16,
+}
+
+impl RestoreTarget {
+    /// The target `file` names; `None` without a usable database URL or a broker.
+    pub fn of(file: &HubFile) -> Option<RestoreTarget> {
+        let mqtt = file.mqtt.as_ref()?;
+        Some(RestoreTarget {
+            database: DatabaseTarget::parse(file.database_url.as_deref()?)?,
+            broker_host: mqtt.host.trim().to_ascii_lowercase(),
+            broker_port: mqtt.port,
+        })
+    }
+}
+
+pub(crate) fn decode(s: &str) -> String {
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 impl fmt::Debug for HubFile {
@@ -202,8 +266,20 @@ mod tests {
     fn restore_flag_round_trips_and_old_files_load() {
         let old: HubFile = serde_json::from_str(r#"{"finished":true}"#).unwrap();
         assert_eq!(old.restore, None);
+        // Written before the checked target was recorded.
+        let old: HubFile = serde_json::from_str(r#"{"restore":{"attempted":true}}"#).unwrap();
+        assert_eq!(
+            old.restore,
+            Some(RestoreState {
+                attempted: true,
+                target: None
+            })
+        );
         let file = HubFile {
-            restore: Some(RestoreState { attempted: true }),
+            restore: Some(RestoreState {
+                attempted: true,
+                target: RestoreTarget::of(&full()),
+            }),
             ..HubFile::default()
         };
         let tmp = tempfile::tempdir().unwrap();
@@ -326,6 +402,83 @@ mod tests {
         // The restored place wins over a city still waiting to be geocoded.
         assert_eq!(target.pending_city, None);
         assert_eq!(target.fields(), source.fields());
+    }
+
+    #[test]
+    fn restore_target_is_the_decoded_addresses_without_passwords() {
+        let target = RestoreTarget::of(&HubFile {
+            database_url: Some("postgres://me%40home:dbpass@DB.local/my%20db".into()),
+            ..full()
+        })
+        .unwrap();
+        assert_eq!(
+            target,
+            RestoreTarget {
+                database: DatabaseTarget {
+                    host: "db.local".into(),
+                    port: 5432,
+                    database: "my db".into(),
+                    user: "me@home".into(),
+                },
+                broker_host: "192.0.2.1".into(),
+                broker_port: 1883,
+            }
+        );
+        let shown = serde_json::to_string(&target).unwrap();
+        assert!(
+            !shown.contains("dbpass") && !shown.contains("s3cret"),
+            "{shown}"
+        );
+        assert_eq!(RestoreTarget::of(&HubFile::default()), None);
+    }
+
+    /// A retry clears only the database and broker the first attempt found empty.
+    #[test]
+    fn a_retry_clears_only_the_checked_target() {
+        let file = full();
+        let checked = RestoreState {
+            attempted: true,
+            target: RestoreTarget::of(&file),
+        };
+        assert!(checked.retry_clears(&file));
+        // Another password, or the same URL written differently, is the same database.
+        let same = HubFile {
+            database_url: Some("postgres://u:changed@H:5432/%64b".into()),
+            ..full()
+        };
+        assert!(checked.retry_clears(&same));
+
+        let mut moved = Vec::new();
+        for url in [
+            "postgres://u:dbpass@other/db",
+            "postgres://u:dbpass@h:5433/db",
+            "postgres://u:dbpass@h/other",
+            "postgres://v:dbpass@h/db",
+            "not a url",
+        ] {
+            moved.push(HubFile {
+                database_url: Some(url.into()),
+                ..full()
+            });
+        }
+        for (host, port) in [("192.0.2.2", 1883), ("192.0.2.1", 1884)] {
+            let mut f = full();
+            let mqtt = f.mqtt.as_mut().unwrap();
+            (mqtt.host, mqtt.port) = (host.into(), port);
+            moved.push(f);
+        }
+        for f in &moved {
+            assert!(!checked.retry_clears(f), "{f:?}");
+        }
+
+        // No attempt yet, or an attempt that recorded nothing (an older file): check again.
+        let fresh = RestoreState::default();
+        assert!(!fresh.retry_clears(&file));
+        let unrecorded = RestoreState {
+            attempted: true,
+            target: None,
+        };
+        assert!(!unrecorded.retry_clears(&file));
     }
 
     #[test]
