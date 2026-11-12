@@ -7,7 +7,7 @@ use nidoo_api::{
 };
 use serde_json::{Value, json};
 
-use super::core::{WebError, check, encode_id, read_json, read_json_or_none};
+use super::core::{WebError, check, check_unless_502, encode_id, read_json, read_json_or_none};
 use crate::i18n::Lang;
 use crate::i18n::setup::{SetupText, setup_text};
 
@@ -149,20 +149,11 @@ pub enum FtpError {
 /// Sends a call that reaches the FTP server; a 502 is [`FtpError::Unreachable`] whatever its
 /// body says, so the page can word it in the language in use.
 async fn check_ftp(request: Result<Request, gloo_net::Error>) -> Result<Response, FtpError> {
-    let network = |e: gloo_net::Error| FtpError::Api(WebError::Network(e.to_string()).into());
-    let response = request.map_err(network)?.send().await.map_err(network)?;
-    let status = response.status();
-    if status == 502 {
-        return Err(FtpError::Unreachable);
+    match check_unless_502(request).await {
+        Ok(Some(response)) => Ok(response),
+        Ok(None) => Err(FtpError::Unreachable),
+        Err(e) => Err(FtpError::Api(e)),
     }
-    if status >= 400 {
-        let body = response.text().await.unwrap_or_default();
-        return Err(FtpError::Api(
-            serde_json::from_str::<ApiError>(&body)
-                .unwrap_or_else(|_| WebError::Http(status).into()),
-        ));
-    }
-    Ok(response)
 }
 
 /// The backup files on an FTP server.

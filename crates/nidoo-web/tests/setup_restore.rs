@@ -33,6 +33,10 @@ struct Mounted {
 }
 
 fn mount() -> Mounted {
+    mount_polling(20)
+}
+
+fn mount_polling(poll_ms: u32) -> Mounted {
     let document = web_sys::window().unwrap().document().unwrap();
     let host = document.create_element("div").unwrap();
     document.body().unwrap().append_child(&host).unwrap();
@@ -44,7 +48,7 @@ fn mount() -> Mounted {
         provide_context(WizardNav { step });
         provide_context(applying);
         provide_context(SetupState(RwSignal::new(Some(status))));
-        provide_context(RestorePollMs(20));
+        provide_context(RestorePollMs(poll_ms));
         view! { <RestoreStep /> }
     });
     Mounted {
@@ -89,6 +93,24 @@ async fn settle() {
         TimeoutFuture::new(15).await;
         tick().await;
     }
+}
+
+/// The value of the summary row whose caption is `caption`.
+fn summary_row(host: &web_sys::Element, caption: &str) -> String {
+    let rows = host.query_selector_all(".restore__row").unwrap();
+    for i in 0..rows.length() {
+        let row: web_sys::Element = rows.get(i).unwrap().unchecked_into();
+        let dt = row.query_selector("dt").unwrap().unwrap().text_content();
+        if dt.as_deref() == Some(caption) {
+            return row
+                .query_selector("dd")
+                .unwrap()
+                .unwrap()
+                .text_content()
+                .unwrap();
+        }
+    }
+    panic!("no summary row {caption}");
 }
 
 fn text(host: &web_sys::Element) -> String {
@@ -152,7 +174,8 @@ async fn ftp_flow_lists_inspects_and_restores() {
     );
     let shown = text(&m.host);
     assert!(shown.contains("0.9.0"), "{shown}");
-    assert!(shown.contains("12"), "{shown}");
+    assert_eq!(summary_row(&m.host, "Dashboards"), "3");
+    assert_eq!(summary_row(&m.host, "Automations"), "12");
     assert!(shown.contains("1.5 GB"), "{shown}");
     click(&m.host, ".restore__go");
     settle().await;
@@ -269,7 +292,8 @@ async fn a_failed_upload_shows_the_hubs_own_error() {
         200,
         r#"{"state":"failed","part":"history","bytes":10,"total":100,"error":"the history is damaged"}"#,
     );
-    let m = mount();
+    // A poll so slow that only the fallback after the failed PUT can read the progress.
+    let m = mount_polling(60_000);
     tick().await;
     choose_file(&m.host, 1024);
     settle().await;
@@ -332,4 +356,28 @@ async fn abandon_returns_to_devices() {
         m.applying.target.get_untracked().as_deref(),
         Some("/setup?step=devices")
     );
+}
+
+#[wasm_bindgen_test]
+async fn a_second_find_drops_the_first_servers_answer() {
+    let stub = FetchStub::install();
+    let first = r#"[{"file":"nidoo-backup-20250101-020000.tar.zst.age","size":1000000,"created_at":1735696800}]"#;
+    stub.reply_after("POST", "/api/v1/setup/restore/ftp/list", 200, first, 300);
+    let m = mount();
+    tick().await;
+    fill_ftp(&m.host).await;
+    click(&m.host, ".restore__find");
+    tick().await;
+    // Back out while the first list is still loading, point at another server, ask again.
+    click(&m.host, ".restore__back");
+    tick().await;
+    type_into(&m.host, "#restore-host", "other.local").await;
+    stub.reply("POST", "/api/v1/setup/restore/ftp/list", 200, LIST);
+    click(&m.host, ".restore__find");
+    TimeoutFuture::new(500).await;
+    tick().await;
+    let radios = m.host.query_selector_all(".restore__item input").unwrap();
+    assert_eq!(radios.length(), 2, "the second server's list shows");
+    let first_radio: web_sys::HtmlInputElement = radios.get(0).unwrap().unchecked_into();
+    assert_eq!(first_radio.value(), NEW);
 }

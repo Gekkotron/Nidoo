@@ -138,6 +138,8 @@ struct Flow {
     progress: RwSignal<Option<RestoreProgress>>,
     problem: RwSignal<Option<Problem>>,
     busy: RwSignal<bool>,
+    /// Counts the list requests, so only the latest one's answer is used.
+    lists: RwSignal<u32>,
     /// Bumped whenever a restore run ends or a new one starts, so an older run's tasks stop.
     run: RwSignal<u32>,
     poll_ms: u32,
@@ -163,6 +165,7 @@ impl Flow {
             progress: RwSignal::new(None),
             problem: RwSignal::new(None),
             busy: RwSignal::new(false),
+            lists: RwSignal::new(0),
             run: RwSignal::new(0),
             poll_ms: use_context::<RestorePollMs>().map_or(DEFAULT_POLL_MS, |p| p.0),
             applying: expect_context::<Applying>(),
@@ -221,14 +224,20 @@ impl Flow {
         let Some(source) = self.source.get_untracked() else {
             return;
         };
-        if self.busy.get_untracked() {
-            return;
-        }
+        // A newer request supersedes an older one still in flight, whose answer is dropped.
+        let mine = self.lists.try_update(|n| {
+            *n += 1;
+            *n
+        });
         self.busy.set(true);
         self.problem.set(None);
         self.backups.set(None);
         leptos::task::spawn_local(async move {
-            match restore_ftp_list(&source).await {
+            let result = restore_ftp_list(&source).await;
+            if self.lists.try_get_untracked() != mine {
+                return;
+            }
+            match result {
                 Ok(mut list) => {
                     list.sort_by_key(|b| std::cmp::Reverse(b.created_at));
                     self.selected
