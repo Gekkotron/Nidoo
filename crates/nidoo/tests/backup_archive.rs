@@ -113,6 +113,10 @@ fn broker_docs(b: &MemBroker) -> BTreeMap<String, Bytes> {
 }
 
 async fn backup(pool: &PgPool, broker: &MemBroker) -> (Vec<u8>, Manifest) {
+    backup_with(pool, broker, None).await
+}
+
+async fn backup_with(pool: &PgPool, broker: &MemBroker, z2m: Option<Bytes>) -> (Vec<u8>, Manifest) {
     let mut out = Vec::new();
     let manifest = write_backup(
         Sources {
@@ -120,6 +124,7 @@ async fn backup(pool: &PgPool, broker: &MemBroker) -> (Vec<u8>, Manifest) {
             broker,
             layout: layout(),
             hub: hub_fields(),
+            z2m,
         },
         &mut out,
         PASSWORD,
@@ -166,7 +171,8 @@ async fn backup_then_restore_brings_everything_back() {
     let source = source_broker();
     let (file, manifest) = backup(pa, &source).await;
 
-    assert_eq!(manifest.format, 1);
+    assert_eq!(manifest.format, 2);
+    assert_eq!(manifest.z2m, None);
     assert_eq!(manifest.migration, migration_level(pa).await.unwrap());
     assert_eq!(manifest.retained, 3);
     assert_eq!(manifest.flows, 1);
@@ -187,6 +193,7 @@ async fn backup_then_restore_brings_everything_back() {
 
     assert_eq!(restored.manifest, manifest);
     assert_eq!(restored.hub, hub_fields());
+    assert_eq!(restored.z2m, None);
     assert_eq!(restored.settings, settings_rows(pa).await);
     assert_eq!(settings_rows(pb).await, settings_rows(pa).await);
     assert_eq!(restored.settings["home"], json!({"name": "Maison"}));
@@ -214,6 +221,27 @@ async fn backup_then_restore_brings_everything_back() {
         );
     }
     assert!(parts.windows(2).all(|w| w[0].1 <= w[1].1), "{parts:?}");
+    a.drop_db().await;
+    b.drop_db().await;
+}
+
+#[tokio::test]
+async fn z2m_zip_round_trips() {
+    let Some(a) = fresh_db().await else { return };
+    let Some(b) = fresh_db().await else { return };
+    fill(a.db.pool(), &a.db).await;
+    let mut zip = vec![0u8; 9 * 1024 * 1024 + 3];
+    getrandom::getrandom(&mut zip).unwrap();
+    let zip = Bytes::from(zip);
+    let (file, manifest) = backup_with(a.db.pool(), &source_broker(), Some(zip.clone())).await;
+    assert_eq!(manifest.z2m.as_ref().unwrap().bytes, zip.len() as u64);
+
+    let target = MemBroker::default();
+    let restored = read_backup(&file[..], PASSWORD, b.db.pool(), &target, &|_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(restored.z2m, Some(zip));
+    assert_eq!(restored.manifest, manifest);
     a.drop_db().await;
     b.drop_db().await;
 }
@@ -377,6 +405,7 @@ async fn manifest_tables_must_be_exported() {
         flows: 0,
         dashboards: 0,
         history_bytes: 0,
+        z2m: None,
     };
     let mut file = Vec::new();
     let mut tw = TarWriter::new(seal(&mut file, PASSWORD));

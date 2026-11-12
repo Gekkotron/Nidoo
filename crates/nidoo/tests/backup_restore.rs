@@ -135,6 +135,7 @@ async fn source(rows: i64) -> Option<(TestDb, Vec<u8>)> {
             broker: &broker,
             layout: Layout::from_config(&Config::default()),
             hub: source_fields(),
+            z2m: None,
         },
         &mut file,
         PASSWORD,
@@ -436,6 +437,7 @@ fn manifest() -> Manifest {
         flows: 2,
         dashboards: 1,
         history_bytes: 123_456,
+        z2m: None,
     }
 }
 

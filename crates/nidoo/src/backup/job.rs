@@ -597,6 +597,7 @@ impl Hub {
             broker,
             layout: self.backups.layout.clone(),
             hub,
+            z2m: None,
         })
     }
 

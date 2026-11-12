@@ -66,7 +66,7 @@ pub fn summary(m: &Manifest) -> BackupSummary {
         flows: m.flows,
         dashboards: m.dashboards,
         history_bytes: m.history_bytes,
-        z2m_bytes: None,
+        z2m_bytes: m.z2m.as_ref().map(|z| z.bytes),
     }
 }
 
@@ -394,7 +394,28 @@ impl<R: AsyncRead + Unpin> AsyncRead for Watched<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::archive::Z2mManifest;
     use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn summary_carries_z2m_bytes() {
+        let mut m = Manifest {
+            format: 2,
+            nidoo_version: "1".into(),
+            migration: 1,
+            created_at: "2026-11-11T00:00:00Z".into(),
+            host: "hub".into(),
+            tables: Default::default(),
+            retained: 0,
+            flows: 0,
+            dashboards: 0,
+            history_bytes: 0,
+            z2m: None,
+        };
+        assert_eq!(summary(&m).z2m_bytes, None);
+        m.z2m = Some(Z2mManifest { bytes: 4096 });
+        assert_eq!(summary(&m).z2m_bytes, Some(4096));
+    }
 
     /// Reads `data`, then fails with `kind`.
     struct Failing {
