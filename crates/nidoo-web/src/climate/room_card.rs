@@ -15,7 +15,7 @@ use crate::climate::{
 use crate::components::now::Now;
 use crate::components::toast::Toasts;
 use crate::i18n::Lang;
-use crate::i18n::climate::{ClimateText, hold_until, now_with_age, use_climate_text};
+use crate::i18n::climate::{ClimateText, hold_until, now_with_age, reason_text, use_climate_text};
 use crate::i18n::use_lang;
 
 /// A thermometer reading this old shows its age under the reading (15 min).
@@ -102,7 +102,11 @@ pub fn RoomCard(
     let why = move || {
         zone.with(|z| match z.decision.as_ref() {
             Some(d) if d.reason.is_empty() => source_word(lang(), d.source).to_owned(),
-            Some(d) => format!("{} · {}", source_word(lang(), d.source), d.reason),
+            Some(d) => format!(
+                "{} · {}",
+                source_word(lang(), d.source),
+                reason_text(lang(), &d.reason)
+            ),
             None => t(ClimateText::NoDecision).to_owned(),
         })
     };

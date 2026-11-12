@@ -1,5 +1,6 @@
 //! The wire types of the assistant: what the web sends, the turns the hub returns and logs.
 
+use nidoo_core::flow::Lang;
 use serde::{Deserialize, Serialize};
 
 /// How a sentence was understood, for the "how it understood" panel and the log.
@@ -48,6 +49,16 @@ pub struct AssistRequest {
     /// Plan and reply, but send nothing to the house.
     #[serde(default)]
     pub simulate: bool,
+    /// The language of the sentence and of the reply: `fr` (the default) or `en`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<Lang>,
+}
+
+impl AssistRequest {
+    /// The language of this request: French unless `en` is asked.
+    pub fn lang(&self) -> Lang {
+        self.lang.unwrap_or(Lang::Fr)
+    }
 }
 
 /// A tapped answer to a pending question.

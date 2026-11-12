@@ -2,6 +2,7 @@
 
 use nidoo_api::{AreaView, EntityView};
 use nidoo_climate::view::ZoneView;
+use nidoo_core::flow::Lang;
 
 /// The setpoints the assistant applies without asking, in °C.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,6 +33,8 @@ pub struct House<'a> {
     pub range: HeatRange,
     /// Unix seconds.
     pub now: u64,
+    /// The language sentences are read in and replies are written in.
+    pub lang: Lang,
 }
 
 impl House<'_> {

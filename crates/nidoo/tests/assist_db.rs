@@ -121,6 +121,7 @@ async fn wrong_tapped_before_the_row_is_written_is_kept() {
             text: Some("bonjour".into()),
             reply: None,
             simulate: false,
+            lang: None,
         })
         .await
         .unwrap();

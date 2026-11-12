@@ -1,12 +1,28 @@
 ---
 title: Assistant
 sidebar_position: 19
-description: Short French sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, control the music and the speakers' volume, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
+description: Short French or English sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, control the music and the speakers' volume, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
 ---
 
-The **Assistant** understands short French sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page.
+The **Assistant** understands short French or English sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page.
 
 It runs in the hub with fixed rules, no language model: the same sentence always gives the same result, instantly, and nothing leaves the house. It is deliberately limited. When it is not sure, it asks or does nothing; it never guesses.
+
+## Languages
+
+The Assistant page reads sentences and writes replies in the language of the screen: French when the web UI is in French, English when it is in English (switch it from the language toggle). The sentences understood are the same in both; the examples below are in French, and the English ones read as you would expect:
+
+| English | French |
+|---|---|
+| "turn on the kitchen lights", "turn off the lamp in the office", "turn everything off" | « allume la lumière de la cuisine », « éteins la lampe du bureau », « éteins tout » |
+| "turn the living room lights red", "turn on the lamp in blue" | « passe le salon en rouge », « allume la lampe en bleu » |
+| "set the bedroom to 19.5", "turn up the heating in the office", "turn the heat down a bit" | « règle la chambre à 19,5 », « monte le chauffage du bureau », « baisse un peu le chauffage » |
+| "what's the temperature in the kitchen?", "how cold is it outside?" | « quelle température dans la cuisine ? », « il fait combien dehors ? » |
+| "open the shutters to 30%", "close all the blinds" | « ouvre les volets à 30 % », « ferme tous les volets » |
+| "turn off the TV", "switch on the coffee plug" | « éteins la télé », « allume la prise café » |
+| "play Shape of You", "pause", "next song", "turn the volume up", "mute the kitchen", "what's playing?" | « joue Shape of You », « pause », « chanson suivante », « monte le son », « coupe le son de la cuisine », « qu'est-ce qu'on écoute ? » |
+
+In English a colour is said after "in" or "to", or as the last word ("turn the lamp red"); before the light word it is part of a name ("the red lamp"). Numbers can be digits or words ("nineteen point five"). Answer a question with "yes", "no", "cancel" or a room's name. Satellites still speak French.
 
 ## What it understands
 
@@ -18,6 +34,12 @@ Rooms are your own rooms, by name ("salon", "la chambre de Léa", "chez Léa", "
 - « éteins la led du salon », « allume la lampe de la chambre »
 
 A room's lights are the ones a mood's "lights" action uses: every light of the room, the ones hidden from the dashboard included, but not groups. Lights already in the wanted state are left alone; an offline light gets no command and the reply says it did not answer.
+
+**Light colours**, said after "en", switch the lights on in that colour:
+
+- « allume la lumière du salon en rouge », « mets la led en bleu », « passe le salon en vert »
+
+The colours are blanc, rouge, orange, jaune, vert, cyan (turquoise), bleu, violet (mauve), magenta and rose, in any gender or number. Only lights that take a colour get one; the others in the room are left as they are and the reply names them. A colour word without "en" is part of a light's name (« allume la lampe rose »), and a colour with an off order, heating, shutters or music is not understood.
 
 **Heating setpoints**, for a room whose [climate](climate.md) zone is active:
 
@@ -104,7 +126,7 @@ With the history database, turns are kept 90 days. Without it, the hub keeps the
 
 ## Voice
 
-The hub can turn text into speech, in each language you set up, on its own processor, with no cloud call when it speaks. Set it up in **Settings → Assistant → Voice** (« Réglages → Assistant → Voix » in French); the gear button at the top right of the Assistant page opens that Assistant group. Speech recognition for the satellites is next to it, under **Listening** (« Écoute »), and the speaker satellites under **Sound**. The Assistant page reads each new reply aloud once the hub speaks **French** with a model (replies are written in French): the speaker switch in its header turns that off, remembered per browser, and **▶** on a reply reads it again. The [sound satellites](sound.md#speak-in-a-room) say sentences with it too: from Settings → Assistant → Sound, a flow's Speak card or the MCP tool `speak`.
+The hub can turn text into speech, in each language you set up, on its own processor, with no cloud call when it speaks. Set it up in **Settings → Assistant → Voice** (« Réglages → Assistant → Voix » in French); the gear button at the top right of the Assistant page opens that Assistant group. Speech recognition for the satellites is next to it, under **Listening** (« Écoute »), and the speaker satellites under **Sound**. The Assistant page reads each new reply aloud once the hub speaks the page's language (French or English) with a model: the speaker switch in its header turns that off, remembered per browser, and **▶** on a reply reads it again. The [sound satellites](sound.md#speak-in-a-room) say sentences with it too: from Settings → Assistant → Sound, a flow's Speak card or the MCP tool `speak`.
 
 The engine is [Phonon](https://huggingface.co/gradium) by Gradium. The hub never ships the model files: you download them yourself, under their licence.
 

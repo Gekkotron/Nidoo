@@ -3,6 +3,7 @@
 pub mod correction_card;
 pub mod eco_pill;
 pub mod entity_field;
+pub mod home;
 pub mod presence_card;
 pub mod proposal;
 pub mod room_card;
@@ -27,7 +28,9 @@ use nidoo_core::model::Kind;
 
 use crate::components::toast::Toasts;
 use crate::i18n::Lang;
-use crate::i18n::climate::{ClimateText, climate_text, correction_summary_line, learning_progress};
+use crate::i18n::climate::{
+    ClimateText, climate_text, correction_summary_line, learning_progress, reason_text,
+};
 use crate::i18n::format::{ago, decimal, month_short, weekday_short};
 use crate::i18n::states::{StateCtx, state_word};
 
@@ -268,7 +271,7 @@ pub fn decision_line(lang: Lang, d: &Decision, now: u64, tz: Tz) -> String {
         source_word(lang, d.source),
         mode_word(lang, d.mode),
         setpoint_text(lang, d.setpoint),
-        d.reason
+        reason_text(lang, &d.reason)
     )
 }
 
@@ -283,7 +286,7 @@ pub fn row_line(lang: Lang, r: &DecisionRow, now: u64, tz: Tz) -> String {
         history_source(lang, &r.source),
         state_word(lang, StateCtx::Hvac, &r.mode),
         setpoint,
-        r.reason
+        reason_text(lang, &r.reason)
     )
 }
 

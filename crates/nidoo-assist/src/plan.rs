@@ -5,11 +5,15 @@ use nidoo_api::search::fold;
 use nidoo_api::{Category, CategoryAction, Target, category_members, commandable};
 use nidoo_climate::doc::{Setpoint, ZoneState};
 use nidoo_climate::view::ZoneView;
+use nidoo_core::flow::Lang;
 use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue, SwitchType};
 
 use crate::house::House;
-use crate::intent::{Change, Intent, MediaIntent, parse, play_by_name};
-use crate::reply::{cannot, dans, de, le, number, temp};
+use crate::intent::{Change, Intent, MediaIntent, parse_in, play_by_name_in};
+use crate::lexicon::Colour;
+use crate::reply::{
+    cannot_in, dans, de, le, number, number_in, place, room_in, temp, temp_in, the,
+};
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
 use crate::view::Trace;
@@ -85,10 +89,14 @@ pub enum Action {
 /// What the actions do, for the reply. `names` are in the actions' order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Done {
+    /// `colour`: the colour's name in the house's language ("rouge", "red"); `unable`: the room's lights left as they
+    /// were because they take no colour.
     Lights {
         area: String,
         on: bool,
         names: Vec<String>,
+        colour: Option<String>,
+        unable: Vec<String>,
     },
     Setpoint {
         zone: String,
@@ -194,13 +202,14 @@ pub fn plan(sentence: &str, house: &House) -> Plan {
 /// music and volume intents use that room.
 pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> Plan {
     let ws = words(sentence);
-    let mut plan = match play_by_name(sentence).or_else(|| parse(&ws)) {
+    let mut plan = match play_by_name_in(sentence, house.lang).or_else(|| parse_in(&ws, house.lang))
+    {
         Some(intent) => {
             let mut req = Request::new(intent);
             req.speaker_room = speaker_room.map(str::to_owned);
             plan_request(&req, house)
         }
-        None => not_understood(),
+        None => not_understood(house.lang),
     };
     plan.trace_mut().words = ws.iter().map(shown).collect();
     plan
@@ -210,8 +219,12 @@ pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> 
 pub fn plan_request(req: &Request, house: &House) -> Plan {
     match &req.intent {
         Intent::Lights {
-            on, names, room, ..
-        } => lights(req, *on, names, room, house),
+            on,
+            names,
+            room,
+            colour,
+            ..
+        } => lights(req, *on, *colour, names, room, house),
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
         Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
@@ -230,7 +243,11 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
             room,
         } => switches(req, *what, *on, *all, names, room, house),
         Intent::CoverPositionHint => answer(
-            "Pour une position, dites par exemple « ouvre les volets à 30 % ».".into(),
+            say(
+                house,
+                "Pour une position, dites par exemple « ouvre les volets à 30 % ».",
+                "For a position, say for example \"open the shutters to 30 %\".",
+            ),
             Trace {
                 intent: Some("covers_hint".into()),
                 ..Default::default()
@@ -240,21 +257,33 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
         Intent::Volume { change, room } => volume(req, *change, room, house),
         Intent::Mute { on, room } => mute(req, *on, room, house),
         Intent::MediaHint => answer(
-            "Pour un titre ou un artiste, dites « joue » suivi du nom.".into(),
+            say(
+                house,
+                "Pour un titre ou un artiste, dites « joue » suivi du nom.",
+                "For a title or an artist, say \"play\" followed by the name.",
+            ),
             Trace {
                 intent: Some("media_hint".into()),
                 ..Default::default()
             },
         ),
         Intent::VolumeRange => answer(
-            "Le volume va de 0 à 100 %.".into(),
+            say(
+                house,
+                "Le volume va de 0 à 100 %.",
+                "The volume goes from 0 to 100 %.",
+            ),
             Trace {
                 intent: Some("volume_range".into()),
                 ..Default::default()
             },
         ),
         Intent::CoverPositionRange => answer(
-            "La position va de 0 à 100 %.".into(),
+            say(
+                house,
+                "La position va de 0 à 100 %.",
+                "The position goes from 0 to 100 %.",
+            ),
             Trace {
                 intent: Some("covers_range".into()),
                 ..Default::default()
@@ -263,9 +292,21 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
     }
 }
 
-fn not_understood() -> Plan {
+/// The French or the English text, after the house's language.
+fn say(house: &House, fr: &str, en: &str) -> String {
+    match house.lang {
+        Lang::Fr => fr.into(),
+        Lang::En => en.into(),
+    }
+}
+
+fn not_understood(lang: Lang) -> Plan {
     Plan::NotUnderstood {
-        reply: "Je n'ai pas compris.".into(),
+        reply: match lang {
+            Lang::Fr => "Je n'ai pas compris.",
+            Lang::En => "I didn't understand.",
+        }
+        .into(),
         trace: Trace::default(),
     }
 }
@@ -282,11 +323,11 @@ fn ask_room(req: &Request, areas: &[String], house: &House, trace: Trace) -> Pla
         .map(|id| {
             let mut next = req.clone();
             next.area = Some(id.clone());
-            (crate::reply::room(house.area_name(id)), next)
+            (room_in(house.area_name(id), house.lang), next)
         })
         .collect();
     Plan::Ask {
-        question: "Dans quelle pièce ?".into(),
+        question: say(house, "Dans quelle pièce ?", "Which room?"),
         choices,
         trace,
     }
@@ -325,14 +366,50 @@ fn areas_of(lights: &[&EntityView], house: &House) -> Vec<String> {
         .collect()
 }
 
-fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &House) -> Plan {
+/// Whether a light takes a colour. Zigbee2MQTT lights advertise `xy` rather than `hs`; the hub
+/// sends the hue and saturation whatever the mode.
+fn takes_colour(light: &EntityView) -> bool {
+    ["hs", "xy", "rgb", "rgbw", "rgbww"]
+        .iter()
+        .any(|m| light.capabilities.color_modes.contains(*m))
+}
+
+fn lights(
+    req: &Request,
+    on: bool,
+    colour: Option<Colour>,
+    names: &[String],
+    room: &[String],
+    house: &House,
+) -> Plan {
     let mut trace = Trace {
-        intent: Some(if on { "lights_on" } else { "lights_off" }.into()),
+        intent: Some(
+            match (on, colour) {
+                (true, Some(_)) => "lights_colour",
+                (true, None) => "lights_on",
+                (false, _) => "lights_off",
+            }
+            .into(),
+        ),
         ..Default::default()
     };
+    let en = house.lang == Lang::En;
+    let coloured = |l: &&EntityView| colour.is_none() || takes_colour(l);
+    // In English the words before the light word may be part of its name, not a room ("turn on
+    // the desk lamp": names `lamp`, room `desk`).
+    let together: Vec<String> = names.iter().chain(room).cloned().collect();
     // Words before a linker that name no light but do name a room are the room
     // ("allume le salon" said with a linker after it).
-    let (names, room) = if room.is_empty()
+    let (names, room) = if en
+        && !names.is_empty()
+        && !room.is_empty()
+        && matches!(resolve_room(house, room), RoomMatch::Unknown)
+        && light_members(on, None, house)
+            .iter()
+            .any(|l| named(l, &together))
+    {
+        (&together[..], &[][..])
+    } else if room.is_empty()
         && !names.is_empty()
         && !light_members(on, None, house)
             .iter()
@@ -340,17 +417,40 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
         && matches!(
             resolve_room(house, names),
             RoomMatch::One(_) | RoomMatch::Many(_)
-        ) {
+        )
+    {
         (&[][..], names)
     } else {
         (names, room)
     };
-    let candidates: Vec<&EntityView> = light_members(on, None, house)
+    let all_named: Vec<&EntityView> = light_members(on, None, house)
         .into_iter()
         .filter(|l| names.is_empty() || named(l, names))
         .collect();
-    let none = if names.is_empty() {
-        "Pas de lumière dans la maison.".to_string()
+    let candidates: Vec<&EntityView> = all_named.iter().copied().filter(coloured).collect();
+    let none = if colour.is_some() && !all_named.is_empty() {
+        match (all_named.as_slice(), en) {
+            _ if names.is_empty() => say(
+                house,
+                "Aucune lumière ne prend de couleur.",
+                "No light takes a colour.",
+            ),
+            ([one], false) => format!("« {} » ne prend pas de couleur.", one.name),
+            ([one], true) => format!("\"{}\" can't take a colour.", one.name),
+            (_, false) => format!(
+                "Aucune lumière « {} » ne prend de couleur.",
+                names.join(" ")
+            ),
+            (_, true) => format!("No \"{}\" light takes a colour.", names.join(" ")),
+        }
+    } else if names.is_empty() {
+        say(
+            house,
+            "Pas de lumière dans la maison.",
+            "No lights in the house.",
+        )
+    } else if en {
+        format!("I can't find a light called \"{}\".", names.join(" "))
     } else {
         format!("Je ne trouve pas de lumière « {} ».", names.join(" "))
     };
@@ -363,7 +463,12 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
     trace.room_how = Some(how);
     let members = light_members(on, Some(&area), house);
     if members.is_empty() {
-        return answer(format!("Pas de lumière {}.", dans(&area_name)), trace);
+        let reply = if en {
+            format!("No lights {}.", place(&area_name, house.lang))
+        } else {
+            format!("Pas de lumière {}.", dans(&area_name))
+        };
+        return answer(reply, trace);
     }
     // Words of the room's own name were part of the room phrase ("la chambre de Léa").
     let mut area_words = name_words(&area_name);
@@ -389,6 +494,7 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
     if chosen.is_empty() {
         let choices = members
             .iter()
+            .filter(|l| coloured(l))
             .take(MAX_CHOICES)
             .map(|l| {
                 let mut next = req.clone();
@@ -396,17 +502,35 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
                 next.lights = Some(vec![l.id.clone()]);
                 (l.name.clone(), next)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if choices.is_empty() {
+            return answer(no_colour_in(&area_name, house), trace);
+        }
         return Plan::Ask {
-            question: format!("Quelle lumière {} ?", de(&area_name)),
+            question: if en {
+                format!("Which light {}?", place(&area_name, house.lang))
+            } else {
+                format!("Quelle lumière {} ?", de(&area_name))
+            },
             choices,
             trace,
         };
     }
+    // A colour goes to the lights that take one; the others are left as they are.
+    let (chosen, unable): (Vec<&EntityView>, Vec<&EntityView>) =
+        chosen.into_iter().partition(coloured);
+    if chosen.is_empty() {
+        let reply = match (unable.as_slice(), en) {
+            ([one], false) => format!("« {} » ne prend pas de couleur.", one.name),
+            ([one], true) => format!("\"{}\" can't take a colour.", one.name),
+            _ => no_colour_in(&area_name, house),
+        };
+        return answer(reply, trace);
+    }
     let command = if on {
         Command::TurnOn {
             brightness: None,
-            color: None,
+            color: colour.map(Colour::hs),
             effect: None,
         }
     } else {
@@ -425,8 +549,18 @@ fn lights(req: &Request, on: bool, names: &[String], room: &[String], house: &Ho
             area,
             on,
             names: chosen.iter().map(|l| l.name.clone()).collect(),
+            colour: colour.map(|c| c.name_in(house.lang).to_string()),
+            unable: unable.iter().map(|l| l.name.clone()).collect(),
         },
         trace,
+    }
+}
+
+/// "No light in the Salon takes a colour."
+fn no_colour_in(area_name: &str, house: &House) -> String {
+    match house.lang {
+        Lang::Fr => format!("Aucune lumière ne prend de couleur {}.", dans(area_name)),
+        Lang::En => format!("No light {} takes a colour.", place(area_name, house.lang)),
     }
 }
 
@@ -468,14 +602,28 @@ fn covers(
         intent: Some(if open { "covers_open" } else { "covers_close" }.into()),
         ..Default::default()
     };
+    let en = house.lang == Lang::En;
+    let together: Vec<String> = names.iter().chain(room).cloned().collect();
     // Words that name no shutter but do name a room are the room ("ferme le salon" form).
-    let (names, room) = if room.is_empty()
+    let (names, room) = if en
+        && !names.is_empty()
+        && !room.is_empty()
+        && matches!(resolve_room(house, room), RoomMatch::Unknown)
+        && cover_members(None, house)
+            .iter()
+            .any(|c| named(c, &together))
+    {
+        // In English the words before the shutter word may be its name ("close the bay
+        // shutter").
+        (&together[..], &[][..])
+    } else if room.is_empty()
         && !names.is_empty()
         && !cover_members(None, house).iter().any(|c| named(c, names))
         && matches!(
             resolve_room(house, names),
             RoomMatch::One(_) | RoomMatch::Many(_)
-        ) {
+        )
+    {
         (&[][..], names)
     } else if names.is_empty()
         && !room.is_empty()
@@ -499,7 +647,14 @@ fn covers(
         trace.room_how = Some("toute la maison".into());
         let members = cover_members(None, house);
         if members.is_empty() {
-            return answer("Pas de volet dans la maison.".into(), trace);
+            return answer(
+                say(
+                    house,
+                    "Pas de volet dans la maison.",
+                    "No shutters in the house.",
+                ),
+                trace,
+            );
         }
         (None, members)
     } else {
@@ -508,7 +663,13 @@ fn covers(
             .filter(|c| names.is_empty() || named(c, names))
             .collect();
         let none = if names.is_empty() {
-            "Pas de volet dans la maison.".to_string()
+            say(
+                house,
+                "Pas de volet dans la maison.",
+                "No shutters in the house.",
+            )
+        } else if en {
+            format!("I can't find a shutter called \"{}\".", names.join(" "))
         } else {
             format!("Je ne trouve pas de volet « {} ».", names.join(" "))
         };
@@ -521,7 +682,12 @@ fn covers(
         trace.room_how = Some(how);
         let members = cover_members(Some(&area), house);
         if members.is_empty() {
-            return answer(format!("Pas de volet {}.", dans(&area_name)), trace);
+            let reply = if en {
+                format!("No shutters {}.", place(&area_name, house.lang))
+            } else {
+                format!("Pas de volet {}.", dans(&area_name))
+            };
+            return answer(reply, trace);
         }
         // Words of the room's own name were part of the room phrase.
         let mut area_words = name_words(&area_name);
@@ -556,7 +722,11 @@ fn covers(
                 })
                 .collect();
             return Plan::Ask {
-                question: format!("Quel volet {} ?", de(&area_name)),
+                question: if en {
+                    format!("Which shutter {}?", place(&area_name, house.lang))
+                } else {
+                    format!("Quel volet {} ?", de(&area_name))
+                },
                 choices,
                 trace,
             };
@@ -580,7 +750,7 @@ fn covers(
         }
     }
     if actions.is_empty() {
-        return answer(cannot(&unable, open, position), trace);
+        return answer(cannot_in(&unable, open, position, house.lang), trace);
     }
     Plan::Act {
         actions,
@@ -622,16 +792,36 @@ fn switches(
     room: &[String],
     house: &House,
 ) -> Plan {
-    let (noun, intent) = match what {
-        SwitchType::Tv => ("télé", "tv"),
-        _ => ("prise", "plugs"),
+    let en = house.lang == Lang::En;
+    let (noun, intent) = match (what, en) {
+        (SwitchType::Tv, false) => ("télé", "tv"),
+        (_, false) => ("prise", "plugs"),
+        (SwitchType::Tv, true) => ("TV", "tv"),
+        (_, true) => ("plug", "plugs"),
+    };
+    // "No TVs", "No plugs".
+    let plural = if what == SwitchType::Tv {
+        "TVs"
+    } else {
+        "plugs"
     };
     let mut trace = Trace {
         intent: Some(format!("{intent}_{}", if on { "on" } else { "off" })),
         ..Default::default()
     };
+    let together: Vec<String> = names.iter().chain(room).cloned().collect();
     // Words that name no device but do name a room are the room.
-    let (names, room) = if room.is_empty()
+    let (names, room) = if en
+        && !names.is_empty()
+        && !room.is_empty()
+        && matches!(resolve_room(house, room), RoomMatch::Unknown)
+        && switch_members(what, None, house)
+            .iter()
+            .any(|s| named(s, &together))
+    {
+        // In English the words before the device word may be its name ("the coffee plug").
+        (&together[..], &[][..])
+    } else if room.is_empty()
         && !names.is_empty()
         && !switch_members(what, None, house)
             .iter()
@@ -639,7 +829,8 @@ fn switches(
         && matches!(
             resolve_room(house, names),
             RoomMatch::One(_) | RoomMatch::Many(_)
-        ) {
+        )
+    {
         (&[][..], names)
     } else if names.is_empty()
         && !room.is_empty()
@@ -665,7 +856,12 @@ fn switches(
         trace.room_how = Some("toute la maison".into());
         let members = switch_members(what, None, house);
         if members.is_empty() {
-            return answer(format!("Pas de {noun} dans la maison."), trace);
+            let reply = if en {
+                format!("No {plural} in the house.")
+            } else {
+                format!("Pas de {noun} dans la maison.")
+            };
+            return answer(reply, trace);
         }
         (None, members)
     } else {
@@ -673,10 +869,11 @@ fn switches(
             .into_iter()
             .filter(|s| names.is_empty() || named(s, names))
             .collect();
-        let none = if names.is_empty() {
-            format!("Pas de {noun} dans la maison.")
-        } else {
-            format!("Je ne trouve pas de {noun} « {} ».", names.join(" "))
+        let none = match (names.is_empty(), en) {
+            (true, false) => format!("Pas de {noun} dans la maison."),
+            (false, false) => format!("Je ne trouve pas de {noun} « {} ».", names.join(" ")),
+            (true, true) => format!("No {plural} in the house."),
+            (false, true) => format!("I can't find a {noun} called \"{}\".", names.join(" ")),
         };
         let (area, how) = match pick_room(req, room, &areas_of(&candidates, house), none, house) {
             Ok(found) => found,
@@ -687,7 +884,12 @@ fn switches(
         trace.room_how = Some(how);
         let members = switch_members(what, Some(&area), house);
         if members.is_empty() {
-            return answer(format!("Pas de {noun} {}.", dans(&area_name)), trace);
+            let reply = if en {
+                format!("No {plural} {}.", place(&area_name, house.lang))
+            } else {
+                format!("Pas de {noun} {}.", dans(&area_name))
+            };
+            return answer(reply, trace);
         }
         // Words of the room's own name were part of the room phrase.
         let mut area_words = name_words(&area_name);
@@ -722,7 +924,11 @@ fn switches(
                 })
                 .collect();
             return Plan::Ask {
-                question: format!("Quelle {noun} {} ?", de(&area_name)),
+                question: if en {
+                    format!("Which {noun} {}?", place(&area_name, house.lang))
+                } else {
+                    format!("Quelle {noun} {} ?", de(&area_name))
+                },
                 choices,
                 trace,
             };
@@ -776,7 +982,11 @@ fn pick_player<'a>(
     let all = players(house);
     let none = || {
         Box::new(answer(
-            "Il n'y a pas de lecteur de musique.".into(),
+            say(
+                house,
+                "Il n'y a pas de lecteur de musique.",
+                "There's no music player.",
+            ),
             trace.clone(),
         ))
     };
@@ -793,7 +1003,11 @@ fn pick_player<'a>(
         .collect();
     match online.as_slice() {
         [] => Err(Box::new(answer(
-            "Le lecteur ne répond pas.".into(),
+            say(
+                house,
+                "Le lecteur ne répond pas.",
+                "The player isn't responding.",
+            ),
             trace.clone(),
         ))),
         [one] => Ok(one),
@@ -815,7 +1029,7 @@ fn pick_player<'a>(
                 })
                 .collect();
             Err(Box::new(Plan::Ask {
-                question: "Quel lecteur ?".into(),
+                question: say(house, "Quel lecteur ?", "Which player?"),
                 choices,
                 trace: trace.clone(),
             }))
@@ -823,12 +1037,17 @@ fn pick_player<'a>(
     }
 }
 
-/// "Get Lucky, de Daft Punk." / "Get Lucky."
-fn song(title: &str, artist: Option<&str>) -> String {
-    match artist {
-        Some(artist) => format!("{title}, de {artist}."),
-        None => format!("{title}."),
+/// "Get Lucky, de Daft Punk." / "Get Lucky, by Daft Punk." / "Get Lucky."
+fn song(title: &str, artist: Option<&str>, lang: Lang) -> String {
+    match (artist, lang) {
+        (Some(artist), Lang::Fr) => format!("{title}, de {artist}."),
+        (Some(artist), Lang::En) => format!("{title}, by {artist}."),
+        (None, _) => format!("{title}."),
     }
+}
+
+fn nothing_playing(house: &House) -> String {
+    say(house, "Rien ne joue.", "Nothing is playing.")
 }
 
 fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
@@ -854,13 +1073,17 @@ fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
         MediaIntent::NowPlaying => {
             let reply = match &player.state.value {
                 StateValue::MediaPlayer(state) => match (state.state.as_deref(), &state.title) {
-                    (Some("playing"), Some(title)) => song(title, state.artist.as_deref()),
-                    (Some("paused"), Some(title)) => {
-                        format!("En pause : {}", song(title, state.artist.as_deref()))
+                    (Some("playing"), Some(title)) => {
+                        song(title, state.artist.as_deref(), house.lang)
                     }
-                    _ => "Rien ne joue.".into(),
+                    (Some("paused"), Some(title)) => format!(
+                        "{} {}",
+                        say(house, "En pause :", "Paused:"),
+                        song(title, state.artist.as_deref(), house.lang)
+                    ),
+                    _ => nothing_playing(house),
                 },
-                _ => "Rien ne joue.".into(),
+                _ => nothing_playing(house),
             };
             return answer(reply, trace);
         }
@@ -904,7 +1127,7 @@ fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
             MediaIntent::Pause | MediaIntent::Next | MediaIntent::Previous
         )
     {
-        return answer("Rien ne joue.".into(), trace);
+        return answer(nothing_playing(house), trace);
     }
     if !player
         .capabilities
@@ -913,11 +1136,19 @@ fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
         .any(|f| f == feature)
     {
         let reply = if feature == "play_media" {
-            "Ce lecteur ne sait pas chercher un titre."
+            say(
+                house,
+                "Ce lecteur ne sait pas chercher un titre.",
+                "This player can't search for a title.",
+            )
         } else {
-            "Ce lecteur ne sait pas faire ça."
+            say(
+                house,
+                "Ce lecteur ne sait pas faire ça.",
+                "This player can't do that.",
+            )
         };
-        return answer(reply.into(), trace);
+        return answer(reply, trace);
     }
     Plan::Act {
         actions: vec![Action::Media {
@@ -993,9 +1224,17 @@ fn speaker_room(
         req,
         room,
         &candidates,
-        "Il n'y a pas d'enceinte.".into(),
+        say(house, "Il n'y a pas d'enceinte.", "There's no speaker."),
         house,
     )
+}
+
+/// "No speakers in the Kitchen."
+fn no_speaker_in(area_name: &str, house: &House) -> String {
+    match house.lang {
+        Lang::Fr => format!("Pas d'enceinte {}.", dans(area_name)),
+        Lang::En => format!("No speakers {}.", place(area_name, house.lang)),
+    }
 }
 
 fn volume(req: &Request, change: Change, room: &[String], house: &House) -> Plan {
@@ -1011,10 +1250,7 @@ fn volume(req: &Request, change: Change, room: &[String], house: &House) -> Plan
     trace.room_how = Some(how);
     let controls = speaker_controls("volume", Some(&area), house);
     if controls.is_empty() {
-        return answer(
-            format!("Pas d'enceinte {}.", dans(house.area_name(&area))),
-            trace,
-        );
+        return answer(no_speaker_in(house.area_name(&area), house), trace);
     }
     let levels: Vec<(&EntityView, f64)> = controls
         .iter()
@@ -1030,7 +1266,14 @@ fn volume(req: &Request, change: Change, room: &[String], house: &House) -> Plan
         })
         .collect();
     if levels.is_empty() {
-        return answer("Je ne connais pas le volume actuel.".into(), trace);
+        return answer(
+            say(
+                house,
+                "Je ne connais pas le volume actuel.",
+                "I don't know the current volume.",
+            ),
+            trace,
+        );
     }
     trace.entities = levels.iter().map(|(c, _)| c.id.clone()).collect();
     trace.value = Some(format!("{} %", number(levels[0].1)));
@@ -1063,10 +1306,7 @@ fn mute(req: &Request, on: bool, room: &[String], house: &House) -> Plan {
     trace.room_how = Some(how);
     let controls = speaker_controls("mute", Some(&area), house);
     if controls.is_empty() {
-        return answer(
-            format!("Pas d'enceinte {}.", dans(house.area_name(&area))),
-            trace,
-        );
+        return answer(no_speaker_in(house.area_name(&area), house), trace);
     }
     trace.entities = controls.iter().map(|c| c.id.clone()).collect();
     let command = if on {
@@ -1108,7 +1348,10 @@ fn pick_room(
         RoomMatch::One(area) => Ok((area, format!("mots : {}", room.join(", ")))),
         RoomMatch::Many(areas) => Err(Box::new(ask_room(req, &areas, house, Trace::default()))),
         RoomMatch::Unknown => Err(Box::new(answer(
-            format!("Je ne connais pas de pièce « {} ».", room.join(" ")),
+            match house.lang {
+                Lang::Fr => format!("Je ne connais pas de pièce « {} ».", room.join(" ")),
+                Lang::En => format!("I don't know a room called \"{}\".", room.join(" ")),
+            },
             Trace::default(),
         ))),
         RoomMatch::NoRoomSaid => match candidates {
@@ -1174,6 +1417,15 @@ fn age_note(age_s: Option<u64>, house: &House) -> String {
     match age_s {
         Some(age) if age > u64::from(house.stale_after_min) * 60 => {
             let (h, m) = (age / 3600, (age % 3600) / 60);
+            if house.lang == Lang::En {
+                let ago = match (h, m) {
+                    (0, m) => format!("{m} min"),
+                    (h, _) if h >= 48 => format!("{} days", h / 24),
+                    (h, 0) => format!("{h} h"),
+                    (h, m) => format!("{h} h {m} min"),
+                };
+                return format!(", measured {ago} ago");
+            }
             let ago = match (h, m) {
                 (0, m) => format!("{m} min"),
                 (h, _) if h >= 48 => format!("{} j", h / 24),
@@ -1200,10 +1452,26 @@ fn read_temp(req: &Request, room: &[String], outdoor: bool, house: &House) -> Pl
         });
         return match reading {
             Some((value, age)) => answer(
-                format!("Il fait {} dehors{}.", temp(value), age_note(age, house)),
+                match house.lang {
+                    Lang::Fr => {
+                        format!("Il fait {} dehors{}.", temp(value), age_note(age, house))
+                    }
+                    Lang::En => format!(
+                        "It's {} outside{}.",
+                        temp_in(value, house.lang),
+                        age_note(age, house)
+                    ),
+                },
                 trace,
             ),
-            None => answer("Pas de température extérieure.".into(), trace),
+            None => answer(
+                say(
+                    house,
+                    "Pas de température extérieure.",
+                    "No outdoor temperature.",
+                ),
+                trace,
+            ),
         };
     }
     let candidates: Vec<String> = house
@@ -1212,7 +1480,11 @@ fn read_temp(req: &Request, room: &[String], outdoor: bool, house: &House) -> Pl
         .filter(|a| room_reading(house, &a.id).is_some())
         .map(|a| a.id.clone())
         .collect();
-    let none = "Pas de thermomètre dans la maison.".to_string();
+    let none = say(
+        house,
+        "Pas de thermomètre dans la maison.",
+        "No thermometer in the house.",
+    );
     let (area, how) = match pick_room(req, room, &candidates, none, house) {
         Ok(found) => found,
         Err(plan) => return (*plan).with_trace(trace),
@@ -1226,15 +1498,22 @@ fn read_temp(req: &Request, room: &[String], outdoor: bool, house: &House) -> Pl
             trace.value = Some(temp(value));
             answer(
                 format!(
-                    "Il fait {} {}{}.",
-                    temp(value),
-                    dans(&name),
+                    "{} {} {}{}.",
+                    say(house, "Il fait", "It's"),
+                    temp_in(value, house.lang),
+                    place(&name, house.lang),
                     age_note(age, house)
                 ),
                 trace,
             )
         }
-        None => answer(format!("Pas de thermomètre {}.", dans(&name)), trace),
+        None => answer(
+            match house.lang {
+                Lang::Fr => format!("Pas de thermomètre {}.", dans(&name)),
+                Lang::En => format!("No thermometer {}.", place(&name, house.lang)),
+            },
+            trace,
+        ),
     }
 }
 
@@ -1284,16 +1563,40 @@ fn round_to(value: f64, step: f64) -> f64 {
     ((value / step).round() * step * 100.0).round() / 100.0
 }
 
-/// An example sentence for a room: "mets le salon à 19".
-fn example_for(name: &str) -> String {
-    format!("mets {} à 19", le(name).to_lowercase())
+/// An example sentence for a room: "mets le salon à 19", "set the Kitchen to 19".
+fn example_for(name: &str, lang: Lang) -> String {
+    match lang {
+        Lang::Fr => format!("mets {} à 19", le(name).to_lowercase()),
+        Lang::En => format!("set {} to 19", the(name)),
+    }
 }
 
-fn ask_value(name: &str) -> String {
-    format!(
-        "Dis-moi une température, par exemple « {} ».",
-        example_for(name)
-    )
+/// `why`, then asks for a temperature with an example: "…: tell me a temperature, for
+/// example "set the Kitchen to 19"."
+fn ask_value_after(why: &str, name: &str, lang: Lang) -> String {
+    match lang {
+        Lang::Fr => format!(
+            "{why} : dis-moi une température, par exemple « {} ».",
+            example_for(name, lang)
+        ),
+        Lang::En => format!(
+            "{why}: tell me a temperature, for example \"{}\".",
+            example_for(name, lang)
+        ),
+    }
+}
+
+fn ask_value(name: &str, lang: Lang) -> String {
+    match lang {
+        Lang::Fr => format!(
+            "Dis-moi une température, par exemple « {} ».",
+            example_for(name, lang)
+        ),
+        Lang::En => format!(
+            "Tell me a temperature, for example \"{}\".",
+            example_for(name, lang)
+        ),
+    }
 }
 
 /// The active zones' ids, in the house's room order.
@@ -1318,7 +1621,11 @@ fn pick_zone<'a>(
     house: &House<'a>,
     trace: &mut Trace,
 ) -> Result<(&'a ZoneView, String), Box<Plan>> {
-    let none = "Aucun chauffage piloté n'est actif.".to_string();
+    let none = say(
+        house,
+        "Aucun chauffage piloté n'est actif.",
+        "No controlled heating is active.",
+    );
     let (area, how) = match pick_room(req, room, &active_zones(house), none, house) {
         Ok(found) => found,
         Err(plan) => return Err(Box::new((*plan).with_trace(trace.clone()))),
@@ -1328,13 +1635,19 @@ fn pick_zone<'a>(
     trace.room_how = Some(how);
     let Some(zone) = house.zones.iter().find(|z| z.zone == area && !z.orphan) else {
         return Err(Box::new(answer(
-            format!("Pas de chauffage piloté {}.", dans(&name)),
+            match house.lang {
+                Lang::Fr => format!("Pas de chauffage piloté {}.", dans(&name)),
+                Lang::En => format!("No controlled heating {}.", place(&name, house.lang)),
+            },
             trace.clone(),
         )));
     };
     if zone.settings.state != ZoneState::Active {
         return Err(Box::new(answer(
-            format!("Le chauffage {} n'est pas encore actif.", de(&name)),
+            match house.lang {
+                Lang::Fr => format!("Le chauffage {} n'est pas encore actif.", de(&name)),
+                Lang::En => format!("The heating {} isn't active yet.", place(&name, house.lang)),
+            },
             trace.clone(),
         )));
     }
@@ -1353,10 +1666,12 @@ fn heating_no_value(req: &Request, room: &[String], house: &House) -> Plan {
             .area
             .clone()
             .or_else(|| active_zones(house).into_iter().next())
-            .map_or("la pièce".into(), |a| house.area_name(&a).to_string()),
+            .map_or(say(house, "la pièce", "room"), |a| {
+                house.area_name(&a).to_string()
+            }),
     };
     trace.room = Some(name.clone());
-    answer(ask_value(&name), trace)
+    answer(ask_value(&name, house.lang), trace)
 }
 
 /// What a zone's units are really set to.
@@ -1437,39 +1752,45 @@ fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Pl
             let base = match real {
                 RealSetpoint::Temp(t) => t,
                 RealSetpoint::Differ(values) => {
+                    let lang = house.lang;
                     let shown = match values.split_last() {
                         Some((last, rest)) if !rest.is_empty() => format!(
-                            "{} et {}",
+                            "{} {} {}",
                             rest.iter()
-                                .map(|v| number(*v))
+                                .map(|v| number_in(*v, lang))
                                 .collect::<Vec<_>>()
                                 .join(", "),
-                            temp(*last)
+                            say(house, "et", "and"),
+                            temp_in(*last, lang)
                         ),
                         _ => String::new(),
                     };
-                    return answer(
-                        format!(
-                            "Les appareils {} ont des consignes différentes ({shown}) : dis-moi une température, par exemple « {} ».",
-                            de(&name),
-                            example_for(&name)
+                    let why = match lang {
+                        Lang::Fr => format!(
+                            "Les appareils {} ont des consignes différentes ({shown})",
+                            de(&name)
                         ),
-                        trace,
-                    );
+                        Lang::En => format!(
+                            "The devices {} have different setpoints ({shown})",
+                            place(&name, lang)
+                        ),
+                    };
+                    return answer(ask_value_after(&why, &name, lang), trace);
                 }
                 RealSetpoint::Off | RealSetpoint::Unknown => {
-                    let why = if real == RealSetpoint::Off {
-                        format!("Le chauffage {} est sur arrêt", de(&name))
-                    } else {
-                        format!("Je ne connais pas la consigne {}", de(&name))
+                    let why = match (real == RealSetpoint::Off, house.lang) {
+                        (true, Lang::Fr) => format!("Le chauffage {} est sur arrêt", de(&name)),
+                        (false, Lang::Fr) => {
+                            format!("Je ne connais pas la consigne {}", de(&name))
+                        }
+                        (true, Lang::En) => {
+                            format!("The heating {} is off", place(&name, house.lang))
+                        }
+                        (false, Lang::En) => {
+                            format!("I don't know the setpoint {}", place(&name, house.lang))
+                        }
                     };
-                    return answer(
-                        format!(
-                            "{why} : dis-moi une température, par exemple « {} ».",
-                            example_for(&name)
-                        ),
-                        trace,
-                    );
+                    return answer(ask_value_after(&why, &name, house.lang), trace);
                 }
             };
             let sign = if delta < 0.0 { "−" } else { "+" };
@@ -1522,14 +1843,30 @@ fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Pl
             (None, None) => unreachable!(),
         };
         trace.gate = Some(format!("hors des limites de l'appareil ({range})"));
-        return answer(
-            format!(
+        let reply = match house.lang {
+            Lang::Fr => format!(
                 "Le chauffage {} accepte {range} : {} est hors limites.",
                 de(&name),
                 temp(target)
             ),
-            trace,
-        );
+            Lang::En => {
+                let lang = house.lang;
+                let range = match (min, max) {
+                    (Some(lo), Some(hi)) => {
+                        format!("{} to {}", number_in(lo, lang), temp_in(hi, lang))
+                    }
+                    (Some(lo), None) => format!("from {}", temp_in(lo, lang)),
+                    (None, Some(hi)) => format!("up to {}", temp_in(hi, lang)),
+                    (None, None) => unreachable!(),
+                };
+                format!(
+                    "The heating {} accepts {range}: {} is out of range.",
+                    place(&name, lang),
+                    temp_in(target, lang)
+                )
+            }
+        };
+        return answer(reply, trace);
     }
     let in_range = (house.range.min..=house.range.max).contains(&target);
     let near_reading = zone
@@ -1554,7 +1891,14 @@ fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Pl
             room: Vec::new(),
         };
         return Plan::Confirm {
-            question: format!("Passer {} à {} ?", le(&name), temp(target)),
+            question: match house.lang {
+                Lang::Fr => format!("Passer {} à {} ?", le(&name), temp(target)),
+                Lang::En => format!(
+                    "Set the heating {} to {}?",
+                    place(&name, house.lang),
+                    temp_in(target, house.lang)
+                ),
+            },
             request,
             trace,
         };
@@ -1734,9 +2078,63 @@ mod tests {
             Done::Lights {
                 area: "salon".into(),
                 on: false,
-                names: vec!["Led".into()]
+                names: vec!["Led".into()],
+                colour: None,
+                unable: vec![],
             }
         );
+    }
+
+    #[test]
+    fn colour_goes_to_the_lights_that_take_one() {
+        let red = Command::TurnOn {
+            brightness: None,
+            color: Some(nidoo_core::model::Hs { h: 0.0, s: 100.0 }),
+            effect: None,
+        };
+        let plan = p("allume le salon en rouge");
+        assert_eq!(
+            lights_of(&plan),
+            vec![
+                ("light_lampe_table".to_string(), red.clone()),
+                ("light_led".to_string(), red.clone()),
+            ]
+        );
+        let Plan::Act { done, trace, .. } = &plan else {
+            unreachable!()
+        };
+        assert_eq!(trace.intent.as_deref(), Some("lights_colour"));
+        assert_eq!(
+            *done,
+            Done::Lights {
+                area: "salon".into(),
+                on: true,
+                names: vec!["Lampe table".into(), "Led".into()],
+                colour: Some("rouge".into()),
+                unable: vec!["Plafonnier".into(), "Ambiance TV".into()],
+            }
+        );
+        assert_eq!(
+            lights_of(&p("mets la led en rouge")),
+            vec![("light_led".to_string(), red)]
+        );
+    }
+
+    #[test]
+    fn colour_without_a_colour_light_answers() {
+        assert_eq!(
+            reply_of(&p("allume le plafonnier en bleu")),
+            "« Plafonnier » ne prend pas de couleur."
+        );
+        assert_eq!(
+            reply_of(&p("allume la chambre de Léa en bleu")),
+            "« Lampe » ne prend pas de couleur."
+        );
+        // No room said: only rooms with a colour light are possible.
+        assert!(matches!(
+            p("allume en vert"),
+            Plan::Act { done: Done::Lights { area, .. }, .. } if area == "salon"
+        ));
     }
 
     fn reply_of(plan: &Plan) -> String {
@@ -2348,6 +2746,7 @@ mod tests {
             all: false,
             names: vec!["salon".into()],
             room: vec![],
+            colour: None,
         });
         let plan = plan_request(&req, &h);
         assert_eq!(
@@ -2934,6 +3333,389 @@ mod tests {
             Command::MediaAction {
                 action: "play".into()
             }
+        );
+    }
+
+    /// [`fixture::house`] with English names: Living room, TV room, Office, Kitchen (the
+    /// heated room with the open/close shutter), Tom (a person's room) and Garage; a desk
+    /// lamp in the Office and a night light in Tom's room.
+    fn english() -> fixture::Fixture {
+        let mut f = fixture::house();
+        for a in &mut f.areas {
+            a.name = match a.id.as_str() {
+                "salon" => "Living room",
+                "salon_tv" => "TV room",
+                "bureau" => "Office",
+                "chambre_lea" => "Kitchen",
+                "chambre_tom" => "Tom",
+                _ => "Garage",
+            }
+            .into();
+        }
+        for (id, name) in [
+            ("light_plafonnier", "Ceiling"),
+            ("light_lampe_table", "Table lamp"),
+            ("light_led", "Led"),
+            ("light_lampe_lea", "Lamp"),
+            ("cover_baie", "Bay"),
+            ("cover_fenetre", "Window"),
+            ("cover_lea", "Shutter"),
+            ("switch_tv", "Screen"),
+            ("switch_prise_bureau", "Coffee maker"),
+            ("switch_prise_tom", "Charger"),
+            ("player_music", "Music"),
+        ] {
+            f.entity_mut(id).name = name.into();
+        }
+        f.entities
+            .push(fixture::light("light_desk", "Desk lamp", "bureau", true));
+        f.entities.push(fixture::light(
+            "light_night",
+            "Night light",
+            "chambre_tom",
+            false,
+        ));
+        f
+    }
+
+    fn words(s: &str) -> Vec<String> {
+        s.split_whitespace().map(str::to_string).collect()
+    }
+
+    /// The plan of `intent` in the English house, and its reply when it acts and every
+    /// action succeeds.
+    fn en(intent: Intent) -> (Plan, String) {
+        let f = english();
+        let house = f.house_en();
+        let plan = plan_request(&Request::new(intent), &house);
+        let text = match &plan {
+            Plan::Act { actions, done, .. } => crate::reply::done(
+                done,
+                &vec![crate::reply::ActionResult::Ok; actions.len()],
+                &house,
+                false,
+            ),
+            Plan::Answer { reply, .. } | Plan::NotUnderstood { reply, .. } => reply.clone(),
+            Plan::Ask { question, .. } | Plan::Confirm { question, .. } => question.clone(),
+        };
+        (plan, text)
+    }
+
+    fn lights_intent(on: bool, names: &str, room: &str) -> Intent {
+        Intent::Lights {
+            on,
+            all: false,
+            names: words(names),
+            room: words(room),
+            colour: None,
+        }
+    }
+
+    #[test]
+    fn english_lights() {
+        assert_eq!(
+            en(lights_intent(true, "", "living room")).1,
+            "Living room lights on (4 lights)."
+        );
+        assert_eq!(
+            en(lights_intent(false, "led", "living room")).1,
+            "Led off in the Living room."
+        );
+        assert_eq!(
+            en(lights_intent(true, "", "tom")).1,
+            "Night light on in Tom's room."
+        );
+        // "turn on the desk lamp": the room words are part of the light's name.
+        let (plan, text) = en(lights_intent(true, "lamp", "desk"));
+        assert_eq!(lights_of(&plan), vec![("light_desk".to_string(), on())]);
+        assert_eq!(text, "Desk lamp on in the Office.");
+        assert_eq!(
+            en(lights_intent(true, "", "attic")).1,
+            "I don't know a room called \"attic\"."
+        );
+        assert_eq!(
+            en(lights_intent(true, "", "garage")).1,
+            "No lights in the Garage."
+        );
+        assert_eq!(
+            en(lights_intent(true, "chandelier", "")).1,
+            "I can't find a light called \"chandelier\"."
+        );
+        let (plan, text) = en(lights_intent(true, "chandelier", "living room"));
+        assert_eq!(text, "Which light in the Living room?");
+        assert_eq!(
+            labels(&plan),
+            ["Ceiling", "Table lamp", "Led", "Ambiance TV"]
+        );
+    }
+
+    #[test]
+    fn english_room_question() {
+        let (plan, text) = en(lights_intent(true, "", ""));
+        assert_eq!(text, "Which room?");
+        assert_eq!(
+            labels(&plan),
+            ["Living room", "Office", "Kitchen", "Tom's room"]
+        );
+    }
+
+    #[test]
+    fn english_colour() {
+        let (plan, text) = en(Intent::Lights {
+            on: true,
+            all: false,
+            names: words("led"),
+            room: vec![],
+            colour: Some(Colour::Red),
+        });
+        let Plan::Act { done, .. } = plan else {
+            panic!("{plan:?}")
+        };
+        assert!(matches!(done, Done::Lights { colour: Some(c), .. } if c == "red"));
+        assert_eq!(text, "Led on in red in the Living room.");
+        assert_eq!(
+            en(Intent::Lights {
+                on: true,
+                all: false,
+                names: words("ceiling"),
+                room: vec![],
+                colour: Some(Colour::Blue),
+            })
+            .1,
+            "\"Ceiling\" can't take a colour."
+        );
+    }
+
+    #[test]
+    fn english_temperatures() {
+        let set = |t: f64, room: &str| Intent::SetTemp {
+            change: Change::Absolute(t),
+            room: words(room),
+        };
+        assert_eq!(
+            en(set(20.0, "living room")).1,
+            "Heating in the Living room set to 20 °C (was 19 °C)."
+        );
+        assert_eq!(
+            en(set(25.0, "living room")).1,
+            "Set the heating in the Living room to 25 °C?"
+        );
+        assert_eq!(
+            en(set(20.0, "tom")).1,
+            "The heating in Tom's room isn't active yet."
+        );
+        assert_eq!(
+            en(set(20.0, "office")).1,
+            "No controlled heating in the Office."
+        );
+        assert_eq!(
+            en(Intent::HeatingNoValue {
+                room: words("kitchen")
+            })
+            .1,
+            "Tell me a temperature, for example \"set the Kitchen to 19\"."
+        );
+        assert_eq!(
+            en(Intent::ReadTemp {
+                room: words("office"),
+                outdoor: false
+            })
+            .1,
+            "It's 20.1 °C in the Office."
+        );
+        assert_eq!(
+            en(Intent::ReadTemp {
+                room: vec![],
+                outdoor: true
+            })
+            .1,
+            "It's 7 °C outside."
+        );
+        // A setpoint without a known setpoint before it.
+        let mut f = english();
+        f.zone_mut("salon").decision = None;
+        let house = f.house_en();
+        let plan = plan_request(&Request::new(set(20.5, "living room")), &house);
+        let Plan::Act { done, .. } = plan else {
+            panic!("{plan:?}")
+        };
+        assert_eq!(
+            crate::reply::done(&done, &[crate::reply::ActionResult::Ok], &house, false),
+            "Heating in the Living room set to 20.5 °C."
+        );
+        let plan = plan_request(
+            &Request::new(Intent::SetTemp {
+                change: Change::Relative(1.0),
+                room: words("living room"),
+            }),
+            &house,
+        );
+        assert!(matches!(
+            plan,
+            Plan::Answer { reply, .. } if reply == "I don't know the setpoint in the Living room: tell me a temperature, for example \"set the Living room to 19\"."
+        ));
+    }
+
+    #[test]
+    fn english_covers() {
+        let covers = |open: bool, position: Option<u8>, all: bool, room: &str| Intent::Covers {
+            open,
+            position,
+            all,
+            names: vec![],
+            room: words(room),
+        };
+        assert_eq!(
+            en(covers(false, None, true, "")).1,
+            "All shutters closed (3 shutters)."
+        );
+        assert_eq!(
+            en(covers(true, Some(30), false, "living room")).1,
+            "Living room: shutters open at 30 % (2 shutters)."
+        );
+        assert_eq!(
+            en(covers(true, Some(30), false, "kitchen")).1,
+            "Shutter can't be set to a position."
+        );
+        assert_eq!(
+            en(covers(false, None, false, "kitchen")).1,
+            "Shutter closed in the Kitchen."
+        );
+        // "close the bay shutter" arrives as names `shutter`, room `bay`.
+        assert_eq!(
+            en(Intent::Covers {
+                open: false,
+                position: None,
+                all: false,
+                names: words("bay"),
+                room: vec![],
+            })
+            .1,
+            "Shutter \"Bay\" closed in the Living room."
+        );
+        assert_eq!(
+            en(Intent::CoverPositionHint).1,
+            "For a position, say for example \"open the shutters to 30 %\"."
+        );
+    }
+
+    #[test]
+    fn english_switches() {
+        let switch = |what, on, names: &str, room: &str| Intent::Switches {
+            what,
+            on,
+            all: false,
+            names: words(names),
+            room: words(room),
+        };
+        assert_eq!(
+            en(switch(SwitchType::Tv, true, "", "")).1,
+            "TV \"Screen\" on in the Living room."
+        );
+        // "turn off the coffee maker plug": names `maker`, room `coffee`.
+        assert_eq!(
+            en(switch(SwitchType::Plug, false, "maker", "coffee")).1,
+            "Plug \"Coffee maker\" off in the Office."
+        );
+        let (plan, text) = en(switch(SwitchType::Plug, false, "", ""));
+        assert_eq!(text, "Which room?");
+        assert_eq!(labels(&plan), ["Office", "Tom's room"]);
+        assert_eq!(
+            en(Intent::Switches {
+                what: SwitchType::Plug,
+                on: false,
+                all: true,
+                names: vec![],
+                room: vec![],
+            })
+            .1,
+            "All plugs off (2 plugs)."
+        );
+        assert_eq!(
+            en(switch(SwitchType::Tv, true, "", "garage")).1,
+            "No TVs in the Garage."
+        );
+    }
+
+    #[test]
+    fn english_media_and_speakers() {
+        assert_eq!(en(Intent::Media(MediaIntent::Pause)).1, "Music paused.");
+        assert_eq!(
+            en(Intent::Media(MediaIntent::NowPlaying)).1,
+            "Get Lucky, by Daft Punk."
+        );
+        assert_eq!(
+            en(Intent::Volume {
+                change: Change::Absolute(30.0),
+                room: words("office"),
+            })
+            .1,
+            "Volume at 30 % in the Office."
+        );
+        assert_eq!(
+            en(Intent::Volume {
+                change: Change::Absolute(30.0),
+                room: vec![],
+            })
+            .1,
+            "Which room?"
+        );
+        assert_eq!(
+            en(Intent::Mute {
+                on: true,
+                room: words("living room"),
+            })
+            .1,
+            "Sound muted in the Living room."
+        );
+        assert_eq!(
+            en(Intent::Mute {
+                on: true,
+                room: words("office"),
+            })
+            .1,
+            "No speakers in the Office."
+        );
+        assert_eq!(
+            en(Intent::VolumeRange).1,
+            "The volume goes from 0 to 100 %."
+        );
+        assert_eq!(
+            en(Intent::MediaHint).1,
+            "For a title or an artist, say \"play\" followed by the name."
+        );
+        let mut f = english();
+        f.entity_mut("player_music").state.availability = Availability::Offline;
+        let plan = plan_request(
+            &Request::new(Intent::Media(MediaIntent::Pause)),
+            &f.house_en(),
+        );
+        assert!(matches!(
+            plan,
+            Plan::Answer { reply, .. } if reply == "The player isn't responding."
+        ));
+    }
+
+    #[test]
+    fn english_not_understood_and_failures() {
+        let f = english();
+        assert!(matches!(
+            plan("xyzzy plugh", &f.house_en()),
+            Plan::NotUnderstood { reply, .. } if reply == "I didn't understand."
+        ));
+        let house = f.house_en();
+        let Plan::Act { done, .. } = en(lights_intent(true, "", "living room")).0 else {
+            panic!()
+        };
+        use crate::reply::ActionResult::{Failed, Ok};
+        assert_eq!(
+            crate::reply::done(
+                &done,
+                &[Ok, Ok, Failed(crate::reply::NO_ANSWER_EN.into()), Ok],
+                &house,
+                true
+            ),
+            "Simulation: Living room lights on (4 lights). 1 of 4 didn't answer: Led."
         );
     }
 }

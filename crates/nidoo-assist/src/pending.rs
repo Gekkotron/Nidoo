@@ -1,9 +1,10 @@
 //! A question left pending, and reading a typed answer to it.
 
-use crate::lexicon::{Class, class};
+use crate::lexicon::{Class, class_in};
 use crate::plan::{Plan, Request};
 use crate::room::{name_words, score};
 use crate::text::{Word, number_text, words};
+use nidoo_core::flow::Lang;
 
 /// How long a question waits for its answer, in seconds (the hub drops it after that).
 pub const PENDING_TTL_S: u64 = 60;
@@ -71,13 +72,71 @@ const YES: &[&str] = &[
     "stp",
     "svp",
 ];
+/// The words one of which makes a French yes.
+const YES_CORE: &[&str] = &[
+    "oui", "ouais", "ok", "okay", "vas", "accord", "daccord", "confirme", "valide", "go", "parfait",
+];
+/// The words one of which makes a French no.
+const NO_CORE: &[&str] = &["non", "nan", "annule", "annuler", "laisse"];
 const NO: &[&str] = &[
     "non", "nan", "annule", "annuler", "laisse", "tomber", "rien", "merci", "stp", "svp",
 ];
 
+/// The English yes words: one of [`YES_EN_CORE`] and nothing but these.
+const YES_EN: &[&str] = &[
+    "yes",
+    "yeah",
+    "yep",
+    "yup",
+    "sure",
+    "ok",
+    "okay",
+    "go",
+    "ahead",
+    "do",
+    "it",
+    "confirm",
+    "fine",
+    "right",
+    "please",
+    "thanks",
+    "thank",
+    "you",
+    "of",
+    "course",
+    "absolutely",
+];
+const YES_EN_CORE: &[&str] = &[
+    "yes",
+    "yeah",
+    "yep",
+    "yup",
+    "sure",
+    "ok",
+    "okay",
+    "go",
+    "confirm",
+    "absolutely",
+];
+/// The English no words: one of [`NO_EN_CORE`] and nothing but these.
+const NO_EN: &[&str] = &[
+    "no", "nope", "nah", "cancel", "never", "mind", "forget", "it", "nothing", "thanks", "thank",
+    "you", "please", "stop",
+];
+const NO_EN_CORE: &[&str] = &["no", "nope", "nah", "cancel", "never", "forget"];
+
 /// Reads a typed sentence as the answer to `pending`: a no to either kind of question, a yes
 /// to a confirmation, or the one choice a choice question names. `None` means the sentence is a new request.
 pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
+    answer_text_in(sentence, pending, Lang::Fr)
+}
+
+/// [`answer_text`] for a sentence in `lang`.
+pub fn answer_text_in(sentence: &str, pending: &Pending, lang: Lang) -> Option<PendingAnswer> {
+    let (yes, yes_core, no, no_core): (&[&str], &[&str], &[&str], &[&str]) = match lang {
+        Lang::Fr => (YES, YES_CORE, NO, NO_CORE),
+        Lang::En => (YES_EN, YES_EN_CORE, NO_EN, NO_EN_CORE),
+    };
     let ws = words(sentence);
     let texts: Vec<&str> = ws.iter().filter_map(Word::text).collect();
     if texts.is_empty() && ws.len() != 1 {
@@ -85,32 +144,12 @@ pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
     }
     let all_in = |set: &[&str]| ws.len() == texts.len() && texts.iter().all(|w| set.contains(w));
     // A refusal cancels either kind of question; a bare command is not one.
-    if texts
-        .iter()
-        .any(|w| matches!(*w, "non" | "nan" | "annule" | "annuler" | "laisse"))
-        && all_in(NO)
-    {
+    if texts.iter().any(|w| no_core.contains(w)) && all_in(no) {
         return Some(PendingAnswer::No);
     }
     match pending {
         Pending::Confirm(_) => {
-            if texts.iter().any(|w| {
-                matches!(
-                    *w,
-                    "oui"
-                        | "ouais"
-                        | "ok"
-                        | "okay"
-                        | "vas"
-                        | "accord"
-                        | "daccord"
-                        | "confirme"
-                        | "valide"
-                        | "go"
-                        | "parfait"
-                )
-            }) && all_in(YES)
-            {
+            if texts.iter().any(|w| yes_core.contains(w)) && all_in(yes) {
                 Some(PendingAnswer::Yes)
             } else {
                 None
@@ -125,7 +164,7 @@ pub fn answer_text(sentence: &str, pending: &Pending) -> Option<PendingAnswer> {
                     Word::Number(n) => Some(number_text(*n)),
                     Word::Signed(_) => None,
                 })
-                .filter(|w| !matches!(class(w), Some(Class::Linker | Class::Noise)))
+                .filter(|w| !matches!(class_in(w, lang), Some(Class::Linker | Class::Noise)))
                 .collect();
             if said.is_empty() || ws.iter().any(|w| matches!(w, Word::Signed(_))) {
                 return None;
@@ -177,6 +216,41 @@ mod tests {
 
     fn confirm() -> Pending {
         Pending::Confirm(req("salon"))
+    }
+
+    #[test]
+    fn typed_yes_no_in_english() {
+        let en = |s: &str, p: &Pending| answer_text_in(s, p, Lang::En);
+        for yes in [
+            "yes",
+            "Yes!",
+            "go ahead",
+            "ok",
+            "sure",
+            "yes please",
+            "yeah thanks",
+        ] {
+            assert_eq!(en(yes, &confirm()), Some(PendingAnswer::Yes), "{yes}");
+        }
+        for no in [
+            "no",
+            "No thanks",
+            "cancel",
+            "never mind",
+            "forget it",
+            "nope",
+        ] {
+            assert_eq!(en(no, &confirm()), Some(PendingAnswer::No), "{no}");
+            assert_eq!(en(no, &rooms()), Some(PendingAnswer::No), "{no}");
+        }
+        assert_eq!(en("oui", &confirm()), None);
+        assert_eq!(en("yes set the kitchen to 25", &confirm()), None);
+        assert_eq!(en("2", &rooms()), Some(PendingAnswer::Choice(1)));
+        assert_eq!(en("Tom", &rooms()), Some(PendingAnswer::Choice(1)));
+        assert_eq!(
+            en("in Léa's room", &rooms()),
+            Some(PendingAnswer::Choice(0))
+        );
     }
 
     #[test]

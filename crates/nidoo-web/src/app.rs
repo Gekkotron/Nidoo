@@ -158,17 +158,22 @@ pub fn App() -> impl IntoView {
         }
     });
     // The Climate link shows only while the hub's engine answers (a 503 means it is disabled).
+    // The view it answers with feeds the climate room cards on Home.
     let climate_on = RwSignal::new(false);
+    let climate_feed = crate::climate::home::ClimateFeed(RwSignal::new(None));
+    provide_context(climate_feed);
     Effect::new(move |_| {
         house.climate_rev.track();
         leptos::task::spawn_local(async move {
             // Only the engine being disabled hides the link; any other failure keeps it as it was.
             match crate::api::climate::get_climate().await {
-                Ok(_) => {
+                Ok(view) => {
                     climate_on.try_set(true);
+                    climate_feed.0.try_set(Some(view));
                 }
                 Err(e) if crate::api::climate::is_climate_disabled(&e) => {
                     climate_on.try_set(false);
+                    climate_feed.0.try_set(None);
                 }
                 Err(_) => {}
             }

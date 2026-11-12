@@ -15,7 +15,7 @@ pub mod text;
 pub mod view;
 
 pub use house::{HeatRange, House};
-pub use pending::{Pending, PendingAnswer, answer_text};
+pub use pending::{Pending, PendingAnswer, answer_text, answer_text_in};
 pub use plan::{Action, Done, Plan, Request, plan, plan_request};
 pub use reply::ActionResult;
 pub use room::{RoomMatch, resolve_room};

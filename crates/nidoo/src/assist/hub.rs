@@ -13,8 +13,9 @@ use nidoo_assist::view::{
     ActionTrace, AssistRequest, AssistTurn, AssistTurns, OutcomeKind, PendingReply, Question,
     QuestionKind,
 };
-use nidoo_assist::{HeatRange, House, Pending, PendingAnswer, answer_text, plan_request};
+use nidoo_assist::{HeatRange, House, Pending, PendingAnswer, answer_text_in, plan_request};
 use nidoo_climate::doc::{Override, OverrideOrigin, Setpoint};
+use nidoo_core::flow::Lang;
 use nidoo_core::model::{Availability, Command, StateValue};
 use tokio::time::timeout;
 
@@ -139,33 +140,39 @@ fn new_id() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// "Salon, Bureau ou Chambre Léa".
-fn list_fr(items: &[String]) -> String {
+/// The French text, or the English one.
+fn tr<'a>(lang: Lang, fr: &'a str, en: &'a str) -> &'a str {
+    match lang {
+        Lang::Fr => fr,
+        Lang::En => en,
+    }
+}
+
+/// "Salon, Bureau ou Chambre Léa", "Kitchen, Office or Tom's room".
+fn list_or(items: &[String], lang: Lang) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),
-        [rest @ .., last] => format!("{} ou {last}", rest.join(", ")),
+        [rest @ .., last] => format!("{} {} {last}", rest.join(", "), tr(lang, "ou", "or")),
     }
 }
 
 /// What the user said by tapping an answer.
-fn said(pending: &Pending, answer: PendingAnswer) -> String {
+fn said(pending: &Pending, answer: PendingAnswer, lang: Lang) -> String {
     match (pending, answer) {
         (Pending::Choose(choices), PendingAnswer::Choice(i)) => choices
             .get(i)
-            .map_or_else(|| format!("choix {}", i + 1), |(label, _)| label.clone()),
-        (_, PendingAnswer::Yes) => "Oui".into(),
-        (_, PendingAnswer::No) => "Non".into(),
-        (_, PendingAnswer::Choice(i)) => format!("choix {}", i + 1),
+            .map_or_else(|| tapped(answer, lang), |(label, _)| label.clone()),
+        _ => tapped(answer, lang),
     }
 }
 
 /// What a tap said when its question is no longer known.
-fn tapped(answer: PendingAnswer) -> String {
+fn tapped(answer: PendingAnswer, lang: Lang) -> String {
     match answer {
-        PendingAnswer::Yes => "Oui".into(),
-        PendingAnswer::No => "Non".into(),
-        PendingAnswer::Choice(i) => format!("choix {}", i + 1),
+        PendingAnswer::Yes => tr(lang, "Oui", "Yes").into(),
+        PendingAnswer::No => tr(lang, "Non", "No").into(),
+        PendingAnswer::Choice(i) => format!("{} {}", tr(lang, "choix", "choice"), i + 1),
     }
 }
 
@@ -173,27 +180,85 @@ fn tapped(answer: PendingAnswer) -> String {
 fn answered(pending: &Pending, answer: PendingAnswer, house: &House) -> Plan {
     if answer == PendingAnswer::No {
         return Plan::Answer {
-            reply: "D'accord, je ne fais rien.".into(),
+            reply: tr(
+                house.lang,
+                "D'accord, je ne fais rien.",
+                "OK, I won't do anything.",
+            )
+            .into(),
             trace: Default::default(),
         };
     }
     match pending.resolve(answer) {
         Some(request) => plan_request(&request, house),
         None => Plan::Answer {
-            reply: "Ce choix n'existe pas.".into(),
+            reply: tr(
+                house.lang,
+                "Ce choix n'existe pas.",
+                "That choice doesn't exist.",
+            )
+            .into(),
             trace: Default::default(),
         },
     }
 }
 
-fn what(action: &Action) -> (String, String) {
+/// What an action does, for the trace, in `lang`.
+fn what(action: &Action, lang: Lang) -> (String, String) {
+    let (target, fr) = what_fr(action);
+    if lang == Lang::Fr {
+        return (target, fr);
+    }
+    let en = match action {
+        Action::Light { command, .. } => match command {
+            Command::TurnOff => "turn off".into(),
+            Command::TurnOn {
+                color: Some(hs), ..
+            } => format!("turn on in colour (hue {} °)", hs.h.round()),
+            _ => "turn on".into(),
+        },
+        Action::Switch { command, .. } => match command {
+            Command::TurnOff => "turn off".into(),
+            _ => "turn on".into(),
+        },
+        Action::Setpoint { setpoint, .. } => {
+            format!("setpoint {} °C", (setpoint * 10.0).round() / 10.0)
+        }
+        Action::Media { command, .. } => match command {
+            Command::PlayMedia { query } => format!("play \"{query}\""),
+            Command::MediaAction { action } => match action.as_str() {
+                "pause" => "pause".into(),
+                "next" => "next".into(),
+                "previous" => "previous".into(),
+                _ => "play".into(),
+            },
+            _ => "play".into(),
+        },
+        Action::Speaker { command, .. } => match command {
+            Command::SetNumber { value } => format!("volume {} %", value.round()),
+            Command::TurnOff => "unmute".into(),
+            _ => "mute".into(),
+        },
+        Action::Cover { command, .. } => match command {
+            Command::SetPosition { position } => format!("open to {position} %"),
+            Command::Close => "close".into(),
+            _ => "open".into(),
+        },
+    };
+    (target, en)
+}
+
+fn what_fr(action: &Action) -> (String, String) {
     match action {
         Action::Light { entity, command } => {
             let what = match command {
-                Command::TurnOff => "éteindre",
-                _ => "allumer",
+                Command::TurnOff => "éteindre".into(),
+                Command::TurnOn {
+                    color: Some(hs), ..
+                } => format!("allumer en couleur (teinte {} °)", reply::number(hs.h)),
+                _ => "allumer".into(),
             };
-            (entity.clone(), what.into())
+            (entity.clone(), what)
         }
         Action::Switch { entity, command } => {
             let what = match command {
@@ -254,6 +319,39 @@ fn result_text(result: &Executed, simulate: bool) -> String {
         format!("simulated {base}")
     } else {
         base
+    }
+}
+
+/// A short reason in `lang` for a refusal of the device-command layer.
+pub(crate) fn reason(english: &str, lang: Lang) -> &'static str {
+    match lang {
+        Lang::Fr => reason_fr(english),
+        Lang::En => reason_en(english),
+    }
+}
+
+/// [`reason_fr`] in English: the same short reasons.
+fn reason_en(english: &str) -> &'static str {
+    let e = english.to_lowercase();
+    let has = |needle: &str| e.contains(needle);
+    if has("no state change") || has("no echo") {
+        reply::NO_ANSWER_EN
+    } else if has("groups disabled") {
+        "groups are disabled"
+    } else if has("no reachable member") {
+        "no device can be reached"
+    } else if has("unknown group") || has("unknown entity") {
+        "unknown device"
+    } else if has("publish") || has("broker") || has("disconnected") {
+        "the link to the broker is down"
+    } else if has("shutting down") {
+        "the hub is shutting down"
+    } else if has("not active") {
+        "the zone is not active"
+    } else if has("offline") || has("unavailable") {
+        "offline"
+    } else {
+        "refused by the hub"
     }
 }
 
@@ -327,6 +425,7 @@ impl Hub {
             .map(|c| (c.house.outdoor_entity, c.house.stale_after_min))
             .unwrap_or((None, 60));
         let (min, max) = self.home_settings().assist_range();
+        let lang = req.lang();
         let house = House {
             areas: &areas,
             entities: &entities,
@@ -335,6 +434,7 @@ impl Hub {
             stale_after_min,
             range: HeatRange { min, max },
             now,
+            lang,
         };
         let text = req.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
         let mut simulate = req.simulate;
@@ -350,16 +450,24 @@ impl Hub {
                 match self.assist.take(&client, id, now) {
                     Taken::Open(pending, asked_simulated) => {
                         simulate |= asked_simulated;
-                        (said(&pending, answer), answered(&pending, answer, &house))
+                        (
+                            said(&pending, answer, lang),
+                            answered(&pending, answer, &house),
+                        )
                     }
                     Taken::Gone => return Err(HubError::Rejected("question expired".into())),
                     // A stale button: the current question stays open.
                     Taken::Superseded => (
-                        tapped(answer),
+                        tapped(answer, lang),
                         Plan::Answer {
-                            reply: "Cette question n'est plus d'actualité : réponds à la \
-                                    dernière, ou écris une nouvelle demande."
-                                .into(),
+                            reply: tr(
+                                lang,
+                                "Cette question n'est plus d'actualité : réponds à la \
+                                 dernière, ou écris une nouvelle demande.",
+                                "That question is out of date: answer the latest one, or type \
+                                 a new request.",
+                            )
+                            .into(),
                             trace: Default::default(),
                         },
                     ),
@@ -369,14 +477,15 @@ impl Hub {
                 // An answer or not, a new sentence closes the question, and takes it in one
                 // step so that no tap can answer it too.
                 let open = self.assist.close(&client, now);
-                let plan =
-                    match open.and_then(|(p, sim)| answer_text(text, &p).map(|a| (p, a, sim))) {
-                        Some((pending, answer, asked_simulated)) => {
-                            simulate |= asked_simulated;
-                            answered(&pending, answer, &house)
-                        }
-                        None => plan_heard(text, &house, speaker_room.as_deref()),
-                    };
+                let plan = match open
+                    .and_then(|(p, sim)| answer_text_in(text, &p, lang).map(|a| (p, a, sim)))
+                {
+                    Some((pending, answer, asked_simulated)) => {
+                        simulate |= asked_simulated;
+                        answered(&pending, answer, &house)
+                    }
+                    None => plan_heard(text, &house, speaker_room.as_deref()),
+                };
                 (text.to_owned(), plan)
             }
             (None, None) => return Err(HubError::Rejected("text or reply is required".into())),
@@ -420,7 +529,7 @@ impl Hub {
                     .iter()
                     .zip(&executed)
                     .map(|(action, result)| {
-                        let (target, what) = what(action);
+                        let (target, what) = what(action, house.lang);
                         ActionTrace {
                             target,
                             what,
@@ -455,7 +564,7 @@ impl Hub {
                 let id = self
                     .assist
                     .put(client, Pending::Choose(choices), now, simulate);
-                let text = format!("{question} {}.", list_fr(&labels));
+                let text = format!("{question} {}.", list_or(&labels, house.lang));
                 let question = Question {
                     pending: id,
                     kind: QuestionKind::Choice,
@@ -482,8 +591,9 @@ impl Hub {
                 (OutcomeKind::NotUnderstood, reply, None, trace)
             }
         };
-        if simulate && !text.starts_with("Simulation :") {
-            text = format!("Simulation : {text}");
+        let prefix = tr(house.lang, "Simulation : ", "Simulation: ");
+        if simulate && !text.starts_with(prefix) {
+            text = format!("{prefix}{text}");
         }
         AssistTurn {
             id: new_id(),
@@ -510,8 +620,8 @@ impl Hub {
         simulate: bool,
     ) -> Vec<Executed> {
         let failed = |english: String| {
-            let fr = reason_fr(&english).to_owned();
-            (ActionResult::Failed(fr), Some(english))
+            let said = reason(&english, house.lang).to_owned();
+            (ActionResult::Failed(said), Some(english))
         };
         join_all(actions.iter().map(|action| async move {
             match action {
@@ -521,7 +631,8 @@ impl Hub {
                 | Action::Media { entity, command }
                 | Action::Speaker { entity, command } => {
                     let Some(view) = house.entity(entity) else {
-                        return (ActionResult::Failed("inconnue".into()), None);
+                        let unknown = tr(house.lang, "inconnue", "unknown");
+                        return (ActionResult::Failed(unknown.into()), None);
                     };
                     if view.state.availability == Availability::Offline {
                         return (ActionResult::Offline, None);

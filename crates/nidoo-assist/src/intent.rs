@@ -1,19 +1,22 @@
 //! What a sentence asks for, before looking at the house.
 
-use crate::lexicon::{Class, class};
+use crate::lexicon::{Class, Colour, class, class_in, colour_in};
 use crate::text::{Word, number_text};
 use nidoo_api::search::fold;
+use nidoo_core::flow::Lang;
 use nidoo_core::model::SwitchType;
 
 /// What the sentence asks, with the words left that may name a room or a light.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Intent {
-    /// `names`: words that may name lights; `room`: words that may name the room.
+    /// `names`: words that may name lights; `room`: words that may name the room; `colour`:
+    /// "en rouge", only ever with `on`.
     Lights {
         on: bool,
         all: bool,
         names: Vec<String>,
         room: Vec<String>,
+        colour: Option<Colour>,
     },
     SetTemp {
         change: Change,
@@ -110,9 +113,15 @@ enum Tok {
     Number(f64),
     Signed(f64),
     Free(String),
+    /// "en rouge": a colour, the "en" included.
+    Colour(Colour),
 }
 
-fn tag(words: &[Word]) -> Vec<Tok> {
+fn tag(words: &[Word], lang: Lang) -> Vec<Tok> {
+    if lang == Lang::En {
+        return tag_en(words);
+    }
+    let colour_of = |w: &str| colour_in(w, Lang::Fr);
     let mut out = Vec::new();
     let mut i = 0;
     while i < words.len() {
@@ -130,6 +139,15 @@ fn tag(words: &[Word]) -> Vec<Tok> {
                 i += 2;
                 continue;
             }
+            Word::Text(t)
+                if t == "en" && next.and_then(Word::text).and_then(colour_of).is_some() =>
+            {
+                if let Some(c) = next.and_then(Word::text).and_then(colour_of) {
+                    out.push(Tok::Colour(c));
+                }
+                i += 2;
+                continue;
+            }
             Word::Text(t) if t == "en" && next.is_some_and(|w| w.is("marche")) => {
                 out.push(Tok::Known(Class::On, "en marche".into()));
                 i += 2;
@@ -139,6 +157,79 @@ fn tag(words: &[Word]) -> Vec<Tok> {
                 Some(c) => Tok::Known(c, t.clone()),
                 None => Tok::Free(t.clone()),
             }),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Words that end an English sentence without carrying meaning: a colour before them is still
+/// the last word ("turn the lamp red please").
+const EN_TAIL: &[&str] = &["please", "pls", "plz", "now", "thanks", "thank", "you", "?"];
+
+/// [`tag`] for English: "per cent", "go back", "mute" and "unmute", and a colour said after "in"
+/// or "to" ("in red", "to blue") or as the last word after a word that is not an article ("turn
+/// the lamp red"). Any other colour word is part of a name ("the red lamp").
+fn tag_en(words: &[Word]) -> Vec<Tok> {
+    let text = |i: usize| words.get(i).and_then(Word::text);
+    let colour = |i: usize| text(i).and_then(|w| colour_in(w, Lang::En));
+    let last = (0..words.len())
+        .rev()
+        .find(|&i| !text(i).is_some_and(|w| EN_TAIL.contains(&w)));
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        match &words[i] {
+            Word::Number(n) => out.push(Tok::Number(*n)),
+            Word::Signed(n) => out.push(Tok::Signed(*n)),
+            Word::Text(t) => {
+                let t = t.as_str();
+                if matches!(t, "in" | "to") && colour(i + 1).is_some() {
+                    if let Some(c) = colour(i + 1) {
+                        out.push(Tok::Colour(c));
+                    }
+                    i += 2;
+                    continue;
+                }
+                if let Some(c) = colour(i).filter(|_| Some(i) == last && i > 0)
+                    && !matches!(
+                        class_in(text(i - 1).unwrap_or_default(), Lang::En),
+                        Some(Class::Noise | Class::Linker)
+                    )
+                    && words[i - 1].text().is_some()
+                {
+                    out.push(Tok::Colour(c));
+                    i += 1;
+                    continue;
+                }
+                match (t, text(i + 1)) {
+                    ("per", Some("cent")) => {
+                        out.push(Tok::Known(Class::Percent, "%".into()));
+                        i += 2;
+                        continue;
+                    }
+                    ("go" | "skip" | "jump", Some("back")) => {
+                        out.push(Tok::Known(Class::Previous, "back".into()));
+                        i += 2;
+                        continue;
+                    }
+                    ("last", Some("song" | "track")) => {
+                        out.push(Tok::Known(Class::Previous, "last".into()));
+                    }
+                    ("mute", _) => {
+                        out.push(Tok::Known(Class::Off, "mute".into()));
+                        out.push(Tok::Known(Class::Sound, "mute".into()));
+                    }
+                    ("unmute", _) => {
+                        out.push(Tok::Known(Class::Resume, "unmute".into()));
+                        out.push(Tok::Known(Class::Sound, "unmute".into()));
+                    }
+                    _ => out.push(match class_in(t, Lang::En) {
+                        Some(c) => Tok::Known(c, t.to_owned()),
+                        None => Tok::Free(t.to_owned()),
+                    }),
+                }
+            }
         }
         i += 1;
     }
@@ -158,6 +249,12 @@ enum Role {
     Name,
 }
 
+/// The linkers a value follows: "à 19", "to 19", "at 19".
+const AFTER_A: &[&str] = &["a", "to", "at"];
+
+/// The linkers an amount follows: "de 2", "d'un degré", "by 2".
+const AMOUNT: &[&str] = &["de", "d", "by"];
+
 fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
     toks.iter()
         .enumerate()
@@ -170,10 +267,10 @@ fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
             let linker = |t: Option<&Tok>, words: &[&str]| {
                 matches!(t, Some(Tok::Known(Class::Linker, w)) if words.contains(&w.as_str()))
             };
-            Some(if linker(before, &["a"]) {
+            Some(if linker(before, AFTER_A) {
                 Role::AfterA
             } else if matches!(after, Some(Tok::Known(Class::Degree, _)))
-                || linker(before, &["de", "d"])
+                || linker(before, AMOUNT)
             {
                 Role::Amount
             } else if matches!(
@@ -196,7 +293,60 @@ fn roles(toks: &[Tok]) -> Vec<Option<Role>> {
 /// statement or question that is not a polite request ("il fait 18 degrés", "qui a éteint")
 /// all give `None` (a temperature question is read, never acted on).
 pub fn parse(words: &[Word]) -> Option<Intent> {
-    let mut toks = tag(words);
+    parse_in(words, Lang::Fr)
+}
+
+/// [`parse`] in `lang`.
+pub fn parse_in(words: &[Word], lang: Lang) -> Option<Intent> {
+    let mut toks = tag(words, lang);
+    // "en rouge": taken out of the sentence, which then parses as before; only lights switched
+    // on take it. Two different colours are not understood.
+    let mut colour = None;
+    for t in &toks {
+        if let Tok::Colour(c) = t {
+            if colour.is_some_and(|seen: Colour| seen != *c) {
+                return None;
+            }
+            colour = Some(*c);
+        }
+    }
+    toks.retain(|t| !matches!(t, Tok::Colour(_)));
+    // "turn the lamp red": with a colour and no other verb, "turn" or "switch" sets it.
+    let verb = |t: &Tok| matches!(t, Tok::Known(Class::On | Class::Off | Class::Set, _));
+    if lang == Lang::En && colour.is_some() && !toks.iter().any(verb) {
+        for t in &mut toks {
+            if matches!(t, Tok::Known(Class::Noise, w) if w == "turn" || w == "switch") {
+                *t = Tok::Known(Class::Set, "turn".into());
+            }
+        }
+    }
+    let intent = parse_toks(toks, colour.is_some())?;
+    match (intent, colour) {
+        (intent, None) => Some(intent),
+        (
+            Intent::Lights {
+                on: true,
+                all,
+                names,
+                room,
+                colour: None,
+            },
+            Some(c),
+        ) => Some(Intent::Lights {
+            on: true,
+            all,
+            names,
+            room,
+            colour: Some(c),
+        }),
+        // A colour for heating, shutters, music or an off order would be ignored: not a guess.
+        _ => None,
+    }
+}
+
+/// [`parse`] without the colour words; `coloured`: a colour was said, so "mets" alone switches
+/// lights on ("mets le salon en bleu").
+fn parse_toks(mut toks: Vec<Tok>, coloured: bool) -> Option<Intent> {
     // A light, shutter, heating or temperature word decides the sentence: a TV or plug word is
     // then part of a name ("la lumière du salon tv", "le volet tv").
     let decided = toks.iter().any(|t| {
@@ -259,9 +409,10 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
         return None;
     }
     // "à -2": a signed value after "à" is neither a setpoint nor a change.
-    if toks.windows(2).any(
-        |w| matches!((&w[0], &w[1]), (Tok::Known(Class::Linker, a), Tok::Signed(_)) if a == "a"),
-    ) {
+    if toks.windows(2).any(|w| {
+        matches!((&w[0], &w[1]), (Tok::Known(Class::Linker, a), Tok::Signed(_))
+            if AFTER_A.contains(&a.as_str()))
+    }) {
         return None;
     }
     let question_word = toks
@@ -369,6 +520,9 @@ pub fn parse(words: &[Word]) -> Option<Intent> {
         return None;
     }
 
+    if coloured && set && !off && !valued {
+        return Some(lights(&toks, &roles, true, has(Class::All)));
+    }
     if set && !light && !on {
         if let Some(n) = after_a {
             return Some(Intent::SetTemp {
@@ -405,7 +559,9 @@ const MEDIA_CLASSES: [Class; 10] = [
 ];
 
 /// Words that name the room after them ("dans le salon"), not the music before them.
-const ROOM_LINKERS: &[&str] = &["dans", "du", "au", "aux", "chez", "sur"];
+const ROOM_LINKERS: &[&str] = &[
+    "dans", "du", "au", "aux", "chez", "sur", "in", "at", "from", "inside",
+];
 
 /// A sentence about the music or the speakers: a music word, and no light, shutter, heating,
 /// TV, plug or other device word, and no negation.
@@ -711,6 +867,97 @@ pub fn play_by_name(sentence: &str) -> Option<Intent> {
     Some(Intent::Media(MediaIntent::PlayMedia { query }))
 }
 
+/// [`play_by_name`] in `lang`.
+pub fn play_by_name_in(sentence: &str, lang: Lang) -> Option<Intent> {
+    match lang {
+        Lang::Fr => play_by_name(sentence),
+        Lang::En => play_by_name_en(sentence),
+    }
+}
+
+/// Hesitations written down in English; never the start of a name.
+const FILLERS_EN: &[&str] = &["um", "uh", "erm", "er", "hmm", "hum", "mm"];
+
+/// Words before "play" that keep it an order: "can you play", "please play".
+const POLITE_EN: &[&str] = &[
+    "can", "could", "would", "will", "you", "please", "just", "hey", "ok", "okay", "now", "me",
+    "for", "us",
+];
+
+/// Words after "play" that ask for some music rather than a name.
+const SOME_MUSIC_EN: &[&str] = &[
+    "music",
+    "something",
+    "anything",
+    "song",
+    "songs",
+    "a song",
+    "tunes",
+    "some tunes",
+    "some music",
+];
+
+/// [`play_by_name`] for English: "play …" at the start, after "can you" or "please" at most.
+/// "what are you playing ?" is not here: "playing" is a music word the parser reads.
+fn play_by_name_en(sentence: &str) -> Option<Intent> {
+    let raw: Vec<&str> = sentence.split_whitespace().collect();
+    let clean = |w: &str| fold(w.trim_matches(|c: char| !c.is_alphanumeric()));
+    let at = raw.iter().position(|w| clean(w) == "play")?;
+    let before: Vec<String> = raw[..at]
+        .iter()
+        .flat_map(|w| w.split(['-', '\'', '’']))
+        .map(clean)
+        .filter(|w| !w.is_empty())
+        .collect();
+    if before.iter().any(|w| w == "who" || w == "what") {
+        return Some(Intent::Media(MediaIntent::NowPlaying));
+    }
+    if !before.iter().all(|w| POLITE_EN.contains(&w.as_str())) {
+        return None;
+    }
+    let mut rest: Vec<&str> = raw[at + 1..].to_vec();
+    if sentence.trim_end().ends_with('?') && rest.len() <= 1 && before.is_empty() {
+        return Some(Intent::Media(MediaIntent::NowPlaying));
+    }
+    while rest
+        .first()
+        .is_some_and(|w| FILLERS_EN.contains(&clean(w).as_str()))
+    {
+        rest.remove(0);
+    }
+    // Politeness at the end is not part of a name, but a lone word is one ("Please").
+    while rest.len() > 1 {
+        match rest.last().map(|w| clean(w)).as_deref() {
+            Some("please" | "thanks" | "") => {
+                rest.pop();
+            }
+            Some("you")
+                if rest
+                    .get(rest.len().wrapping_sub(2))
+                    .is_some_and(|w| clean(w) == "thank") =>
+            {
+                rest.truncate(rest.len() - 2);
+            }
+            _ => break,
+        }
+    }
+    let query = rest
+        .join(" ")
+        .trim_end_matches(|c: char| c.is_whitespace() || "?!.,;".contains(c))
+        .to_owned();
+    let folded: Vec<String> = query.split_whitespace().map(clean).collect();
+    let skip = usize::from(
+        folded
+            .first()
+            .is_some_and(|a| matches!(a.as_str(), "the" | "a" | "an" | "some")),
+    );
+    let what = folded.get(skip..).unwrap_or_default().join(" ");
+    if what.is_empty() || SOME_MUSIC_EN.contains(&what.as_str()) {
+        return Some(Intent::Media(MediaIntent::Play { resume: false }));
+    }
+    Some(Intent::Media(MediaIntent::PlayMedia { query }))
+}
+
 /// Shutters: an open verb ("ouvre", "monte") or a close verb ("ferme", "baisse"), never both
 /// or neither, and never with a light, heating or switch word. A position is "à N %" right after
 /// the open verb's object; any other number or percentage is not understood. Names and room words
@@ -802,6 +1049,7 @@ fn lights(toks: &[Tok], roles: &[Option<Role>], on: bool, all: bool) -> Intent {
         all,
         names,
         room,
+        colour: None,
     }
 }
 
@@ -834,6 +1082,7 @@ fn split_names(toks: &[Tok], roles: &[Option<Role>]) -> (Vec<String>, Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lexicon::colour_of;
     use crate::text::words;
 
     fn p(s: &str) -> Option<Intent> {
@@ -850,7 +1099,65 @@ mod tests {
             all,
             names: v(names),
             room: v(room),
+            colour: None,
         })
+    }
+
+    fn coloured(names: &[&str], room: &[&str], colour: &str) -> Option<Intent> {
+        Some(Intent::Lights {
+            on: true,
+            all: false,
+            names: v(names),
+            room: v(room),
+            colour: colour_of(colour),
+        })
+    }
+
+    #[test]
+    fn colour_after_en() {
+        assert_eq!(
+            p("allume la lumière du salon en rouge"),
+            coloured(&[], &["salon"], "rouge")
+        );
+        assert_eq!(
+            p("allume la led en bleu dans le salon"),
+            coloured(&["led"], &["salon"], "bleu")
+        );
+        assert_eq!(
+            p("mets la lampe de la chambre en vert"),
+            coloured(&["lampe"], &["chambre"], "vert")
+        );
+        assert_eq!(
+            p("mets le salon en rose"),
+            coloured(&[], &["salon"], "rose")
+        );
+        assert_eq!(
+            p("passe les lumières du salon en blanc"),
+            coloured(&[], &["salon"], "blanc")
+        );
+        assert_eq!(p("Allume en Violette"), coloured(&[], &[], "violet"));
+    }
+
+    #[test]
+    fn colour_never_guessed() {
+        // Off, heating, shutters, music or two colours: not understood.
+        assert_eq!(p("éteins le salon en rouge"), None);
+        assert_eq!(p("mets le chauffage en rouge"), None);
+        assert_eq!(p("ouvre les volets en bleu"), None);
+        assert_eq!(p("mets la musique en bleu"), None);
+        assert_eq!(p("allume le salon en rouge et en bleu"), None);
+        assert_eq!(p("ne mets pas le salon en rouge"), None);
+        assert_eq!(p("mets le salon en rouge à 20"), None);
+        // The same colour twice is one colour.
+        assert_eq!(
+            p("allume le salon en rouge, en rouge"),
+            coloured(&[], &["salon"], "rouge")
+        );
+        // Without "en" a colour word is part of a name, as before.
+        assert_eq!(
+            p("allume la lampe rose"),
+            lights(true, false, &["lampe"], &["rose"])
+        );
     }
 
     fn set(change: Change, room: &[&str]) -> Option<Intent> {
@@ -1479,5 +1786,356 @@ mod tests {
             p("remets le chauffage à 20"),
             set(Change::Absolute(20.0), &["remets"])
         );
+    }
+}
+
+#[cfg(test)]
+mod english {
+    use super::*;
+    use crate::text::words;
+
+    fn p(s: &str) -> Option<Intent> {
+        parse_in(&words(s), Lang::En)
+    }
+
+    fn m(s: &str) -> Option<Intent> {
+        play_by_name_in(s, Lang::En).or_else(|| p(s))
+    }
+
+    fn v(ws: &[&str]) -> Vec<String> {
+        ws.iter().map(|w| w.to_string()).collect()
+    }
+
+    fn lights(on: bool, all: bool, names: &[&str], room: &[&str]) -> Option<Intent> {
+        Some(Intent::Lights {
+            on,
+            all,
+            names: v(names),
+            room: v(room),
+            colour: None,
+        })
+    }
+
+    fn coloured(names: &[&str], room: &[&str], colour: Colour) -> Option<Intent> {
+        Some(Intent::Lights {
+            on: true,
+            all: false,
+            names: v(names),
+            room: v(room),
+            colour: Some(colour),
+        })
+    }
+
+    fn set(change: Change, room: &[&str]) -> Option<Intent> {
+        Some(Intent::SetTemp {
+            change,
+            room: v(room),
+        })
+    }
+
+    fn media(m: MediaIntent) -> Option<Intent> {
+        Some(Intent::Media(m))
+    }
+
+    #[test]
+    fn lights_on_and_off() {
+        let kitchen = lights(true, false, &[], &["kitchen"]);
+        assert_eq!(p("turn on the kitchen lights"), kitchen);
+        assert_eq!(p("Turn on the lights in the kitchen"), kitchen);
+        assert_eq!(p("turn the kitchen lights on please"), kitchen);
+        assert_eq!(p("switch on the kitchen light"), kitchen);
+        assert_eq!(p("can you turn on the kitchen?"), kitchen);
+        assert_eq!(
+            p("turn off the lights in the living room"),
+            lights(false, false, &[], &["living"])
+        );
+        assert_eq!(
+            p("turn off the lamp in Tom's bedroom"),
+            lights(false, false, &["lamp"], &["tom", "bedroom"])
+        );
+        assert_eq!(
+            p("turn off the desk lamp"),
+            lights(false, false, &["lamp"], &["desk"])
+        );
+        assert_eq!(p("turn off all the lights"), lights(false, true, &[], &[]));
+        assert_eq!(p("turn everything off"), lights(false, true, &[], &[]));
+        assert_eq!(p("turn the lights back on"), lights(true, false, &[], &[]));
+    }
+
+    #[test]
+    fn light_colours() {
+        assert_eq!(
+            p("turn on the kitchen lights in red"),
+            coloured(&[], &["kitchen"], Colour::Red)
+        );
+        assert_eq!(
+            p("turn the lamp in the office blue"),
+            coloured(&["lamp"], &["office"], Colour::Blue)
+        );
+        assert_eq!(
+            p("set the living room to green please"),
+            coloured(&[], &["living"], Colour::Green)
+        );
+        assert_eq!(
+            p("make the bedroom lights pink"),
+            coloured(&[], &["bedroom"], Colour::Pink)
+        );
+        // Before the light word, a colour is a plain word, as in French ("la lampe rose").
+        assert_eq!(
+            p("turn on the red lamp"),
+            lights(true, false, &["lamp"], &["red"])
+        );
+        assert_eq!(p("turn off the kitchen in red"), None);
+        assert_eq!(p("set the heating to red"), None);
+    }
+
+    #[test]
+    fn setpoints() {
+        assert_eq!(
+            p("set the heating to 20 in the kitchen"),
+            set(Change::Absolute(20.0), &["kitchen"])
+        );
+        assert_eq!(
+            p("set the bedroom to nineteen point five degrees"),
+            set(Change::Absolute(19.5), &["bedroom"])
+        );
+        assert_eq!(
+            p("turn up the heat in the office"),
+            set(Change::Relative(STEP), &["office"])
+        );
+        assert_eq!(
+            p("turn the heating down a bit in the kitchen"),
+            set(Change::Relative(-LITTLE), &["kitchen"])
+        );
+        assert_eq!(
+            p("raise the temperature by 2 degrees in the office"),
+            set(Change::Relative(2.0), &["office"])
+        );
+        assert_eq!(
+            p("turn on the heating in the kitchen"),
+            Some(Intent::HeatingNoValue {
+                room: v(&["kitchen"])
+            })
+        );
+        assert_eq!(p("turn up the office"), None);
+    }
+
+    #[test]
+    fn temperature_questions() {
+        let read = |room: &[&str], outdoor| {
+            Some(Intent::ReadTemp {
+                room: v(room),
+                outdoor,
+            })
+        };
+        assert_eq!(
+            p("what's the temperature in the kitchen?"),
+            read(&["kitchen"], false)
+        );
+        assert_eq!(p("how warm is it in the office"), read(&["office"], false));
+        assert_eq!(p("how cold is it outside?"), read(&[], true));
+        assert_eq!(p("what is the temperature"), read(&[], false));
+        // A statement is not a question nor an order.
+        assert_eq!(p("it is cold in the kitchen"), None);
+        assert_eq!(p("the kitchen is 18 degrees"), None);
+    }
+
+    #[test]
+    fn covers_and_switches() {
+        assert_eq!(
+            p("open the shutters in the living room"),
+            Some(Intent::Covers {
+                open: true,
+                position: None,
+                all: false,
+                names: vec![],
+                room: v(&["living"]),
+            })
+        );
+        assert_eq!(
+            p("open the blinds to 30%"),
+            Some(Intent::Covers {
+                open: true,
+                position: Some(30),
+                all: false,
+                names: vec![],
+                room: vec![],
+            })
+        );
+        assert_eq!(
+            p("close all the shutters"),
+            Some(Intent::Covers {
+                open: false,
+                position: None,
+                all: true,
+                names: vec![],
+                room: vec![],
+            })
+        );
+        assert_eq!(
+            p("close the blinds to 30 percent"),
+            Some(Intent::CoverPositionHint)
+        );
+        assert_eq!(p("are the shutters closed?"), None);
+        assert_eq!(p("close the kitchen lights"), None);
+        assert_eq!(
+            p("turn off the tv in the living room"),
+            Some(Intent::Switches {
+                what: SwitchType::Tv,
+                on: false,
+                all: false,
+                names: vec![],
+                room: v(&["living"]),
+            })
+        );
+        assert_eq!(
+            p("switch on the coffee plug"),
+            Some(Intent::Switches {
+                what: SwitchType::Plug,
+                on: true,
+                all: false,
+                names: vec![],
+                room: v(&["coffee"]),
+            })
+        );
+    }
+
+    #[test]
+    fn never_guessed() {
+        assert_eq!(p("don't turn on the kitchen"), None);
+        assert_eq!(p("do not turn off the lights"), None);
+        assert_eq!(p("turn on and off the lights"), None);
+        assert_eq!(p("who turned off the lights"), None);
+        assert_eq!(p("open the curtains"), None);
+        assert_eq!(p("hello there"), None);
+    }
+
+    #[test]
+    fn music_and_volume() {
+        assert_eq!(m("pause the music"), media(MediaIntent::Pause));
+        assert_eq!(m("pause"), media(MediaIntent::Pause));
+        assert_eq!(m("next song"), media(MediaIntent::Next));
+        assert_eq!(m("skip this track"), media(MediaIntent::Next));
+        assert_eq!(m("previous song"), media(MediaIntent::Previous));
+        assert_eq!(m("go back"), media(MediaIntent::Previous));
+        assert_eq!(
+            m("resume the music"),
+            media(MediaIntent::Play { resume: true })
+        );
+        assert_eq!(m("stop the music"), media(MediaIntent::Pause));
+        assert_eq!(m("what's playing?"), media(MediaIntent::NowPlaying));
+        assert_eq!(m("what song is this?"), media(MediaIntent::NowPlaying));
+        assert_eq!(
+            m("turn the volume up"),
+            Some(Intent::Volume {
+                change: Change::Relative(VOLUME_STEP),
+                room: vec![],
+            })
+        );
+        assert_eq!(
+            m("set the volume to 30 in the kitchen"),
+            Some(Intent::Volume {
+                change: Change::Absolute(30.0),
+                room: v(&["kitchen"]),
+            })
+        );
+        assert_eq!(
+            m("turn the sound down a little"),
+            Some(Intent::Volume {
+                change: Change::Relative(-VOLUME_LITTLE),
+                room: vec![],
+            })
+        );
+        assert_eq!(m("set the volume to 150"), Some(Intent::VolumeRange));
+        assert_eq!(
+            m("mute the kitchen"),
+            Some(Intent::Mute {
+                on: true,
+                room: v(&["kitchen"]),
+            })
+        );
+        assert_eq!(
+            m("unmute"),
+            Some(Intent::Mute {
+                on: false,
+                room: vec![],
+            })
+        );
+    }
+
+    /// The table of docs/users/assistant.md, both columns.
+    #[test]
+    fn the_documented_sentences_parse() {
+        let en = [
+            "turn on the kitchen lights",
+            "turn off the lamp in the office",
+            "turn everything off",
+            "turn the living room lights red",
+            "turn on the lamp in blue",
+            "set the bedroom to 19.5",
+            "turn up the heating in the office",
+            "turn the heat down a bit",
+            "what's the temperature in the kitchen?",
+            "how cold is it outside?",
+            "open the shutters to 30%",
+            "close all the blinds",
+            "turn off the TV",
+            "switch on the coffee plug",
+            "play Shape of You",
+            "pause",
+            "next song",
+            "turn the volume up",
+            "mute the kitchen",
+            "what's playing?",
+        ];
+        for s in en {
+            assert!(m(s).is_some(), "{s}");
+        }
+        let fr = [
+            "allume la lumière de la cuisine",
+            "éteins la lampe du bureau",
+            "éteins tout",
+            "passe le salon en rouge",
+            "allume la lampe en bleu",
+            "règle la chambre à 19,5",
+            "monte le chauffage du bureau",
+            "baisse un peu le chauffage",
+            "quelle température dans la cuisine ?",
+            "il fait combien dehors ?",
+            "ouvre les volets à 30 %",
+            "ferme tous les volets",
+            "éteins la télé",
+            "allume la prise café",
+            "joue Shape of You",
+            "pause",
+            "chanson suivante",
+            "monte le son",
+            "coupe le son de la cuisine",
+            "qu'est-ce qu'on écoute ?",
+        ];
+        for s in fr {
+            assert!(
+                super::play_by_name(s)
+                    .or_else(|| parse(&words(s)))
+                    .is_some(),
+                "{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn play_by_name() {
+        let query = |q: &str| media(MediaIntent::PlayMedia { query: q.into() });
+        assert_eq!(m("play Shape of You"), query("Shape of You"));
+        assert_eq!(m("can you play Lost on You please"), query("Lost on You"));
+        assert_eq!(
+            m("Play some music"),
+            media(MediaIntent::Play { resume: false })
+        );
+        assert_eq!(m("play"), media(MediaIntent::Play { resume: false }));
+        assert_eq!(m("play music"), media(MediaIntent::Play { resume: false }));
+        assert_eq!(m("play Please"), query("Please"));
+        assert_eq!(m("don't play anything"), None);
+        assert_eq!(m("the kids play upstairs"), None);
     }
 }

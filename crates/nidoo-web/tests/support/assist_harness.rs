@@ -24,7 +24,13 @@ pub struct Mounted {
     pub host: web_sys::Element,
 }
 
+/// The page in English.
 pub fn mount() -> Mounted {
+    mount_in(Lang::En)
+}
+
+/// The page in `lang`, which is also the language its replies are spoken in.
+pub fn mount_in(lang: Lang) -> Mounted {
     let window = web_sys::window().unwrap();
     let document = window.document().unwrap();
     let host = document.create_element("div").unwrap();
@@ -37,7 +43,7 @@ pub fn mount() -> Mounted {
     let app = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
         provide_context(House::new());
         provide_context(Toasts::new());
-        provide_context(RwSignal::new(Lang::En));
+        provide_context(RwSignal::new(lang));
         nidoo_web::nav::install_nav();
         view! {
             <Router>

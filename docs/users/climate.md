@@ -27,6 +27,8 @@ The room card:
 - **Zone state**: Off, Pending or Active. **−** and **+** only work in an Active room.
 - **Eco…** opens a small popup to start eco until a date and time; a running eco reads **Eco until …** with a **✕** that cancels it (see [Eco](#eco)).
 
+An **Active** room shows the same card on **Home** too, at the top of its room, above the device cards. There its **⚙** opens the Climate screen. A Pending or Off room shows no card on Home.
+
 The **⚙** on the card opens the room's settings:
 
 - **Room thermometer**: Automatic (the room's own temperature sensor when it has one, else the mean of its climate devices' readings) or a sensor you pick.
