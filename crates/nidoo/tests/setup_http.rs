@@ -1667,3 +1667,41 @@ async fn a_new_database_resets_an_attempted_restore() {
     a.drop_db().await;
     b.drop_db().await;
 }
+
+/// Ruling Q: while a restore runs, the setup writes that could change its database or broker,
+/// or restart the hub mid-copy, are refused. Once it has failed, they go through again.
+#[tokio::test]
+async fn setup_writes_are_refused_while_a_restore_runs() {
+    let s = serve(Mode::Restore, restoring(), None, false).await;
+    nidoo::backup::restore::claim(&s.ctx, None).await.unwrap();
+    let writes = [
+        (
+            "/location",
+            json!({"city": "Paris", "country": "FR", "latitude": 48.85, "longitude": 2.35,
+                   "timezone": "Europe/Paris"}),
+        ),
+        (
+            "/mqtt",
+            json!({"host": "127.0.0.1", "port": closed_port().await, "user": "u"}),
+        ),
+        (
+            "/database",
+            json!({"host": "192.0.2.2", "port": 5432, "database": "nidoo", "user": "u"}),
+        ),
+        ("/restore", json!({"pending": false})),
+    ];
+    for (path, body) in &writes {
+        let (code, answer) = s.put(path, body.clone()).await;
+        assert_eq!(code, StatusCode::CONFLICT, "{path}: {answer}");
+        assert_eq!(answer, json!({"error": "a restore is running"}), "{path}");
+    }
+    assert!(s.hub_json().is_none(), "nothing saved");
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 0, "no restart");
+
+    if let Some(p) = s.ctx.restore.lock().await.as_mut() {
+        p.state = nidoo_api::BackupState::Failed;
+    }
+    let (code, body) = s.put("/restore", json!({"pending": false})).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 1);
+}
