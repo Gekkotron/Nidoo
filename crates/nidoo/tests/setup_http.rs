@@ -1589,7 +1589,10 @@ async fn pending_refused_on_a_running_hub() {
 /// Restore mode with a restore already attempted, MQTT on the local port `mqtt_port`.
 async fn attempted_restore(mqtt_port: u16, database_url: Option<&str>) -> Server {
     let mut file = HubFile {
-        restore: Some(nidoo::setup::hub_file::RestoreState { attempted: true }),
+        restore: Some(nidoo::setup::hub_file::RestoreState {
+            attempted: true,
+            target: None,
+        }),
         ..restoring()
     };
     if let Some(mqtt) = file.mqtt.as_mut() {

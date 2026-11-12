@@ -1,8 +1,8 @@
 //! The restore job, on a hub booted in restore mode: a backup read from an FTP server or an
 //! upload into the database and the broker, then `hub.json` and a restart into Run.
 //!
-//! The first attempt refuses a hub that already holds data; once it has started, a retry
-//! clears whatever a failed attempt left. A failure wipes what it wrote and keeps the restore
+//! The first attempt refuses a hub that already holds data; once it has started, a retry on
+//! the same database and broker clears whatever a failed attempt left. A failure wipes what it wrote and keeps the restore
 //! pending, so `hub.json` only changes when the restore is done.
 
 use std::io;
@@ -26,6 +26,7 @@ use super::settings::FtpSection;
 use crate::history::db::Db;
 use crate::setup::HubFile;
 use crate::setup::SetupCtx;
+use crate::setup::hub_file::RestoreTarget;
 use crate::setup::restart::schedule_restart;
 use crate::setup::routes::RESTART_DELAY;
 use crate::setup::sections::{Sections, assemble};
@@ -218,13 +219,17 @@ pub async fn run_restore(
     let Some(state) = &file.restore else {
         return Err(BackupError::Io("no restore is pending".into()));
     };
-    if state.attempted {
+    if state.retry_clears(&file) {
         clear(db, broker.as_ref(), &file, &layout).await?;
     } else {
+        // A first attempt, or a retry on a target nobody checked (changed since by an env
+        // override or a hand edit): refuse data, and record what was found empty.
         refuse_data(db.pool(), broker.as_ref(), &layout).await?;
+        let checked = RestoreTarget::of(&file);
         ctx.update_file(|f| {
             if let Some(r) = f.restore.as_mut() {
                 r.attempted = true;
+                r.target = checked;
             }
         })
         .await

@@ -23,7 +23,7 @@ use nidoo::backup::settings::BackupSection;
 use nidoo::backup::tar::TarWriter;
 use nidoo::config::{Config, HttpConfig, LogConfig, MqttConfig};
 use nidoo::history::db::Db;
-use nidoo::setup::hub_file::{HubFields, RestoreState};
+use nidoo::setup::hub_file::{HubFields, RestoreState, RestoreTarget};
 use nidoo::setup::sections::Sections;
 use nidoo::setup::store::read_cache;
 use nidoo::setup::{HubFile, Mode, RestartHook, SetupCtx};
@@ -179,9 +179,15 @@ fn target_file(database_url: &str, mode: Mode) -> HubFile {
 /// A hub in `mode` over `db` (none: no database at all), its `hub.json` saved, served on an
 /// ephemeral port with an empty in-memory broker.
 async fn target(mode: Mode, db: Option<&TestDb>) -> Target {
+    target_with(mode, db, |_| {}).await
+}
+
+/// [`target`] with its `hub.json` edited first.
+async fn target_with(mode: Mode, db: Option<&TestDb>, edit: impl FnOnce(&mut HubFile)) -> Target {
     let dir = tempfile::tempdir().unwrap();
     let url = db.map_or("postgres://u:p@192.0.2.2/nidoo", |d| d.url.as_str());
-    let file = target_file(url, mode);
+    let mut file = target_file(url, mode);
+    edit(&mut file);
     file.save(dir.path()).unwrap();
     let restarts = Arc::new(AtomicUsize::new(0));
     let ctx = Arc::new(SetupCtx::new(
@@ -538,7 +544,15 @@ async fn retry_after_a_failure_starts_clean() {
     assert_eq!(progress["state"], "failed", "{progress}");
     assert!(progress["error"].is_string(), "{progress}");
     let file_after = t.file();
-    assert_eq!(file_after.restore, Some(RestoreState { attempted: true }));
+    // The attempt recorded the database and broker it checked, so the retry below clears them.
+    assert_eq!(
+        file_after.restore,
+        Some(RestoreState {
+            attempted: true,
+            target: RestoreTarget::of(&before),
+        })
+    );
+    assert!(file_after.restore.as_ref().unwrap().target.is_some());
     assert_eq!(file_after.location, before.location);
     // The failed attempt cleaned up after itself.
     assert_eq!(holds_history(b.db.pool()).await.unwrap(), None);
@@ -590,6 +604,60 @@ async fn retry_after_a_failure_starts_clean() {
         settings_rows(b.db.pool()).await,
         settings_rows(a.db.pool()).await
     );
+    a.drop_db().await;
+    b.drop_db().await;
+}
+
+/// A retry whose database or broker is not the one the first attempt checked (an env
+/// override or a hand edit changed it since, or the file predates the record) checks for data
+/// again instead of clearing a hub nobody looked at.
+#[tokio::test]
+async fn a_retry_on_an_unchecked_target_is_refused_when_it_holds_data() {
+    let Some((a, file)) = source(50).await else {
+        return;
+    };
+    let Some(b) = fresh_db().await else { return };
+    b.db.insert(&Rows {
+        values: vec![ValueRow {
+            at: T0,
+            id: "sensor.mine".into(),
+            value: StateValue::Number(1.0),
+            num: Some(1.0),
+        }],
+        availability: vec![],
+    })
+    .await
+    .unwrap();
+    let mine = contents(b.db.pool(), "entity_state").await;
+    let flow = (
+        "nidoo/automation/mine".to_owned(),
+        Bytes::from_static(br#"{"id":"mine"}"#),
+    );
+
+    let elsewhere = RestoreTarget::of(&target_file(
+        "postgres://u:p@192.0.2.3/other",
+        Mode::Restore,
+    ));
+    for recorded in [elsewhere, None] {
+        let t = target_with(Mode::Restore, Some(&b), |f| {
+            f.restore = Some(RestoreState {
+                attempted: true,
+                target: recorded.clone(),
+            });
+        })
+        .await;
+        t.broker.publish_retained(vec![flow.clone()]).await.unwrap();
+        let before = t.file();
+
+        let (code, body) = t.upload("/upload", PASSWORD_HEADER, file.clone()).await;
+        assert_eq!(code, StatusCode::CONFLICT, "{body}");
+        let error = body["error"].as_str().unwrap();
+        assert!(error.contains("already holds data"), "{error}");
+        assert_eq!(contents(b.db.pool(), "entity_state").await, mine);
+        assert_eq!(t.docs(), BTreeMap::from([flow.clone()]));
+        assert_eq!(t.file(), before, "nothing recorded on a refusal");
+        assert_eq!(t.restarts.load(Ordering::SeqCst), 0);
+    }
     a.drop_db().await;
     b.drop_db().await;
 }
