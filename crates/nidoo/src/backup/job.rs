@@ -606,6 +606,7 @@ impl Hub {
         let fields = ctx.file.lock().await.fields();
         let broker = self.backups.broker();
         let sources = self.backup_sources(ctx, &*broker, fields)?;
+        // Connecting first reports an unreachable server before any work is done.
         let mut store = FtpStore::connect(&ftp).await?;
         let (head, tail, _end) = pipe(&run.written, &run.sent);
 
@@ -632,6 +633,11 @@ impl Hub {
             // the rows come first, and the upload gives up on a source that stays silent.
             if let Err(e) = reader.fill_buf().await {
                 fail(BackupError::Io(e.to_string()));
+                return None;
+            }
+            // That wait may have outlasted the server's idle timeout.
+            if let Err(e) = store.keep_alive(&ftp).await {
+                fail(e);
                 return None;
             }
             match store.upload(&run.file, reader).await {
