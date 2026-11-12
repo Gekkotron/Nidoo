@@ -12,6 +12,7 @@ pub enum BackupPart {
     Settings,
     Retained,
     History,
+    Z2m,
     Upload,
     Download,
 }
@@ -63,6 +64,9 @@ pub struct LastBackup {
     pub error: Option<String>,
     /// When the last successful backup ended, unix seconds; kept across failures.
     pub last_ok_at: Option<i64>,
+    /// Why the backup is partial (it saved, without some data); `None` when complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// A finished FTP backup.
@@ -72,6 +76,9 @@ pub struct BackupDone {
     pub size: u64,
     /// The FTP server it went to.
     pub host: String,
+    /// Why the Zigbee2MQTT data is missing from the backup, when it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub z2m_warning: Option<String>,
 }
 
 /// One backup file found on the FTP server.
@@ -108,6 +115,7 @@ pub struct BackupView {
     pub ftp: FtpView,
     pub keep: u32,
     pub notify_failure: bool,
+    pub include_z2m: bool,
 }
 
 /// Where the backups are copied, as a read shows it.
@@ -132,6 +140,8 @@ pub struct BackupInput {
     pub keep: Option<u32>,
     #[serde(default = "on")]
     pub notify_failure: bool,
+    #[serde(default = "on")]
+    pub include_z2m: bool,
 }
 
 fn on() -> bool {
@@ -145,6 +155,7 @@ impl Default for BackupInput {
             ftp: FtpInput::default(),
             keep: None,
             notify_failure: true,
+            include_z2m: true,
         }
     }
 }
@@ -219,6 +230,17 @@ pub struct BackupSummary {
     pub dashboards: u32,
     /// The history's size in the source database: an estimate, not the file's size.
     pub history_bytes: u64,
+    /// The Zigbee2MQTT data's size in the backup, when it holds some.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub z2m_bytes: Option<u64>,
+}
+
+/// The Zigbee2MQTT data a restore saved aside, for the info route.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RestoredZ2m {
+    pub bytes: u64,
+    /// Unix seconds.
+    pub saved_at: i64,
 }
 
 /// The running or last restore.
@@ -316,6 +338,7 @@ mod tests {
             ok: false,
             error: Some("cancelled".into()),
             last_ok_at: None,
+            warning: None,
         };
         assert_eq!(
             serde_json::to_value(&last).unwrap(),
@@ -326,6 +349,41 @@ mod tests {
             serde_json::to_string(&BackupState::Cancelled).unwrap(),
             "\"cancelled\""
         );
+    }
+
+    #[test]
+    fn backup_input_include_z2m_defaults_on() {
+        let input: BackupInput = serde_json::from_str("{}").unwrap();
+        assert!(input.include_z2m);
+        let off: BackupInput = serde_json::from_str(r#"{"include_z2m": false}"#).unwrap();
+        assert!(!off.include_z2m);
+    }
+
+    #[test]
+    fn last_backup_warning_is_optional_on_the_wire() {
+        let old = serde_json::json!({"started_at": 10, "ended_at": 20, "destination": "download",
+            "file": "f", "size": 3, "ok": true, "error": null, "last_ok_at": null});
+        let last: LastBackup = serde_json::from_value(old).unwrap();
+        assert_eq!(last.warning, None);
+        assert!(
+            serde_json::to_value(&last)
+                .unwrap()
+                .get("warning")
+                .is_none()
+        );
+        let partial = LastBackup {
+            warning: Some("Zigbee2MQTT is offline".into()),
+            ..last
+        };
+        assert_eq!(
+            serde_json::to_value(&partial).unwrap()["warning"],
+            "Zigbee2MQTT is offline"
+        );
+    }
+
+    #[test]
+    fn backup_part_z2m() {
+        assert_eq!(serde_json::to_string(&BackupPart::Z2m).unwrap(), "\"z2m\"");
     }
 
     #[test]

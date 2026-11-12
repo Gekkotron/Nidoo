@@ -40,6 +40,7 @@ pub enum BackupText {
     PartSettings,
     PartRetained,
     PartHistory,
+    PartZ2m,
     PartUpload,
     PartDownload,
     LastTitle,
@@ -92,6 +93,7 @@ impl BackupText {
         BackupText::PartSettings,
         BackupText::PartRetained,
         BackupText::PartHistory,
+        BackupText::PartZ2m,
         BackupText::PartUpload,
         BackupText::PartDownload,
         BackupText::LastTitle,
@@ -165,6 +167,7 @@ pub fn backup_text(lang: Lang, k: BackupText) -> &'static str {
         PartSettings => ("Settings", "Réglages"),
         PartRetained => ("Retained", "Configuration"),
         PartHistory => ("History", "Historique"),
+        PartZ2m => ("Zigbee2MQTT", "Zigbee2MQTT"),
         PartUpload => ("Upload", "Envoi"),
         PartDownload => ("Download", "Téléchargement"),
         LastTitle => ("Last backup", "Dernière sauvegarde"),
@@ -201,8 +204,8 @@ mod tests {
             | Port | User | FtpPassword | FtpPasswordKept | Folder | TestConnection | Testing
             | StepConnect | StepLogin | StepFolder | StepWrite | KeepTitle | Keep
             | NotifyFailure | BackUpNow | DownloadBackup | NeedPassword | NeedHost | Running
-            | Cancel | PartSettings | PartRetained | PartHistory | PartUpload | PartDownload
-            | LastTitle | LastNone | LastDate | LastDestination | DestinationFtp
+            | Cancel | PartSettings | PartRetained | PartHistory | PartZ2m | PartUpload
+            | PartDownload | LastTitle | LastNone | LastDate | LastDestination | DestinationFtp
             | DestinationDownload | LastFile | LastSize | LastOutcome | OutcomeOk
             | OutcomeFailed => true,
         }
@@ -216,6 +219,7 @@ mod tests {
             backup_text,
             &[
                 BackupText::Port,
+                BackupText::PartZ2m,
                 BackupText::LastDate,
                 BackupText::LastDestination,
                 BackupText::OutcomeOk,

@@ -66,6 +66,7 @@ pub fn summary(m: &Manifest) -> BackupSummary {
         flows: m.flows,
         dashboards: m.dashboards,
         history_bytes: m.history_bytes,
+        z2m_bytes: None,
     }
 }
 

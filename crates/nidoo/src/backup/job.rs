@@ -454,6 +454,7 @@ impl Hub {
                     ftp,
                     keep: Some(stored.keep),
                     notify_failure: stored.notify_failure,
+                    include_z2m: stored.include_z2m,
                 };
                 match settings::apply_input(&stored, input) {
                     Ok(section) => section,
@@ -558,6 +559,7 @@ impl Hub {
             } else {
                 previous
             },
+            warning: None,
         };
         match &outcome {
             Ok(_) => tracing::info!(file = %run.file, size = record.size, "backup done"),
@@ -664,6 +666,7 @@ impl Hub {
             file: run.file.clone(),
             size,
             host: ftp.host,
+            z2m_warning: None,
         })
     }
 
@@ -723,6 +726,7 @@ impl Hub {
             file: run.file.clone(),
             size: run.sent.load(Ordering::Relaxed),
             host: String::new(),
+            z2m_warning: None,
         })
     }
 }
@@ -752,6 +756,7 @@ mod tests {
             ok,
             error: (!ok).then(|| "time limit reached".into()),
             last_ok_at: Some(1_799_000_000),
+            warning: None,
         }
     }
 

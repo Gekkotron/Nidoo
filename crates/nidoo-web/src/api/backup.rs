@@ -52,6 +52,7 @@ fn input_json(input: &BackupInput) -> Value {
         out.insert("keep".to_owned(), json!(keep));
     }
     out.insert("notify_failure".to_owned(), json!(input.notify_failure));
+    out.insert("include_z2m".to_owned(), json!(input.include_z2m));
     Value::Object(out)
 }
 
@@ -145,12 +146,14 @@ mod tests {
             ftp: ftp(),
             keep: Some(3),
             notify_failure: false,
+            include_z2m: false,
         };
         let body = input_json(&input);
         assert_eq!(body["password"], "backup-pass");
         assert_eq!(body["ftp"]["host"], "nas.local");
         assert_eq!(body["keep"], 3);
         assert_eq!(body["notify_failure"], false);
+        assert_eq!(body["include_z2m"], false);
     }
 
     #[test]

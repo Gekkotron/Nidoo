@@ -60,6 +60,7 @@ fn base_input(view: &BackupView) -> BackupInput {
         },
         keep: Some(view.keep),
         notify_failure: view.notify_failure,
+        include_z2m: view.include_z2m,
     }
 }
 
@@ -77,6 +78,7 @@ pub(crate) fn part_text(part: BackupPart) -> BackupText {
         BackupPart::Settings => BackupText::PartSettings,
         BackupPart::Retained => BackupText::PartRetained,
         BackupPart::History => BackupText::PartHistory,
+        BackupPart::Z2m => BackupText::PartZ2m,
         BackupPart::Upload => BackupText::PartUpload,
         BackupPart::Download => BackupText::PartDownload,
     }
@@ -606,6 +608,7 @@ mod tests {
             },
             keep: 7,
             notify_failure: false,
+            include_z2m: true,
         };
         let input = base_input(&view);
         assert_eq!(input.password, Secret::Keep);
