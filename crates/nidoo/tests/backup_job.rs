@@ -91,6 +91,22 @@ impl RetainedBroker for GateBroker {
     }
 }
 
+/// A broker whose collection panics: the job dies in the middle.
+struct PanicBroker;
+
+impl RetainedBroker for PanicBroker {
+    fn collect(&self, _filters: Vec<String>, _quiet: Duration) -> Collected<'_> {
+        Box::pin(async { panic!("broker exploded (expected by the test)") })
+    }
+
+    fn publish_retained(
+        &self,
+        _docs: Vec<(String, Bytes)>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 /// A database nobody answers on: for the tests whose job ends before it reads the database.
 const DEAD_DB: &str = "postgres://nidoo@127.0.0.1:1/none";
 
@@ -469,6 +485,56 @@ async fn cancel_ends_the_job_cancelled() {
         (json!(false), json!("cancelled"))
     );
     assert_eq!(cancel().await, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn panicking_job_frees_the_slot_and_records() {
+    let mut r = rig(Some(DEAD_DB), Arc::new(PanicBroker), |_| {}).await;
+    r.load_push().await;
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(10)).await;
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], false);
+    assert_eq!(last["error"], "the backup stopped");
+    assert_eq!(r.failure_alerts().len(), 1);
+    let (code, body) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED, "{body}");
+    r.wait_idle(Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+async fn refused_on_the_recheck_leaves_no_record_and_no_push() {
+    let mut r = rig(Some(DEAD_DB), mem(one_dashboard()), |s| s.password = None).await;
+    r.load_push().await;
+    // A settings save holds the lock: the up-front check is skipped, the job checks again.
+    let held = r.ctx.sections.lock().await;
+    r.hub.start_backup(Duration::from_secs(60)).unwrap();
+    drop(held);
+    r.wait_idle(Duration::from_secs(10)).await;
+    assert_eq!(r.last().await, None, "a refusal writes no record");
+    assert!(
+        !r.drain().iter().any(|p| p.topic == "nidoo/push/history"),
+        "a refusal never pushes"
+    );
+    let err = r.hub.backup_and_wait(Duration::from_secs(60)).await;
+    assert_eq!(err, Err(nidoo::backup::BackupError::NoPassword));
+}
+
+#[tokio::test]
+async fn stalled_download_is_cancelled() {
+    let Some(tdb) = fresh_db().await else { return };
+    let r = rig(Some(&tdb.url), mem(big_docs()), |_| {}).await;
+    r.hub.set_backup_download_idle(Duration::from_millis(300));
+    // The browser takes the headers and then reads nothing.
+    let resp = reqwest::get(r.url("/backup/download")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    r.wait_idle(Duration::from_secs(30)).await;
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], false, "{last}");
+    assert_eq!(last["error"], "cancelled");
+    drop(resp);
+    tdb.drop_db().await;
 }
 
 #[tokio::test]
