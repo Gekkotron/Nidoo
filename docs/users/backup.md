@@ -41,7 +41,7 @@ Press **Test connection**. It tries four steps and shows which worked: connect t
 
 A backup is first uploaded as `<name>.partial` and renamed only when the last byte is in. A half-sent file is never listed as a backup and never counts toward the number to keep. A leftover `.partial` file older than a day is deleted.
 
-**Notify me when a backup fails** is on by default. A failed FTP backup sends a push "Backup failed" with the reason. A good backup sends nothing. This switch does not depend on the system notifications switch. See [Push notifications](push-notifications.md).
+**Notify me when a backup fails** is on by default. A failed FTP backup sends a push "Backup failed" with the reason. A good backup sends nothing, and neither does a backup you cancel. This switch does not depend on the system notifications switch. See [Push notifications](push-notifications.md).
 
 ## Back up now, or download
 
@@ -94,8 +94,13 @@ Some rules to know:
 - **A newer backup is refused.** A backup restores into the same or a newer Nidoo, not an older one. A file made by a newer Nidoo, or with a newer database level, is refused with a message asking you to update first.
 - **A bad file is refused.** A file that is not a backup, or that is damaged or cut short, is refused. The restore counts the rows of each table against the file's manifest and fails on a mismatch, so a half history is never kept.
 - **The database must be reachable.** Without it the restore answers "database unreachable".
-- **A failed restore can be retried.** The hub stays in restore mode. A retry clears what the first attempt wrote and starts again: from FTP it downloads again, from a file you pick it again. The "already holds data" check is made only on the first attempt.
+- **A failed restore can be retried.** The hub stays in restore mode. A retry clears what the first attempt wrote and starts again: from FTP it downloads again, from a file you pick it again. The "already holds data" check is made only on the first attempt, unless the database or the broker changed since (in the wizard, in `hub.json` or through a `NIDOO_*` variable): then it is made again. If you reload the page while a restore runs, it follows the restore again.
 - **Your FTP settings continue.** When the restore came from FTP and the backup holds other FTP settings than the ones you typed, the restored settings use the ones you typed, since they worked. Otherwise the backup's are kept, and the nightly flow keeps working with no re-typing. The backup password is the same one.
+
+## Troubleshooting
+
+- **A very large history fails with "out of shared memory".** A backup locks every history chunk (`ACCESS SHARE`) for as long as it reads them. Years of history mean many chunks, which can exceed PostgreSQL's lock table: raise `max_locks_per_transaction` (for example to 256) and restart PostgreSQL.
+- **"This backup's password protection is too costly for this machine to open".** The backup was made on a much faster machine, and unlocking it here would take too long. Restore it on a faster machine.
 
 ## Open a backup by hand
 
