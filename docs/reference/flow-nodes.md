@@ -475,9 +475,11 @@ Backs the hub up to the FTP server set in **Settings → Backup** and waits unti
 | `destination` | `ftp` (default) | Where the backup goes. `ftp` is the only value. |
 | `timeout_minutes` | integer, 1 to 1440 (default 120) | The time limit. When the step starts the backup, it is the backup's own limit. When the step joins a backup that is already running, it is how long the step waits. |
 
-Outputs: two, `ok` and `failed`. Both record the step as `Ok` and the run goes on along the matching port, so a failed backup does not stop the flow. Wire both to the step that shuts the NAS down.
+Outputs: three, `ok`, `partial` and `failed`. All three record the step as `Ok` and the run goes on along the matching port, so a failed backup does not stop the flow. Wire `ok`, `partial` and `failed` to the step that shuts the NAS down.
 
-The step detail on `ok` reads `Backed up <size> to <host> as <file>`. On `failed` it is the reason: `FTP not configured`, `no backup password set`, `can't reach the FTP server (…)`, `login refused`, `FTP folder: …`, `time limit reached`, `cancelled`, or the database or file error that stopped it. A step that joins a running backup that ends badly takes `failed` with that backup's reason.
+`partial` is a backup that saved Nidoo's data but not the Zigbee2MQTT data (the switch was on and Zigbee2MQTT did not supply it; see [Zigbee2MQTT data](../users/backup.md#zigbee2mqtt-data)). When nothing is wired to `partial`, the run goes on along `ok` instead, so a flow that wires only `ok` and `failed` keeps working unchanged. The editor's help for the port reads: "Partial: saved without Zigbee2MQTT data. Left unwired, it goes on as Backed up."
+
+The step detail on `ok` reads `Backed up <size> to <host> as <file>`. On `partial` it is the same with `, without Zigbee2MQTT data: <reason>` added, the reason being one of the skip reasons in the backup guide. On `failed` it is the reason: `FTP not configured`, `no backup password set`, `can't reach the FTP server (…)`, `login refused`, `FTP folder: …`, `time limit reached`, `cancelled`, or the database or file error that stopped it. A step that joins a running backup that ends badly takes `failed` with that backup's reason.
 
 When `timeout_minutes` passes while the step waits on a backup that was already running, the step takes `failed` with `time limit reached` and the backup keeps running. A run cancelled while it waits (the flow disabled, or restarted in restart mode) does not cancel the backup.
 

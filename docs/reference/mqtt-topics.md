@@ -12,6 +12,8 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | Device state topics named by the discovery configs | in | by the device | Device state; subscribed on demand | discovery | — |
 | Device command topics named by the discovery configs | out | only when the config says `"retain": true` | The device's command payload | discovery | — |
 | `<z2m_base>/bridge/devices`, `/info`, `/state` | in | yes (by Zigbee2MQTT) | Zigbee2MQTT device list, bridge info and state | `[topics] z2m_base` | — |
+| `<z2m_base>/bridge/request/backup` | out | no | `{"transaction": "<id>"}`, asking Zigbee2MQTT for its own backup; sent by a backup that includes Zigbee2MQTT data, once per backup | `[topics] z2m_base` | — |
+| `<z2m_base>/bridge/response/backup` | in | no | Zigbee2MQTT's answer: `{"transaction", "status", "data": {"zip": "<base64>"}}` or `status: "error"`; subscribed by the backup's own connection only while it waits, and only the answer matching the transaction is used | `[topics] z2m_base` | — |
 | `<ha_status_topic>`, default `homeassistant/status` | out | no | `online`, once per connect | `[mqtt] send_ha_birth`, `[mqtt] ha_status_topic` | — |
 | `nidoo/ui/<entity id>` | in, out | yes | The entity's [override](entity-types.md#overrides) JSON; empty clears it | `[topics] ui_prefix` | yes |
 | `nidoo/ui/_areas` | in, out | yes | The declared rooms (`{"areas": […]}`) | `[topics] ui_prefix` | yes |
