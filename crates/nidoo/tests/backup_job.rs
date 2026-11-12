@@ -16,6 +16,7 @@ use nidoo::backup::archive::read_manifest;
 use nidoo::backup::name;
 use nidoo::backup::retained::{MemBroker, RetainedBroker};
 use nidoo::backup::settings::BackupSection;
+use nidoo::backup::z2m::{MemZ2m, Z2mSkip, Z2mSource};
 use nidoo::config::Config;
 use nidoo::hub::Hub;
 use nidoo::setup::sections::Sections;
@@ -105,6 +106,30 @@ impl RetainedBroker for PanicBroker {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
         Box::pin(async { Ok(()) })
     }
+}
+
+/// A Zigbee2MQTT source that must not be asked.
+struct PanicZ2m;
+
+impl Z2mSource for PanicZ2m {
+    fn fetch(&self) -> futures_util::future::BoxFuture<'_, Result<Bytes, Z2mSkip>> {
+        Box::pin(async { panic!("Zigbee2MQTT was asked (not expected by the test)") })
+    }
+}
+
+fn z2m_ok(zip: &'static [u8]) -> Arc<dyn Z2mSource> {
+    Arc::new(MemZ2m(Mutex::new(Ok(Bytes::from_static(zip)))))
+}
+
+fn z2m_err(skip: Z2mSkip) -> Arc<dyn Z2mSource> {
+    Arc::new(MemZ2m(Mutex::new(Err(skip))))
+}
+
+fn bridge(hub: &Hub, state: &str) {
+    hub.ingest(
+        "zigbee2mqtt/bridge/state",
+        format!(r#"{{"state":"{state}"}}"#).as_bytes(),
+    );
 }
 
 /// A database nobody answers on: for the tests whose job ends before it reads the database.
@@ -234,6 +259,12 @@ impl Rig {
 
     /// The backup failure alerts in the latest push history publish since the last drain.
     fn failure_alerts(&mut self) -> Vec<Value> {
+        self.alerts("backup-failed-")
+    }
+
+    /// The alerts whose id starts with `prefix` in the latest push history publish since the
+    /// last drain.
+    fn alerts(&mut self, prefix: &str) -> Vec<Value> {
         let Some(last) = self
             .drain()
             .into_iter()
@@ -246,7 +277,7 @@ impl Rig {
         list.as_array()
             .unwrap()
             .iter()
-            .filter(|a| a["id"].as_str().unwrap().starts_with("backup-failed-"))
+            .filter(|a| a["id"].as_str().unwrap().starts_with(prefix))
             .cloned()
             .collect()
     }
@@ -797,6 +828,164 @@ async fn cancelled_run_keeps_the_backup() {
     assert_eq!(
         files(r.ftp_dir.path()),
         vec![last["file"].as_str().unwrap()]
+    );
+    tdb.drop_db().await;
+}
+
+/// The manifest of the only file on the FTP server.
+async fn only_manifest(r: &Rig) -> nidoo::backup::archive::Manifest {
+    let all = files(r.ftp_dir.path());
+    assert_eq!(all.len(), 1, "{all:?}");
+    let bytes = std::fs::read(r.ftp_dir.path().join(&all[0])).unwrap();
+    read_manifest(&bytes[..], PASSWORD).await.unwrap()
+}
+
+#[tokio::test]
+async fn online_z2m_is_in_the_file() {
+    let Some(tdb) = fresh_db().await else { return };
+    let mut r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    r.load_push().await;
+    bridge(&r.hub, "online");
+    r.hub.set_backup_z2m(z2m_ok(b"PK-zip-bytes"));
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(60)).await;
+
+    let manifest = only_manifest(&r).await;
+    assert_eq!(manifest.z2m.map(|z| z.bytes), Some(12));
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], true, "{last}");
+    assert!(last["warning"].is_null(), "{last}");
+    assert!(r.alerts("backup-").is_empty());
+    tdb.drop_db().await;
+}
+
+/// A partial backup: saved, warned about, pushed once with `reason`.
+async fn assert_partial(r: &mut Rig, reason: &str) {
+    let manifest = only_manifest(r).await;
+    assert!(manifest.z2m.is_none());
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], true, "{last}");
+    assert_eq!(last["warning"], reason, "{last}");
+    assert!(last["last_ok_at"].as_i64().is_some(), "{last}");
+    let alerts = r.alerts("backup-partial-");
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(
+        alerts[0]["id"],
+        format!("backup-partial-{}", last["started_at"])
+    );
+    assert_eq!(alerts[0]["title"], "Backup incomplete");
+    assert_eq!(
+        alerts[0]["body"],
+        format!("Backup saved without Zigbee2MQTT data: {reason}")
+    );
+}
+
+#[tokio::test]
+async fn offline_z2m_gives_a_partial_backup() {
+    let Some(tdb) = fresh_db().await else { return };
+    let mut r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    r.load_push().await;
+    bridge(&r.hub, "offline");
+    r.hub.set_backup_z2m(Arc::new(PanicZ2m));
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(60)).await;
+    assert_partial(&mut r, "Zigbee2MQTT is offline").await;
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn silent_z2m_gives_a_partial_backup() {
+    let Some(tdb) = fresh_db().await else { return };
+    let mut r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    r.load_push().await;
+    bridge(&r.hub, "online");
+    r.hub.set_backup_z2m(z2m_err(Z2mSkip::NoAnswer));
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(60)).await;
+    assert_partial(&mut r, "Zigbee2MQTT didn't answer within 60 s").await;
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn unknown_bridge_or_switch_off_is_a_plain_backup() {
+    let Some(tdb) = fresh_db().await else { return };
+    // No bridge state yet: not asked, nothing to say.
+    let mut r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    r.load_push().await;
+    r.hub.set_backup_z2m(Arc::new(PanicZ2m));
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(60)).await;
+    assert!(only_manifest(&r).await.z2m.is_none());
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], true, "{last}");
+    assert!(last["warning"].is_null(), "{last}");
+    assert!(r.alerts("backup-").is_empty());
+
+    // The switch off with an online bridge: same.
+    r.ctx.sections.lock().await.backup.include_z2m = false;
+    bridge(&r.hub, "online");
+    next_second().await;
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(60)).await;
+    let again = r.last().await.expect("a record");
+    assert_ne!(again["started_at"], last["started_at"]);
+    assert_eq!(again["ok"], true, "{again}");
+    assert!(again["warning"].is_null(), "{again}");
+    assert!(r.alerts("backup-").is_empty());
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn partial_push_follows_the_notify_switch() {
+    let Some(tdb) = fresh_db().await else { return };
+    let mut r = rig(Some(&tdb.url), mem(one_dashboard()), |s| {
+        s.notify_failure = false
+    })
+    .await;
+    r.load_push().await;
+    bridge(&r.hub, "offline");
+    r.hub.set_backup_z2m(Arc::new(PanicZ2m));
+    let (code, _) = r.post_run().await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    r.wait_idle(Duration::from_secs(60)).await;
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["warning"], "Zigbee2MQTT is offline", "{last}");
+    assert!(
+        !r.drain().iter().any(|p| p.topic == "nidoo/push/history"),
+        "pushed with the switch off"
+    );
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn download_partial_does_not_push() {
+    let Some(tdb) = fresh_db().await else { return };
+    let mut r = rig(Some(&tdb.url), mem(one_dashboard()), |s| s.ftp.host.clear()).await;
+    r.load_push().await;
+    bridge(&r.hub, "offline");
+    r.hub.set_backup_z2m(Arc::new(PanicZ2m));
+    let resp = reqwest::get(r.url("/backup/download")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.bytes().await.unwrap();
+    assert!(
+        read_manifest(&body[..], PASSWORD)
+            .await
+            .unwrap()
+            .z2m
+            .is_none()
+    );
+    r.wait_idle(Duration::from_secs(10)).await;
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], true, "{last}");
+    assert_eq!(last["warning"], "Zigbee2MQTT is offline", "{last}");
+    assert!(
+        !r.drain().iter().any(|p| p.topic == "nidoo/push/history"),
+        "a download pushed"
     );
     tdb.drop_db().await;
 }
