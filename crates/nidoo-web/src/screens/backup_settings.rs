@@ -9,12 +9,12 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use nidoo_api::{
     BackupDestination, BackupInput, BackupPart, BackupProgress, BackupState, BackupView, FtpCheck,
-    FtpInput, FtpStep, LastBackup, Secret,
+    FtpInput, FtpStep, LastBackup, RestoredZ2m, Secret,
 };
 
-use crate::api::backup::{self as api, DOWNLOAD_PATH};
+use crate::api::backup::{self as api, DOWNLOAD_PATH, RESTORED_Z2M_PATH};
 use crate::i18n::format::{date_time, local_date_time};
-use crate::i18n::{BackupText, backup_text, use_backup_text, use_lang};
+use crate::i18n::{BackupText, backup_text, saved_without_z2m, use_backup_text, use_lang};
 use crate::screens::alarm_settings::SwitchRow;
 use crate::screens::system_settings::size;
 
@@ -61,6 +61,23 @@ fn base_input(view: &BackupView) -> BackupInput {
         keep: Some(view.keep),
         notify_failure: view.notify_failure,
         include_z2m: view.include_z2m,
+    }
+}
+
+/// How the last backup is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Ok,
+    /// Saved, without some data.
+    Partial,
+    Failed,
+}
+
+fn tone(l: &LastBackup) -> Tone {
+    match (l.ok, &l.warning) {
+        (false, _) => Tone::Failed,
+        (true, Some(_)) => Tone::Partial,
+        (true, None) => Tone::Ok,
     }
 }
 
@@ -137,6 +154,8 @@ pub fn BackupSettingsPage() -> impl IntoView {
     let folder = RwSignal::new(String::new());
     let keep = RwSignal::new(String::new());
     let notify = RwSignal::new(true);
+    let include_z2m = RwSignal::new(true);
+    let restored = RwSignal::new(None::<RestoredZ2m>);
     let saving = RwSignal::new(false);
     let save_error = RwSignal::new(None::<String>);
     let checks = RwSignal::new(None::<Vec<FtpCheck>>);
@@ -153,6 +172,7 @@ pub fn BackupSettingsPage() -> impl IntoView {
         folder.try_set(v.ftp.folder.clone());
         keep.try_set(v.keep.to_string());
         notify.try_set(v.notify_failure);
+        include_z2m.try_set(v.include_z2m);
         password.try_set(String::new());
         repeat.try_set(String::new());
         ftp_password.try_set(String::new());
@@ -176,6 +196,11 @@ pub fn BackupSettingsPage() -> impl IntoView {
         });
     };
     reload_last();
+    spawn_local(async move {
+        if let Ok(info) = api::restored_z2m_info().await {
+            restored.try_set(info);
+        }
+    });
 
     // Reads the running backup every second until it ends, then the record it left.
     let stop = Arc::new(AtomicBool::new(false));
@@ -286,6 +311,22 @@ pub fn BackupSettingsPage() -> impl IntoView {
         });
     };
 
+    let toggle_z2m = Callback::new(move |on: bool| {
+        save(Box::new(move |i| i.include_z2m = on));
+    });
+    let delete_restored = move |_| {
+        spawn_local(async move {
+            match api::delete_restored_z2m().await {
+                Ok(()) => {
+                    restored.try_set(None);
+                }
+                Err(e) => {
+                    run_error.try_set(Some(e.error));
+                }
+            }
+        });
+    };
+
     let keep_valid = move || parse_keep(&keep.get()).is_some();
     let save_keep = move |_| {
         if let Some(count) = parse_keep(&keep.get_untracked()) {
@@ -366,6 +407,15 @@ pub fn BackupSettingsPage() -> impl IntoView {
                 >
                     {move || t(BackupText::Save)}
                 </button>
+            </section>
+            <section class="sheet__panel backup__z2m">
+                <SwitchRow
+                    label=Signal::derive(move || t(BackupText::IncludeZ2m).to_owned())
+                    on=include_z2m
+                    on_toggle=toggle_z2m
+                    busy=Signal::derive(move || !loaded() || saving.get())
+                />
+                <p class="system__hint">{move || t(BackupText::IncludeZ2mHelp)}</p>
             </section>
             <section class="sheet__panel backup__ftp">
                 <h2 class="sheet__heading">{move || t(BackupText::FtpTitle)}</h2>
@@ -459,6 +509,35 @@ pub fn BackupSettingsPage() -> impl IntoView {
                 </button>
             </section>
             {move || {
+                restored
+                    .get()
+                    .map(|r| {
+                        view! {
+                            <section class="sheet__panel backup__z2m-restored">
+                                <h2 class="sheet__heading">{move || t(BackupText::RestoredZ2mTitle)}</h2>
+                                <p class="backup__z2m-size">{size(lang(), r.bytes)}</p>
+                                <p class="system__hint">{move || t(BackupText::RestoredZ2mHint)}</p>
+                                <div class="backup__buttons">
+                                    <a
+                                        class="btn btn--primary backup__z2m-download"
+                                        href=RESTORED_Z2M_PATH
+                                        download=""
+                                    >
+                                        {move || t(BackupText::Download)}
+                                    </a>
+                                    <button
+                                        type="button"
+                                        class="btn backup__z2m-delete"
+                                        on:click=delete_restored
+                                    >
+                                        {move || t(BackupText::Delete)}
+                                    </button>
+                                </div>
+                            </section>
+                        }
+                    })
+            }}
+            {move || {
                 save_error
                     .get()
                     .map(|e| view! { <p class="home-settings__error" role="alert">{e}</p> })
@@ -536,12 +615,13 @@ fn last_rows(l: &LastBackup, lang: crate::i18n::Lang) -> impl IntoView + use<> {
             BackupDestination::Download => BackupText::DestinationDownload,
         },
     );
+    let tone = tone(l);
     let outcome = backup_text(
         lang,
-        if l.ok {
-            BackupText::OutcomeOk
-        } else {
-            BackupText::OutcomeFailed
+        match tone {
+            Tone::Ok => BackupText::OutcomeOk,
+            Tone::Partial => BackupText::OutcomePartial,
+            Tone::Failed => BackupText::OutcomeFailed,
         },
     );
     let row = |label: BackupText, value: String, class: &'static str| {
@@ -557,7 +637,22 @@ fn last_rows(l: &LastBackup, lang: crate::i18n::Lang) -> impl IntoView + use<> {
         {row(BackupText::LastDestination, destination.to_owned(), "backup__last-destination")}
         {row(BackupText::LastFile, l.file.clone(), "backup__last-file")}
         {row(BackupText::LastSize, size(lang, l.size), "backup__last-size")}
-        {row(BackupText::LastOutcome, outcome.to_owned(), "backup__last-outcome")}
+        {row(
+            BackupText::LastOutcome,
+            outcome.to_owned(),
+            match tone {
+                Tone::Ok => "backup__last-outcome",
+                Tone::Partial => "backup__last-outcome backup__last-outcome--partial",
+                Tone::Failed => "backup__last-outcome backup__last-outcome--failed",
+            },
+        )}
+        {l
+            .warning
+            .as_deref()
+            .filter(|_| tone == Tone::Partial)
+            .map(|w| {
+                view! { <p class="backup__warning backup__last-warning">{saved_without_z2m(lang, w)}</p> }
+            })}
         {l
             .error
             .clone()
@@ -595,6 +690,31 @@ mod tests {
         assert_eq!(parse_keep(""), None);
     }
 
+    fn last(ok: bool, warning: Option<&str>) -> LastBackup {
+        LastBackup {
+            started_at: 0,
+            ended_at: 1,
+            destination: BackupDestination::Ftp,
+            file: "f".into(),
+            size: 1,
+            ok,
+            error: None,
+            last_ok_at: None,
+            warning: warning.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_warning_makes_a_saved_backup_partial() {
+        assert_eq!(tone(&last(true, None)), Tone::Ok);
+        assert_eq!(
+            tone(&last(true, Some("Zigbee2MQTT is offline"))),
+            Tone::Partial
+        );
+        assert_eq!(tone(&last(false, None)), Tone::Failed);
+        assert_eq!(tone(&last(false, Some("x"))), Tone::Failed);
+    }
+
     #[test]
     fn the_base_input_changes_nothing() {
         let view = BackupView {
@@ -618,6 +738,12 @@ mod tests {
         assert_eq!(input.ftp.folder.as_deref(), Some("/backups"));
         assert_eq!(input.keep, Some(7));
         assert!(!input.notify_failure);
+        assert!(input.include_z2m);
+        let off = BackupView {
+            include_z2m: false,
+            ..view
+        };
+        assert!(!base_input(&off).include_z2m);
         assert_eq!(typed_secret(""), Secret::Keep);
         assert_eq!(typed_secret("x"), Secret::Set("x".into()));
     }

@@ -15,7 +15,7 @@ use crate::api::setup::{
     restore_progress, restore_upload, restore_upload_inspect,
 };
 use crate::i18n::format::{date_time, local_date_time};
-use crate::i18n::setup::{SetupText, setup_text, use_setup_text};
+use crate::i18n::setup::{SetupText, restore_includes_z2m, setup_text, use_setup_text};
 use crate::i18n::{BackupText, Lang, backup_text, current_lang, use_lang};
 use crate::screens::backup_settings::part_text;
 use crate::screens::system_settings::size;
@@ -701,6 +701,15 @@ fn summary_view(flow: Flow) -> impl IntoView {
                     {row(SetupText::RestoreSummaryDashboards, s.dashboards.to_string())}
                     {row(SetupText::RestoreSummaryHistory, size(lang(), s.history_bytes))}
                 </dl>
+                {s
+                    .z2m_bytes
+                    .map(|bytes| {
+                        view! {
+                            <p class="system__hint restore__z2m">
+                                {move || restore_includes_z2m(lang(), &size(lang(), bytes))}
+                            </p>
+                        }
+                    })}
             }
         })
     };

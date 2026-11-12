@@ -54,6 +54,13 @@ pub enum BackupText {
     LastOutcome,
     OutcomeOk,
     OutcomeFailed,
+    IncludeZ2m,
+    IncludeZ2mHelp,
+    OutcomePartial,
+    Download,
+    Delete,
+    RestoredZ2mTitle,
+    RestoredZ2mHint,
 }
 
 impl BackupText {
@@ -107,6 +114,13 @@ impl BackupText {
         BackupText::LastOutcome,
         BackupText::OutcomeOk,
         BackupText::OutcomeFailed,
+        BackupText::IncludeZ2m,
+        BackupText::IncludeZ2mHelp,
+        BackupText::OutcomePartial,
+        BackupText::Download,
+        BackupText::Delete,
+        BackupText::RestoredZ2mTitle,
+        BackupText::RestoredZ2mHint,
     ];
 }
 
@@ -149,8 +163,8 @@ pub fn backup_text(lang: Lang, k: BackupText) -> &'static str {
         KeepTitle => ("Retention", "Conservation"),
         Keep => ("Backups to keep", "Sauvegardes à conserver"),
         NotifyFailure => (
-            "Notify me when a backup fails",
-            "Me prévenir quand une sauvegarde échoue",
+            "Notify me when a backup fails or is incomplete",
+            "Me prévenir quand une sauvegarde échoue ou est incomplète",
         ),
         BackUpNow => ("Back up now", "Sauvegarder maintenant"),
         DownloadBackup => ("Download a backup", "Télécharger une sauvegarde"),
@@ -181,8 +195,35 @@ pub fn backup_text(lang: Lang, k: BackupText) -> &'static str {
         LastOutcome => ("Result", "Résultat"),
         OutcomeOk => ("OK", "OK"),
         OutcomeFailed => ("Failed", "Échec"),
+        IncludeZ2m => (
+            "Include Zigbee2MQTT data",
+            "Inclure les données Zigbee2MQTT",
+        ),
+        IncludeZ2mHelp => (
+            "Keeps your Zigbee network (key, paired devices) so a new Zigbee2MQTT doesn't need re-pairing.",
+            "Conserve votre réseau Zigbee (clé, appareils appairés) : un nouveau Zigbee2MQTT n'a pas besoin de tout ré-appairer.",
+        ),
+        OutcomePartial => ("Partial", "Partielle"),
+        Download => ("Download", "Télécharger"),
+        Delete => ("Delete", "Supprimer"),
+        RestoredZ2mTitle => (
+            "Zigbee2MQTT data from the restored backup",
+            "Données Zigbee2MQTT de la sauvegarde restaurée",
+        ),
+        RestoredZ2mHint => (
+            "It holds your Zigbee network key: delete it once Zigbee2MQTT is back.",
+            "L'archive contient la clé de votre réseau Zigbee : supprimez-la une fois Zigbee2MQTT de retour.",
+        ),
     };
     if lang == Lang::Fr { fr } else { en }
+}
+
+/// The last-backup line of a partial backup: it saved, without the Zigbee2MQTT data, for `reason`.
+pub fn saved_without_z2m(lang: Lang, reason: &str) -> String {
+    match lang {
+        Lang::En => format!("Saved without Zigbee2MQTT data: {reason}"),
+        Lang::Fr => format!("Sauvegardée sans les données Zigbee2MQTT : {reason}"),
+    }
 }
 
 /// The text table for the current language.
@@ -207,7 +248,8 @@ mod tests {
             | Cancel | PartSettings | PartRetained | PartHistory | PartZ2m | PartUpload
             | PartDownload | LastTitle | LastNone | LastDate | LastDestination | DestinationFtp
             | DestinationDownload | LastFile | LastSize | LastOutcome | OutcomeOk
-            | OutcomeFailed => true,
+            | OutcomeFailed | IncludeZ2m | IncludeZ2mHelp | OutcomePartial | Download | Delete
+            | RestoredZ2mTitle | RestoredZ2mHint => true,
         }
     }
 
@@ -224,6 +266,18 @@ mod tests {
                 BackupText::LastDestination,
                 BackupText::OutcomeOk,
             ],
+        );
+    }
+
+    #[test]
+    fn a_partial_backup_names_its_reason() {
+        assert_eq!(
+            saved_without_z2m(Lang::En, "Zigbee2MQTT is offline"),
+            "Saved without Zigbee2MQTT data: Zigbee2MQTT is offline"
+        );
+        assert_eq!(
+            saved_without_z2m(Lang::Fr, "x"),
+            "Sauvegardée sans les données Zigbee2MQTT : x"
         );
     }
 

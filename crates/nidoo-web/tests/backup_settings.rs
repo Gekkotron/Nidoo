@@ -33,6 +33,7 @@ fn view_json(password_set: bool, host: &str) -> Value {
         },
         "keep": 7,
         "notify_failure": true,
+        "include_z2m": true,
     })
 }
 
@@ -356,4 +357,125 @@ async fn settings_list_shows_backup_after_system() {
     assert_eq!(links[system + 1], "/settings/backup", "{links:?}");
     let entry = texts(&m.host, "a[href=\"/settings/backup\"]").remove(0);
     assert!(entry.contains("Backup"), "{entry}");
+}
+
+#[wasm_bindgen_test]
+async fn the_z2m_switch_sends_the_flipped_flag() {
+    let stub = FetchStub::install();
+    let mut stored = view_json(true, "nas.local");
+    stored["include_z2m"] = json!(false);
+    stub.reply("GET", "/api/v1/settings/backup", 200, &stored.to_string());
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    stub.reply("GET", "/api/v1/backup/last", 204, "");
+    stub.reply("GET", "/api/v1/backup/restored-z2m/info", 404, "");
+    stub.reply(
+        "PUT",
+        "/api/v1/settings/backup",
+        200,
+        &view_json(true, "nas.local").to_string(),
+    );
+    let m = mount("/settings/backup");
+    wait_for(&m.host, ".backup__z2m .switch", 1).await;
+    settle().await;
+    let switch = one(&m.host, ".backup__z2m .switch");
+    assert_eq!(
+        switch.get_attribute("aria-checked").as_deref(),
+        Some("false")
+    );
+    switch.click();
+    let put = stub.wait_for("PUT").await.expect("a PUT");
+    let body: Value = serde_json::from_str(&put.body).unwrap();
+    assert_eq!(body["include_z2m"], true);
+    assert_eq!(body["keep"], 7);
+}
+
+#[wasm_bindgen_test]
+async fn a_partial_backup_shows_its_reason_in_the_warning_style() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/settings/backup",
+        200,
+        &view_json(true, "nas.local").to_string(),
+    );
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    stub.reply("GET", "/api/v1/backup/restored-z2m/info", 404, "");
+    let mut last = last_json();
+    last["warning"] = json!("Zigbee2MQTT is offline");
+    stub.reply("GET", "/api/v1/backup/last", 200, &last.to_string());
+    let m = mount("/settings/backup");
+    wait_for(&m.host, ".backup__last-warning", 1).await;
+    assert_eq!(
+        text(&m.host, ".backup__last-warning"),
+        "Saved without Zigbee2MQTT data: Zigbee2MQTT is offline"
+    );
+    assert_eq!(all(&m.host, ".backup__last-outcome--partial").len(), 1);
+}
+
+#[wasm_bindgen_test]
+async fn a_complete_backup_has_no_warning() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/settings/backup",
+        200,
+        &view_json(true, "nas.local").to_string(),
+    );
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    stub.reply("GET", "/api/v1/backup/restored-z2m/info", 404, "");
+    stub.reply("GET", "/api/v1/backup/last", 200, &last_json().to_string());
+    let m = mount("/settings/backup");
+    wait_for(&m.host, ".backup__last-file", 1).await;
+    assert!(all(&m.host, ".backup__last-warning").is_empty());
+    assert!(all(&m.host, ".backup__last-outcome--partial").is_empty());
+}
+
+#[wasm_bindgen_test]
+async fn the_restored_z2m_card_offers_download_and_delete() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/settings/backup",
+        200,
+        &view_json(true, "nas.local").to_string(),
+    );
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    stub.reply("GET", "/api/v1/backup/last", 204, "");
+    stub.reply(
+        "GET",
+        "/api/v1/backup/restored-z2m/info",
+        200,
+        &json!({"bytes": 2_000_000u64, "saved_at": 1_700_000_000i64}).to_string(),
+    );
+    stub.reply("DELETE", "/api/v1/backup/restored-z2m", 204, "");
+    let m = mount("/settings/backup");
+    wait_for(&m.host, ".backup__z2m-restored", 1).await;
+    assert!(text(&m.host, ".backup__z2m-restored").contains("2 MB"));
+    assert_eq!(
+        one(&m.host, ".backup__z2m-download")
+            .get_attribute("href")
+            .as_deref(),
+        Some("/api/v1/backup/restored-z2m")
+    );
+    one(&m.host, ".backup__z2m-delete").click();
+    stub.wait_for("DELETE").await.expect("a DELETE");
+    wait_for(&m.host, ".backup__z2m-restored", 0).await;
+}
+
+#[wasm_bindgen_test]
+async fn no_restored_z2m_means_no_card() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/settings/backup",
+        200,
+        &view_json(true, "nas.local").to_string(),
+    );
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    stub.reply("GET", "/api/v1/backup/last", 204, "");
+    stub.reply("GET", "/api/v1/backup/restored-z2m/info", 404, "");
+    let m = mount("/settings/backup");
+    wait_for(&m.host, ".backup__run", 1).await;
+    settle().await;
+    assert!(all(&m.host, ".backup__z2m-restored").is_empty());
 }
