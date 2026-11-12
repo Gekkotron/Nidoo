@@ -15,6 +15,9 @@ use nidoo_api::{BackupProgress, FtpCheck, FtpInput};
 
 use super::api::HttpError;
 use crate::backup::BackupError;
+use crate::backup::restore::{
+    RESTORED_Z2M_FILE, delete_restored_z2m, restored_z2m_info as read_info,
+};
 use crate::hub::Hub;
 
 /// How long a "back up now" may run.
@@ -27,6 +30,8 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/backup/runs", post(start))
         .route("/backup/current", get(current).delete(cancel))
         .route("/backup/download", get(download))
+        .route("/backup/restored-z2m", get(restored_z2m).delete(delete_z2m))
+        .route("/backup/restored-z2m/info", get(restored_z2m_info))
 }
 
 impl From<BackupError> for HttpError {
@@ -99,4 +104,48 @@ async fn download(State(hub): State<Arc<Hub>>) -> Result<Response, HttpError> {
         Body::from_stream(stream),
     )
         .into_response())
+}
+
+fn not_found() -> HttpError {
+    HttpError::new(StatusCode::NOT_FOUND, "no restored Zigbee2MQTT data")
+}
+
+async fn restored_z2m_info(
+    State(hub): State<Arc<Hub>>,
+) -> Result<Json<nidoo_api::RestoredZ2m>, HttpError> {
+    let dir = hub.data_dir().ok_or_else(not_found)?;
+    read_info(&dir).map(Json).ok_or_else(not_found)
+}
+
+async fn restored_z2m(State(hub): State<Arc<Hub>>) -> Result<Response, HttpError> {
+    let dir = hub.data_dir().ok_or_else(not_found)?;
+    let bytes = match tokio::fs::read(dir.join(RESTORED_Z2M_FILE)).await {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(not_found()),
+        Err(e) => {
+            return Err(HttpError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+            ));
+        }
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/zip"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"zigbee2mqtt-backup.zip\"",
+            ),
+        ],
+        bytes,
+    )
+        .into_response())
+}
+
+async fn delete_z2m(State(hub): State<Arc<Hub>>) -> Result<StatusCode, HttpError> {
+    if let Some(dir) = hub.data_dir() {
+        delete_restored_z2m(&dir)
+            .map_err(|e| HttpError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }

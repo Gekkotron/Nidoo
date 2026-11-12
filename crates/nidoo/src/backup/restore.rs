@@ -6,6 +6,7 @@
 //! pending, so `hub.json` only changes when the restore is done.
 
 use std::io;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -13,7 +14,7 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 use nidoo_api::{
     BackupPart, BackupState, BackupSummary, FtpSource, RemoteBackup, RestoreErrorCode,
-    RestoreProgress, SetupStep,
+    RestoreProgress, RestoredZ2m, SetupStep,
 };
 use sqlx::PgPool;
 use tokio::io::{AsyncRead, ReadBuf};
@@ -32,6 +33,38 @@ use crate::setup::restart::schedule_restart;
 use crate::setup::routes::RESTART_DELAY;
 use crate::setup::sections::{Sections, assemble};
 use crate::setup::store::{load_stored, save_section, write_cache};
+
+/// Where a restore keeps the backup's Zigbee2MQTT zip, in the data directory (mode 0600: it
+/// holds the Zigbee network key).
+pub const RESTORED_Z2M_FILE: &str = "zigbee2mqtt-restored.zip";
+
+/// Saves the zip aside for download.
+pub fn save_restored_z2m(dir: &Path, zip: &[u8]) -> io::Result<()> {
+    crate::setup::fs::write_private_atomic(&dir.join(RESTORED_Z2M_FILE), zip)
+}
+
+/// The saved zip's size and time, `None` when there is none.
+pub fn restored_z2m_info(dir: &Path) -> Option<RestoredZ2m> {
+    let meta = std::fs::metadata(dir.join(RESTORED_Z2M_FILE)).ok()?;
+    let saved_at = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(RestoredZ2m {
+        bytes: meta.len(),
+        saved_at: i64::try_from(saved_at).ok()?,
+    })
+}
+
+/// Removes the saved zip; already gone is fine.
+pub fn delete_restored_z2m(dir: &Path) -> io::Result<()> {
+    match std::fs::remove_file(dir.join(RESTORED_Z2M_FILE)) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
 
 fn no_database() -> BackupError {
     BackupError::Database("database unreachable".into())
@@ -273,6 +306,13 @@ async fn restore(
     progress: &(dyn Fn(BackupPart, u64) + Sync),
 ) -> Result<(), BackupError> {
     let restored = read_backup(input, password, db.pool(), broker, progress).await?;
+    if let Some(zip) = restored.z2m {
+        let dir = ctx.data_dir.clone();
+        tokio::task::spawn_blocking(move || save_restored_z2m(&dir, &zip))
+            .await
+            .map_err(|e| BackupError::Io(e.to_string()))?
+            .map_err(io_error)?;
+    }
     let mut sections = Sections::from_rows(restored.settings);
     if let Some(used) = ftp_used {
         let typed = FtpSection {
@@ -396,6 +436,39 @@ mod tests {
     use super::*;
     use crate::backup::archive::Z2mManifest;
     use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn the_restored_zip_round_trips_privately() {
+        let dir = tempfile::tempdir().unwrap();
+        save_restored_z2m(dir.path(), b"zip-bytes").unwrap();
+        let path = dir.path().join(RESTORED_Z2M_FILE);
+        assert_eq!(std::fs::read(&path).unwrap(), b"zip-bytes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let info = restored_z2m_info(dir.path()).unwrap();
+        assert_eq!(info.bytes, 9);
+        assert!(info.saved_at > 1_600_000_000);
+    }
+
+    #[test]
+    fn no_restored_zip_means_no_info() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(restored_z2m_info(dir.path()).is_none());
+    }
+
+    #[test]
+    fn deleting_the_restored_zip_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        delete_restored_z2m(dir.path()).unwrap();
+        save_restored_z2m(dir.path(), b"x").unwrap();
+        delete_restored_z2m(dir.path()).unwrap();
+        assert!(!dir.path().join(RESTORED_Z2M_FILE).exists());
+        delete_restored_z2m(dir.path()).unwrap();
+    }
 
     #[test]
     fn summary_carries_z2m_bytes() {

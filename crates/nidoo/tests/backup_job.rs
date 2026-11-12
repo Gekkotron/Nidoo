@@ -1060,3 +1060,55 @@ async fn download_partial_does_not_push() {
     );
     tdb.drop_db().await;
 }
+
+#[tokio::test]
+async fn restored_z2m_routes_show_download_and_delete() {
+    let r = rig(None, mem(vec![]), |_| {}).await;
+    let (info, download, delete) = (
+        r.url("/backup/restored-z2m/info"),
+        r.url("/backup/restored-z2m"),
+        r.url("/backup/restored-z2m"),
+    );
+    assert_eq!(
+        reqwest::get(&info).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        reqwest::get(&download).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let zip = b"PK-zigbee-zip";
+    nidoo::backup::restore::save_restored_z2m(&r.ctx.data_dir, zip).unwrap();
+    let resp = reqwest::get(&info).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["bytes"], zip.len());
+    assert!(body["saved_at"].as_i64().unwrap() > 1_600_000_000, "{body}");
+
+    let resp = reqwest::get(&download).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["content-type"], "application/zip");
+    assert_eq!(
+        resp.headers()["content-disposition"],
+        "attachment; filename=\"zigbee2mqtt-backup.zip\""
+    );
+    assert_eq!(resp.bytes().await.unwrap().as_ref(), zip);
+
+    let client = reqwest::Client::new();
+    let resp = client.delete(&delete).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(
+        !r.ctx
+            .data_dir
+            .join(nidoo::backup::restore::RESTORED_Z2M_FILE)
+            .exists()
+    );
+    assert_eq!(
+        reqwest::get(&info).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    // Deleting what is already gone is fine.
+    let resp = client.delete(&delete).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}

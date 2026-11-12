@@ -487,6 +487,11 @@ impl Hub {
         read_record(&self.setup.get()?.data_dir)
     }
 
+    /// The data directory, when the hub has a setup context.
+    pub fn data_dir(&self) -> Option<std::path::PathBuf> {
+        Some(self.setup.get()?.data_dir.clone())
+    }
+
     /// Tries the FTP server step by step: the stored settings, or `input` with its kept
     /// password taken from the stored ones. An input the section would refuse (a new address
     /// with the password kept) fails the first step with the reason.

@@ -3,14 +3,18 @@
 
 use gloo_net::http::Request;
 use nidoo_api::{
-    ApiError, BackupInput, BackupProgress, BackupView, FtpCheck, FtpInput, LastBackup, Secret,
+    ApiError, BackupInput, BackupProgress, BackupView, FtpCheck, FtpInput, LastBackup, RestoredZ2m,
+    Secret,
 };
 use serde_json::{Map, Value, json};
 
-use super::core::{check, read_json, read_json_or_none};
+use super::core::{check, check_unless_404, read_json, read_json_or_none};
 
 /// Where a backup file is downloaded from; the page links to it.
 pub const DOWNLOAD_PATH: &str = "/api/v1/backup/download";
+
+/// Where the Zigbee2MQTT zip a restore kept is downloaded from; the page links to it.
+pub const RESTORED_Z2M_PATH: &str = "/api/v1/backup/restored-z2m";
 
 const SETTINGS: &str = "/api/v1/settings/backup";
 
@@ -100,6 +104,20 @@ pub async fn cancel_backup() -> Result<(), ApiError> {
 pub async fn last_backup() -> Result<Option<LastBackup>, ApiError> {
     let response = check(Request::get("/api/v1/backup/last").build(), None).await?;
     read_json_or_none(response).await
+}
+
+/// The Zigbee2MQTT zip a restore kept, `None` when there is none (the hub answers 404).
+pub async fn restored_z2m_info() -> Result<Option<RestoredZ2m>, ApiError> {
+    match check_unless_404(Request::get("/api/v1/backup/restored-z2m/info").build()).await? {
+        Some(response) => read_json(response).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Deletes the kept Zigbee2MQTT zip; already gone is fine.
+pub async fn delete_restored_z2m() -> Result<(), ApiError> {
+    check(Request::delete(RESTORED_Z2M_PATH).build(), None).await?;
+    Ok(())
 }
 
 #[cfg(test)]
