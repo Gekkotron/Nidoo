@@ -12,7 +12,8 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use nidoo_api::{
-    BackupPart, BackupState, BackupSummary, FtpSource, RemoteBackup, RestoreProgress, SetupStep,
+    BackupPart, BackupState, BackupSummary, FtpSource, RemoteBackup, RestoreErrorCode,
+    RestoreProgress, SetupStep,
 };
 use sqlx::PgPool;
 use tokio::io::{AsyncRead, ReadBuf};
@@ -116,6 +117,7 @@ pub async fn claim(ctx: &SetupCtx, total: Option<u64>) -> Result<RestoreProgress
         bytes: 0,
         total,
         error: None,
+        code: None,
     };
     *held = Some(progress.clone());
     Ok(progress)
@@ -130,6 +132,11 @@ fn report(ctx: &SetupCtx, part: BackupPart, bytes: u64) {
         p.part = part;
         p.bytes = bytes;
     }
+}
+
+/// The kind of a failure the setup wizard words itself.
+fn error_code(e: &BackupError) -> Option<RestoreErrorCode> {
+    matches!(e, BackupError::Unreachable(_)).then_some(RestoreErrorCode::FtpUnreachable)
 }
 
 /// Runs `work` (a claimed restore) in a task of its own and records how it ended in
@@ -152,6 +159,7 @@ pub fn spawn_tracked(
                 Err(e) => {
                     p.state = BackupState::Failed;
                     p.error = Some(e.to_string());
+                    p.code = error_code(e);
                 }
             }
         }
@@ -430,6 +438,27 @@ mod tests {
         assert!(w.read_u8().await.is_err());
         let explained = w.explain::<()>(Err(BackupError::Io("reset".into())));
         assert_eq!(explained, Err(BackupError::Io("reset".into())));
+    }
+
+    #[tokio::test]
+    async fn a_failed_restore_says_when_the_ftp_server_was_unreachable() {
+        let ctx = SetupCtx::inert();
+        for (error, code) in [
+            (
+                BackupError::Unreachable("timed out".into()),
+                Some(RestoreErrorCode::FtpUnreachable),
+            ),
+            (BackupError::WrongPassword, None),
+        ] {
+            claim(&ctx, None).await.unwrap();
+            let failed = error.clone();
+            let ended = spawn_tracked(Arc::clone(&ctx), async move { Err(failed) }).await;
+            assert_eq!(ended.unwrap(), Err(error.clone()));
+            let p = ctx.restore.lock().await.clone().unwrap();
+            assert_eq!(p.state, BackupState::Failed);
+            assert_eq!(p.error, Some(error.to_string()));
+            assert_eq!(p.code, code, "{error}");
+        }
     }
 
     #[test]

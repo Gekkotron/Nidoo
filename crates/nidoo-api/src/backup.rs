@@ -231,6 +231,17 @@ pub struct RestoreProgress {
     /// The file's size, when known.
     pub total: Option<u64>,
     pub error: Option<String>,
+    /// What kind of failure `error` is, for the ones a page words itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<RestoreErrorCode>,
+}
+
+/// A failed restore's kind, beside its English `error`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreErrorCode {
+    /// The FTP server could not be reached, or stopped answering.
+    FtpUnreachable,
 }
 
 #[cfg(test)]
@@ -253,6 +264,24 @@ mod tests {
         assert!(
             !shown.contains("ftp-secret") && !shown.contains("backup-secret"),
             "{shown}"
+        );
+    }
+
+    #[test]
+    fn restore_progress_code_is_optional_on_the_wire() {
+        let old: RestoreProgress = serde_json::from_str(
+            r#"{"state":"failed","part":"history","bytes":1,"total":null,"error":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!(old.code, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("code"));
+        let unreachable = RestoreProgress {
+            code: Some(RestoreErrorCode::FtpUnreachable),
+            ..old
+        };
+        assert_eq!(
+            serde_json::to_value(&unreachable).unwrap()["code"],
+            "ftp_unreachable"
         );
     }
 
