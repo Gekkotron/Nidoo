@@ -150,7 +150,12 @@ impl MqttZ2m {
                         break Err(Z2mSkip::Broker(format!("could not subscribe: {e}")));
                     }
                 }
-                Event::Incoming(Packet::SubAck(_)) if !subscribed => {
+                Event::Incoming(Packet::SubAck(ack)) if !subscribed => {
+                    if suback_refused(&ack) {
+                        break Err(Z2mSkip::Broker(
+                            "the broker refused the subscription".into(),
+                        ));
+                    }
                     subscribed = true;
                     // Subscribed first, so the answer cannot be missed.
                     if let Err(e) = client
@@ -174,7 +179,17 @@ impl MqttZ2m {
                 _ => {}
             }
         };
-        let _ = client.try_disconnect();
+        // `try_disconnect` only queues the packet: poll the loop so it goes out, briefly.
+        if client.try_disconnect().is_ok() {
+            let _ = tokio::time::timeout(Duration::from_secs(1), async {
+                while let Ok(event) = eventloop.poll().await {
+                    if matches!(event, Event::Outgoing(rumqttc::Outgoing::Disconnect)) {
+                        break;
+                    }
+                }
+            })
+            .await;
+        }
         result
     }
 }
@@ -188,6 +203,13 @@ impl Z2mSource for MqttZ2m {
             }
         })
     }
+}
+
+/// Whether the broker refused the subscription (an ACL, say).
+fn suback_refused(ack: &rumqttc::SubAck) -> bool {
+    ack.return_codes
+        .iter()
+        .any(|code| !matches!(code, rumqttc::SubscribeReasonCode::Success(_)))
 }
 
 /// `nidoo-<unix millis>-<random u32>`.
@@ -213,6 +235,15 @@ fn map_connection_error(err: &ConnectionError) -> Z2mSkip {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_suback_is_a_refusal() {
+        use rumqttc::{QoS, SubAck, SubscribeReasonCode};
+        let ok = SubAck::new(1, vec![SubscribeReasonCode::Success(QoS::AtLeastOnce)]);
+        let refused = SubAck::new(1, vec![SubscribeReasonCode::Failure]);
+        assert!(!suback_refused(&ok));
+        assert!(suback_refused(&refused));
+    }
+
     use super::*;
 
     fn ok_payload(zip: &[u8], transaction: &str) -> Vec<u8> {
