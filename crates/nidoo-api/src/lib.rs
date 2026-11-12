@@ -37,7 +37,8 @@ pub use ambiances::{
 };
 pub use backup::{
     BackupDestination, BackupDone, BackupInput, BackupPart, BackupProgress, BackupState,
-    BackupView, FtpCheck, FtpInput, FtpStep, FtpView, LastBackup, RemoteBackup,
+    BackupSummary, BackupView, FtpCheck, FtpInput, FtpSource, FtpStep, FtpView, LastBackup,
+    RemoteBackup, RestoreFromFtp, RestoreProgress,
 };
 pub use cameras::{CameraInfo, CamerasView};
 pub use dashboards::{

@@ -8,6 +8,7 @@ pub mod hub_file;
 pub mod mobile;
 pub mod probe;
 pub mod restart;
+mod restore_routes;
 pub mod routes;
 pub mod secret;
 pub mod sections;
@@ -15,11 +16,13 @@ pub mod settings;
 pub mod store;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, OnceLock};
 
+use nidoo_api::RestoreProgress;
 use tokio::sync::Mutex;
 
+use crate::backup::retained::{MqttRetained, RetainedBroker};
 use crate::history::db::Db;
 pub use hub_file::{HUB_FILE, HubFile, HubFileError};
 pub use restart::RestartHook;
@@ -57,6 +60,10 @@ pub struct SetupCtx {
     pub sections: Mutex<Sections>,
     pub restarting: AtomicBool,
     pub restart: RestartHook,
+    /// The running or last restore (restore mode only).
+    pub restore: Mutex<Option<RestoreProgress>>,
+    /// Where a restore reads and writes the retained documents; see [`SetupCtx::restore_broker`].
+    pub broker: OnceLock<Arc<dyn RetainedBroker>>,
 }
 
 impl SetupCtx {
@@ -76,7 +83,29 @@ impl SetupCtx {
             sections: Mutex::new(sections),
             restarting: AtomicBool::new(false),
             restart,
+            restore: Mutex::new(None),
+            broker: OnceLock::new(),
         }
+    }
+
+    /// The broker a restore uses: the one `hub.json` names (over a connection of its own),
+    /// unless a test set another first.
+    pub async fn restore_broker(&self) -> Arc<dyn RetainedBroker> {
+        if let Some(broker) = self.broker.get() {
+            return Arc::clone(broker);
+        }
+        let mqtt = self.file.lock().await.mqtt.clone().unwrap_or_default();
+        Arc::clone(
+            self.broker
+                .get_or_init(|| Arc::new(MqttRetained::new(mqtt))),
+        )
+    }
+
+    /// For tests: the broker a restore uses instead of the configured one. Only the first call
+    /// before the first restore counts.
+    #[doc(hidden)]
+    pub fn set_restore_broker(&self, broker: Arc<dyn RetainedBroker>) {
+        let _ = self.broker.set(broker);
     }
 
     /// A Run-mode context over an empty `hub.json` that never restarts, for tests and tools
