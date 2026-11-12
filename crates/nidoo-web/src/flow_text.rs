@@ -524,6 +524,9 @@ pub fn exit_label(lang: Lang, kind: &NodeKind, port: &str, ctx: &Ctx) -> String 
         },
         NodeKind::BackupRun(_) => match port {
             nidoo_core::flow::BACKUP_OK_PORT => flow_text(lang, FlowText::BackupOk).to_owned(),
+            nidoo_core::flow::BACKUP_PARTIAL_PORT => {
+                flow_text(lang, FlowText::BackupPartial).to_owned()
+            }
             nidoo_core::flow::BACKUP_FAILED_PORT => {
                 flow_text(lang, FlowText::BackupFailed).to_owned()
             }
@@ -750,6 +753,8 @@ mod tests {
         assert_eq!(label(Lang::En, json, "failed"), "Failed");
         assert_eq!(label(Lang::Fr, json, "ok"), "Sauvegardé");
         assert_eq!(label(Lang::Fr, json, "failed"), "Échec");
+        assert_eq!(label(Lang::En, json, "partial"), "Partial");
+        assert_eq!(label(Lang::Fr, json, "partial"), "Partielle");
     }
 
     #[test]

@@ -31,13 +31,13 @@ pub use math::{
 };
 pub use model::{
     ASK_MAX_ANSWERS, ASK_NONE_PORT, AskAnswer, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT,
-    BackupRunParams, BackupTarget, CommandParams, DelayParams, Edge, Flow, FlowEnableParams,
-    FlowLabelParams, FlowMode, IfParams, LimitParams, MAX_AVERAGE_SECS, MAX_LIMIT,
-    MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind, NotifyParams, OffPeakEdge,
-    Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams, SwitchRule, TimeBetweenParams,
-    TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams, TriggerSignalParams,
-    TriggerSilentParams, TriggerStateParams, TriggerSunParams, command_with_number, math_names,
-    uses_sun_or_is_dark,
+    BACKUP_PARTIAL_PORT, BackupRunParams, BackupTarget, CommandParams, DelayParams, Edge, Flow,
+    FlowEnableParams, FlowLabelParams, FlowMode, IfParams, LimitParams, MAX_AVERAGE_SECS,
+    MAX_LIMIT, MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind, NotifyParams,
+    OffPeakEdge, Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams, SwitchRule,
+    TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
+    TriggerSignalParams, TriggerSilentParams, TriggerStateParams, TriggerSunParams,
+    command_with_number, math_names, uses_sun_or_is_dark,
 };
 pub use scalar::{CompareError, Scalar, compare};
 pub use schedule::{Schedule, ScheduleError};

@@ -553,6 +553,7 @@ fn backup_run_fields(
                 on:input=on_timeout
             />
         </label>
+        <p class="node-editor__hint">{move || t(FlowText::BackupPartialHelp)}</p>
     }
 }
 

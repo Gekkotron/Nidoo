@@ -22,10 +22,10 @@ use nidoo_core::flow::math::{fit_to_entity, parse_formula};
 use nidoo_core::flow::sun::is_dark_with_offset;
 use nidoo_core::flow::template::{Lang, render};
 use nidoo_core::flow::{
-    ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, Flow, FlowMode, MathParams,
-    Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule, command_with_number,
-    compare, field_scalar, format_duration, headline_scalar, in_time_range, parse_clock,
-    parse_duration, pick_duration, switch_exits, window,
+    ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, BACKUP_PARTIAL_PORT, Flow,
+    FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule,
+    command_with_number, compare, field_scalar, format_duration, headline_scalar, in_time_range,
+    parse_clock, parse_duration, pick_duration, switch_exits, window,
 };
 use nidoo_core::history::buckets::{Sample, readings_mean};
 use nidoo_core::model::{Command, StateValue};
@@ -1167,7 +1167,7 @@ pub(super) async fn execute(
             }
             return RunStatus::Failed;
         };
-        let (outcome, detail, ports) = run_node(
+        let (outcome, detail, mut ports) = run_node(
             &hub,
             &now,
             &flow.id,
@@ -1185,6 +1185,9 @@ pub(super) async fn execute(
                 | NodeKind::Ask(_)
                 | NodeKind::BackupRun(_)
         );
+        if matches!(node.kind, NodeKind::BackupRun(_)) {
+            ports = backup_ports(&flow, &node.id, ports);
+        }
         let shown = (branching && outcome == StepOutcome::Ok).then(|| ports.clone());
         if !hub.record_step(&flow.id, &run_id, step(&node.id, outcome, detail, shown)) {
             return RunStatus::Cancelled;
@@ -1209,6 +1212,29 @@ pub(super) async fn execute(
         stack.extend(next.into_iter().rev().map(|next| next.id.clone()));
     }
     RunStatus::Done
+}
+
+/// The detail of a finished `backup.run` step; a warning says what the backup lacks.
+fn backup_detail(size: &str, host: &str, file: &str, warning: Option<&str>) -> String {
+    let base = format!("Backed up {size} to {host} as {file}");
+    match warning {
+        Some(reason) => format!("{base}, without Zigbee2MQTT data: {reason}"),
+        None => base,
+    }
+}
+
+/// The ports a `backup.run` step follows: `partial` falls back to `ok` when nothing is wired to
+/// it, so a flow written before the port existed goes on as it did.
+fn backup_ports(flow: &Flow, node_id: &str, ports: Vec<String>) -> Vec<String> {
+    let unwired = ports == [BACKUP_PARTIAL_PORT]
+        && flow
+            .successors(node_id, Some(BACKUP_PARTIAL_PORT))
+            .is_empty();
+    if unwired {
+        vec![BACKUP_OK_PORT.to_owned()]
+    } else {
+        ports
+    }
 }
 
 fn step(node: &str, outcome: StepOutcome, detail: String, ports: Option<Vec<String>>) -> StepView {
@@ -1395,13 +1421,21 @@ async fn run_node(
             match waited {
                 Ok(done) => (
                     StepOutcome::Ok,
-                    format!(
-                        "Backed up {} to {} as {}",
-                        crate::backup::job::human_size(done.size),
-                        done.host,
-                        done.file
+                    backup_detail(
+                        &crate::backup::job::human_size(done.size),
+                        &done.host,
+                        &done.file,
+                        done.z2m_warning.as_deref(),
                     ),
-                    vec![BACKUP_OK_PORT.to_owned()],
+                    // `execute` turns `partial` into `ok` when nothing is wired to it.
+                    vec![
+                        if done.z2m_warning.is_some() {
+                            BACKUP_PARTIAL_PORT
+                        } else {
+                            BACKUP_OK_PORT
+                        }
+                        .to_owned(),
+                    ],
                 ),
                 Err(err) => (
                     StepOutcome::Ok,
@@ -1954,6 +1988,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use nidoo_core::command::Publish;
+    use serde_json::json;
 
     fn sun_flow(id: &str, enabled: bool) -> String {
         serde_json::json!({
@@ -3500,5 +3535,66 @@ mod tests {
         engine.reload();
         let (steps, _) = run_now(&mut engine, "l").await;
         assert_eq!(steps[1].1, "passed (1 of 3 in the last 1h)");
+    }
+
+    fn backup_flow(partial_wired: bool) -> Flow {
+        let mut edges = vec![
+            json!({ "from": "bk", "to": "yes", "port": "ok" }),
+            json!({ "from": "bk", "to": "no", "port": "failed" }),
+        ];
+        if partial_wired {
+            edges.push(json!({ "from": "bk", "to": "part", "port": "partial" }));
+        }
+        let tail =
+            |id: &str| json!({ "id": id, "type": "flow.enable", "params": { "enabled": true } });
+        serde_json::from_value(json!({
+            "id": "f", "name": "f", "enabled": true, "mode": "single",
+            "nodes": [
+                { "id": "bk", "type": "backup.run", "params": {} },
+                tail("yes"), tail("no"), tail("part"),
+            ],
+            "edges": edges,
+        }))
+        .unwrap()
+    }
+
+    fn strings(ports: &[&str]) -> Vec<String> {
+        ports.iter().map(|p| (*p).to_owned()).collect()
+    }
+
+    #[test]
+    fn backup_partial_follows_partial_when_wired() {
+        let flow = backup_flow(true);
+        assert_eq!(
+            backup_ports(&flow, "bk", strings(&["partial"])),
+            ["partial"]
+        );
+    }
+
+    #[test]
+    fn backup_partial_falls_back_to_ok_when_unwired() {
+        let flow = backup_flow(false);
+        assert_eq!(backup_ports(&flow, "bk", strings(&["partial"])), ["ok"]);
+    }
+
+    #[test]
+    fn backup_ok_and_failed_pass_through() {
+        for wired in [true, false] {
+            let flow = backup_flow(wired);
+            assert_eq!(backup_ports(&flow, "bk", strings(&["ok"])), ["ok"]);
+            assert_eq!(backup_ports(&flow, "bk", strings(&["failed"])), ["failed"]);
+        }
+    }
+
+    #[test]
+    fn backup_detail_names_the_missing_zigbee_data() {
+        assert_eq!(
+            backup_detail("1.2 MB", "nas", "b.nidoo", None),
+            "Backed up 1.2 MB to nas as b.nidoo"
+        );
+        assert_eq!(
+            backup_detail("1.2 MB", "nas", "b.nidoo", Some("Zigbee2MQTT is offline")),
+            "Backed up 1.2 MB to nas as b.nidoo, without Zigbee2MQTT data: Zigbee2MQTT is offline"
+        );
     }
 }

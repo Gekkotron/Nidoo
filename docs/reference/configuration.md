@@ -19,7 +19,7 @@ Two places, split by what the hub needs before it can reach anything:
 | `data/settings-cache.json` | A copy of the settings the hub last read, mode `0600`. If the database is down when the hub starts, it starts from this copy with a warning, so the house keeps running. |
 | `data/bundled.json` | Written by the compose `init` service (`nidoo init-bundled`): the credentials of the Mosquitto and TimescaleDB that come with Nidoo, `mqtt_user`, `mqtt_password`, `db_user`, `db_password` and `db_name`, mode `0600`. The wizard reads it to pre-fill the MQTT and Database steps. It is not used once those steps are saved. |
 
-`data/backup-last.json` holds the record of the last backup (see [Backup](#backup)).
+`data/backup-last.json` holds the record of the last backup (see [Backup](#backup)). After a restore from a backup that held Zigbee2MQTT data, `data/zigbee2mqtt-restored.zip` (mode `0600`) holds that data until it is deleted in **Settings → Backup**.
 
 The documents the hub keeps on the broker (home settings, alarm, climate schedules, flows, groups, dashboards, ambiances) are not part of this: they are edited on their own screens and routes.
 
@@ -206,7 +206,8 @@ Where and how the hub backs up. Read with `GET /api/v1/settings/backup`, change 
 | `ftp.password` | none | The FTP password (a secret). A read shows `{"set": bool}`. Changing the host or port needs it sent again. |
 | `ftp.folder` | `/` | The remote folder; an empty value is `/`. |
 | `keep` | `7` | How many backups stay on the server, at least 1. The oldest beyond it are deleted after a good backup. |
-| `notify_failure` | `true` | Send a push when an FTP backup fails. A cancelled backup sends none. Independent of the system notifications switch. |
+| `include_z2m` | `true` | Add Zigbee2MQTT's own backup (its network key and paired devices) to each backup, asked over MQTT. When it is missing, the backup is saved without it and reported as partial. See [Zigbee2MQTT data](../users/backup.md#zigbee2mqtt-data). |
+| `notify_failure` | `true` | Send a push when an FTP backup fails or is saved without its Zigbee2MQTT data (partial). A cancelled backup sends none. Independent of the system notifications switch. |
 
 Both passwords are write-only, as in [Secrets](#secrets): a string sets one, `null` clears the FTP one, and leaving it out, `""` or `{"set": true}` keeps it. The backup password can be replaced but not cleared. They are stored in the `settings` table like the other sections and carried by a backup, which is encrypted.
 

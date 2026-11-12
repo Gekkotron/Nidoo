@@ -20,6 +20,7 @@ use nidoo_api::{
     BackupDestination, BackupDone, BackupInput, BackupPart, BackupProgress, BackupState, FtpCheck,
     FtpInput, FtpStep, LastBackup, Secret,
 };
+use nidoo_core::model::Availability;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader, DuplexStream, ReadBuf};
 use tokio::sync::{oneshot, watch};
@@ -31,6 +32,7 @@ use super::ftp::FtpStore;
 use super::name;
 use super::retained::{Layout, MqttRetained, RetainedBroker};
 use super::settings;
+use super::z2m::{MqttZ2m, Z2M_WAIT, Z2mSkip, Z2mSource};
 use crate::config::{Config, MqttConfig};
 use crate::hub::Hub;
 use crate::setup::SetupCtx;
@@ -67,6 +69,9 @@ pub struct Backups {
     /// The broker the retained documents are read from; the hub's own broker (over a
     /// connection of its own) unless a test set another.
     broker: Mutex<Option<Arc<dyn RetainedBroker>>>,
+    /// Where Zigbee2MQTT's backup comes from; its own MQTT connection unless a test set another.
+    z2m: Mutex<Option<Arc<dyn Z2mSource>>>,
+    z2m_base: String,
     download_idle: Mutex<Duration>,
 }
 
@@ -77,12 +82,30 @@ impl Backups {
             layout: Layout::from_config(cfg),
             mqtt: cfg.mqtt.clone(),
             broker: Mutex::new(None),
+            z2m: Mutex::new(None),
+            z2m_base: cfg.topics.z2m_base.clone(),
             download_idle: Mutex::new(DOWNLOAD_IDLE),
         }
     }
 
     pub(crate) fn set_broker(&self, broker: Arc<dyn RetainedBroker>) {
         *lock(&self.broker) = Some(broker);
+    }
+
+    pub(crate) fn set_z2m(&self, source: Arc<dyn Z2mSource>) {
+        *lock(&self.z2m) = Some(source);
+    }
+
+    fn z2m(&self) -> Arc<dyn Z2mSource> {
+        lock(&self.z2m)
+            .get_or_insert_with(|| {
+                Arc::new(MqttZ2m::new(
+                    self.mqtt.clone(),
+                    self.z2m_base.clone(),
+                    Z2M_WAIT,
+                ))
+            })
+            .clone()
     }
 
     fn broker(&self) -> Arc<dyn RetainedBroker> {
@@ -282,6 +305,39 @@ pub fn failure_alert(started_at: i64, reason: &str) -> Value {
     })
 }
 
+/// The push raised when an FTP backup is saved without Zigbee2MQTT's data.
+pub fn partial_alert(started_at: i64, reason: &str) -> Value {
+    json!({
+        "v": 1,
+        "id": format!("backup-partial-{started_at}"),
+        "channel": "system",
+        "severity": "warning",
+        "title": "Backup incomplete",
+        "body": format!("Backup saved without Zigbee2MQTT data: {reason}"),
+        "silent": false,
+        "loc": {"key": "hub.backup_partial", "args": {"reason": reason}},
+    })
+}
+
+/// What a backup does about Zigbee2MQTT's data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Z2mPlan {
+    /// Not asked for, or the bridge's state isn't known: a plain backup.
+    Skip,
+    /// Asked for but the bridge is offline: a partial backup, without a request.
+    Offline,
+    /// Ask Zigbee2MQTT for its backup.
+    Fetch,
+}
+
+fn z2m_plan(include: bool, bridge: Availability) -> Z2mPlan {
+    match (include, bridge) {
+        (false, _) | (true, Availability::Unknown) => Z2mPlan::Skip,
+        (true, Availability::Offline) => Z2mPlan::Offline,
+        (true, Availability::Online) => Z2mPlan::Fetch,
+    }
+}
+
 /// `512 B`, `12.3 MB`, `1.4 GB`: powers of 1000, one decimal.
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
@@ -431,6 +487,17 @@ impl Hub {
         read_record(&self.setup.get()?.data_dir)
     }
 
+    /// The data directory, when the hub has a setup context.
+    pub fn data_dir(&self) -> Option<std::path::PathBuf> {
+        Some(self.setup.get()?.data_dir.clone())
+    }
+
+    /// The stored backup password, if there is one and a setup context.
+    pub async fn stored_backup_password(&self) -> Option<String> {
+        let ctx = self.setup.get()?;
+        ctx.sections.lock().await.backup.password.clone()
+    }
+
     /// Tries the FTP server step by step: the stored settings, or `input` with its kept
     /// password taken from the stored ones. An input the section would refuse (a new address
     /// with the password kept) fails the first step with the reason.
@@ -454,6 +521,7 @@ impl Hub {
                     ftp,
                     keep: Some(stored.keep),
                     notify_failure: stored.notify_failure,
+                    include_z2m: stored.include_z2m,
                 };
                 match settings::apply_input(&stored, input) {
                     Ok(section) => section,
@@ -558,11 +626,16 @@ impl Hub {
             } else {
                 previous
             },
+            warning: outcome.as_ref().ok().and_then(|d| d.z2m_warning.clone()),
         };
         match &outcome {
             Ok(_) => tracing::info!(file = %run.file, size = record.size, "backup done"),
             Err(error) => tracing::warn!(file = %run.file, %error, "backup ended"),
         }
+        if let Some(reason) = &record.warning {
+            tracing::warn!(file = %run.file, %reason, "backup saved without Zigbee2MQTT data");
+        }
+        let partial = record.warning.clone();
         let dir = ctx.data_dir.clone();
         let written = tokio::task::spawn_blocking(move || write_record(&dir, &record)).await;
         match written {
@@ -580,8 +653,33 @@ impl Hub {
                 tracing::warn!(reason = %rejected.reason, "backup failure push refused");
             }
         }
+        if let Some(reason) = partial
+            && run.destination == BackupDestination::Ftp
+            && ctx.sections.lock().await.backup.notify_failure
+        {
+            let alert = partial_alert(run.started_at, &reason);
+            if let Err(rejected) = self.notify("system", &alert) {
+                tracing::warn!(reason = %rejected.reason, "backup partial push refused");
+            }
+        }
         *lock(&run.slot) = None;
         done.send_replace(Some(outcome));
+    }
+
+    /// Zigbee2MQTT's zip for the file, and why there is none when it was wanted.
+    async fn z2m_part(&self, include: bool, run: &Run) -> (Option<Bytes>, Option<String>) {
+        let bridge = self.read().bridge().state;
+        match z2m_plan(include, bridge) {
+            Z2mPlan::Skip => (None, None),
+            Z2mPlan::Offline => (None, Some(Z2mSkip::Offline.to_string())),
+            Z2mPlan::Fetch => {
+                run.update(|p| p.part = BackupPart::Z2m);
+                match self.backups.z2m().fetch().await {
+                    Ok(zip) => (Some(zip), None),
+                    Err(skip) => (None, Some(skip.to_string())),
+                }
+            }
+        }
     }
 
     fn backup_sources<'a>(
@@ -589,12 +687,14 @@ impl Hub {
         ctx: &'a SetupCtx,
         broker: &'a dyn RetainedBroker,
         hub: crate::setup::hub_file::HubFields,
+        z2m: Option<Bytes>,
     ) -> Result<Sources<'a>, BackupError> {
         Ok(Sources {
             pool: ctx.db.as_ref().ok_or_else(no_database)?.pool(),
             broker,
             layout: self.backups.layout.clone(),
             hub,
+            z2m,
         })
     }
 
@@ -605,9 +705,10 @@ impl Hub {
         let ftp = section.ftp_settings()?;
         let fields = ctx.file.lock().await.fields();
         let broker = self.backups.broker();
-        let sources = self.backup_sources(ctx, &*broker, fields)?;
         // Connecting first reports an unreachable server before any work is done.
         let mut store = FtpStore::connect(&ftp).await?;
+        let (z2m, z2m_warning) = self.z2m_part(section.include_z2m, run).await;
+        let sources = self.backup_sources(ctx, &*broker, fields, z2m)?;
         let (head, tail, _end) = pipe(&run.written, &run.sent);
 
         // Whichever side fails first holds the cause; the other then fails on the pipe.
@@ -664,6 +765,7 @@ impl Hub {
             file: run.file.clone(),
             size,
             host: ftp.host,
+            z2m_warning,
         })
     }
 
@@ -679,7 +781,8 @@ impl Hub {
         let password = section.password.ok_or(BackupError::NoPassword)?;
         let fields = ctx.file.lock().await.fields();
         let broker = self.backups.broker();
-        let sources = self.backup_sources(ctx, &*broker, fields)?;
+        let (z2m, z2m_warning) = self.z2m_part(section.include_z2m, run).await;
+        let sources = self.backup_sources(ctx, &*broker, fields, z2m)?;
         let progress = |part, bytes| {
             run.update(|p| {
                 p.part = part;
@@ -723,6 +826,7 @@ impl Hub {
             file: run.file.clone(),
             size: run.sent.load(Ordering::Relaxed),
             host: String::new(),
+            z2m_warning,
         })
     }
 }
@@ -752,6 +856,7 @@ mod tests {
             ok,
             error: (!ok).then(|| "time limit reached".into()),
             last_ok_at: Some(1_799_000_000),
+            warning: None,
         }
     }
 
@@ -789,6 +894,34 @@ mod tests {
         let normalized = nidoo_push::normalize::normalize("system", &alert, 1_800_000_000)
             .expect("a valid alert");
         assert!(normalized.loc.is_some(), "the loc hint was dropped");
+    }
+
+    #[test]
+    fn partial_alert_shape() {
+        let reason = "Zigbee2MQTT is offline";
+        let alert = partial_alert(1_800_000_000, reason);
+        assert_eq!(
+            alert,
+            json!({"v": 1, "id": "backup-partial-1800000000", "channel": "system",
+                "severity": "warning", "title": "Backup incomplete",
+                "body": "Backup saved without Zigbee2MQTT data: Zigbee2MQTT is offline",
+                "silent": false,
+                "loc": {"key": "hub.backup_partial", "args": {"reason": reason}}})
+        );
+        let normalized = nidoo_push::normalize::normalize("system", &alert, 1_800_000_000)
+            .expect("a valid alert");
+        assert!(normalized.loc.is_some(), "the loc hint was dropped");
+    }
+
+    #[test]
+    fn z2m_plan_follows_the_switch_and_the_bridge() {
+        use Availability::{Offline, Online, Unknown};
+        for bridge in [Online, Offline, Unknown] {
+            assert_eq!(z2m_plan(false, bridge), Z2mPlan::Skip, "{bridge:?}");
+        }
+        assert_eq!(z2m_plan(true, Unknown), Z2mPlan::Skip);
+        assert_eq!(z2m_plan(true, Offline), Z2mPlan::Offline);
+        assert_eq!(z2m_plan(true, Online), Z2mPlan::Fetch);
     }
 
     #[tokio::test]

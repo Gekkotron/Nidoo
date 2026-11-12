@@ -4,6 +4,9 @@
 //! - `manifest.json`: the [`Manifest`], first so a restore can check a file from its head;
 //! - `hub.json`: the [`HubFields`];
 //! - `settings.json`: the `settings` rows, `key → value`;
+//! - `z2m/<n>.zip`: Zigbee2MQTT's own backup zip, cut into entries of at most [`MAX_ENTRY`]
+//!   bytes (`n` from `000001`); none when the backup carries no Zigbee2MQTT data (and in every
+//!   format 1 file);
 //! - `retained/<n>.json`: the backed-up retained documents, as compact JSON arrays of
 //!   `{"topic", "payload_b64"}` of at most [`MAX_ENTRY`] bytes each (`n` from `000001`; there is
 //!   always a first one, `[]` when there are no documents);
@@ -38,7 +41,7 @@ use super::tar::{MAX_ENTRY, TarReader, TarWriter};
 use crate::setup::hub_file::HubFields;
 
 /// The file format this hub writes, and the newest it reads.
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 const MANIFEST: &str = "manifest.json";
 const HUB: &str = "hub.json";
@@ -52,6 +55,13 @@ const BLOCK: usize = 512;
 pub struct TableManifest {
     pub columns: Vec<String>,
     pub rows: u64,
+}
+
+/// Zigbee2MQTT's backup zip as the file carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Z2mManifest {
+    /// The zip's size.
+    pub bytes: u64,
 }
 
 /// What a backup holds, readable before the rest of the file.
@@ -72,6 +82,9 @@ pub struct Manifest {
     pub dashboards: u32,
     /// The history's size on disk in the source database: an estimate, not the file's size.
     pub history_bytes: u64,
+    /// Zigbee2MQTT's zip, when the file carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub z2m: Option<Z2mManifest>,
 }
 
 /// What a backup reads from.
@@ -80,6 +93,8 @@ pub struct Sources<'a> {
     pub broker: &'a dyn RetainedBroker,
     pub layout: Layout,
     pub hub: HubFields,
+    /// Zigbee2MQTT's backup zip, when there is one to carry (it holds the Zigbee network key).
+    pub z2m: Option<Bytes>,
 }
 
 /// What a restore hands back for its caller to apply: `hub.json` is the caller's to write.
@@ -88,15 +103,19 @@ pub struct Restored {
     pub hub: HubFields,
     pub settings: BTreeMap<String, Value>,
     pub manifest: Manifest,
+    /// Zigbee2MQTT's backup zip, when the file carried one.
+    pub z2m: Option<Bytes>,
 }
 
-/// Settings rows may hold secrets: only their keys are shown.
+/// Settings rows may hold secrets: only their keys are shown, and the Zigbee2MQTT zip (it holds
+/// the network key) only by its length.
 impl fmt::Debug for Restored {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Restored")
             .field("hub", &self.hub)
             .field("settings", &self.settings.keys().collect::<Vec<_>>())
             .field("manifest", &self.manifest)
+            .field("z2m", &self.z2m.as_ref().map(Bytes::len))
             .finish()
     }
 }
@@ -158,11 +177,15 @@ pub async fn write_backup<W: AsyncWrite + Unpin + Send>(
         flows: count(Family::Flow),
         dashboards: count(Family::Dashboard),
         history_bytes,
+        z2m: src.z2m.as_ref().map(|z| Z2mManifest {
+            bytes: z.len() as u64,
+        }),
     };
     let contents = Contents {
         manifest: &manifest,
         hub: &src.hub,
         settings: &settings,
+        z2m: src.z2m.as_ref(),
         docs: &docs,
         tables: &tables,
     };
@@ -192,6 +215,7 @@ struct Contents<'a> {
     manifest: &'a Manifest,
     hub: &'a HubFields,
     settings: &'a BTreeMap<String, Value>,
+    z2m: Option<&'a Bytes>,
     docs: &'a [(String, Bytes)],
     tables: &'a [TableInfo],
 }
@@ -221,6 +245,12 @@ async fn write_archive<W: AsyncWrite + Unpin + Send, S: TableSource>(
     w.json(BackupPart::Settings, MANIFEST, c.manifest).await?;
     w.json(BackupPart::Settings, HUB, c.hub).await?;
     w.json(BackupPart::Settings, SETTINGS, c.settings).await?;
+    if let Some(z2m) = c.z2m {
+        for (i, data) in z2m.chunks(MAX_ENTRY).enumerate() {
+            w.entry(BackupPart::Z2m, &z2m_path(i as u32 + 1), data)
+                .await?;
+        }
+    }
     for (i, data) in retained_entries(c.docs, MAX_ENTRY)?.iter().enumerate() {
         w.entry(BackupPart::Retained, &retained_path(i as u32 + 1), data)
             .await?;
@@ -355,6 +385,20 @@ fn retained_path(n: u32) -> String {
     format!("retained/{n:06}.json")
 }
 
+fn z2m_path(n: u32) -> String {
+    format!("z2m/{n:06}.zip")
+}
+
+/// `n` of a `z2m/<n>.zip` entry.
+fn parse_z2m_path(path: &str) -> Option<u32> {
+    let n: u32 = path
+        .strip_prefix("z2m/")?
+        .strip_suffix(".zip")?
+        .parse()
+        .ok()?;
+    (z2m_path(n) == path).then_some(n)
+}
+
 /// `n` of a `retained/<n>.json` entry.
 fn parse_retained_path(path: &str) -> Option<u32> {
     let n: u32 = path
@@ -415,12 +459,13 @@ pub async fn read_backup<R: AsyncRead + Unpin + Send>(
     check_compatible(&manifest, db::migration_level(pool).await?)?;
     let mut target = DbTarget::prepare(pool, broker, &manifest).await?;
     let report = |part| progress(part, read.load(Ordering::Relaxed));
-    let (hub, settings) = restore_into(tar, &manifest, &mut target, &report).await?;
+    let (hub, settings, z2m) = restore_into(tar, &manifest, &mut target, &report).await?;
     db::fix_sequences(pool).await?;
     Ok(Restored {
         hub,
         settings,
         manifest,
+        z2m,
     })
 }
 
@@ -562,17 +607,46 @@ async fn restore_into<R: AsyncRead + Unpin, T: Target>(
     manifest: &Manifest,
     target: &mut T,
     report: &(dyn Fn(BackupPart) + Sync),
-) -> Result<(HubFields, BTreeMap<String, Value>), BackupError> {
+) -> Result<(HubFields, BTreeMap<String, Value>, Option<Bytes>), BackupError> {
     let hub: HubFields = parse(HUB, &expect(&mut tar, HUB).await?)?;
     let settings: BTreeMap<String, Value> = parse(SETTINGS, &expect(&mut tar, SETTINGS).await?)?;
     target.settings(&settings).await?;
     report(BackupPart::Settings);
 
+    // `z2m/000001.zip` onwards, when there are any; the entry after them is the first retained one.
+    let mut zip: Vec<u8> = Vec::new();
+    let mut parts = 0u32;
+    let first_retained = loop {
+        let (path, data) = next(&mut tar).await?.ok_or_else(ends_early)?;
+        match parse_z2m_path(&path) {
+            Some(n) if n == parts + 1 => {
+                parts = n;
+                zip.extend_from_slice(&data);
+            }
+            Some(_) => return Err(unexpected(&path)),
+            None => break (path, data),
+        }
+    };
+    let expected_zip = manifest.z2m.as_ref().map_or(0, |z| z.bytes);
+    if zip.len() as u64 != expected_zip {
+        return Err(BackupError::Corrupt(
+            "the Zigbee2MQTT data does not match the manifest".into(),
+        ));
+    }
+    let z2m = (parts > 0).then(|| Bytes::from(zip));
+    if z2m.is_some() {
+        report(BackupPart::Z2m);
+    }
+
     // `retained/000001.json` onwards; the entry after them is the first table's (or the end).
     let mut docs = Vec::new();
     let mut last = 0u32;
+    let mut first = Some(first_retained);
     let after_retained = loop {
-        let (path, data) = next(&mut tar).await?.ok_or_else(ends_early)?;
+        let (path, data) = match first.take() {
+            Some(entry) => entry,
+            None => next(&mut tar).await?.ok_or_else(ends_early)?,
+        };
         match parse_retained_path(&path) {
             Some(n) if n == last + 1 => {
                 last = n;
@@ -646,7 +720,7 @@ async fn restore_into<R: AsyncRead + Unpin, T: Target>(
     tokio::io::copy(&mut rest, &mut tokio::io::sink())
         .await
         .map_err(read_error)?;
-    Ok((hub, settings))
+    Ok((hub, settings, z2m))
 }
 
 async fn end_table<T: Target>(
@@ -764,6 +838,7 @@ mod tests {
         docs: Vec<(String, Bytes)>,
         tables: BTreeMap<String, Vec<u8>>,
         current: Option<String>,
+        z2m: Option<Bytes>,
     }
 
     impl Target for Recorder {
@@ -826,6 +901,18 @@ mod tests {
         docs: Vec<(String, Bytes)>,
         tables: Vec<TableInfo>,
         data: BTreeMap<String, Vec<Bytes>>,
+        z2m: Option<Bytes>,
+    }
+
+    impl Sample {
+        /// Carries `zip` as Zigbee2MQTT's backup, the manifest saying so.
+        fn with_z2m(mut self, zip: Vec<u8>) -> Sample {
+            self.manifest.z2m = Some(Z2mManifest {
+                bytes: zip.len() as u64,
+            });
+            self.z2m = Some(Bytes::from(zip));
+            self
+        }
     }
 
     /// Three tables: `big` spans two entries, `empty` has no rows, `small` two rows sent in
@@ -888,6 +975,7 @@ mod tests {
             flows: 1,
             dashboards: 1,
             history_bytes: 123,
+            z2m: None,
         };
         Sample {
             manifest,
@@ -902,6 +990,7 @@ mod tests {
             docs,
             tables,
             data,
+            z2m: None,
         }
     }
 
@@ -911,6 +1000,7 @@ mod tests {
             manifest: &s.manifest,
             hub: &s.hub,
             settings: &s.settings,
+            z2m: s.z2m.as_ref(),
             docs: &s.docs,
             tables: &s.tables,
         };
@@ -930,7 +1020,8 @@ mod tests {
     ) -> Result<(Manifest, HubFields, BTreeMap<String, Value>, Recorder), BackupError> {
         let (tar, manifest) = open_archive(file, PASSWORD).await?;
         let mut rec = Recorder::default();
-        let (hub, settings) = restore_into(tar, &manifest, &mut rec, &|_| {}).await?;
+        let (hub, settings, z2m) = restore_into(tar, &manifest, &mut rec, &|_| {}).await?;
+        rec.z2m = z2m;
         Ok((manifest, hub, settings, rec))
     }
 
@@ -1014,7 +1105,7 @@ mod tests {
         assert_eq!(check_compatible(&newer, 7), Err(BackupError::TooNew));
         // A newer manifest this hub can't even parse.
         assert_eq!(
-            parse_manifest(br#"{"format": 2, "parts": []}"#),
+            parse_manifest(br#"{"format": 3, "parts": []}"#),
             Err(BackupError::TooNew)
         );
         assert_eq!(
@@ -1026,7 +1117,8 @@ mod tests {
 
     #[tokio::test]
     async fn entries_are_laid_out_in_order() {
-        let s = sample(MAX_ENTRY + 1000);
+        let zip = random(9 * 1024 * 1024);
+        let s = sample(MAX_ENTRY + 1000).with_z2m(zip.clone());
         let file = write_sample(&s, &|_, _| {}).await;
         let entries = plaintext_entries(&file);
         let names: Vec<&str> = entries.iter().map(|(p, _)| p.as_str()).collect();
@@ -1036,6 +1128,8 @@ mod tests {
                 "manifest.json",
                 "hub.json",
                 "settings.json",
+                "z2m/000001.zip",
+                "z2m/000002.zip",
                 "retained/000001.json",
                 "db/big/000001.copy",
                 "db/big/000002.copy",
@@ -1043,9 +1137,16 @@ mod tests {
                 "end.json"
             ]
         );
-        assert_eq!(entries[4].1.len(), MAX_ENTRY);
+        assert_eq!(entries[3].1.len(), MAX_ENTRY);
+        assert_eq!([&entries[3].1[..], &entries[4].1[..]].concat(), zip);
+        assert_eq!(
+            s.manifest.z2m,
+            Some(Z2mManifest {
+                bytes: 9 * 1024 * 1024
+            })
+        );
         let big: Vec<u8> = s.data["big"].concat();
-        assert_eq!([&entries[4].1[..], &entries[5].1[..]].concat(), big);
+        assert_eq!([&entries[6].1[..], &entries[7].1[..]].concat(), big);
 
         let json = |i: usize| serde_json::from_slice::<Value>(&entries[i].1).unwrap();
         assert_eq!(
@@ -1055,14 +1156,14 @@ mod tests {
         assert_eq!(json(1)["z2m_base"], "zigbee2mqtt");
         assert_eq!(json(2), json!({"home": {"name": "Maison"}}));
         assert_eq!(
-            json(3),
+            json(5),
             json!([
                 {"topic": "nidoo/automation/f1", "payload_b64": "eyJpZCI6ImYxIn0="},
                 {"topic": "nidoo/ui/dashboards/d1", "payload_b64": "AP8K"}
             ])
         );
         assert_eq!(
-            json(7),
+            json(9),
             json!({"tables": {"big": s.manifest.tables["big"].rows, "empty": 0, "small": 2}})
         );
     }
@@ -1103,6 +1204,7 @@ mod tests {
             manifest: &s.manifest,
             hub: &s.hub,
             settings: &s.settings,
+            z2m: s.z2m.as_ref(),
             docs: &s.docs,
             tables: &s.tables,
         };
@@ -1137,6 +1239,66 @@ mod tests {
             .map(|(name, chunks)| (name.clone(), chunks.concat()))
             .collect();
         assert_eq!(rec.tables, expected);
+        assert_eq!(rec.z2m, None);
+        assert!(
+            !plaintext_entries(&file)
+                .iter()
+                .any(|(p, _)| p.starts_with("z2m/"))
+        );
+
+        let zip = random(9 * 1024 * 1024 + 5);
+        let s = sample(10).with_z2m(zip.clone());
+        let file = write_sample(&s, &|_, _| {}).await;
+        let (manifest, .., rec) = restore(&file).await.unwrap();
+        assert_eq!(manifest, s.manifest);
+        assert_eq!(rec.z2m, Some(Bytes::from(zip)));
+    }
+
+    /// A format 1 file has no `z2m` key in its manifest and no `z2m/` entries.
+    #[tokio::test]
+    async fn a_format_1_file_still_restores() {
+        let mut s = sample(10);
+        s.manifest.format = 1;
+        let file = write_sample(&s, &|_, _| {}).await;
+        let entries = plaintext_entries(&file);
+        let manifest: Value = serde_json::from_slice(&entries[0].1).unwrap();
+        assert_eq!(manifest["format"], 1);
+        assert!(manifest.get("z2m").is_none(), "{manifest}");
+        let (manifest, .., rec) = restore(&file).await.unwrap();
+        assert_eq!(manifest.format, 1);
+        assert_eq!(manifest.z2m, None);
+        assert_eq!(rec.z2m, None);
+    }
+
+    #[tokio::test]
+    async fn z2m_entries_out_of_order_are_refused() {
+        let mut s = sample(10);
+        s.manifest.tables = BTreeMap::new();
+        let head = vec![
+            (MANIFEST, serde_json::to_vec(&s.manifest).unwrap()),
+            (HUB, b"{}".to_vec()),
+            (SETTINGS, b"{}".to_vec()),
+        ];
+        let mut skipped = head.clone();
+        skipped.push(("z2m/000002.zip", b"PK".to_vec()));
+        let err = restore(&file_with(&skipped).await).await.err().unwrap();
+        assert_eq!(err, unexpected("z2m/000002.zip"));
+
+        // A zip the manifest doesn't account for.
+        let mut stray = head;
+        stray.push(("z2m/000001.zip", b"PK".to_vec()));
+        stray.push(("retained/000001.json", b"[]".to_vec()));
+        stray.push((END, br#"{"tables": {}}"#.to_vec()));
+        assert!(restore(&file_with(&stray).await).await.is_err());
+    }
+
+    #[test]
+    fn z2m_paths_round_trip() {
+        assert_eq!(z2m_path(1), "z2m/000001.zip");
+        assert_eq!(parse_z2m_path("z2m/000012.zip"), Some(12));
+        for bad in ["z2m/1.zip", "z2m/000001.json", "x/000001.zip", "z2m/a.zip"] {
+            assert_eq!(parse_z2m_path(bad), None, "{bad}");
+        }
     }
 
     /// Ruling A: 256 KiB holds the first age chunk (64 KiB + tag after the header) and more.
@@ -1212,7 +1374,7 @@ mod tests {
         async fn restore_from<R: AsyncRead + Unpin>(
             input: R,
             manifest: &Manifest,
-        ) -> Result<(HubFields, BTreeMap<String, Value>), BackupError> {
+        ) -> Result<(HubFields, BTreeMap<String, Value>, Option<Bytes>), BackupError> {
             let mut reader = TarReader::new(input);
             reader.next().await.unwrap().unwrap();
             restore_into(reader, manifest, &mut Recorder::default(), &|_| {}).await
@@ -1322,10 +1484,26 @@ mod tests {
                 .into_iter()
                 .collect(),
             manifest: s.manifest,
+            z2m: None,
         };
         let text = format!("{restored:?}");
         assert!(text.contains("\"backup\""), "{text}");
         assert!(!text.contains("hunter2-secret"), "{text}");
+    }
+
+    #[test]
+    fn restored_debug_hides_the_zip() {
+        let s = sample(10);
+        let restored = Restored {
+            hub: s.hub,
+            settings: BTreeMap::new(),
+            manifest: s.manifest,
+            z2m: Some(Bytes::from_static(b"PK\x03\x04 network key")),
+        };
+        let text = format!("{restored:?}");
+        assert!(!text.contains("PK"), "{text}");
+        assert!(!text.contains("network key"), "{text}");
+        assert!(text.contains("z2m: Some(16)"), "{text}");
     }
 
     /// A tar ending without `end.json`, or with fewer rows than the manifest says, is damaged.
@@ -1384,6 +1562,7 @@ mod tests {
             broker,
             layout,
             hub: HubFields::default(),
+            z2m: None,
         };
         send(write_backup(sources, Vec::new(), "pw", &|_, _| {}));
         send(read_backup(&b""[..], "pw", pool, broker, &|_, _| {}));

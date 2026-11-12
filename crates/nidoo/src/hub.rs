@@ -511,6 +511,11 @@ impl Hub {
         self.backups.set_broker(broker);
     }
 
+    /// The source backups ask for Zigbee2MQTT's backup, instead of its own MQTT connection (tests).
+    pub fn set_backup_z2m(&self, source: Arc<dyn crate::backup::z2m::Z2mSource>) {
+        self.backups.set_z2m(source);
+    }
+
     /// Hands the setup context to the hub; the second call is a no-op.
     pub fn set_setup(&self, ctx: Arc<crate::setup::SetupCtx>) {
         let _ = self.setup.set(ctx);

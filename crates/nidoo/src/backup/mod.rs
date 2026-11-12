@@ -11,6 +11,7 @@ pub mod restore;
 pub mod retained;
 pub mod settings;
 pub mod tar;
+pub mod z2m;
 
 /// Why a backup or restore stopped. The text is shown to the user as is; none carries a secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -10107,3 +10107,11 @@ dialog.popup::backdrop {
   font: var(--type-label);
   opacity: 0.6;
 }
+
+.backup__last-outcome--partial {
+  color: var(--accent-amber);
+}
+
+.backup__last-warning {
+  margin: 4px 0 0;
+}

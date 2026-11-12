@@ -9,17 +9,20 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use nidoo_api::{
     BackupDestination, BackupInput, BackupPart, BackupProgress, BackupState, BackupView, FtpCheck,
-    FtpInput, FtpStep, LastBackup, Secret,
+    FtpInput, FtpStep, LastBackup, RestoredZ2m, Secret,
 };
 
-use crate::api::backup::{self as api, DOWNLOAD_PATH};
+use crate::api::backup::{self as api, DOWNLOAD_PATH, RestoredDownloadError};
 use crate::i18n::format::{date_time, local_date_time};
-use crate::i18n::{BackupText, backup_text, use_backup_text, use_lang};
+use crate::i18n::{BackupText, backup_text, saved_without_z2m, use_backup_text, use_lang};
 use crate::screens::alarm_settings::SwitchRow;
 use crate::screens::system_settings::size;
 
 /// How often the running backup is read again.
 const POLL_MS: u32 = 1000;
+/// How often, and how many times, the page looks for the job a browser download starts.
+const DOWNLOAD_PICKUP_MS: u32 = 300;
+const DOWNLOAD_PICKUP_TRIES: u32 = 10;
 
 /// The fewest characters a backup password may have.
 const MIN_PASSWORD: usize = 8;
@@ -60,6 +63,24 @@ fn base_input(view: &BackupView) -> BackupInput {
         },
         keep: Some(view.keep),
         notify_failure: view.notify_failure,
+        include_z2m: view.include_z2m,
+    }
+}
+
+/// How the last backup is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Ok,
+    /// Saved, without some data.
+    Partial,
+    Failed,
+}
+
+fn tone(l: &LastBackup) -> Tone {
+    match (l.ok, &l.warning) {
+        (false, _) => Tone::Failed,
+        (true, Some(_)) => Tone::Partial,
+        (true, None) => Tone::Ok,
     }
 }
 
@@ -77,6 +98,7 @@ pub(crate) fn part_text(part: BackupPart) -> BackupText {
         BackupPart::Settings => BackupText::PartSettings,
         BackupPart::Retained => BackupText::PartRetained,
         BackupPart::History => BackupText::PartHistory,
+        BackupPart::Z2m => BackupText::PartZ2m,
         BackupPart::Upload => BackupText::PartUpload,
         BackupPart::Download => BackupText::PartDownload,
     }
@@ -118,6 +140,36 @@ fn TextField(
     }
 }
 
+/// Hands `bytes` to the browser as a `zigbee2mqtt-backup.zip` download.
+fn save_zip(bytes: &[u8]) {
+    use wasm_bindgen::JsCast;
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence(&parts) else {
+        return;
+    };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+        return;
+    };
+    if let Some(document) = web_sys::window().and_then(|w| w.document())
+        && let Ok(a) = document.create_element("a")
+    {
+        let _ = a.set_attribute("href", &url);
+        let _ = a.set_attribute("download", "zigbee2mqtt-backup.zip");
+        if let Some(body) = document.body() {
+            let _ = body.append_child(&a);
+            if let Ok(a) = a.clone().dyn_into::<web_sys::HtmlElement>() {
+                a.click();
+            }
+            let _ = body.remove_child(&a);
+        }
+    }
+    // Some browsers read the object only after the click returns: release it a bit later.
+    spawn_local(async move {
+        gloo_timers::future::TimeoutFuture::new(10_000).await;
+        let _ = web_sys::Url::revoke_object_url(&url);
+    });
+}
+
 /// Settings → Backup.
 #[component]
 pub fn BackupSettingsPage() -> impl IntoView {
@@ -135,6 +187,8 @@ pub fn BackupSettingsPage() -> impl IntoView {
     let folder = RwSignal::new(String::new());
     let keep = RwSignal::new(String::new());
     let notify = RwSignal::new(true);
+    let include_z2m = RwSignal::new(true);
+    let restored = RwSignal::new(None::<RestoredZ2m>);
     let saving = RwSignal::new(false);
     let save_error = RwSignal::new(None::<String>);
     let checks = RwSignal::new(None::<Vec<FtpCheck>>);
@@ -151,6 +205,7 @@ pub fn BackupSettingsPage() -> impl IntoView {
         folder.try_set(v.ftp.folder.clone());
         keep.try_set(v.keep.to_string());
         notify.try_set(v.notify_failure);
+        include_z2m.try_set(v.include_z2m);
         password.try_set(String::new());
         repeat.try_set(String::new());
         ftp_password.try_set(String::new());
@@ -174,6 +229,11 @@ pub fn BackupSettingsPage() -> impl IntoView {
         });
     };
     reload_last();
+    spawn_local(async move {
+        if let Ok(info) = api::restored_z2m_info().await {
+            restored.try_set(info);
+        }
+    });
 
     // Reads the running backup every second until it ends, then the record it left.
     let stop = Arc::new(AtomicBool::new(false));
@@ -284,6 +344,53 @@ pub fn BackupSettingsPage() -> impl IntoView {
         });
     };
 
+    let toggle_z2m = Callback::new(move |on: bool| {
+        save(Box::new(move |i| i.include_z2m = on));
+    });
+    // The kept zip needs the backup password: the button reveals a field, Confirm fetches it.
+    let z2m_asking = RwSignal::new(false);
+    let z2m_password = RwSignal::new(String::new());
+    let z2m_error = RwSignal::new(None::<String>);
+    let z2m_busy = RwSignal::new(false);
+    let confirm_z2m_download = move |_| {
+        if z2m_busy.get_untracked() {
+            return;
+        }
+        let given = z2m_password.get_untracked();
+        z2m_busy.set(true);
+        z2m_error.set(None);
+        spawn_local(async move {
+            match api::download_restored_z2m(&given).await {
+                Ok(bytes) => {
+                    save_zip(&bytes);
+                    z2m_password.try_set(String::new());
+                    z2m_asking.try_set(false);
+                }
+                Err(RestoredDownloadError::WrongPassword) => {
+                    z2m_error.try_set(Some(
+                        backup_text(lang(), BackupText::WrongPassword).to_owned(),
+                    ));
+                }
+                Err(RestoredDownloadError::Other(e)) => {
+                    z2m_error.try_set(Some(e));
+                }
+            }
+            z2m_busy.try_set(false);
+        });
+    };
+    let delete_restored = move |_| {
+        spawn_local(async move {
+            match api::delete_restored_z2m().await {
+                Ok(()) => {
+                    restored.try_set(None);
+                }
+                Err(e) => {
+                    run_error.try_set(Some(e.error));
+                }
+            }
+        });
+    };
+
     let keep_valid = move || parse_keep(&keep.get()).is_some();
     let save_keep = move |_| {
         if let Some(count) = parse_keep(&keep.get_untracked()) {
@@ -307,6 +414,24 @@ pub fn BackupSettingsPage() -> impl IntoView {
                     run_error.try_set(Some(e.error));
                 }
             }
+        });
+    };
+    // A browser download is a job too: once the browser's request starts it, follow it so the
+    // page shows its record (and its partial warning) when it ends, without a reload.
+    let after_download = move |_| {
+        spawn_local(async move {
+            for _ in 0..DOWNLOAD_PICKUP_TRIES {
+                gloo_timers::future::TimeoutFuture::new(DOWNLOAD_PICKUP_MS).await;
+                if let Ok(Some(p)) = api::backup_current().await
+                    && p.state == BackupState::Running
+                {
+                    progress.try_set(Some(p));
+                    follow.run(());
+                    return;
+                }
+            }
+            // Too quick to catch: the record is already there.
+            reload_last();
         });
     };
     let cancel = move |_| {
@@ -364,6 +489,15 @@ pub fn BackupSettingsPage() -> impl IntoView {
                 >
                     {move || t(BackupText::Save)}
                 </button>
+            </section>
+            <section class="sheet__panel backup__z2m">
+                <SwitchRow
+                    label=Signal::derive(move || t(BackupText::IncludeZ2m).to_owned())
+                    on=include_z2m
+                    on_toggle=toggle_z2m
+                    busy=Signal::derive(move || !loaded() || saving.get())
+                />
+                <p class="system__hint">{move || t(BackupText::IncludeZ2mHelp)}</p>
             </section>
             <section class="sheet__panel backup__ftp">
                 <h2 class="sheet__heading">{move || t(BackupText::FtpTitle)}</h2>
@@ -457,6 +591,65 @@ pub fn BackupSettingsPage() -> impl IntoView {
                 </button>
             </section>
             {move || {
+                restored
+                    .get()
+                    .map(|r| {
+                        view! {
+                            <section class="sheet__panel backup__z2m-restored">
+                                <h2 class="sheet__heading">{move || t(BackupText::RestoredZ2mTitle)}</h2>
+                                <p class="backup__z2m-size">{size(lang(), r.bytes)}</p>
+                                <p class="system__hint">{move || t(BackupText::RestoredZ2mHint)}</p>
+                                <div class="backup__buttons">
+                                    <button
+                                        type="button"
+                                        class="btn btn--primary backup__z2m-download"
+                                        on:click=move |_| z2m_asking.set(true)
+                                    >
+                                        {move || t(BackupText::Download)}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="btn backup__z2m-delete"
+                                        on:click=delete_restored
+                                    >
+                                        {move || t(BackupText::Delete)}
+                                    </button>
+                                </div>
+                                <Show when=move || z2m_asking.get()>
+                                    <div class="backup__z2m-ask">
+                                        <TextField
+                                            id="backup-z2m-password"
+                                            label=BackupText::RestoredPassword
+                                            value=z2m_password
+                                            kind="password"
+                                            autocomplete="current-password"
+                                        />
+                                        <button
+                                            type="button"
+                                            class="btn btn--primary backup__z2m-confirm"
+                                            disabled=move || z2m_busy.get() || z2m_password.get().is_empty()
+                                            on:click=confirm_z2m_download
+                                        >
+                                            {move || t(BackupText::Confirm)}
+                                        </button>
+                                        {move || {
+                                            z2m_error
+                                                .get()
+                                                .map(|e| {
+                                                    view! {
+                                                        <p class="home-settings__error backup__z2m-error" role="alert">
+                                                            {e}
+                                                        </p>
+                                                    }
+                                                })
+                                        }}
+                                    </div>
+                                </Show>
+                            </section>
+                        }
+                    })
+            }}
+            {move || {
                 save_error
                     .get()
                     .map(|e| view! { <p class="home-settings__error" role="alert">{e}</p> })
@@ -476,6 +669,7 @@ pub fn BackupSettingsPage() -> impl IntoView {
                         href=move || (!download_blocked()).then_some(DOWNLOAD_PATH)
                         download=""
                         aria-disabled=move || download_blocked().to_string()
+                        on:click=after_download
                     >
                         {move || t(BackupText::DownloadBackup)}
                     </a>
@@ -534,12 +728,13 @@ fn last_rows(l: &LastBackup, lang: crate::i18n::Lang) -> impl IntoView + use<> {
             BackupDestination::Download => BackupText::DestinationDownload,
         },
     );
+    let tone = tone(l);
     let outcome = backup_text(
         lang,
-        if l.ok {
-            BackupText::OutcomeOk
-        } else {
-            BackupText::OutcomeFailed
+        match tone {
+            Tone::Ok => BackupText::OutcomeOk,
+            Tone::Partial => BackupText::OutcomePartial,
+            Tone::Failed => BackupText::OutcomeFailed,
         },
     );
     let row = |label: BackupText, value: String, class: &'static str| {
@@ -555,7 +750,22 @@ fn last_rows(l: &LastBackup, lang: crate::i18n::Lang) -> impl IntoView + use<> {
         {row(BackupText::LastDestination, destination.to_owned(), "backup__last-destination")}
         {row(BackupText::LastFile, l.file.clone(), "backup__last-file")}
         {row(BackupText::LastSize, size(lang, l.size), "backup__last-size")}
-        {row(BackupText::LastOutcome, outcome.to_owned(), "backup__last-outcome")}
+        {row(
+            BackupText::LastOutcome,
+            outcome.to_owned(),
+            match tone {
+                Tone::Ok => "backup__last-outcome",
+                Tone::Partial => "backup__last-outcome backup__last-outcome--partial",
+                Tone::Failed => "backup__last-outcome backup__last-outcome--failed",
+            },
+        )}
+        {l
+            .warning
+            .as_deref()
+            .filter(|_| tone == Tone::Partial)
+            .map(|w| {
+                view! { <p class="backup__warning backup__last-warning">{saved_without_z2m(lang, w)}</p> }
+            })}
         {l
             .error
             .clone()
@@ -593,6 +803,31 @@ mod tests {
         assert_eq!(parse_keep(""), None);
     }
 
+    fn last(ok: bool, warning: Option<&str>) -> LastBackup {
+        LastBackup {
+            started_at: 0,
+            ended_at: 1,
+            destination: BackupDestination::Ftp,
+            file: "f".into(),
+            size: 1,
+            ok,
+            error: None,
+            last_ok_at: None,
+            warning: warning.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_warning_makes_a_saved_backup_partial() {
+        assert_eq!(tone(&last(true, None)), Tone::Ok);
+        assert_eq!(
+            tone(&last(true, Some("Zigbee2MQTT is offline"))),
+            Tone::Partial
+        );
+        assert_eq!(tone(&last(false, None)), Tone::Failed);
+        assert_eq!(tone(&last(false, Some("x"))), Tone::Failed);
+    }
+
     #[test]
     fn the_base_input_changes_nothing() {
         let view = BackupView {
@@ -606,6 +841,7 @@ mod tests {
             },
             keep: 7,
             notify_failure: false,
+            include_z2m: true,
         };
         let input = base_input(&view);
         assert_eq!(input.password, Secret::Keep);
@@ -615,6 +851,12 @@ mod tests {
         assert_eq!(input.ftp.folder.as_deref(), Some("/backups"));
         assert_eq!(input.keep, Some(7));
         assert!(!input.notify_failure);
+        assert!(input.include_z2m);
+        let off = BackupView {
+            include_z2m: false,
+            ..view
+        };
+        assert!(!base_input(&off).include_z2m);
         assert_eq!(typed_secret(""), Secret::Keep);
         assert_eq!(typed_secret("x"), Secret::Set("x".into()));
     }

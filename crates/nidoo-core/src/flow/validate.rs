@@ -1175,6 +1175,15 @@ mod tests {
     }
 
     #[test]
+    fn backup_run_partial_edge_validates() {
+        let mut f = schedule_flow("*/10 * * * *", "bk");
+        f.nodes
+            .push(serde_json::from_str(r#"{"id":"bk","type":"backup.run","params":{}}"#).unwrap());
+        f.edges.push(edge("bk", "act", Some("partial")));
+        assert!(validate(&f).is_ok());
+    }
+
+    #[test]
     fn backup_run_timeout_bounds() {
         let mut f = schedule_flow("*/10 * * * *", "act");
         f.nodes

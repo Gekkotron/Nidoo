@@ -125,6 +125,11 @@ fn restored_docs() -> BTreeMap<String, Bytes> {
 
 /// Database A filled with `rows` readings, and a backup of it.
 async fn source(rows: i64) -> Option<(TestDb, Vec<u8>)> {
+    source_with(rows, None).await
+}
+
+/// [`source`] carrying Zigbee2MQTT's zip.
+async fn source_with(rows: i64, z2m: Option<Bytes>) -> Option<(TestDb, Vec<u8>)> {
     let a = fresh_db().await?;
     fill(&a, rows).await;
     let broker = MemBroker(std::sync::Mutex::new(source_docs()));
@@ -135,6 +140,7 @@ async fn source(rows: i64) -> Option<(TestDb, Vec<u8>)> {
             broker: &broker,
             layout: Layout::from_config(&Config::default()),
             hub: source_fields(),
+            z2m,
         },
         &mut file,
         PASSWORD,
@@ -403,6 +409,51 @@ async fn upload_restore_streams() {
     b.drop_db().await;
 }
 
+#[tokio::test]
+async fn restore_keeps_the_z2m_zip() {
+    let zip = Bytes::from_static(b"PK-zigbee-zip");
+    let Some((a, file)) = source_with(5, Some(zip.clone())).await else {
+        return;
+    };
+    let Some(b) = fresh_db().await else { return };
+    let t = target(Mode::Restore, Some(&b)).await;
+
+    let (code, body) = t.upload("/upload", PASSWORD_HEADER, file).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let path = t.dir.path().join(nidoo::backup::restore::RESTORED_Z2M_FILE);
+    assert_eq!(std::fs::read(&path).unwrap(), zip.as_ref());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    a.drop_db().await;
+    b.drop_db().await;
+}
+
+#[tokio::test]
+async fn restore_without_z2m_writes_nothing() {
+    let Some((a, file)) = source(5).await else {
+        return;
+    };
+    let Some(b) = fresh_db().await else { return };
+    let t = target(Mode::Restore, Some(&b)).await;
+
+    let (code, body) = t.upload("/upload", PASSWORD_HEADER, file).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(
+        !t.dir
+            .path()
+            .join(nidoo::backup::restore::RESTORED_Z2M_FILE)
+            .exists()
+    );
+    a.drop_db().await;
+    b.drop_db().await;
+}
+
 /// A backup file written by hand: the manifest, then `filler` bytes that do not compress.
 async fn crafted(manifest: &Manifest, filler: usize) -> Vec<u8> {
     let mut x: u64 = 0x2545_F491_4F6C_DD1D;
@@ -436,6 +487,7 @@ fn manifest() -> Manifest {
         flows: 2,
         dashboards: 1,
         history_bytes: 123_456,
+        z2m: None,
     }
 }
 

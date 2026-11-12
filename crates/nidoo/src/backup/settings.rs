@@ -22,6 +22,7 @@ pub struct BackupSection {
     pub ftp: FtpSection,
     pub keep: u32,
     pub notify_failure: bool,
+    pub include_z2m: bool,
 }
 
 impl Default for BackupSection {
@@ -31,6 +32,7 @@ impl Default for BackupSection {
             ftp: FtpSection::default(),
             keep: 7,
             notify_failure: true,
+            include_z2m: true,
         }
     }
 }
@@ -43,6 +45,7 @@ impl fmt::Debug for BackupSection {
             .field("ftp", &self.ftp)
             .field("keep", &self.keep)
             .field("notify_failure", &self.notify_failure)
+            .field("include_z2m", &self.include_z2m)
             .finish()
     }
 }
@@ -115,6 +118,7 @@ pub fn view(s: &BackupSection) -> BackupView {
         },
         keep: s.keep,
         notify_failure: s.notify_failure,
+        include_z2m: s.include_z2m,
     }
 }
 
@@ -161,6 +165,7 @@ pub fn apply_input(old: &BackupSection, input: BackupInput) -> Result<BackupSect
         },
         keep,
         notify_failure: input.notify_failure,
+        include_z2m: input.include_z2m,
     })
 }
 
@@ -291,6 +296,19 @@ mod tests {
             s.ftp_settings(),
             Err(BackupError::FtpNotConfigured)
         ));
+    }
+
+    #[test]
+    fn stored_section_without_include_z2m_reads_on() {
+        let s: BackupSection = serde_json::from_str(r#"{"keep":3}"#).unwrap();
+        assert!(s.include_z2m);
+        let off = BackupInput {
+            include_z2m: false,
+            ..input()
+        };
+        let applied = apply_input(&s, off).unwrap();
+        assert!(!applied.include_z2m);
+        assert!(!view(&applied).include_z2m);
     }
 
     #[test]

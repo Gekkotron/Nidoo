@@ -71,7 +71,7 @@ const LABEL_DX: f64 = 24.0;
 /// The height of a card: [`NODE_H`], except a switch, which grows to give each exit a row.
 pub fn node_height(kind: &NodeKind) -> f64 {
     match kind {
-        NodeKind::Switch(_) | NodeKind::Ask(_) => {
+        NodeKind::Switch(_) | NodeKind::Ask(_) | NodeKind::BackupRun(_) => {
             NODE_H.max(EXIT_PAD + EXIT_H * kind.ports().len() as f64)
         }
         _ => NODE_H,
@@ -370,17 +370,13 @@ pub fn bounds(flow: &Flow, pos: &BTreeMap<String, Pt>) -> Rect {
 
 /// Where a wire leaves a card at `at`: its right edge, halfway down; for an `if` 30 % down for
 /// `true` and 70 % down for `false`; for a switch, each exit evenly down the card; for a time
-/// card 30 % down for `in` and 70 % down for `out`; for a back-up card 30 % down for `ok` and
-/// 70 % down for `failed`.
+/// card 30 % down for `in` and 70 % down for `out`; for a back-up card, `ok`, `partial` and
+/// `failed` evenly down the card, as a switch.
 pub fn out_anchor(kind: &NodeKind, at: Pt, port: Option<&str>) -> Pt {
     let down = match (kind, port) {
-        (NodeKind::If(_), Some("true"))
-        | (NodeKind::TimeBetween(_), Some("in"))
-        | (NodeKind::BackupRun(_), Some(nidoo_core::flow::BACKUP_OK_PORT)) => 0.3,
-        (NodeKind::If(_), Some("false"))
-        | (NodeKind::TimeBetween(_), Some("out"))
-        | (NodeKind::BackupRun(_), Some(nidoo_core::flow::BACKUP_FAILED_PORT)) => 0.7,
-        (NodeKind::Switch(_) | NodeKind::Ask(_), Some(port)) => {
+        (NodeKind::If(_), Some("true")) | (NodeKind::TimeBetween(_), Some("in")) => 0.3,
+        (NodeKind::If(_), Some("false")) | (NodeKind::TimeBetween(_), Some("out")) => 0.7,
+        (NodeKind::Switch(_) | NodeKind::Ask(_) | NodeKind::BackupRun(_), Some(port)) => {
             let ports = kind.ports();
             ports
                 .iter()
@@ -923,15 +919,22 @@ mod tests {
     }
 
     #[test]
-    fn backup_card_pins_sit_at_30_and_70_percent() {
+    fn backup_card_grows_and_spreads_its_three_exits() {
         let node: nidoo_core::flow::Node = serde_json::from_value(serde_json::json!({
             "id": "b", "type": "backup.run", "params": {}
         }))
         .unwrap();
+        let height = node_height(&node.kind);
+        assert_eq!(height, 74.0);
         let o = Pt { x: 0.0, y: 0.0 };
-        assert_eq!(out_anchor(&node.kind, o, Some("ok")).y, NODE_H * 0.3);
-        assert_eq!(out_anchor(&node.kind, o, Some("failed")).y, NODE_H * 0.7);
-        assert_eq!(node_height(&node.kind), NODE_H);
+        let ys: Vec<f64> = ["ok", "partial", "failed"]
+            .iter()
+            .map(|p| out_anchor(&node.kind, o, Some(p)).y)
+            .collect();
+        // The same spacing as a switch: one row of EXIT_H per exit, centred in its row.
+        assert!(ys.windows(2).all(|w| w[1] - w[0] >= EXIT_H), "{ys:?}");
+        assert_eq!(ys[1], height * 0.5);
+        assert!(ys[0] > 0.0 && ys[2] < height);
     }
 
     #[test]
