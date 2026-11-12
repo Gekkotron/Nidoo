@@ -206,7 +206,7 @@ Where and how the hub backs up. Read with `GET /api/v1/settings/backup`, change 
 | `ftp.password` | none | The FTP password (a secret). A read shows `{"set": bool}`. Changing the host or port needs it sent again. |
 | `ftp.folder` | `/` | The remote folder; an empty value is `/`. |
 | `keep` | `7` | How many backups stay on the server, at least 1. The oldest beyond it are deleted after a good backup. |
-| `notify_failure` | `true` | Send a push when an FTP backup fails. Independent of the system notifications switch. |
+| `notify_failure` | `true` | Send a push when an FTP backup fails. A cancelled backup sends none. Independent of the system notifications switch. |
 
 Both passwords are write-only, as in [Secrets](#secrets): a string sets one, `null` clears the FTP one, and leaving it out, `""` or `{"set": true}` keeps it. The backup password can be replaced but not cleared. They are stored in the `settings` table like the other sections and carried by a backup, which is encrypted.
 
