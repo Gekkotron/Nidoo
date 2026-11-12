@@ -10,13 +10,14 @@ use nidoo_core::model::SwitchType;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Intent {
     /// `names`: words that may name lights; `room`: words that may name the room; `colour`:
-    /// "en rouge", only ever with `on`.
+    /// "en rouge" and `brightness`: "à 50 %" (a percent, 1–100), only ever with `on`.
     Lights {
         on: bool,
         all: bool,
         names: Vec<String>,
         room: Vec<String>,
         colour: Option<Colour>,
+        brightness: Option<u8>,
     },
     SetTemp {
         change: Change,
@@ -68,6 +69,8 @@ pub enum Intent {
     MediaHint,
     /// A volume outside 0–100 %.
     VolumeRange,
+    /// A light brightness outside 1–100 %.
+    BrightnessRange,
 }
 
 /// What is asked of the music player.
@@ -311,14 +314,15 @@ pub fn parse_in(words: &[Word], lang: Lang) -> Option<Intent> {
         }
     }
     toks.retain(|t| !matches!(t, Tok::Colour(_)));
-    // "turn the lamp red": with a colour and no other verb, "turn" or "switch" sets it.
-    let verb = |t: &Tok| matches!(t, Tok::Known(Class::On | Class::Off | Class::Set, _));
-    if lang == Lang::En && colour.is_some() && !toks.iter().any(verb) {
-        for t in &mut toks {
-            if matches!(t, Tok::Known(Class::Noise, w) if w == "turn" || w == "switch") {
-                *t = Tok::Known(Class::Set, "turn".into());
-            }
-        }
+    // "à 50 %": a brightness, only for lights switched on; anything else with a percentage
+    // (shutters, an off order, heating, plugs) is read as before.
+    if let Some((stripped, percent)) = take_brightness(&toks)
+        && let Some(intent) = bright_lights(stripped, percent, colour, lang)
+    {
+        return Some(intent);
+    }
+    if colour.is_some() {
+        turn_sets(&mut toks, lang);
     }
     let intent = parse_toks(toks, colour.is_some())?;
     match (intent, colour) {
@@ -330,6 +334,7 @@ pub fn parse_in(words: &[Word], lang: Lang) -> Option<Intent> {
                 names,
                 room,
                 colour: None,
+                brightness: None,
             },
             Some(c),
         ) => Some(Intent::Lights {
@@ -338,14 +343,87 @@ pub fn parse_in(words: &[Word], lang: Lang) -> Option<Intent> {
             names,
             room,
             colour: Some(c),
+            brightness: None,
         }),
         // A colour for heating, shutters, music or an off order would be ignored: not a guess.
         _ => None,
     }
 }
 
-/// [`parse`] without the colour words; `coloured`: a colour was said, so "mets" alone switches
-/// lights on ("mets le salon en bleu").
+/// "turn the lamp red": with a colour or a brightness and no other verb, "turn" or "switch"
+/// sets it.
+fn turn_sets(toks: &mut [Tok], lang: Lang) {
+    let verb = |t: &Tok| matches!(t, Tok::Known(Class::On | Class::Off | Class::Set, _));
+    if lang == Lang::En && !toks.iter().any(verb) {
+        for t in toks {
+            if matches!(t, Tok::Known(Class::Noise, w) if w == "turn" || w == "switch") {
+                *t = Tok::Known(Class::Set, "turn".into());
+            }
+        }
+    }
+}
+
+/// The sentence without its one "à 50 %" ("at" / "to" in English), and the number.
+fn take_brightness(toks: &[Tok]) -> Option<(Vec<Tok>, f64)> {
+    let i = toks.windows(3).position(|w| {
+        matches!(&w[0], Tok::Known(Class::Linker, a) if AFTER_A.contains(&a.as_str()))
+            && matches!(w[1], Tok::Number(_))
+            && matches!(w[2], Tok::Known(Class::Percent, _))
+    })?;
+    let Tok::Number(n) = toks[i + 1] else {
+        return None;
+    };
+    let mut stripped = toks.to_vec();
+    stripped.drain(i..i + 3);
+    Some((stripped, n))
+}
+
+/// Lights switched on at a brightness. Needs a light word, a colour or an "allume": "mets le
+/// salon à 20 %" could as well be the heating, so it stays not understood. `None` when the
+/// sentence is anything but lights switched on.
+fn bright_lights(
+    mut toks: Vec<Tok>,
+    percent: f64,
+    colour: Option<Colour>,
+    lang: Lang,
+) -> Option<Intent> {
+    let named = toks.iter().any(|t| {
+        matches!(
+            t,
+            Tok::Known(Class::Light | Class::LightNamed | Class::On, _)
+        )
+    });
+    if colour.is_none() && !named {
+        return None;
+    }
+    turn_sets(&mut toks, lang);
+    let Intent::Lights {
+        on: true,
+        all,
+        names,
+        room,
+        colour: None,
+        brightness: None,
+    } = parse_toks(toks, true)?
+    else {
+        return None;
+    };
+    let percent = percent.round();
+    if !(1.0..=100.0).contains(&percent) {
+        return Some(Intent::BrightnessRange);
+    }
+    Some(Intent::Lights {
+        on: true,
+        all,
+        names,
+        room,
+        colour,
+        brightness: Some(percent as u8),
+    })
+}
+
+/// [`parse`] without the colour words; `coloured`: a colour or a brightness was said, so "mets"
+/// alone switches lights on ("mets le salon en bleu").
 fn parse_toks(mut toks: Vec<Tok>, coloured: bool) -> Option<Intent> {
     // A light, shutter, heating or temperature word decides the sentence: a TV or plug word is
     // then part of a name ("la lumière du salon tv", "le volet tv").
@@ -1050,6 +1128,7 @@ fn lights(toks: &[Tok], roles: &[Option<Role>], on: bool, all: bool) -> Intent {
         names,
         room,
         colour: None,
+        brightness: None,
     }
 }
 
@@ -1100,6 +1179,7 @@ mod tests {
             names: v(names),
             room: v(room),
             colour: None,
+            brightness: None,
         })
     }
 
@@ -1110,6 +1190,7 @@ mod tests {
             names: v(names),
             room: v(room),
             colour: colour_of(colour),
+            brightness: None,
         })
     }
 
@@ -1136,6 +1217,69 @@ mod tests {
             coloured(&[], &["salon"], "blanc")
         );
         assert_eq!(p("Allume en Violette"), coloured(&[], &[], "violet"));
+    }
+
+    fn bright(names: &[&str], room: &[&str], colour: Option<&str>, percent: u8) -> Option<Intent> {
+        Some(Intent::Lights {
+            on: true,
+            all: false,
+            names: v(names),
+            room: v(room),
+            colour: colour.and_then(colour_of),
+            brightness: Some(percent),
+        })
+    }
+
+    #[test]
+    fn brightness_after_a() {
+        assert_eq!(
+            p("allume les leds du salon en bleu à 100 %"),
+            bright(&["leds"], &["salon"], Some("bleu"), 100)
+        );
+        assert_eq!(
+            p("allume les leds du salon à 50 % en rouge"),
+            bright(&["leds"], &["salon"], Some("rouge"), 50)
+        );
+        assert_eq!(
+            p("allume la led à 50 pour cent"),
+            bright(&["led"], &[], None, 50)
+        );
+        assert_eq!(
+            p("allume le salon à 30 %"),
+            bright(&[], &["salon"], None, 30)
+        );
+        assert_eq!(
+            p("mets la lumière du salon à 40 %"),
+            bright(&[], &["salon"], None, 40)
+        );
+        assert_eq!(
+            p("passe la lampe du bureau à 70 %"),
+            bright(&["lampe"], &["bureau"], None, 70)
+        );
+        assert_eq!(
+            p("mets le salon en bleu à 20 %"),
+            bright(&[], &["salon"], Some("bleu"), 20)
+        );
+    }
+
+    #[test]
+    fn brightness_never_guessed() {
+        // Off, heating without a light word, plugs, TVs, shutters and music are as before.
+        assert_eq!(p("éteins le salon à 50 %"), None);
+        assert_eq!(p("éteins la led du salon à 50 %"), None);
+        assert_eq!(p("mets le salon à 20 %"), None);
+        assert_eq!(p("allume la prise du bureau à 50 %"), None);
+        assert_eq!(p("allume la télé du salon à 50 %"), None);
+        assert_eq!(p("allume le chauffage à 50 %"), None);
+        assert!(matches!(
+            p("ferme les volets du salon à 50 %"),
+            Some(Intent::CoverPositionHint)
+        ));
+        // Out of range: a hint, not a guess.
+        assert_eq!(p("allume la led à 0 %"), Some(Intent::BrightnessRange));
+        assert_eq!(p("allume la led à 150 %"), Some(Intent::BrightnessRange));
+        // The brightness is not a setpoint.
+        assert_eq!(p("allume la led à 50"), None);
     }
 
     #[test]
@@ -1813,6 +1957,7 @@ mod english {
             names: v(names),
             room: v(room),
             colour: None,
+            brightness: None,
         })
     }
 
@@ -1823,6 +1968,7 @@ mod english {
             names: v(names),
             room: v(room),
             colour: Some(colour),
+            brightness: None,
         })
     }
 
@@ -1887,6 +2033,50 @@ mod english {
         );
         assert_eq!(p("turn off the kitchen in red"), None);
         assert_eq!(p("set the heating to red"), None);
+    }
+
+    fn bright(
+        names: &[&str],
+        room: &[&str],
+        colour: Option<Colour>,
+        percent: u8,
+    ) -> Option<Intent> {
+        Some(Intent::Lights {
+            on: true,
+            all: false,
+            names: v(names),
+            room: v(room),
+            colour,
+            brightness: Some(percent),
+        })
+    }
+
+    #[test]
+    fn light_brightness() {
+        assert_eq!(
+            p("turn on the lamp in the office at 50 %"),
+            bright(&["lamp"], &["office"], None, 50)
+        );
+        assert_eq!(
+            p("set the kitchen lights to 30 percent"),
+            bright(&[], &["kitchen"], None, 30)
+        );
+        assert_eq!(
+            p("turn the lamp to 80 per cent"),
+            bright(&["lamp"], &[], None, 80)
+        );
+        assert_eq!(
+            p("turn on the kitchen lights in blue at 100 %"),
+            bright(&[], &["kitchen"], Some(Colour::Blue), 100)
+        );
+        assert_eq!(p("turn off the kitchen lights at 50 %"), None);
+        assert_eq!(p("set the kitchen to 20 %"), None);
+        assert_eq!(p("turn on the heating at 50 %"), None);
+        assert_eq!(p("turn on the lamp at 0 %"), Some(Intent::BrightnessRange));
+        assert_eq!(
+            p("turn on the lamp at 101 %"),
+            Some(Intent::BrightnessRange)
+        );
     }
 
     #[test]

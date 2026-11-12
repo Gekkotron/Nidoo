@@ -107,8 +107,9 @@ pub fn light(id: &str, name: &str, area: &str, on: bool) -> EntityView {
     e
 }
 
-/// A light that takes a colour (Zigbee2MQTT's `xy`).
+/// A light that dims and takes a colour (Zigbee2MQTT's brightness and `xy`).
 pub fn coloured(mut light: EntityView) -> EntityView {
+    light.capabilities.brightness = true;
     light.capabilities.color_modes.insert("xy".into());
     light
 }

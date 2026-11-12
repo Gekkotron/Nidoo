@@ -41,6 +41,12 @@ A room's lights are the ones a mood's "lights" action uses: every light of the r
 
 The colours are blanc, rouge, orange, jaune, vert, cyan (turquoise), bleu, violet (mauve), magenta and rose, in any gender or number. Only lights that take a colour get one; the others in the room are left as they are and the reply names them. A colour word without "en" is part of a light's name (« allume la lampe rose »), and a colour with an off order, heating, shutters or music is not understood.
 
+**Light brightness**, said after "à" with a percentage, switches the lights on at that level, with or without a colour:
+
+- « allume la led du salon à 50 % », « allume les leds du salon en bleu à 100 % », « mets la lampe à 30 % en rouge »; in English "turn the lamp on at 50 %", "set the lamp to 30 %"
+
+The percentage goes from 1 to 100; outside that the assistant answers with the range. Only lights that can be dimmed get it; the others in the room are left as they are and the reply names them. "Mets le salon à 20 %" stays not understood (it could be the heating), as does a percentage with an off order, plugs, TVs or heating.
+
 **Heating setpoints**, for a room whose [climate](climate.md) zone is active:
 
 - an exact value: « mets le salon à 20 », « règle la chambre de Léa à 19,5 degrés »
@@ -181,4 +187,4 @@ For other clients, such as the future satellites, speech is two HTTP calls: a `P
 
 ## Not yet
 
-Speaking to the assistant works through the satellites: see [Talk to a satellite](talk-to-a-satellite.md); a spoken turn shows the satellite and its room in the history. English sentences, stopping a shutter half-way ("stop"), brightness, colours, scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.
+Speaking to the assistant works through the satellites: see [Talk to a satellite](talk-to-a-satellite.md); a spoken turn shows the satellite and its room in the history. Stopping a shutter half-way ("stop"), scenes, moods, the alarm and turning the heating off are not handled. The [HTTP API](../reference/http-api.md#assist) has the three routes the page uses.
