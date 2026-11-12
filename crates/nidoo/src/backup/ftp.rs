@@ -10,6 +10,7 @@ use std::time::Duration;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use nidoo_api::{FtpCheck, FtpStep, RemoteBackup};
 use suppaftp::tokio::{AsyncDataStream, AsyncFtpStream, AsyncNoTlsStream};
+use suppaftp::types::FileType;
 use suppaftp::{FtpError, Mode};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, ReadBuf};
 
@@ -167,6 +168,14 @@ async fn log_in(ftp: &mut AsyncFtpStream, s: &FtpSettings, t: Timeouts) -> Resul
     }
 }
 
+/// Puts the session in binary mode. suppaftp does not, and FTP starts in ASCII, where a server
+/// may rewrite the line ends of a transfer (corrupting the encrypted file) or refuse `SIZE`.
+async fn binary(ftp: &mut AsyncFtpStream, t: Timeouts) -> Result<(), BackupError> {
+    within(t.control, ftp.transfer_type(FileType::Binary))
+        .await
+        .map_err(io)
+}
+
 async fn enter(ftp: &mut AsyncFtpStream, s: &FtpSettings, t: Timeouts) -> Result<(), BackupError> {
     within(t.control, ftp.cwd(s.folder.as_str()))
         .await
@@ -197,8 +206,20 @@ impl FtpStore {
     pub async fn connect_with(s: &FtpSettings, t: Timeouts) -> Result<FtpStore, BackupError> {
         let mut ftp = open(s, t).await?;
         log_in(&mut ftp, s, t).await?;
+        binary(&mut ftp, t).await?;
         enter(&mut ftp, s, t).await?;
         Ok(FtpStore { ftp, t })
+    }
+
+    /// Checks the control connection still answers (a `NOOP`) and connects again once if it does
+    /// not. A backup connects before it collects its data, which can outlast the server's idle
+    /// timeout (300 s on vsftpd).
+    pub async fn keep_alive(&mut self, s: &FtpSettings) -> Result<(), BackupError> {
+        if within(self.t.control, self.ftp.noop()).await.is_ok() {
+            return Ok(());
+        }
+        *self = Self::connect_with(s, self.t).await?;
+        Ok(())
     }
 
     /// The backups on the server, newest first. Anything not named like a backup (including
@@ -385,7 +406,11 @@ impl FtpStore {
             }
         };
         step(FtpStep::Connect, Ok(()));
-        if !step(FtpStep::Login, log_in(&mut ftp, s, t).await) {
+        let logged_in = match log_in(&mut ftp, s, t).await {
+            Ok(()) => binary(&mut ftp, t).await,
+            Err(e) => Err(e),
+        };
+        if !step(FtpStep::Login, logged_in) {
             return checks;
         }
         if !step(FtpStep::Folder, enter(&mut ftp, s, t).await) {

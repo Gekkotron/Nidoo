@@ -4,10 +4,11 @@ use crate::common;
 
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, TimeZone, Utc};
-use common::ftp::ftp_server;
+use common::ftp::{ftp_server, ftp_server_idle};
 use nidoo::backup::BackupError;
 use nidoo::backup::ftp::{FtpSettings, FtpStore, Timeouts};
 use nidoo::backup::name::file_name;
@@ -307,4 +308,125 @@ async fn a_stalled_server_times_out_instead_of_hanging() {
         checks[1].detail.as_deref(),
         Some("can't reach the FTP server (timed out)")
     );
+}
+
+/// A scripted FTP server that records every command it receives, for checks libunftp cannot
+/// make (it accepts any transfer type). Passive data connections are served on a port of its
+/// own; a listing is empty and a stored file is read and dropped.
+async fn recording_server() -> (u16, Arc<Mutex<Vec<String>>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    tokio::spawn(async move {
+        while let Ok((sock, _)) = listener.accept().await {
+            tokio::spawn(serve_scripted(sock, Arc::clone(&log)));
+        }
+    });
+    (port, seen)
+}
+
+async fn serve_scripted(sock: tokio::net::TcpStream, log: Arc<Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let (read, mut write) = sock.into_split();
+    let mut lines = BufReader::new(read).lines();
+    let _ = write.write_all(b"220 hello\r\n").await;
+    let mut data: Option<tokio::net::TcpListener> = None;
+    while let Ok(Some(line)) = lines.next_line().await {
+        log.lock().unwrap().push(line.clone());
+        let verb = line.split(' ').next().unwrap_or("").to_ascii_uppercase();
+        let reply: String = match verb.as_str() {
+            "USER" => "331 password please".into(),
+            "PASS" => "230 in".into(),
+            "TYPE" => "200 type set".into(),
+            "CWD" => "250 ok".into(),
+            "NOOP" => "200 ok".into(),
+            "SIZE" => "213 0".into(),
+            "DELE" | "RNTO" => "250 ok".into(),
+            "RNFR" => "350 go on".into(),
+            "PASV" => {
+                let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let p = l.local_addr().unwrap().port();
+                data = Some(l);
+                format!(
+                    "227 Entering Passive Mode (127,0,0,1,{},{})",
+                    p / 256,
+                    p % 256
+                )
+            }
+            "NLST" | "STOR" | "RETR" => {
+                let Some(l) = data.take() else {
+                    let _ = write.write_all(b"425 no data connection\r\n").await;
+                    continue;
+                };
+                let _ = write.write_all(b"150 here it comes\r\n").await;
+                if let Ok((mut d, _)) = l.accept().await {
+                    if verb == "STOR" {
+                        let mut sink = Vec::new();
+                        let _ = tokio::io::AsyncReadExt::read_to_end(&mut d, &mut sink).await;
+                    }
+                    let _ = d.shutdown().await;
+                }
+                "226 done".into()
+            }
+            "QUIT" => {
+                let _ = write.write_all(b"221 bye\r\n").await;
+                return;
+            }
+            _ => "502 not here".into(),
+        };
+        let _ = write.write_all(format!("{reply}\r\n").as_bytes()).await;
+    }
+}
+
+/// `TYPE I` comes after the login and before the first command that moves file bytes or reads
+/// a size (ASCII mode rewrites line ends, and some servers refuse SIZE in it).
+fn assert_binary_before_transfers(seen: &[String]) {
+    let at = |pred: &dyn Fn(&str) -> bool| seen.iter().position(|c| pred(c));
+    let login = at(&|c| c.starts_with("PASS")).expect("a login");
+    let binary = at(&|c| c == "TYPE I").unwrap_or_else(|| panic!("no TYPE I in {seen:?}"));
+    let first_transfer = at(&|c| {
+        ["SIZE", "STOR", "RETR", "NLST"]
+            .iter()
+            .any(|v| c.starts_with(v))
+    })
+    .expect("a transfer");
+    assert!(login < binary && binary < first_transfer, "order: {seen:?}");
+}
+
+#[tokio::test]
+async fn the_session_is_binary_before_any_transfer() {
+    let (port, seen) = recording_server().await;
+    let mut store = FtpStore::connect_with(&settings(port, "/"), quick())
+        .await
+        .unwrap();
+    assert!(store.list().await.unwrap().is_empty());
+    store
+        .upload(&file_name(at(11)), &b"x\r\ny\n"[..])
+        .await
+        .unwrap();
+    assert_binary_before_transfers(&seen.lock().unwrap());
+
+    let (port, seen) = recording_server().await;
+    let checks = FtpStore::probe_with(&settings(port, "/"), quick()).await;
+    assert!(checks.iter().all(|c| c.ok), "{checks:?}");
+    assert_binary_before_transfers(&seen.lock().unwrap());
+}
+
+#[tokio::test]
+async fn keep_alive_reconnects_once_the_server_dropped_an_idle_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let port = ftp_server_idle(dir.path(), 1).await;
+    let s = settings(port, "/");
+    let mut store = FtpStore::connect_with(&s, quick()).await.unwrap();
+    // Longer than the server's idle timeout: it has closed the session.
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    store.keep_alive(&s).await.unwrap();
+    let name = file_name(at(11));
+    store.upload(&name, &b"data"[..]).await.unwrap();
+    assert_eq!(names(dir.path()), vec![name]);
+
+    // A live session is kept as it is.
+    store.keep_alive(&s).await.unwrap();
+    assert_eq!(store.list().await.unwrap().len(), 1);
 }
