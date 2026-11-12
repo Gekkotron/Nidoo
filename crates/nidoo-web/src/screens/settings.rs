@@ -21,6 +21,7 @@ use crate::nav::BackLink;
 use crate::screens::alarm_settings::{AlarmSettingsPage, settings_status};
 use crate::screens::assist_settings::AssistVoicePage;
 use crate::screens::assist_status;
+use crate::screens::backup_settings::BackupSettingsPage;
 use crate::screens::energy_preview::EnergyPreview;
 use crate::screens::entity_sheet::availability_class;
 use crate::screens::home_settings_panel::HomeSettingsPanel;
@@ -300,6 +301,7 @@ pub enum SettingsPage {
     AssistantListening,
     Sound,
     System,
+    Backup,
     Appearance,
     Zigbee2mqtt,
     Broker,
@@ -310,7 +312,7 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 19] = [
+    pub const ALL: [SettingsPage; 20] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
@@ -324,6 +326,7 @@ impl SettingsPage {
         SettingsPage::AssistantListening,
         SettingsPage::Sound,
         SettingsPage::System,
+        SettingsPage::Backup,
         SettingsPage::Appearance,
         SettingsPage::Zigbee2mqtt,
         SettingsPage::Broker,
@@ -347,6 +350,7 @@ impl SettingsPage {
             SettingsPage::AssistantListening => "assistant-listening",
             SettingsPage::Sound => "sound",
             SettingsPage::System => "system",
+            SettingsPage::Backup => "backup",
             SettingsPage::Appearance => "appearance",
             SettingsPage::Zigbee2mqtt => "zigbee2mqtt",
             SettingsPage::Broker => "broker",
@@ -376,6 +380,7 @@ impl SettingsPage {
             SettingsPage::AssistantListening => Key::AssistantListening,
             SettingsPage::Sound => Key::Sound,
             SettingsPage::System => Key::System,
+            SettingsPage::Backup => Key::Backup,
             SettingsPage::Appearance => Key::Appearance,
             SettingsPage::Zigbee2mqtt => Key::Zigbee2mqtt,
             SettingsPage::Broker => Key::Broker,
@@ -406,6 +411,7 @@ impl SettingsPage {
                 SettingsPage::AssistantListening => T::HintAssistantListening,
                 SettingsPage::Sound => T::HintSound,
                 SettingsPage::System => T::HintSystem,
+                SettingsPage::Backup => T::HintBackup,
                 SettingsPage::Appearance => T::HintAppearance,
                 SettingsPage::Zigbee2mqtt => T::HintZigbee,
                 SettingsPage::Broker => T::HintBroker,
@@ -437,6 +443,7 @@ impl SettingsPage {
             SettingsPage::AssistantListening => (icons::MIC, "violet"),
             SettingsPage::Sound => (icons::SPEAKER, "rose"),
             SettingsPage::System => (icons::PULSE, "mint"),
+            SettingsPage::Backup => (icons::ARCHIVE, "blue"),
             SettingsPage::Appearance => (icons::SUN_MOON, "violet"),
             SettingsPage::Zigbee2mqtt => (icons::MESH, "amber"),
             SettingsPage::Broker => (icons::BROKER, "mint"),
@@ -463,6 +470,7 @@ impl SettingsPage {
             | SettingsPage::AssistantListening
             | SettingsPage::Sound => T::GroupAssistant,
             SettingsPage::System
+            | SettingsPage::Backup
             | SettingsPage::Appearance
             | SettingsPage::Zigbee2mqtt
             | SettingsPage::Broker
@@ -625,7 +633,7 @@ pub fn SettingsScreen() -> impl IntoView {
             house.bridge.with(|b| b.state),
         ),
         SettingsPage::Broker => house.connection.with(|c| connection_word(lang(), c)),
-        SettingsPage::Database | SettingsPage::Mcp => String::new(),
+        SettingsPage::Backup | SettingsPage::Database | SettingsPage::Mcp => String::new(),
         SettingsPage::About => VERSION.to_owned(),
     };
 
@@ -776,6 +784,7 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 }
                 Some(SettingsPage::Sound) => view! { <SoundSettingsPage /> }.into_any(),
                 Some(SettingsPage::System) => view! { <SystemSettingsPage /> }.into_any(),
+                Some(SettingsPage::Backup) => view! { <BackupSettingsPage /> }.into_any(),
                 Some(SettingsPage::Appearance) => view! { <AppearancePage /> }.into_any(),
                 Some(SettingsPage::Zigbee2mqtt) => view! { <ZigbeePage /> }.into_any(),
                 Some(SettingsPage::Broker) => view! { <BrokerPage /> }.into_any(),

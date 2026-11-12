@@ -21,6 +21,7 @@ pub enum SettingsText {
     HintAssistantListening,
     HintSound,
     HintSystem,
+    HintBackup,
     HintAppearance,
     HintZigbee,
     HintBroker,
@@ -103,6 +104,7 @@ impl SettingsText {
         SettingsText::HintAssistantListening,
         SettingsText::HintSound,
         SettingsText::HintSystem,
+        SettingsText::HintBackup,
         SettingsText::HintAppearance,
         SettingsText::HintZigbee,
         SettingsText::HintBroker,
@@ -220,6 +222,10 @@ pub fn settings_text(lang: Lang, k: SettingsText) -> &'static str {
         T::HintSystem => (
             "Uptime, load, storage and services",
             "Disponibilité, charge, stockage et services",
+        ),
+        T::HintBackup => (
+            "Copy the hub to an FTP server, or download a backup",
+            "Copie du hub sur un serveur FTP, ou téléchargement d'une sauvegarde",
         ),
         T::HintAppearance => ("Theme, energy view", "Thème, vue énergie"),
         T::HintZigbee => (
@@ -409,7 +415,7 @@ mod tests {
     #[test]
     fn all_lists_every_variant() {
         // The match in `settings_text` is exhaustive, so a new variant only needs listing here.
-        assert_eq!(SettingsText::ALL.len(), 78);
+        assert_eq!(SettingsText::ALL.len(), 79);
     }
 
     #[test]

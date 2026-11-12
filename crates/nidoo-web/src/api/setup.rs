@@ -2,11 +2,12 @@
 
 use gloo_net::http::{Request, Response};
 use nidoo_api::{
-    ApiError, GeoPlace, Location, MobileCode, MobileView, SetupStatus, SetupStep, TestResult,
+    ApiError, BackupSummary, FtpSource, GeoPlace, Location, MobileCode, MobileView, RemoteBackup,
+    RestoreFromFtp, RestoreProgress, SetupStatus, SetupStep, TestResult,
 };
 use serde_json::{Value, json};
 
-use super::core::{WebError, check, encode_id, read_json};
+use super::core::{WebError, check, encode_id, read_json, read_json_or_none};
 use crate::i18n::Lang;
 use crate::i18n::setup::{SetupText, setup_text};
 
@@ -123,6 +124,83 @@ pub async fn put_step(step: SetupStep) -> Result<SetupStatus, SaveError> {
 
 pub async fn finish() -> Result<SetupStatus, SaveError> {
     save_status(Request::post("/api/v1/setup/finish").build()).await
+}
+
+/// The header that carries an upload's backup password, percent-encoded, beside the file.
+const PASSWORD_HEADER: &str = "x-backup-password";
+
+/// How much of a backup file's head an upload inspect sends.
+const INSPECT_BYTES: f64 = 1_048_576.0;
+
+/// Turns the restore path on or off while setting up. Turning it off while a restore is pending
+/// sends the hub back to the devices step.
+pub async fn restore_pending(pending: bool) -> Result<SetupStatus, SaveError> {
+    save_status(Request::put("/api/v1/setup/restore").json(&json!({ "pending": pending }))).await
+}
+
+/// The backup files on an FTP server.
+pub async fn restore_ftp_list(source: &FtpSource) -> Result<Vec<RemoteBackup>, ApiError> {
+    let response = check(
+        Request::post("/api/v1/setup/restore/ftp/list").json(source),
+        None,
+    )
+    .await?;
+    read_json(response).await
+}
+
+/// What a backup file on an FTP server holds; a wrong password is refused here.
+pub async fn restore_ftp_inspect(request: &RestoreFromFtp) -> Result<BackupSummary, ApiError> {
+    let response = check(
+        Request::post("/api/v1/setup/restore/ftp/inspect").json(request),
+        None,
+    )
+    .await?;
+    read_json(response).await
+}
+
+/// What an uploaded backup holds, read from the first megabyte of `file`.
+pub async fn restore_upload_inspect(
+    file: &web_sys::File,
+    password: &str,
+) -> Result<BackupSummary, ApiError> {
+    let head = file
+        .slice_with_f64_and_f64(0.0, INSPECT_BYTES)
+        .map_err(|e| WebError::Network(format!("{e:?}")))?;
+    let request = Request::post("/api/v1/setup/restore/upload/inspect")
+        .header(PASSWORD_HEADER, &encode_id(password))
+        .body(head);
+    let response = check(request, None).await?;
+    read_json(response).await
+}
+
+/// Starts restoring a backup from an FTP server; the hub answers 202 and
+/// [`restore_progress`] follows it.
+pub async fn restore_ftp(request: &RestoreFromFtp) -> Result<RestoreProgress, ApiError> {
+    let response = check(
+        Request::post("/api/v1/setup/restore/ftp").json(request),
+        None,
+    )
+    .await?;
+    read_json(response).await
+}
+
+/// Restores the uploaded backup `file`, sent whole as the request body. The reply comes when the
+/// restore ended: its last progress, if the hub has one.
+pub async fn restore_upload(
+    file: &web_sys::File,
+    password: &str,
+) -> Result<Option<RestoreProgress>, ApiError> {
+    let request = Request::put("/api/v1/setup/restore/upload")
+        .header(PASSWORD_HEADER, &encode_id(password))
+        .body(file);
+    let response = check(request, None).await?;
+    read_json_or_none(response).await
+}
+
+/// The running or last restore, `None` when there has been none.
+pub async fn restore_progress() -> Result<Option<RestoreProgress>, ApiError> {
+    let response = check(Request::get("/api/v1/setup/restore/progress").build(), None).await?;
+    read_json_or_none(response).await
 }
 
 /// One settings section as the hub reads it (secrets as `{"set": bool}`).

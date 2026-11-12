@@ -9841,6 +9841,94 @@ dialog.popup::backdrop {
 }
 
 .system__loading,
+/* Settings → Backup: password, FTP server, retention, back up now, last backup. */
+.backup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--grid-gap);
+}
+
+.backup__set {
+  margin: 0;
+  color: var(--accent-mint);
+  font: var(--type-label);
+}
+
+.backup__warning {
+  margin: 0 0 8px;
+  color: var(--accent-amber);
+  font: var(--type-label);
+}
+
+.backup__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.backup__download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.backup__download[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.backup__checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.backup__check {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.backup__check--ok .backup__mark {
+  color: var(--accent-mint);
+}
+
+.backup__check--bad .backup__mark {
+  color: var(--offline);
+}
+
+.backup__detail,
+.backup__label {
+  color: var(--muted);
+  font: var(--type-label);
+}
+
+.backup__progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.backup__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.backup__last-file {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .system__hint {
   margin: 0;
   font: var(--type-label);

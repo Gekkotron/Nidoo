@@ -74,7 +74,7 @@ fn whole(lang: Lang, v: f64) -> String {
 
 /// A byte count as "180 MB", or "3.2 GB" from one gigabyte up, in decimal units (like the
 /// hub's sensors).
-fn size(lang: Lang, bytes: u64) -> String {
+pub(crate) fn size(lang: Lang, bytes: u64) -> String {
     const GB: f64 = 1e9;
     const MB: f64 = 1e6;
     let b = bytes as f64;
