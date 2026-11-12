@@ -62,6 +62,15 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Why a settings write is refused outside Run mode; `None` once the hub runs.
+fn not_running(mode: Mode) -> Option<&'static str> {
+    match mode {
+        Mode::Run => None,
+        Mode::Restore => Some("finish the restore first"),
+        Mode::Setup => Some("finish MQTT and database setup first"),
+    }
+}
+
 fn unprocessable(message: &str) -> ApiError {
     ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message)
 }
@@ -305,11 +314,8 @@ pub async fn write_section(
     if ctx.restarting.load(Ordering::SeqCst) {
         return Err(unavailable("restarting"));
     }
-    if ctx.mode != Mode::Run {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "finish MQTT and database setup first",
-        ));
+    if let Some(why) = not_running(ctx.mode) {
+        return Err(ApiError::new(StatusCode::CONFLICT, why));
     }
     let Some(db) = ctx.db.as_ref() else {
         return Err(unavailable("database unreachable"));
@@ -353,11 +359,8 @@ async fn write_mobile(ctx: &Arc<SetupCtx>, body: Value) -> Result<Value, ApiErro
     if ctx.restarting.load(Ordering::SeqCst) {
         return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "restarting"));
     }
-    if ctx.mode != Mode::Run {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "finish MQTT and database setup first",
-        ));
+    if let Some(why) = not_running(ctx.mode) {
+        return Err(ApiError::new(StatusCode::CONFLICT, why));
     }
     let input: nidoo_api::MobileInput = parse(body, "mobile")?;
     let stored = ctx.sections.lock().await.mobile.clone();
@@ -373,11 +376,8 @@ async fn write_backup(ctx: &Arc<SetupCtx>, body: Value) -> Result<Value, ApiErro
     if ctx.restarting.load(Ordering::SeqCst) {
         return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "restarting"));
     }
-    if ctx.mode != Mode::Run {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "finish MQTT and database setup first",
-        ));
+    if let Some(why) = not_running(ctx.mode) {
+        return Err(ApiError::new(StatusCode::CONFLICT, why));
     }
     let input: nidoo_api::BackupInput = parse(body, "backup")?;
     let stored = ctx.sections.lock().await.backup.clone();

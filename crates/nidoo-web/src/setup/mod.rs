@@ -217,6 +217,7 @@ mod tests {
             mqtt: None,
             database: None,
             restarting: false,
+            restore_pending: false,
         }
     }
 

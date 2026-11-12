@@ -127,6 +127,21 @@ async fn run_setup(ctx: Arc<SetupCtx>, stop: Arc<Stop>) -> anyhow::Result<ExitCo
     Ok(ExitCode::SUCCESS)
 }
 
+/// Restore mode: like setup mode, only HTTP, until the restore is done or given up.
+async fn run_restore(ctx: Arc<SetupCtx>, stop: Arc<Stop>) -> anyhow::Result<ExitCode> {
+    let http_cfg = ctx.file.lock().await.http.clone();
+    tracing::info!(
+        "restore mode: waiting for a backup to be restored; MQTT and the engine are off"
+    );
+    let http_task = http::serve(&http_cfg, http::setup_router(ctx)).await?;
+    banner::log_restore_banner(&http_cfg.bind);
+    stop.wait().await;
+    tracing::info!("shutting down");
+    http_task.abort();
+    tracing::info!("stopped");
+    Ok(ExitCode::SUCCESS)
+}
+
 fn main() -> anyhow::Result<ExitCode> {
     // Sets an environment variable: runs before any other thread exists.
     nidoo::assist::tts::limit_threads();
@@ -144,6 +159,7 @@ async fn run() -> anyhow::Result<ExitCode> {
             logging::init(&early_log_config(&data_dir));
             let (cfg, setup_ctx) = match resolve(&data_dir).await? {
                 Boot::Setup(ctx) => return run_setup(ctx, stop).await,
+                Boot::Restore(ctx) => return run_restore(ctx, stop).await,
                 Boot::Run { cfg, ctx } => (*cfg, ctx),
             };
             cfg.validate_all()

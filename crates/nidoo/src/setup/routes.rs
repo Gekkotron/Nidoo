@@ -25,6 +25,7 @@ use url::Url;
 
 use crate::config::MqttConfig;
 use crate::setup::bundled::{self, Bundled};
+use crate::setup::hub_file::RestoreState;
 use crate::setup::{HubFile, Mode, SetupCtx, Written, probe, secret, settings};
 use crate::weather::open_meteo::{self, Endpoints};
 
@@ -67,6 +68,7 @@ pub fn router_with_solcast<S: Clone + Send + Sync + 'static>(
         .route("/api/v1/setup/mqtt", put(put_mqtt))
         .route("/api/v1/setup/test/database", post(test_database))
         .route("/api/v1/setup/database", put(put_database))
+        .route("/api/v1/setup/restore", put(put_restore))
         .route("/api/v1/setup/step", put(put_step))
         .route("/api/v1/setup/finish", post(finish))
         .route("/api/v1/setup/mobile-code", get(mobile_code))
@@ -171,6 +173,7 @@ async fn status(State(s): State<RouteState>) -> Json<SetupStatus> {
     Json(SetupStatus {
         mode: match s.ctx.mode {
             Mode::Setup => "setup",
+            Mode::Restore => "restore",
             Mode::Run => "running",
         }
         .into(),
@@ -181,6 +184,7 @@ async fn status(State(s): State<RouteState>) -> Json<SetupStatus> {
         mqtt: mqtt_view(&file, bundled.as_ref()),
         database: database_view(&file, bundled.as_ref()),
         restarting: s.ctx.restarting.load(Ordering::SeqCst),
+        restore_pending: file.restore.is_some(),
     })
 }
 
@@ -244,7 +248,10 @@ async fn finish_write(s: &RouteState, restarts: bool, edit: impl FnOnce(&mut Hub
         .write_unless_restarting(
             RESTART_DELAY,
             edit,
-            |before, after| restarts && (in_run || (!before.is_complete() && after.is_complete())),
+            |before, after| {
+                restarts
+                    && (s.ctx.mode != Mode::Setup || (!before.is_complete() && after.is_complete()))
+            },
             |after| match &sections {
                 Some(held) => settings::check_boot(after, held),
                 None => Ok(()),
@@ -462,7 +469,11 @@ async fn put_database(State(s): State<RouteState>, Json(input): Json<DatabaseInp
     }
     finish_write(&s, true, |f| {
         f.database_url = Some(url);
-        f.step = f.step.max(SetupStep::Devices);
+        f.step = if f.restore.is_some() {
+            SetupStep::Restore
+        } else {
+            f.step.max(SetupStep::Devices)
+        };
     })
     .await
 }
@@ -477,6 +488,42 @@ async fn put_step(State(s): State<RouteState>, Json(body): Json<StepBody>) -> Re
         return r;
     }
     finish_write(&s, false, |f| f.step = body.step).await
+}
+
+#[derive(Deserialize)]
+struct RestoreBody {
+    pending: bool,
+}
+
+/// Turns the restore path on or off. On only while setting up; off also while a restore is
+/// pending, which sends the hub back to the devices step and restarts it into Run.
+async fn put_restore(State(s): State<RouteState>, Json(body): Json<RestoreBody>) -> Response {
+    if let Some(r) = restarting(&s.ctx) {
+        return r;
+    }
+    match (s.ctx.mode, body.pending) {
+        (Mode::Run, _) => error(StatusCode::CONFLICT, "the hub is already running"),
+        (Mode::Restore, true) => error(StatusCode::CONFLICT, "a restore is already pending"),
+        (Mode::Setup, true) => {
+            finish_write(&s, false, |f| f.restore = Some(RestoreState::default())).await
+        }
+        (Mode::Setup, false) => {
+            finish_write(&s, false, |f| {
+                f.restore = None;
+                if f.step == SetupStep::Restore {
+                    f.step = SetupStep::Devices;
+                }
+            })
+            .await
+        }
+        (Mode::Restore, false) => {
+            finish_write(&s, true, |f| {
+                f.restore = None;
+                f.step = SetupStep::Devices;
+            })
+            .await
+        }
+    }
 }
 
 async fn finish(State(s): State<RouteState>) -> Response {
