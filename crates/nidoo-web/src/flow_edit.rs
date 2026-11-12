@@ -406,6 +406,7 @@ pub fn next_node_id(flow: &Flow, kind: &NodeKind) -> String {
         NodeKind::Command(_) => "command",
         NodeKind::FlowEnable(_) => "flow_switch",
         NodeKind::FlowLabel(_) => "flow_label",
+        NodeKind::BackupRun(_) => "backup",
         NodeKind::Notify(_) => "notify",
         NodeKind::Speak(_) => "speak",
         NodeKind::Ask(_) => "ask",

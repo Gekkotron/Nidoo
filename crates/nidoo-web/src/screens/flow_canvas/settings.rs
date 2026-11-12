@@ -355,6 +355,7 @@ fn node_editor_body(
         NodeKind::Command(_) => FlowText::NodeCommand,
         NodeKind::FlowEnable(_) => FlowText::NodeFlowSwitch,
         NodeKind::FlowLabel(_) => FlowText::NodeFlowLabel,
+        NodeKind::BackupRun(_) => FlowText::NodeBackupRun,
         NodeKind::Notify(_) => FlowText::Notify,
         NodeKind::Speak(_) => FlowText::Speak,
         NodeKind::Ask(_) => FlowText::Ask,
@@ -1915,6 +1916,8 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
         NodeKind::TriggerManual(p) => manual_fields(form, id, p.value).into_any(),
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
         NodeKind::FlowLabel(p) => flow_label_fields(form, id, p).into_any(),
+        // The real card comes with the backup flow-step editor.
+        NodeKind::BackupRun(_) => ().into_any(),
         NodeKind::Notify(p) => notify_fields(form, id, p).into_any(),
         NodeKind::Speak(p) => speak_fields(form, id, p).into_any(),
         NodeKind::Ask(p) => ask_fields(form, id, p).into_any(),

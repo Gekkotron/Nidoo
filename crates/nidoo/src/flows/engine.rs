@@ -22,10 +22,10 @@ use nidoo_core::flow::math::{fit_to_entity, parse_formula};
 use nidoo_core::flow::sun::is_dark_with_offset;
 use nidoo_core::flow::template::{Lang, render};
 use nidoo_core::flow::{
-    ASK_NONE_PORT, AskParams, Flow, FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op,
-    Reading, Scalar, Schedule, command_with_number, compare, field_scalar, format_duration,
-    headline_scalar, in_time_range, parse_clock, parse_duration, pick_duration, switch_exits,
-    window,
+    ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, Flow, FlowMode, MathParams,
+    Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule, command_with_number,
+    compare, field_scalar, format_duration, headline_scalar, in_time_range, parse_clock,
+    parse_duration, pick_duration, switch_exits, window,
 };
 use nidoo_core::history::buckets::{Sample, readings_mean};
 use nidoo_core::model::{Command, StateValue};
@@ -1179,7 +1179,11 @@ pub(super) async fn execute(
         .await;
         let branching = matches!(
             node.kind,
-            NodeKind::If(_) | NodeKind::Switch(_) | NodeKind::TimeBetween(_) | NodeKind::Ask(_)
+            NodeKind::If(_)
+                | NodeKind::Switch(_)
+                | NodeKind::TimeBetween(_)
+                | NodeKind::Ask(_)
+                | NodeKind::BackupRun(_)
         );
         let shown = (branching && outcome == StepOutcome::Ok).then(|| ports.clone());
         if !hub.record_step(&flow.id, &run_id, step(&node.id, outcome, detail, shown)) {
@@ -1378,6 +1382,32 @@ async fn run_node(
                 // The reason alone: "unknown label `x`" reads better than "rejected: …".
                 Err(HubError::Rejected(reason)) => failed(reason),
                 Err(err) => failed(err.to_string()),
+            }
+        }
+        NodeKind::BackupRun(params) => {
+            let limit = std::time::Duration::from_secs(60 * u64::from(params.timeout_minutes));
+            // The limit is the job's own when this step starts it; when it joins a running job
+            // it is how long to wait. Dropping the wait (the run cancelled, the limit reached)
+            // leaves the backup running.
+            let waited = tokio::time::timeout(limit, hub.backup_and_wait(limit))
+                .await
+                .unwrap_or(Err(crate::backup::BackupError::TimeLimit));
+            match waited {
+                Ok(done) => (
+                    StepOutcome::Ok,
+                    format!(
+                        "Backed up {} to {} as {}",
+                        crate::backup::job::human_size(done.size),
+                        done.host,
+                        done.file
+                    ),
+                    vec![BACKUP_OK_PORT.to_owned()],
+                ),
+                Err(err) => (
+                    StepOutcome::Ok,
+                    err.to_string(),
+                    vec![BACKUP_FAILED_PORT.to_owned()],
+                ),
             }
         }
         NodeKind::Math(params) => match run_math(hub, now, params, trigger, results).await {

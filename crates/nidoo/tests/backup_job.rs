@@ -651,3 +651,147 @@ async fn idle_routes_answer_no_content() {
         .unwrap();
     assert_eq!(cancel.status(), StatusCode::NOT_FOUND);
 }
+
+/// `go` (manual) → `bk` (`backup.run`) → `yes` on port `ok`, `no` on port `failed`. The two
+/// tail steps switch the flow on (it is on already), so their node id tells the port taken.
+fn backup_flow(timeout_minutes: u32) -> String {
+    let tail = |id: &str| json!({ "id": id, "type": "flow.enable", "params": { "enabled": true } });
+    json!({
+        "id": "nightly", "name": "nightly", "enabled": true, "mode": "single",
+        "nodes": [
+            { "id": "go", "type": "trigger.manual", "params": {} },
+            { "id": "bk", "type": "backup.run",
+              "params": { "destination": "ftp", "timeout_minutes": timeout_minutes } },
+            tail("yes"),
+            tail("no"),
+        ],
+        "edges": [
+            { "from": "go", "to": "bk" },
+            { "from": "bk", "to": "yes", "port": "ok" },
+            { "from": "bk", "to": "no", "port": "failed" },
+        ],
+    })
+    .to_string()
+}
+
+/// The next run event the predicate accepts, within `limit`.
+async fn next_run(
+    rx: &mut tokio::sync::broadcast::Receiver<nidoo_api::WsEvent>,
+    limit: Duration,
+    accept: impl Fn(&nidoo_api::RunView) -> bool,
+) -> nidoo_api::RunView {
+    tokio::time::timeout(limit, async {
+        loop {
+            if let nidoo_api::WsEvent::FlowRunChanged { run, .. } =
+                rx.recv().await.expect("open channel")
+                && accept(&run)
+            {
+                return run;
+            }
+        }
+    })
+    .await
+    .expect("the expected run event in time")
+}
+
+fn step_nodes(run: &nidoo_api::RunView) -> Vec<&str> {
+    run.steps.iter().map(|s| s.node.as_str()).collect()
+}
+
+#[tokio::test]
+async fn backup_flow_takes_ok() {
+    let Some(tdb) = fresh_db().await else { return };
+    let r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    let _engine = r.hub.start_engine();
+    r.hub
+        .ingest("nidoo/automation/nightly", backup_flow(120).as_bytes());
+    tokio::task::yield_now().await;
+    let mut events = r.hub.subscribe();
+    r.hub.run_flow("nightly").expect("run");
+    let run = next_run(&mut events, Duration::from_secs(60), |r| {
+        r.status == nidoo_api::RunStatus::Done
+    })
+    .await;
+
+    assert_eq!(step_nodes(&run), ["go", "bk", "yes"]);
+    let bk = &run.steps[1];
+    assert_eq!(bk.outcome, nidoo_api::StepOutcome::Ok);
+    assert_eq!(bk.ports.as_deref(), Some(&["ok".to_owned()][..]));
+    let file = files(r.ftp_dir.path()).pop().expect("an uploaded file");
+    let size = std::fs::metadata(r.ftp_dir.path().join(&file))
+        .unwrap()
+        .len();
+    assert_eq!(
+        bk.detail,
+        format!(
+            "Backed up {} to 127.0.0.1 as {file}",
+            nidoo::backup::job::human_size(size)
+        )
+    );
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn backup_flow_takes_failed() {
+    let port = closed_port();
+    let r = rig(Some(DEAD_DB), mem(one_dashboard()), |s| s.ftp.port = port).await;
+    let _engine = r.hub.start_engine();
+    r.hub
+        .ingest("nidoo/automation/nightly", backup_flow(120).as_bytes());
+    tokio::task::yield_now().await;
+    let mut events = r.hub.subscribe();
+    r.hub.run_flow("nightly").expect("run");
+    let run = next_run(&mut events, Duration::from_secs(30), |r| {
+        r.status != nidoo_api::RunStatus::Running
+    })
+    .await;
+
+    // The step succeeded: `failed` is a port, not an error. The run ends `Done`.
+    assert_eq!(run.status, nidoo_api::RunStatus::Done);
+    assert_eq!(step_nodes(&run), ["go", "bk", "no"]);
+    let bk = &run.steps[1];
+    assert_eq!(bk.outcome, nidoo_api::StepOutcome::Ok);
+    assert_eq!(bk.ports.as_deref(), Some(&["failed".to_owned()][..]));
+    assert!(bk.detail.starts_with("can't reach"), "{}", bk.detail);
+}
+
+/// Review focus 4: a run cancelled while it waits does not cancel the backup.
+#[tokio::test]
+async fn cancelled_run_keeps_the_backup() {
+    let Some(tdb) = fresh_db().await else { return };
+    let gate = Arc::new(GateBroker::default());
+    let r = rig(Some(&tdb.url), gate.clone(), |_| {}).await;
+    let _engine = r.hub.start_engine();
+    r.hub
+        .ingest("nidoo/automation/nightly", backup_flow(120).as_bytes());
+    tokio::task::yield_now().await;
+    let mut events = r.hub.subscribe();
+    r.hub.run_flow("nightly").expect("run");
+    // The step is waiting on the job, which is held at the retained-documents gate.
+    next_run(&mut events, Duration::from_secs(30), |run| {
+        step_nodes(run) == ["go"]
+    })
+    .await;
+    assert_eq!(r.current().await.0, StatusCode::OK, "the job runs");
+
+    r.hub
+        .set_flow_enabled("nightly", false)
+        .await
+        .expect("disable");
+    let cancelled = next_run(&mut events, Duration::from_secs(30), |run| {
+        run.status == nidoo_api::RunStatus::Cancelled
+    })
+    .await;
+    assert_eq!(step_nodes(&cancelled), ["go"]);
+    assert_eq!(r.current().await.0, StatusCode::OK, "the job still runs");
+
+    gate.release();
+    r.wait_idle(Duration::from_secs(60)).await;
+    let last = r.last().await.expect("a record");
+    assert_eq!(last["ok"], true, "{last}");
+    assert_eq!(
+        files(r.ftp_dir.path()),
+        vec![last["file"].as_str().unwrap()]
+    );
+    tdb.drop_db().await;
+}

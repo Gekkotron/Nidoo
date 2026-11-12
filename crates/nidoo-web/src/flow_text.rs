@@ -48,6 +48,7 @@ pub fn role(kind: &NodeKind) -> Role {
         NodeKind::Command(_)
         | NodeKind::FlowEnable(_)
         | NodeKind::FlowLabel(_)
+        | NodeKind::BackupRun(_)
         | NodeKind::Notify(_)
         | NodeKind::Speak(_)
         | NodeKind::Ask(_)
@@ -436,6 +437,7 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             let name = label.map_or(p.label.as_str(), |l| l.name.as_str());
             t::flow_label_card(lang, p.action, name, choice)
         }
+        NodeKind::BackupRun(_) => flow_text(lang, FlowText::NodeBackupRun).to_owned(),
     }
 }
 
@@ -518,6 +520,13 @@ pub fn exit_label(lang: Lang, kind: &NodeKind, port: &str, ctx: &Ctx) -> String 
         NodeKind::TimeBetween(p) => match port {
             "in" => format!("{}–{}", p.from, p.to),
             "out" => flow_text(lang, FlowText::Outside).to_owned(),
+            _ => String::new(),
+        },
+        NodeKind::BackupRun(_) => match port {
+            nidoo_core::flow::BACKUP_OK_PORT => flow_text(lang, FlowText::BackupOk).to_owned(),
+            nidoo_core::flow::BACKUP_FAILED_PORT => {
+                flow_text(lang, FlowText::BackupFailed).to_owned()
+            }
             _ => String::new(),
         },
         _ => String::new(),

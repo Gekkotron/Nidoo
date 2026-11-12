@@ -182,6 +182,10 @@ pub enum NodeKind {
     /// Picks a label of a choice, or turns every flow carrying a label on or off.
     #[serde(rename = "flow.label")]
     FlowLabel(FlowLabelParams),
+    /// Backs up the hub to the FTP server set in Settings → Backup and waits until it ends;
+    /// continues on `ok` or `failed`.
+    #[serde(rename = "backup.run")]
+    BackupRun(BackupRunParams),
     /// Sends a phone push notification.
     #[serde(rename = "notify")]
     Notify(NotifyParams),
@@ -220,6 +224,7 @@ impl NodeKind {
             NodeKind::Command(_) => "command",
             NodeKind::FlowEnable(_) => "flow.enable",
             NodeKind::FlowLabel(_) => "flow.label",
+            NodeKind::BackupRun(_) => "backup.run",
             NodeKind::Notify(_) => "notify",
             NodeKind::Speak(_) => "speak",
             NodeKind::Ask(_) => "ask",
@@ -257,6 +262,7 @@ impl NodeKind {
                 ports
             }
             NodeKind::TimeBetween(_) => vec!["in".into(), "out".into()],
+            NodeKind::BackupRun(_) => vec![BACKUP_OK_PORT.into(), BACKUP_FAILED_PORT.into()],
             NodeKind::Ask(p) => {
                 let mut ports: Vec<String> = (1..=p.answers.len()).map(|i| i.to_string()).collect();
                 ports.push(ASK_NONE_PORT.into());
@@ -589,6 +595,50 @@ pub struct FlowLabelParams {
     pub action: LabelAction,
     #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// The port `backup.run` takes when the backup is written.
+pub const BACKUP_OK_PORT: &str = "ok";
+/// The port `backup.run` takes when the backup fails, or the wait ends first.
+pub const BACKUP_FAILED_PORT: &str = "failed";
+
+/// Where `backup.run` sends the backup.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum BackupTarget {
+    /// The FTP server set in Settings → Backup.
+    #[default]
+    Ftp,
+}
+
+/// Params of `backup.run`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct BackupRunParams {
+    /// Where the backup goes; only `ftp` (the default) exists.
+    #[serde(default)]
+    pub destination: BackupTarget,
+    /// The time limit in minutes (1 to 1440, default 120). When the step joins a backup already
+    /// running, it is how long the step waits: on expiry it takes `failed` and the backup goes on.
+    #[serde(default = "default_backup_timeout")]
+    pub timeout_minutes: u32,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl Default for BackupRunParams {
+    fn default() -> Self {
+        Self {
+            destination: BackupTarget::default(),
+            timeout_minutes: default_backup_timeout(),
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_backup_timeout() -> u32 {
+    120
 }
 
 /// Params of `notify`: the fields of a v1 push alert.
@@ -1320,5 +1370,24 @@ mod tests {
         .unwrap();
         assert_eq!(node.kind.ports(), vec!["in", "out"]);
         assert_eq!(node.kind.type_name(), "time.between");
+    }
+
+    #[test]
+    fn backup_run_round_trips_with_defaults() {
+        let node: Node =
+            serde_json::from_str(r#"{"id":"b","type":"backup.run","params":{}}"#).unwrap();
+        let NodeKind::BackupRun(ref p) = node.kind else {
+            panic!("not a backup.run");
+        };
+        assert_eq!(p.timeout_minutes, 120);
+        assert_eq!(p.destination, BackupTarget::Ftp);
+        assert_eq!(node.kind.ports(), vec!["ok", "failed"]);
+        assert_eq!(node.kind.type_name(), "backup.run");
+        let back = serde_json::to_value(&node).unwrap();
+        assert_eq!(back["type"], "backup.run");
+        assert_eq!(back["params"]["destination"], "ftp");
+        assert_eq!(back["params"]["timeout_minutes"], 120);
+        let again: Node = serde_json::from_value(back).unwrap();
+        assert_eq!(again, node);
     }
 }
