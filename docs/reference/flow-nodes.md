@@ -466,6 +466,23 @@ Outputs: one. Only flows not already in the target state are written; invalid fl
 
 On save, an empty `label` is refused ("node `x`: choose a label"), and so is an unknown label ("unknown label `x` in node `n`") or a `pick` of a label in no choice ("label `x` is no longer in a choice in node `n`"). A node left as it was stored passes, so a flow whose label was deleted can still be saved to fix another node; at run time the step then fails with the same reason, and a `pick` in a choice with fewer than two labels fails too.
 
+## `backup.run`
+
+Backs the hub up to the FTP server set in **Settings → Backup** and waits until the backup ends. See [Backup and restore](../users/backup.md).
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `destination` | `ftp` (default) | Where the backup goes. `ftp` is the only value. |
+| `timeout_minutes` | integer, 1 to 1440 (default 120) | The time limit. When the step starts the backup, it is the backup's own limit. When the step joins a backup that is already running, it is how long the step waits. |
+
+Outputs: two, `ok` and `failed`. Both record the step as `Ok` and the run goes on along the matching port, so a failed backup does not stop the flow. Wire both to the step that shuts the NAS down.
+
+The step detail on `ok` reads `Backed up <size> to <host> as <file>`. On `failed` it is the reason: `FTP not configured`, `no backup password set`, `can't reach the FTP server (…)`, `login refused`, `FTP folder: …`, `time limit reached`, `cancelled`, or the database or file error that stopped it. A step that joins a running backup that ends badly takes `failed` with that backup's reason.
+
+When `timeout_minutes` passes while the step waits on a backup that was already running, the step takes `failed` with `time limit reached` and the backup keeps running. A run cancelled while it waits (the flow disabled, or restarted in restart mode) does not cancel the backup.
+
+On save, a `timeout_minutes` outside 1 to 1440 is refused. A flow is saved even when FTP or the backup password is not set yet: the step fails at run time instead.
+
 ## Flow labels
 
 The catalog of labels and choices is one retained document on `nidoo/flow_labels` (the `[topics] flow_labels` key, see the [Settings reference](configuration.md)), written by the hub only:
