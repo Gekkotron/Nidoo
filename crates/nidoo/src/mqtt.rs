@@ -298,7 +298,11 @@ fn static_filters(topics: &TopicsConfig, push: &[String]) -> BTreeSet<String> {
         .iter()
         .map(|prefix| format!("{prefix}/#"))
         .chain([
-            format!("{}/bridge/#", topics.z2m_base),
+            // Not `bridge/#`: that would also deliver `bridge/response/backup`, which can be
+            // bigger than this connection's packet limit (the backup has its own connection).
+            format!("{}/bridge/state", topics.z2m_base),
+            format!("{}/bridge/info", topics.z2m_base),
+            format!("{}/bridge/devices", topics.z2m_base),
             format!("{}/#", topics.ui_prefix),
             format!("{}/#", topics.automation_prefix),
         ])
@@ -424,6 +428,22 @@ mod tests {
         // `nidoo-push/...` is not under `nidoo/#`: a prefix match stops at the separator.
         let filters = static_filters(&topics, &push_filters("nidoo-push"));
         assert!(filters.contains("nidoo-push/history"));
+    }
+
+    #[test]
+    fn the_bridge_is_subscribed_by_topic_not_by_wildcard() {
+        let topics = TopicsConfig::default();
+        let filters = static_filters(&topics, &[]);
+        for topic in ["state", "info", "devices"] {
+            let want = format!("{}/bridge/{topic}", topics.z2m_base);
+            assert!(filters.contains(&want), "{want} missing: {filters:?}");
+        }
+        assert!(
+            !filters
+                .iter()
+                .any(|f| f.contains("response") || f.contains("bridge/#")),
+            "{filters:?}"
+        );
     }
 
     #[test]
