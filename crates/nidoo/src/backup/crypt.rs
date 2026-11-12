@@ -17,10 +17,16 @@ use tokio_util::compat::{
     TokioAsyncWriteCompatExt,
 };
 
+pub(crate) const TOO_COSTLY: &str =
+    "This backup's password protection is too costly for this machine to open";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenError {
     WrongPassword,
     NotABackup,
+    /// The file's passphrase work factor is far beyond what this machine does in about a
+    /// second (it was made on a much faster one).
+    TooCostly,
     Io(String),
 }
 
@@ -29,6 +35,7 @@ impl std::fmt::Display for OpenError {
         match self {
             Self::WrongPassword => f.write_str("Wrong password"),
             Self::NotABackup => f.write_str("This file is not a Nidoo backup"),
+            Self::TooCostly => f.write_str(TOO_COSTLY),
             Self::Io(e) => f.write_str(e),
         }
     }
@@ -104,6 +111,7 @@ fn map_decrypt(e: DecryptError) -> OpenError {
         DecryptError::DecryptionFailed | DecryptError::KeyDecryptionFailed => {
             OpenError::WrongPassword
         }
+        DecryptError::ExcessiveWork { .. } => OpenError::TooCostly,
         DecryptError::Io(e) if e.kind() != io::ErrorKind::UnexpectedEof => {
             OpenError::Io(e.to_string())
         }
@@ -205,6 +213,23 @@ mod tests {
         assert_eq!(err.to_string(), "This file is not a Nidoo backup");
         let err = open(&b""[..], "whatever1").await.err().unwrap();
         assert_eq!(err, OpenError::NotABackup);
+    }
+
+    #[test]
+    fn too_costly_a_passphrase_is_not_called_a_bad_file() {
+        let err = map_decrypt(DecryptError::ExcessiveWork {
+            required: 22,
+            target: 16,
+        });
+        assert_eq!(err, OpenError::TooCostly);
+        assert_eq!(
+            err.to_string(),
+            "This backup's password protection is too costly for this machine to open"
+        );
+        assert_eq!(
+            crate::backup::BackupError::from(err).to_string(),
+            "This backup's password protection is too costly for this machine to open"
+        );
     }
 
     #[tokio::test]
