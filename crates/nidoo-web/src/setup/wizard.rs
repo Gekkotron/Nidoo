@@ -8,13 +8,14 @@ use serde_json::Value;
 use super::connection::{DatabaseStep, MqttStep};
 use super::devices::DevicesStep;
 use super::done::DoneStep;
+use super::restore::RestoreStep;
 use super::services::ServicesStep;
 use super::welcome::WelcomeStep;
 use super::{SetupState, opening_step};
 use crate::i18n::setup::{SetupText, use_setup_text};
 
-/// Every step, in order; the progress line has one dot each.
-const STEPS: [SetupStep; 6] = [
+/// The steps of the setup by hand, in order; the progress line has one dot each.
+const SETUP_STEPS: [SetupStep; 6] = [
     SetupStep::Welcome,
     SetupStep::Mqtt,
     SetupStep::Database,
@@ -22,6 +23,24 @@ const STEPS: [SetupStep; 6] = [
     SetupStep::Services,
     SetupStep::Done,
 ];
+
+/// The steps of the restore path, in order.
+const RESTORE_STEPS: [SetupStep; 5] = [
+    SetupStep::Welcome,
+    SetupStep::Mqtt,
+    SetupStep::Database,
+    SetupStep::Restore,
+    SetupStep::Done,
+];
+
+/// The steps to show: the restore path replaces the devices and services steps.
+pub fn steps(restore: bool) -> &'static [SetupStep] {
+    if restore {
+        &RESTORE_STEPS
+    } else {
+        &SETUP_STEPS
+    }
+}
 
 /// The step the steps' Back and Next buttons move; provided as context by [`SetupScreen`].
 #[derive(Clone, Copy)]
@@ -80,29 +99,39 @@ pub fn SetupScreen() -> impl IntoView {
             ready.try_set(true);
         });
     }
+    let restoring = move || {
+        state.is_some_and(|s| {
+            s.0.with(|s| {
+                s.as_ref()
+                    .is_some_and(|s| s.restore_pending || s.mode == "restore")
+            })
+        })
+    };
     view! {
         <Show when=move || ready.get()>
             <div class="setup">
                 <ol class="setup__progress" aria-label=move || t(SetupText::Progress)>
-                    {STEPS
-                        .into_iter()
-                        .map(|s| {
-                            view! {
-                                <li
-                                    class=move || dot_class(step.get(), s)
-                                    aria-current=move || (step.get() == s).then_some("step")
-                                    title=move || t(step_name(s))
-                                ></li>
-                            }
-                        })
-                        .collect_view()}
+                    {move || {
+                        steps(restoring())
+                            .iter()
+                            .copied()
+                            .map(|s| {
+                                view! {
+                                    <li
+                                        class=move || dot_class(step.get(), s)
+                                        aria-current=move || (step.get() == s).then_some("step")
+                                        title=move || t(step_name(s))
+                                    ></li>
+                                }
+                            })
+                            .collect_view()
+                    }}
                 </ol>
                 {move || match step.get() {
                     SetupStep::Welcome => view! { <WelcomeStep /> }.into_any(),
                     SetupStep::Mqtt => view! { <MqttStep /> }.into_any(),
                     SetupStep::Database => view! { <DatabaseStep /> }.into_any(),
-                    // The restore screen comes with a later change.
-                    SetupStep::Restore => ().into_any(),
+                    SetupStep::Restore => view! { <RestoreStep /> }.into_any(),
                     SetupStep::Devices => {
                         let z2m_base = state
                             .and_then(|s| s.0.get_untracked())
@@ -116,5 +145,28 @@ pub fn SetupScreen() -> impl IntoView {
                 }}
             </div>
         </Show>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_path_has_five_dots() {
+        let restore = steps(true);
+        assert_eq!(restore.len(), 5);
+        assert_eq!(
+            restore,
+            [
+                SetupStep::Welcome,
+                SetupStep::Mqtt,
+                SetupStep::Database,
+                SetupStep::Restore,
+                SetupStep::Done,
+            ]
+        );
+        assert_eq!(steps(false).len(), 6);
+        assert!(!steps(false).contains(&SetupStep::Restore));
     }
 }

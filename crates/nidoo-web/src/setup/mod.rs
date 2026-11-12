@@ -3,6 +3,7 @@
 pub mod connection;
 pub mod devices;
 pub mod done;
+pub mod restore;
 pub mod services;
 pub mod welcome;
 pub mod wizard;
@@ -171,19 +172,29 @@ pub fn SetupApp() -> impl IntoView {
     }
 }
 
-/// Whether `path` must be replaced by `/setup`: any path while the hub is in setup mode, and
-/// the landing page until setup is finished.
+/// Whether the hub serves only the wizard: it has no house to show yet, because it is in setup
+/// mode or waiting for a backup to be restored.
+pub fn setup_only(status: &SetupStatus) -> bool {
+    status.mode == "setup" || status.mode == "restore"
+}
+
+/// Whether `path` must be replaced by `/setup`: any path while the hub serves only the wizard,
+/// and the landing page until setup is finished.
 pub fn redirects_to_setup(status: &SetupStatus, path: &str) -> bool {
     if path == "/setup" {
         return false;
     }
-    status.mode == "setup" || (!status.finished && path == "/")
+    setup_only(status) || (!status.finished && path == "/")
 }
 
 /// The step the wizard opens on. `query_step` (from `/setup?step=…`) wins when given, else a
 /// finished hub starts over at `Welcome` and an unfinished one resumes at its stored step. In
-/// setup mode only the steps up to `Database` work, so it never goes past that.
+/// setup mode only the steps up to `Database` work, so it never goes past that; in restore mode
+/// only the restore works.
 pub fn opening_step(status: &SetupStatus, query_step: Option<SetupStep>) -> SetupStep {
+    if status.mode == "restore" {
+        return SetupStep::Restore;
+    }
     let step = query_step.unwrap_or(if status.finished {
         SetupStep::Welcome
     } else {
@@ -227,6 +238,26 @@ mod tests {
         assert!(redirects_to_setup(&s, "/"));
         assert!(redirects_to_setup(&s, "/dashboards/house"));
         assert!(!redirects_to_setup(&s, "/setup"));
+    }
+
+    #[test]
+    fn restore_mode_sends_every_path_to_setup() {
+        let s = status("restore", false, SetupStep::Restore);
+        assert!(redirects_to_setup(&s, "/"));
+        assert!(redirects_to_setup(&s, "/rooms/x"));
+        assert!(!redirects_to_setup(&s, "/setup"));
+        assert!(setup_only(&s));
+        assert!(!setup_only(&status("running", false, SetupStep::Devices)));
+    }
+
+    #[test]
+    fn opening_step_in_restore_mode() {
+        let s = status("restore", false, SetupStep::Database);
+        assert_eq!(opening_step(&s, None), SetupStep::Restore);
+        assert_eq!(
+            opening_step(&s, Some(SetupStep::Welcome)),
+            SetupStep::Restore
+        );
     }
 
     #[test]

@@ -514,19 +514,25 @@ pub fn MqttStep() -> impl IntoView {
 }
 
 /// The Database step. Saving it restarts a hub that is still in setup mode, so the overlay
-/// reloads into Devices in running mode.
+/// reloads into Devices in running mode, or into Restore when a restore is pending.
 #[component]
 pub fn DatabaseStep() -> impl IntoView {
     let t = use_setup_text();
     let nav = expect_context::<WizardNav>();
     let state = use_context::<SetupState>();
+    // With a restore pending, saving the database restarts the hub into restore mode.
+    let target = if known_status().is_some_and(|s| s.restore_pending) {
+        SetupStep::Restore
+    } else {
+        SetupStep::Devices
+    };
     view! {
         <div class="setup__body">
             <h1 class="setup__title">{move || t(SetupText::DatabaseTitle)}</h1>
             <p class="setup__lead">{move || t(SetupText::DatabaseLead)}</p>
             <DatabaseForm
                 initial=known_status().and_then(|s| s.database)
-                applying_target=setup_href(SetupStep::Devices)
+                applying_target=setup_href(target)
                 on_saved=move |s: SetupStatus| {
                     // Only reached when the hub did not restart. A hub still in setup mode has
                     // no house to show Devices with, so it goes back to the broker.

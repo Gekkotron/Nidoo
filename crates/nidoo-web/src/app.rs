@@ -42,7 +42,7 @@ use crate::screens::solar::SolarScreen;
 use crate::screens::weather::WeatherScreen;
 use crate::setup::wizard::SetupScreen;
 use crate::setup::{
-    Applying, ApplyingOverlay, SetupApp, SetupState, redirects_to_setup, reload_to,
+    Applying, ApplyingOverlay, SetupApp, SetupState, redirects_to_setup, reload_to, setup_only,
 };
 use crate::shell::Shell;
 use crate::theme::install_theme;
@@ -108,7 +108,7 @@ pub fn Root() -> impl IntoView {
             loaded
                 .get()
                 .then(|| {
-                    if state.0.with_untracked(|s| s.as_ref().is_some_and(|s| s.mode == "setup")) {
+                    if state.0.with_untracked(|s| s.as_ref().is_some_and(setup_only)) {
                         view! { <SetupApp /> }.into_any()
                     } else {
                         view! { <App /> }.into_any()
