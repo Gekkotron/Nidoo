@@ -24,6 +24,9 @@ const RESTART_DELAY: Duration = Duration::from_secs(1);
 
 pub enum Boot {
     Setup(Arc<SetupCtx>),
+    /// A complete file with a restore pending: the database is open and migrated, and only the
+    /// setup and restore screens are served.
+    Restore(Arc<SetupCtx>),
     Run {
         cfg: Box<Config>,
         ctx: Arc<SetupCtx>,
@@ -60,6 +63,25 @@ pub async fn resolve(data_dir: &Path) -> anyhow::Result<Boot> {
             None
         }
     };
+    if file.restore.is_some() {
+        if let Some(db) = &db {
+            match tokio::time::timeout(DB_WAIT, db.migrate()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::warn!(%error, "restore: cannot migrate the database"),
+                Err(_) => tracing::warn!("restore: cannot migrate the database (no answer)"),
+            }
+        }
+        let sections = read_cache(data_dir).unwrap_or_default();
+        let ctx = SetupCtx::new(
+            data_dir.to_path_buf(),
+            Mode::Restore,
+            file,
+            db,
+            sections,
+            restart,
+        );
+        return Ok(Boot::Restore(Arc::new(ctx)));
+    }
     let sections = load_or_cached(db.as_ref(), data_dir).await;
     let cfg = assemble(&file, &sections);
     let ctx = Arc::new(SetupCtx::new(
@@ -226,6 +248,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::setup::hub_file::RestoreState;
 
     /// `resolve` reads `NIDOO_*`, so each call runs inside figment's lock on a runtime of its
     /// own.
@@ -259,6 +282,23 @@ mod tests {
         };
         assert_eq!(ctx.mode, Mode::Setup);
         assert!(ctx.db.is_none());
+    }
+
+    #[test]
+    fn complete_file_with_restore_pending_boots_restore_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = HubFile {
+            mqtt: Some(crate::config::MqttConfig::default()),
+            database_url: Some(DOWN.into()),
+            restore: Some(RestoreState::default()),
+            ..HubFile::default()
+        };
+        file.save(tmp.path()).unwrap();
+        let Boot::Restore(ctx) = resolve_locked(tmp.path()).unwrap() else {
+            panic!("expected restore mode")
+        };
+        assert_eq!(ctx.mode, Mode::Restore);
+        assert!(ctx.db.is_some());
     }
 
     #[test]

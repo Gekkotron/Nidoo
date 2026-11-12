@@ -22,7 +22,10 @@ pub fn lan_addresses(ifaces: &[(String, IpAddr)]) -> Vec<Ipv4Addr> {
 
 /// One line per address; `localhost` when there is none.
 pub fn banner_lines(addrs: &[Ipv4Addr], port: u16, finished: bool) -> Vec<String> {
-    let what = if finished { "open" } else { "set up" };
+    lines_for(addrs, port, if finished { "open" } else { "set up" })
+}
+
+fn lines_for(addrs: &[Ipv4Addr], port: u16, what: &str) -> Vec<String> {
     let line = |host: String| format!("Open http://{host}:{port} to {what} your home");
     if addrs.is_empty() {
         return vec![line("localhost".to_string())];
@@ -43,13 +46,22 @@ fn addrs_for_bind(bind: &str, ifaces: &[(String, IpAddr)]) -> Option<(Vec<Ipv4Ad
 
 /// Logs where to open the hub. Thin glue over the pure functions above.
 pub fn log_banner(bind: &str, finished: bool) {
+    log_lines(bind, if finished { "open" } else { "set up" });
+}
+
+/// Logs where to open the hub while it waits for a backup to be restored.
+pub fn log_restore_banner(bind: &str) {
+    log_lines(bind, "restore a backup into");
+}
+
+fn log_lines(bind: &str, what: &str) {
     let ifaces: Vec<(String, IpAddr)> = if_addrs::get_if_addrs()
         .map(|list| list.into_iter().map(|i| (i.name.clone(), i.ip())).collect())
         .unwrap_or_default();
     let Some((addrs, port)) = addrs_for_bind(bind, &ifaces) else {
         return;
     };
-    for line in banner_lines(&addrs, port, finished) {
+    for line in lines_for(&addrs, port, what) {
         tracing::info!("{line}");
     }
 }

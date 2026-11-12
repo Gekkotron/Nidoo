@@ -26,6 +26,8 @@ pub enum SetupStep {
     Welcome,
     Mqtt,
     Database,
+    /// Restoring a backup instead of setting the house up by hand.
+    Restore,
     Devices,
     Services,
     Done,
@@ -255,7 +257,7 @@ pub struct PushInput {
 /// Where the setup stands, as `GET /api/v1/setup` reports it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SetupStatus {
-    /// `"setup"` or `"running"`.
+    /// `"setup"`, `"restore"` or `"running"`.
     pub mode: String,
     pub step: SetupStep,
     pub finished: bool,
@@ -265,12 +267,25 @@ pub struct SetupStatus {
     pub mqtt: Option<MqttView>,
     pub database: Option<DatabaseView>,
     pub restarting: bool,
+    /// Whether the hub is set to restore a backup rather than finish the setup by hand.
+    #[serde(default)]
+    pub restore_pending: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn setup_step_restore_orders_between_database_and_devices() {
+        assert!(SetupStep::Database < SetupStep::Restore);
+        assert!(SetupStep::Restore < SetupStep::Devices);
+        assert_eq!(
+            serde_json::to_value(SetupStep::Restore).unwrap(),
+            json!("restore")
+        );
+    }
 
     #[test]
     fn secret_in_a_body() {

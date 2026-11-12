@@ -44,6 +44,17 @@ pub struct HubFile {
     pub log: LogConfig,
     pub step: SetupStep,
     pub finished: bool,
+    /// Set while the hub is to restore a backup before it runs; absent in files written before
+    /// the restore existed.
+    pub restore: Option<RestoreState>,
+}
+
+/// Where a pending restore stands.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RestoreState {
+    /// Whether a restore has been started on this hub.
+    pub attempted: bool,
 }
 
 impl fmt::Debug for HubFile {
@@ -60,6 +71,7 @@ impl fmt::Debug for HubFile {
             .field("log", &self.log)
             .field("step", &self.step)
             .field("finished", &self.finished)
+            .field("restore", &self.restore)
             .finish()
     }
 }
@@ -185,6 +197,19 @@ mod tests {
     #![allow(clippy::result_large_err)] // figment::Jail closures return figment::Error
 
     use super::*;
+
+    #[test]
+    fn restore_flag_round_trips_and_old_files_load() {
+        let old: HubFile = serde_json::from_str(r#"{"finished":true}"#).unwrap();
+        assert_eq!(old.restore, None);
+        let file = HubFile {
+            restore: Some(RestoreState { attempted: true }),
+            ..HubFile::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        file.save(tmp.path()).unwrap();
+        assert_eq!(HubFile::load(tmp.path()).unwrap().unwrap(), file);
+    }
 
     fn full() -> HubFile {
         HubFile {

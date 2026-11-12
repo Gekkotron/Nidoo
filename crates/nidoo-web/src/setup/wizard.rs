@@ -34,6 +34,7 @@ fn step_name(step: SetupStep) -> SetupText {
         SetupStep::Welcome => SetupText::StepWelcome,
         SetupStep::Mqtt => SetupText::StepMqtt,
         SetupStep::Database => SetupText::StepDatabase,
+        SetupStep::Restore => SetupText::StepRestore,
         SetupStep::Devices => SetupText::StepDevices,
         SetupStep::Services => SetupText::StepServices,
         SetupStep::Done => SetupText::StepDone,
@@ -100,6 +101,8 @@ pub fn SetupScreen() -> impl IntoView {
                     SetupStep::Welcome => view! { <WelcomeStep /> }.into_any(),
                     SetupStep::Mqtt => view! { <MqttStep /> }.into_any(),
                     SetupStep::Database => view! { <DatabaseStep /> }.into_any(),
+                    // The restore screen comes with a later change.
+                    SetupStep::Restore => ().into_any(),
                     SetupStep::Devices => {
                         let z2m_base = state
                             .and_then(|s| s.0.get_untracked())

@@ -1494,3 +1494,94 @@ async fn mobile_save_without_database_is_unavailable() {
     assert_eq!(v["gateway_url"], Value::Null);
     assert_eq!(s.restarts.load(Ordering::SeqCst), 0);
 }
+
+// ---- the restore path ------------------------------------------------------------------
+
+fn restoring() -> HubFile {
+    HubFile {
+        database_url: Some("postgres://u:p@192.0.2.2/nidoo".into()),
+        restore: Some(nidoo::setup::hub_file::RestoreState::default()),
+        step: nidoo_api::SetupStep::Restore,
+        ..mqtt_file("192.0.2.1")
+    }
+}
+
+#[tokio::test]
+async fn restore_path_lands_on_the_restore_step() {
+    let Some(tdb) = crate::common::db::fresh_db().await else {
+        return;
+    };
+    let url = url::Url::parse(&tdb.url).unwrap();
+    let s = setup_server().await;
+    let (code, body) = s.put("/restore", json!({"pending": true})).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["restore_pending"], true);
+    let port = fake_broker(0).await;
+    let (code, _) = s
+        .put("/mqtt", json!({"host":"127.0.0.1","port":port}))
+        .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 0, "not complete yet");
+    let (code, body) = s
+        .put(
+            "/database",
+            json!({
+                "host": url.host_str().unwrap(),
+                "port": url.port().unwrap_or(5432),
+                "database": url.path().trim_start_matches('/'),
+                "user": url.username(),
+                "password": url.password().unwrap_or(""),
+            }),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["step"], "restore");
+    let file = HubFile::load(s.dir.path()).unwrap().unwrap();
+    assert_eq!(file.step, nidoo_api::SetupStep::Restore);
+    assert!(file.restore.is_some());
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 1);
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn abandoning_restore_returns_to_devices() {
+    let s = serve(Mode::Restore, restoring(), None, false).await;
+    let (code, body) = s.put("/restore", json!({"pending": false})).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["step"], "devices");
+    assert_eq!(body["restore_pending"], false);
+    let file = HubFile::load(s.dir.path()).unwrap().unwrap();
+    assert_eq!(file.step, nidoo_api::SetupStep::Devices);
+    assert!(file.restore.is_none());
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 1, "restarts into Run");
+}
+
+#[tokio::test]
+async fn restore_mode_refuses_settings_writes_and_a_second_pending() {
+    let s = serve_settings(Mode::Restore, restoring(), Sections::default(), None, None).await;
+    let (code, body) = s.sput("/solcast", json!({})).await;
+    assert_eq!(code, StatusCode::CONFLICT);
+    assert_eq!(body, json!({"error": "finish the restore first"}));
+    let (code, _) = s.put("/restore", json!({"pending": true})).await;
+    assert_eq!(code, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn pending_toggles_in_setup_mode() {
+    let s = setup_server().await;
+    let (_, body) = s.put("/restore", json!({"pending": true})).await;
+    assert_eq!(body["restore_pending"], true);
+    let (_, body) = s.put("/restore", json!({"pending": false})).await;
+    assert_eq!(body["restore_pending"], false);
+    assert_eq!(s.restarts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn pending_refused_on_a_running_hub() {
+    let s = serve_settings(Mode::Run, located(), Sections::default(), None, None).await;
+    for pending in [true, false] {
+        let (code, _) = s.put("/restore", json!({"pending": pending})).await;
+        assert_eq!(code, StatusCode::CONFLICT);
+    }
+    assert!(s.hub_json().is_none(), "nothing saved");
+}

@@ -30,6 +30,9 @@ use sections::Sections;
 pub enum Mode {
     /// Not configured yet: only the setup screens are served.
     Setup,
+    /// The database is reachable and a backup is to be restored into it: only the setup and
+    /// restore screens are served.
+    Restore,
     /// The whole hub.
     Run,
 }
