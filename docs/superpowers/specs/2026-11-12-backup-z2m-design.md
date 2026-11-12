@@ -73,22 +73,22 @@ machine), with no file access from the hub to Z2M's folder.
   "Zigbee2MQTT's backup is too big (over 24 MB)", not a generic timeout. Mosquitto's default
   `message_size_limit` allows this; the docs mention it for brokers that set a lower one.
 - **When Z2M is not there** *(design call)*:
-  - `z2m_base` not set in `hub.json` → no Z2M on this hub: no request, plain **ok**, and the
-    switch shows as unavailable ("No Zigbee2MQTT set up") in Settings → Backup.
-  - Bridge known **offline** (the registry's `bridge/state`) → skip at once, no 60 s wait, outcome
-    **partial** with "Zigbee2MQTT is offline". This is exactly the bad night the warning exists for.
-  - Bridge state unknown or online → send the request and wait as above.
+  - The topic base always has a value (`topics.z2m_base`, default `zigbee2mqtt`), so "no Z2M" is
+    read from the registry's bridge availability (`bridge/state`, retained by Z2M):
+  - **Unknown** (this hub has never seen a Z2M bridge) → no request, not included, plain **ok**.
+  - **Offline** → skip at once, no 60 s wait, outcome **partial** with "Zigbee2MQTT is offline".
+    This is exactly the bad night the warning exists for.
+  - **Online** → send the request and wait as above.
 - With the switch off, no request is sent and the outcome is plain ok.
 
 ### In the file
 
-- A new tar entry `z2m/backup.zip` (the zip as Z2M sent it, decoded from base64), split like the
-  other parts if bigger than `MAX_ENTRY`, placed **after `settings.json` and before `retained/`**
+- New tar entries `z2m/000001.zip`, `z2m/000002.zip`… (the zip as Z2M sent it, decoded from
+  base64, cut at `MAX_ENTRY` = 8 MiB; concatenated they are the zip), placed **after `settings.json` and before `retained/`**
   so the wizard reaches it early when scanning a file. Exact layout is the builder's call.
-- The `Manifest` gains `z2m: Option<Z2mManifest>` (`bytes`, Z2M version if the bridge info gives
-  it). `None` = not included (switch off, or skipped). Old backups without the field read as
-  `None`. **`FORMAT` goes to 2** *(design call)*: an older hub refuses the file with its existing
-  "newer Nidoo" message instead of misreading it; a new hub still reads format 1.
+- The `Manifest` gains `z2m: Option<Z2mManifest>` (`bytes`). `None` = not included (switch off, or skipped). Old backups without the field read as
+  `None`. **`FORMAT` goes to 2** *(design call)* for every new file: an older hub refuses it with
+  its existing "newer Nidoo" message instead of misreading it; a new hub still reads format 1.
 - The restore reader (`restore_into` in `archive.rs`) rejects unknown entries between
   `settings.json` and `retained/` today; it must accept `z2m/…` there (and skip it for the
   restore itself, see *Restore wizard*).
@@ -110,8 +110,8 @@ Z2M part was skipped.
   not push (the user is looking at the page).
 - **Backup page**: the last-backup line shows an amber warning with the reason instead of green.
   During a browser download the warning shows on the page when the job ends.
-- **System sensor**: the backup problem sensor is **on** for a partial backup, with the reason as
-  its detail, same as for a failure.
+- **System sensor**: unchanged. There is only `system_last_backup` (last *successful* backup),
+  which moves for a partial backup since its file is complete.
 - **Flow action `backup.run`**: a third port **`partial`** (`BACKUP_PARTIAL_PORT`), detail "Backed
   up <size> to <host> as <file>, without Zigbee2MQTT data: <reason>". Step outcome `Ok`, like the
   other two.
@@ -125,14 +125,12 @@ Z2M part was skipped.
 ### Restore wizard
 
 - The summary step (`BackupSummary`) gains `z2m_bytes: Option<u64>`; when present the summary shows
-  "Includes Zigbee2MQTT data (<size>)" and a **"Download the Zigbee2MQTT data"** button that
-  streams `z2m/backup.zip` out of the backup (decrypting with the password just entered) as a
-  plain `.zip` download, named `zigbee2mqtt-backup-<date>.zip`.
-  - From FTP: the hub reads the backup up to that entry and streams it. From an uploaded file the
-    file is a single stream, so the wizard instead extracts the zip **during the restore pass** and
-    keeps it for download afterwards — builder's call between that and asking the user to upload
-    the file again; no full-backup temp copy either way (anti-goal of the parent design). Keeping
-    the small zip on disk under `data/` until the restore finishes is fine.
+  "Includes Zigbee2MQTT data (<size>). You can download it from Settings → Backup once restored."
+- The restore pass keeps the zip: it writes `data/zigbee2mqtt-restored.zip` (mode 0600). Same for
+  FTP and uploaded files, since an upload is a single stream that can't be read twice.
+- After the restart, **Settings → Backup** shows a "Zigbee2MQTT data from the restored backup"
+  card while that file exists: size, **Download** (`zigbee2mqtt-backup.zip`) and **Delete**
+  (it holds the Zigbee network key in clear on the hub's disk, next to `hub.json`).
 - The restore itself does **not** touch Z2M. The Done screen reminds: "To bring your Zigbee network
   back, put the Zigbee2MQTT data into its folder before starting it — see the backup guide."
 
@@ -141,8 +139,8 @@ Z2M part was skipped.
 - `docs/users/backup.md`: what's in a backup now includes Z2M data (when the switch is on), remove
   it from "Things that are not Nidoo's", the partial outcome and its push, the `partial` port and
   its fallback, and a **"Putting Zigbee2MQTT back"** section: stop Z2M, unzip into its data folder
-  (Docker bind mount or install dir), start it; by hand: `age -d … | zstd -d | tar x` then the zip
-  is `z2m/backup.zip`.
+  (Docker bind mount or install dir), start it; by hand: `age -d … | zstd -d | tar x` then concatenate
+  `z2m/*.zip` (`cat z2m/*.zip > zigbee2mqtt.zip`).
 - `docs/users/zigbee2mqtt.md`: one line pointing to it.
 - Reference: `flow-nodes.md` (third port), `http-api.md` (new fields), `configuration.md`
   (`include_z2m`), `mqtt-topics.md` (the hub now publishes `bridge/request/backup`).
@@ -158,10 +156,8 @@ Z2M part was skipped.
 
 ## Left to the builder
 
-- Entry splitting.
 - Where the request/response helper lives and how it subscribes (on its own connection, see
   *Packet size*).
-- Uploaded-file restore: keep the extracted zip vs ask for the file again.
 - Icons, exact wording beyond the strings above (FR/EN via i18n).
 
 ## Follow-up for the author's install (not code)
