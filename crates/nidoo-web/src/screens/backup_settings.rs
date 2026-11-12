@@ -20,6 +20,9 @@ use crate::screens::system_settings::size;
 
 /// How often the running backup is read again.
 const POLL_MS: u32 = 1000;
+/// How often, and how many times, the page looks for the job a browser download starts.
+const DOWNLOAD_PICKUP_MS: u32 = 300;
+const DOWNLOAD_PICKUP_TRIES: u32 = 10;
 
 /// The fewest characters a backup password may have.
 const MIN_PASSWORD: usize = 8;
@@ -352,6 +355,24 @@ pub fn BackupSettingsPage() -> impl IntoView {
             }
         });
     };
+    // A browser download is a job too: once the browser's request starts it, follow it so the
+    // page shows its record (and its partial warning) when it ends, without a reload.
+    let after_download = move |_| {
+        spawn_local(async move {
+            for _ in 0..DOWNLOAD_PICKUP_TRIES {
+                gloo_timers::future::TimeoutFuture::new(DOWNLOAD_PICKUP_MS).await;
+                if let Ok(Some(p)) = api::backup_current().await
+                    && p.state == BackupState::Running
+                {
+                    progress.try_set(Some(p));
+                    follow.run(());
+                    return;
+                }
+            }
+            // Too quick to catch: the record is already there.
+            reload_last();
+        });
+    };
     let cancel = move |_| {
         spawn_local(async move {
             if let Err(e) = api::cancel_backup().await {
@@ -557,6 +578,7 @@ pub fn BackupSettingsPage() -> impl IntoView {
                         href=move || (!download_blocked()).then_some(DOWNLOAD_PATH)
                         download=""
                         aria-disabled=move || download_blocked().to_string()
+                        on:click=after_download
                     >
                         {move || t(BackupText::DownloadBackup)}
                     </a>

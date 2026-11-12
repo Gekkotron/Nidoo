@@ -390,6 +390,47 @@ async fn the_z2m_switch_sends_the_flipped_flag() {
 }
 
 #[wasm_bindgen_test]
+async fn a_browser_download_shows_its_partial_warning_when_it_ends() {
+    use wasm_bindgen::JsCast;
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/settings/backup",
+        200,
+        &view_json(true, "nas.local").to_string(),
+    );
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    stub.reply("GET", "/api/v1/backup/restored-z2m/info", 404, "");
+    stub.reply("GET", "/api/v1/backup/last", 204, "");
+    let m = mount("/settings/backup");
+    wait_for(&m.host, ".backup__download", 1).await;
+    settle().await;
+    // The click must not really start a browser download in the test page.
+    let stop = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+        |e: web_sys::Event| e.prevent_default(),
+    );
+    m.host
+        .add_event_listener_with_callback("click", stop.as_ref().unchecked_ref())
+        .unwrap();
+    // The download job is running, then ends leaving a record with a warning.
+    stub.reply(
+        "GET",
+        "/api/v1/backup/current",
+        200,
+        &progress_json().to_string(),
+    );
+    one(&m.host, ".backup__download").click();
+    wait_for(&m.host, ".backup__progress", 1).await;
+    stub.reply("GET", "/api/v1/backup/current", 204, "");
+    let mut last = last_json();
+    last["destination"] = json!("download");
+    last["warning"] = json!("Zigbee2MQTT is offline");
+    stub.reply("GET", "/api/v1/backup/last", 200, &last.to_string());
+    wait_for_ms(&m.host, ".backup__last-warning", 1, 5000).await;
+    assert_eq!(all(&m.host, ".backup__last-outcome--partial").len(), 1);
+}
+
+#[wasm_bindgen_test]
 async fn a_partial_backup_shows_its_reason_in_the_warning_style() {
     let stub = FetchStub::install();
     stub.reply(
