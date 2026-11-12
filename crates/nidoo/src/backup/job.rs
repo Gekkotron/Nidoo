@@ -40,6 +40,10 @@ pub const RECORD_FILE: &str = "backup-last.json";
 /// The pipe between the archive writer and the upload or the HTTP body.
 const PIPE: usize = 256 * 1024;
 const UPLOAD_BUFFER: usize = 64 * 1024;
+/// The chunks the HTTP body is sent in.
+const BODY_CHUNK: usize = 64 * 1024;
+/// A download whose browser reads nothing for this long, with bytes waiting, is cancelled.
+pub const DOWNLOAD_IDLE: Duration = Duration::from_secs(10 * 60);
 
 type Outcome = Option<Result<BackupDone, BackupError>>;
 
@@ -63,6 +67,7 @@ pub struct Backups {
     /// The broker the retained documents are read from; the hub's own broker (over a
     /// connection of its own) unless a test set another.
     broker: Mutex<Option<Arc<dyn RetainedBroker>>>,
+    download_idle: Mutex<Duration>,
 }
 
 impl Backups {
@@ -72,6 +77,7 @@ impl Backups {
             layout: Layout::from_config(cfg),
             mqtt: cfg.mqtt.clone(),
             broker: Mutex::new(None),
+            download_idle: Mutex::new(DOWNLOAD_IDLE),
         }
     }
 
@@ -94,6 +100,8 @@ struct Run {
     file: String,
     /// Bytes of the file handed on so far.
     sent: Arc<AtomicU64>,
+    /// Bytes put into the pipe so far.
+    written: Arc<AtomicU64>,
 }
 
 impl Run {
@@ -128,6 +136,7 @@ fn claim(
         started_at: progress.started_at,
         file: progress.file.clone(),
         sent: Arc::default(),
+        written: Arc::default(),
     };
     *held = Some(Job {
         progress,
@@ -142,6 +151,7 @@ fn claim(
 struct Head {
     inner: DuplexStream,
     complete: Arc<AtomicBool>,
+    written: Arc<AtomicU64>,
 }
 
 impl AsyncWrite for Head {
@@ -150,7 +160,9 @@ impl AsyncWrite for Head {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.inner).poll_write(cx, buf)
+        let n = ready!(Pin::new(&mut self.inner).poll_write(cx, buf))?;
+        self.written.fetch_add(n as u64, Ordering::Relaxed);
+        Poll::Ready(Ok(n))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -201,14 +213,15 @@ impl AsyncRead for Tail {
 }
 
 /// A pipe for one backup: the writer's end, the reader's end and the signal the reader sends
-/// when it read the whole file.
-fn pipe(sent: &Arc<AtomicU64>) -> (Head, Tail, oneshot::Receiver<()>) {
+/// when it read the whole file. `written` and `sent` count the bytes in and out.
+fn pipe(written: &Arc<AtomicU64>, sent: &Arc<AtomicU64>) -> (Head, Tail, oneshot::Receiver<()>) {
     let (w, r) = tokio::io::duplex(PIPE);
     let complete = Arc::new(AtomicBool::new(false));
     let (end_tx, end_rx) = oneshot::channel();
     let head = Head {
         inner: w,
         complete: Arc::clone(&complete),
+        written: Arc::clone(written),
     };
     let tail = Tail {
         inner: r,
@@ -217,6 +230,24 @@ fn pipe(sent: &Arc<AtomicU64>) -> (Head, Tail, oneshot::Receiver<()>) {
         end: Some(end_tx),
     };
     (head, tail, end_rx)
+}
+
+/// Resolves once the reader has taken nothing for `limit` while bytes wait in the pipe. A slow
+/// reader that keeps taking, or a writer with nothing to give yet, never trips it.
+async fn stalled(read: &AtomicU64, written: &AtomicU64, limit: Duration) {
+    let step = (limit / 10).max(Duration::from_millis(10));
+    let mut last = read.load(Ordering::Relaxed);
+    let mut since = tokio::time::Instant::now();
+    loop {
+        tokio::time::sleep(step).await;
+        let now = read.load(Ordering::Relaxed);
+        if now != last || written.load(Ordering::Relaxed) <= now {
+            last = now;
+            since = tokio::time::Instant::now();
+        } else if since.elapsed() >= limit {
+            return;
+        }
+    }
 }
 
 /// The data directory's last-backup record; `None` when there is none or it can't be read.
@@ -339,7 +370,7 @@ impl Hub {
         let job = held.as_ref().expect("just claimed");
         let started = (job.progress.clone(), job.done.clone());
         tokio::spawn(async move {
-            hub.run_backup(ctx, run, Kind::Ftp, Some(limit), cancelled, done)
+            hub.run_backup(ctx, Arc::new(run), Kind::Ftp, Some(limit), cancelled, done)
                 .await;
         });
         Ok(started)
@@ -369,13 +400,14 @@ impl Hub {
         let hub = self.me.upgrade().ok_or_else(hub_gone)?;
         let (run, cancelled, done) =
             claim(&self.backups.job, &mut held, BackupDestination::Download);
-        let (head, tail, end) = pipe(&run.sent);
+        let (head, tail, end) = pipe(&run.written, &run.sent);
         let file = run.file.clone();
         tokio::spawn(async move {
             let kind = Kind::Download { head, end };
-            hub.run_backup(ctx, run, kind, None, cancelled, done).await;
+            hub.run_backup(ctx, Arc::new(run), kind, None, cancelled, done)
+                .await;
         });
-        Ok((file, ReaderStream::new(tail)))
+        Ok((file, ReaderStream::with_capacity(tail, BODY_CHUNK)))
     }
 
     /// The running backup, if any.
@@ -435,34 +467,60 @@ impl Hub {
         }
     }
 
-    /// The whole job, from its first step to the record.
+    /// For tests: how long a download may sit unread before it is cancelled.
+    #[doc(hidden)]
+    pub fn set_backup_download_idle(&self, idle: Duration) {
+        *lock(&self.backups.download_idle) = idle;
+    }
+
+    /// The whole job, from its first step to the record. The work runs in a task of its own, so
+    /// the record is written and the slot freed however it ends, a panic included.
     async fn run_backup(
-        &self,
+        self: Arc<Self>,
         ctx: Arc<SetupCtx>,
-        run: Run,
+        run: Arc<Run>,
         kind: Kind,
         limit: Option<Duration>,
         mut cancelled: watch::Receiver<bool>,
         done: watch::Sender<Outcome>,
     ) {
-        let work = async {
-            match kind {
-                Kind::Ftp => self.ftp_job(&ctx, &run).await,
-                Kind::Download { head, end } => self.download_job(&ctx, &run, head, end).await,
+        let mut work = {
+            let (hub, ctx, run) = (Arc::clone(&self), Arc::clone(&ctx), Arc::clone(&run));
+            tokio::spawn(async move {
+                match kind {
+                    Kind::Ftp => hub.ftp_job(&ctx, &run).await,
+                    Kind::Download { head, end } => hub.download_job(&ctx, &run, head, end).await,
+                }
+            })
+        };
+        let mut joined = false;
+        let outcome = {
+            let finished = async {
+                let outcome = (&mut work).await;
+                joined = true;
+                outcome.unwrap_or_else(|error| {
+                    tracing::error!(%error, "the backup job died");
+                    Err(BackupError::Io("the backup stopped".into()))
+                })
+            };
+            let limited = async {
+                match limit {
+                    Some(limit) => tokio::time::timeout(limit, finished)
+                        .await
+                        .unwrap_or(Err(BackupError::TimeLimit)),
+                    None => finished.await,
+                }
+            };
+            tokio::select! {
+                outcome = limited => outcome,
+                Ok(_) = cancelled.wait_for(|c| *c) => Err(BackupError::Cancelled),
             }
         };
-        let limited = async {
-            match limit {
-                Some(limit) => tokio::time::timeout(limit, work)
-                    .await
-                    .unwrap_or(Err(BackupError::TimeLimit)),
-                None => work.await,
-            }
-        };
-        let outcome = tokio::select! {
-            outcome = limited => outcome,
-            Ok(_) = cancelled.wait_for(|c| *c) => Err(BackupError::Cancelled),
-        };
+        if !joined {
+            // Stopped from outside: end the work (its pipe, connection and snapshot) first.
+            work.abort();
+            let _ = work.await;
+        }
         self.end_backup(&ctx, &run, outcome, done).await;
     }
 
@@ -474,6 +532,14 @@ impl Hub {
         outcome: Result<BackupDone, BackupError>,
         done: watch::Sender<Outcome>,
     ) {
+        // The job's own check of the settings, when the one before the start was skipped:
+        // a refusal like a 409, so no record and no push.
+        if let Err(error @ (BackupError::NoPassword | BackupError::FtpNotConfigured)) = &outcome {
+            tracing::warn!(%error, "backup refused");
+            *lock(&run.slot) = None;
+            done.send_replace(Some(outcome));
+            return;
+        }
         let ended_at = Utc::now().timestamp();
         let previous = read_record(&ctx.data_dir).and_then(|r| r.last_ok_at);
         let record = LastBackup {
@@ -541,7 +607,7 @@ impl Hub {
         let broker = self.backups.broker();
         let sources = self.backup_sources(ctx, &*broker, fields)?;
         let mut store = FtpStore::connect(&ftp).await?;
-        let (head, tail, _end) = pipe(&run.sent);
+        let (head, tail, _end) = pipe(&run.written, &run.sent);
 
         // Whichever side fails first holds the cause; the other then fails on the pipe.
         let first = Mutex::new(None);
@@ -614,6 +680,9 @@ impl Hub {
                 p.bytes = bytes;
             })
         };
+        let idle = *lock(&self.backups.download_idle);
+        let stall = stalled(&run.sent, &run.written, idle);
+        tokio::pin!(stall);
         let write = write_backup(sources, head, &password, &progress);
         tokio::pin!(write);
         let mut read_all = false;
@@ -625,6 +694,8 @@ impl Hub {
                     // The body was dropped: nobody reads the rest.
                     Err(_) => return Err(BackupError::Cancelled),
                 },
+                // The browser stopped reading: free the slot and the snapshot.
+                () = &mut stall => return Err(BackupError::Cancelled),
             }
         };
         if let Err(e) = written {
@@ -633,8 +704,14 @@ impl Hub {
             return Err(if left { BackupError::Cancelled } else { e });
         }
         run.update(|p| p.part = BackupPart::Download);
-        if !read_all && end.await.is_err() {
-            return Err(BackupError::Cancelled);
+        if !read_all {
+            let read = tokio::select! {
+                read = end => read.is_ok(),
+                () = &mut stall => false,
+            };
+            if !read {
+                return Err(BackupError::Cancelled);
+            }
         }
         Ok(BackupDone {
             file: run.file.clone(),
@@ -713,7 +790,8 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let sent = Arc::new(AtomicU64::new(0));
-        let (mut head, mut tail, end) = pipe(&sent);
+        let written = Arc::new(AtomicU64::new(0));
+        let (mut head, mut tail, end) = pipe(&written, &sent);
         head.write_all(b"abc").await.unwrap();
         drop(head);
         let mut got = Vec::new();
@@ -723,7 +801,7 @@ mod tests {
         drop(tail);
         assert!(end.await.is_err(), "no clean end");
 
-        let (mut head, mut tail, end) = pipe(&sent);
+        let (mut head, mut tail, end) = pipe(&written, &sent);
         head.write_all(b"defg").await.unwrap();
         head.shutdown().await.unwrap();
         let mut got = Vec::new();
@@ -733,12 +811,39 @@ mod tests {
         assert_eq!(sent.load(Ordering::Relaxed), 7);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn stall_needs_bytes_waiting_and_no_reads() {
+        let limit = Duration::from_secs(600);
+        let (read, written) = (AtomicU64::new(0), AtomicU64::new(0));
+        // Nothing written yet (collecting, counting): never stalled.
+        let quiet = tokio::time::timeout(limit * 3, stalled(&read, &written, limit)).await;
+        assert!(quiet.is_err());
+        // A slow reader that keeps taking: never stalled.
+        written.store(1_000, Ordering::Relaxed);
+        let slow = async {
+            for n in 1..=30 {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                read.store(n, Ordering::Relaxed);
+            }
+        };
+        tokio::select! {
+            () = stalled(&read, &written, limit) => panic!("a moving reader stalled"),
+            () = slow => {}
+        }
+        // Bytes waiting, nothing read: stalled after the limit, not before.
+        let start = tokio::time::Instant::now();
+        stalled(&read, &written, limit).await;
+        let waited = start.elapsed();
+        assert!(waited >= limit && waited <= limit + limit / 5, "{waited:?}");
+    }
+
     #[tokio::test]
     async fn dropped_reader_breaks_a_blocked_writer() {
         use tokio::io::AsyncWriteExt;
 
         let sent = Arc::new(AtomicU64::new(0));
-        let (mut head, tail, _end) = pipe(&sent);
+        let written = Arc::new(AtomicU64::new(0));
+        let (mut head, tail, _end) = pipe(&written, &sent);
         let writer = tokio::spawn(async move {
             let block = vec![0u8; PIPE * 2];
             head.write_all(&block).await
