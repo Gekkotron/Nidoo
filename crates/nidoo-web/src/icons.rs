@@ -500,6 +500,10 @@ pub const BROKER: &str = svg!(
 pub const DATABASE: &str = svg!(
     r#"<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"/><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>"#
 );
+/// An archive box: a backup.
+pub const ARCHIVE: &str = svg!(
+    r#"<rect x="3" y="4" width="18" height="4.5" rx="1.2"/><path d="M5 8.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8.5"/><path d="M10 13h4"/>"#
+);
 /// A heartbeat line: the hub's health.
 pub const PULSE: &str = svg!(r#"<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>"#);
 pub const INFO: &str =

@@ -3,6 +3,7 @@
 pub mod alarm;
 pub mod ambiances;
 pub mod assist;
+pub mod backup;
 pub mod climate;
 mod core;
 pub mod flow_labels;

@@ -98,6 +98,16 @@ pub(crate) async fn read_json<T: DeserializeOwned>(response: Response) -> Result
         .map_err(|e| WebError::Decode(e.to_string()).into())
 }
 
+/// Like [`read_json`], but a `204 No Content` reply is `Ok(None)`: the hub has nothing to show.
+pub(crate) async fn read_json_or_none<T: DeserializeOwned>(
+    response: Response,
+) -> Result<Option<T>, ApiError> {
+    if response.status() == 204 {
+        return Ok(None);
+    }
+    read_json(response).await.map(Some)
+}
+
 /// `id` as one URL path segment: everything but the unreserved characters (`A-Za-z0-9-._~`)
 /// becomes `%XX` over its UTF-8 bytes, so `/`, `#`, `?`, `%` and spaces cannot change the route.
 ///

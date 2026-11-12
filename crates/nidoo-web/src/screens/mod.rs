@@ -5,6 +5,7 @@ pub mod assist_languages;
 pub mod assist_settings;
 pub mod assist_status;
 pub mod assistant;
+pub mod backup_settings;
 pub mod climate;
 pub mod dashboard;
 pub mod devices;
