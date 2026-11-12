@@ -164,9 +164,97 @@ pub struct FtpInput {
     pub folder: Option<String>,
 }
 
+/// The FTP server a restore reads from, as typed in the setup wizard. A left-out `port` is 21
+/// and a left-out `folder` is `/`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FtpSource {
+    pub host: String,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+impl std::fmt::Debug for FtpSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FtpSource")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("folder", &self.folder)
+            .finish_non_exhaustive()
+    }
+}
+
+/// One backup file on an FTP server, and the backup password that opens it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RestoreFromFtp {
+    pub source: FtpSource,
+    pub file: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for RestoreFromFtp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RestoreFromFtp")
+            .field("source", &self.source)
+            .field("file", &self.file)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What a backup holds, read from its head before restoring it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BackupSummary {
+    /// RFC 3339, UTC.
+    pub created_at: String,
+    pub nidoo_version: String,
+    /// The host name of the hub the backup was taken on.
+    pub host: String,
+    pub flows: u32,
+    pub dashboards: u32,
+    /// The history's size in the source database: an estimate, not the file's size.
+    pub history_bytes: u64,
+}
+
+/// The running or last restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RestoreProgress {
+    pub state: BackupState,
+    pub part: BackupPart,
+    /// Bytes of the backup file read so far.
+    pub bytes: u64,
+    /// The file's size, when known.
+    pub total: Option<u64>,
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ftp_source_defaults_and_hides_its_password() {
+        let source: FtpSource =
+            serde_json::from_str(r#"{"host": "nas.local", "password": "ftp-secret"}"#).unwrap();
+        assert_eq!(source.port, None);
+        assert_eq!(source.folder, None);
+        assert_eq!(source.user, "");
+        let request = RestoreFromFtp {
+            source,
+            file: "f".into(),
+            password: "backup-secret".into(),
+        };
+        let shown = format!("{request:?}");
+        assert!(
+            !shown.contains("ftp-secret") && !shown.contains("backup-secret"),
+            "{shown}"
+        );
+    }
 
     #[test]
     fn backup_part_is_snake_case() {

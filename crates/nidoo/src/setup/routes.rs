@@ -29,7 +29,7 @@ use crate::setup::hub_file::RestoreState;
 use crate::setup::{HubFile, Mode, SetupCtx, Written, probe, secret, settings};
 use crate::weather::open_meteo::{self, Endpoints};
 
-pub(super) const RESTART_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const RESTART_DELAY: Duration = Duration::from_millis(500);
 const GEOCODE_LIMIT: u8 = 5;
 /// Where the compose file's own broker and database listen (host networking).
 const BUNDLED_HOST: &str = "localhost";
@@ -73,6 +73,7 @@ pub fn router_with_solcast<S: Clone + Send + Sync + 'static>(
         .route("/api/v1/setup/finish", post(finish))
         .route("/api/v1/setup/mobile-code", get(mobile_code))
         .merge(super::settings::routes())
+        .merge(super::restore_routes::routes())
         .with_state(RouteState {
             ctx,
             geocoding,
@@ -95,7 +96,7 @@ fn save_failed() -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save hub.json")
 }
 
-fn decode(s: &str) -> String {
+pub(super) fn decode(s: &str) -> String {
     percent_encoding::percent_decode_str(s)
         .decode_utf8_lossy()
         .into_owned()

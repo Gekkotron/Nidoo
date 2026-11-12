@@ -7,6 +7,7 @@ pub mod db;
 pub mod ftp;
 pub mod job;
 pub mod name;
+pub mod restore;
 pub mod retained;
 pub mod settings;
 pub mod tar;
