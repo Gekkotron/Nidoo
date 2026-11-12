@@ -705,6 +705,21 @@ fn backup_flow(timeout_minutes: u32) -> String {
     .to_string()
 }
 
+/// `backup_flow` plus a `part` step on port `partial` when `wire_partial`.
+fn backup_flow_partial(wire_partial: bool) -> String {
+    let mut flow: serde_json::Value = serde_json::from_str(&backup_flow(120)).unwrap();
+    if wire_partial {
+        flow["nodes"].as_array_mut().unwrap().push(json!({
+            "id": "part", "type": "flow.enable", "params": { "enabled": true }
+        }));
+        flow["edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "from": "bk", "to": "part", "port": "partial" }));
+    }
+    flow.to_string()
+}
+
 /// The next run event the predicate accepts, within `limit`.
 async fn next_run(
     rx: &mut tokio::sync::broadcast::Receiver<nidoo_api::WsEvent>,
@@ -758,6 +773,62 @@ async fn backup_flow_takes_ok() {
             "Backed up {} to 127.0.0.1 as {file}",
             nidoo::backup::job::human_size(size)
         )
+    );
+    tdb.drop_db().await;
+}
+
+/// A run of `flow` against an offline Zigbee2MQTT bridge, ended.
+async fn run_with_offline_z2m(r: &Rig, flow: String) -> nidoo_api::RunView {
+    let _engine = r.hub.start_engine();
+    bridge(&r.hub, "offline");
+    r.hub.ingest("nidoo/automation/nightly", flow.as_bytes());
+    tokio::task::yield_now().await;
+    let mut events = r.hub.subscribe();
+    r.hub.run_flow("nightly").expect("run");
+    next_run(&mut events, Duration::from_secs(60), |r| {
+        r.status == nidoo_api::RunStatus::Done
+    })
+    .await
+}
+
+#[tokio::test]
+async fn backup_partial_takes_partial_when_wired() {
+    let Some(tdb) = fresh_db().await else { return };
+    let r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    let run = run_with_offline_z2m(&r, backup_flow_partial(true)).await;
+
+    assert_eq!(step_nodes(&run), ["go", "bk", "part"]);
+    let bk = &run.steps[1];
+    assert_eq!(bk.outcome, nidoo_api::StepOutcome::Ok);
+    assert_eq!(bk.ports.as_deref(), Some(&["partial".to_owned()][..]));
+    let file = files(r.ftp_dir.path()).pop().expect("an uploaded file");
+    let size = std::fs::metadata(r.ftp_dir.path().join(&file))
+        .unwrap()
+        .len();
+    assert_eq!(
+        bk.detail,
+        format!(
+            "Backed up {} to 127.0.0.1 as {file}, without Zigbee2MQTT data: Zigbee2MQTT is offline",
+            nidoo::backup::job::human_size(size)
+        )
+    );
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn backup_partial_falls_back_to_ok() {
+    let Some(tdb) = fresh_db().await else { return };
+    let r = rig(Some(&tdb.url), mem(one_dashboard()), |_| {}).await;
+    let run = run_with_offline_z2m(&r, backup_flow_partial(false)).await;
+
+    assert_eq!(step_nodes(&run), ["go", "bk", "yes"]);
+    let bk = &run.steps[1];
+    assert_eq!(bk.ports.as_deref(), Some(&["ok".to_owned()][..]));
+    assert!(
+        bk.detail
+            .ends_with(", without Zigbee2MQTT data: Zigbee2MQTT is offline"),
+        "{}",
+        bk.detail
     );
     tdb.drop_db().await;
 }

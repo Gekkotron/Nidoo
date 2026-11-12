@@ -370,13 +370,14 @@ pub fn bounds(flow: &Flow, pos: &BTreeMap<String, Pt>) -> Rect {
 
 /// Where a wire leaves a card at `at`: its right edge, halfway down; for an `if` 30 % down for
 /// `true` and 70 % down for `false`; for a switch, each exit evenly down the card; for a time
-/// card 30 % down for `in` and 70 % down for `out`; for a back-up card 30 % down for `ok` and
-/// 70 % down for `failed`.
+/// card 30 % down for `in` and 70 % down for `out`; for a back-up card 30 % down for `ok`, 50 %
+/// for `partial` and 70 % down for `failed`.
 pub fn out_anchor(kind: &NodeKind, at: Pt, port: Option<&str>) -> Pt {
     let down = match (kind, port) {
         (NodeKind::If(_), Some("true"))
         | (NodeKind::TimeBetween(_), Some("in"))
         | (NodeKind::BackupRun(_), Some(nidoo_core::flow::BACKUP_OK_PORT)) => 0.3,
+        (NodeKind::BackupRun(_), Some(nidoo_core::flow::BACKUP_PARTIAL_PORT)) => 0.5,
         (NodeKind::If(_), Some("false"))
         | (NodeKind::TimeBetween(_), Some("out"))
         | (NodeKind::BackupRun(_), Some(nidoo_core::flow::BACKUP_FAILED_PORT)) => 0.7,
@@ -932,6 +933,18 @@ mod tests {
         assert_eq!(out_anchor(&node.kind, o, Some("ok")).y, NODE_H * 0.3);
         assert_eq!(out_anchor(&node.kind, o, Some("failed")).y, NODE_H * 0.7);
         assert_eq!(node_height(&node.kind), NODE_H);
+    }
+
+    #[test]
+    fn backup_ports_anchor() {
+        let node: nidoo_core::flow::Node = serde_json::from_value(serde_json::json!({
+            "id": "b", "type": "backup.run", "params": {}
+        }))
+        .unwrap();
+        let o = Pt { x: 0.0, y: 0.0 };
+        assert_eq!(out_anchor(&node.kind, o, Some("ok")).y, NODE_H * 0.3);
+        assert_eq!(out_anchor(&node.kind, o, Some("partial")).y, NODE_H * 0.5);
+        assert_eq!(out_anchor(&node.kind, o, Some("failed")).y, NODE_H * 0.7);
     }
 
     #[test]

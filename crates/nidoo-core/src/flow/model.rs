@@ -262,7 +262,11 @@ impl NodeKind {
                 ports
             }
             NodeKind::TimeBetween(_) => vec!["in".into(), "out".into()],
-            NodeKind::BackupRun(_) => vec![BACKUP_OK_PORT.into(), BACKUP_FAILED_PORT.into()],
+            NodeKind::BackupRun(_) => vec![
+                BACKUP_OK_PORT.into(),
+                BACKUP_PARTIAL_PORT.into(),
+                BACKUP_FAILED_PORT.into(),
+            ],
             NodeKind::Ask(p) => {
                 let mut ports: Vec<String> = (1..=p.answers.len()).map(|i| i.to_string()).collect();
                 ports.push(ASK_NONE_PORT.into());
@@ -599,6 +603,9 @@ pub struct FlowLabelParams {
 
 /// The port `backup.run` takes when the backup is written.
 pub const BACKUP_OK_PORT: &str = "ok";
+/// The port `backup.run` takes when the backup is written without Zigbee2MQTT's data. Left
+/// unwired, the run goes on from [`BACKUP_OK_PORT`].
+pub const BACKUP_PARTIAL_PORT: &str = "partial";
 /// The port `backup.run` takes when the backup fails, or the wait ends first.
 pub const BACKUP_FAILED_PORT: &str = "failed";
 
@@ -1381,7 +1388,7 @@ mod tests {
         };
         assert_eq!(p.timeout_minutes, 120);
         assert_eq!(p.destination, BackupTarget::Ftp);
-        assert_eq!(node.kind.ports(), vec!["ok", "failed"]);
+        assert_eq!(node.kind.ports(), vec!["ok", "partial", "failed"]);
         assert_eq!(node.kind.type_name(), "backup.run");
         let back = serde_json::to_value(&node).unwrap();
         assert_eq!(back["type"], "backup.run");
