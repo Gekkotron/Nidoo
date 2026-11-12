@@ -286,15 +286,16 @@ async fn a_failed_upload_shows_the_hubs_own_error() {
     // The hub may close the connection before the browser reads its answer; the page then asks
     // the progress route what went wrong.
     stub.reply("PUT", "/api/v1/setup/restore/upload", 500, "oops");
+    // A poll so slow that only the fallback after the failed PUT can read the progress.
+    let m = mount_polling(60_000);
+    settle().await;
+    // Only now: on opening, the step would show a failed restore it finds.
     stub.reply(
         "GET",
         "/api/v1/setup/restore/progress",
         200,
         r#"{"state":"failed","part":"history","bytes":10,"total":100,"error":"the history is damaged"}"#,
     );
-    // A poll so slow that only the fallback after the failed PUT can read the progress.
-    let m = mount_polling(60_000);
-    tick().await;
     choose_file(&m.host, 1024);
     settle().await;
     type_into(&m.host, "#restore-password", "correct horse").await;
@@ -317,9 +318,10 @@ async fn the_progress_bar_follows_the_restore() {
     stub.reply("POST", "/api/v1/setup/restore/ftp/list", 200, LIST);
     stub.reply("POST", "/api/v1/setup/restore/ftp/inspect", 200, SUMMARY);
     stub.reply("POST", "/api/v1/setup/restore/ftp", 202, RUNNING);
-    stub.reply("GET", "/api/v1/setup/restore/progress", 200, RUNNING);
     let m = mount();
-    tick().await;
+    settle().await;
+    // Only now: on opening, the step would follow a running restore it finds.
+    stub.reply("GET", "/api/v1/setup/restore/progress", 200, RUNNING);
     fill_ftp(&m.host).await;
     click(&m.host, ".restore__find");
     settle().await;
@@ -380,4 +382,86 @@ async fn a_second_find_drops_the_first_servers_answer() {
     assert_eq!(radios.length(), 2, "the second server's list shows");
     let first_radio: web_sys::HtmlInputElement = radios.get(0).unwrap().unchecked_into();
     assert_eq!(first_radio.value(), NEW);
+}
+
+/// Picks the newest backup on the FTP server, types the password and starts the restore.
+async fn start_ftp_restore(host: &web_sys::Element) {
+    fill_ftp(host).await;
+    click(host, ".restore__find");
+    settle().await;
+    click(host, ".restore__next");
+    tick().await;
+    type_into(host, "#restore-password", "correct horse").await;
+    click(host, ".restore__next");
+    settle().await;
+    click(host, ".restore__go");
+    settle().await;
+}
+
+#[wasm_bindgen_test]
+async fn a_reloaded_step_follows_the_running_restore() {
+    let stub = FetchStub::install();
+    stub.reply("GET", "/api/v1/setup/restore/progress", 200, RUNNING);
+    let m = mount();
+    settle().await;
+    let bar = query(&m.host, ".restore__bar").expect("the running restore");
+    assert_eq!(bar.get_attribute("value").as_deref(), Some("50"));
+    assert!(
+        query(&m.host, "#restore-host").is_none(),
+        "not the first screen"
+    );
+    assert!(query(&m.host, ".restore__without").is_none());
+    // It keeps following it to the end.
+    stub.reply("GET", "/api/v1/setup/restore/progress", 200, DONE);
+    settle().await;
+    assert_eq!(m.applying.target.get_untracked().as_deref(), Some("/"));
+}
+
+#[wasm_bindgen_test]
+async fn a_reloaded_step_shows_a_failed_restore_and_retry_asks_for_the_source() {
+    let stub = FetchStub::install();
+    stub.reply(
+        "GET",
+        "/api/v1/setup/restore/progress",
+        200,
+        r#"{"state":"failed","part":"history","bytes":10,"total":100,"error":"the history is damaged"}"#,
+    );
+    let m = mount_polling(60_000);
+    settle().await;
+    assert!(
+        text(&m.host).contains("the history is damaged"),
+        "{}",
+        text(&m.host)
+    );
+    // The page does not know where the backup came from: back to the first screen.
+    click(&m.host, ".restore__retry");
+    tick().await;
+    assert!(query(&m.host, "#restore-host").is_some());
+    assert!(
+        !stub.requests().iter().any(|r| r.method == "POST"),
+        "no restore started blind"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn an_ftp_server_lost_during_the_restore_is_worded_by_the_page() {
+    let stub = FetchStub::install();
+    stub.reply("POST", "/api/v1/setup/restore/ftp/list", 200, LIST);
+    stub.reply("POST", "/api/v1/setup/restore/ftp/inspect", 200, SUMMARY);
+    stub.reply("POST", "/api/v1/setup/restore/ftp", 202, RUNNING);
+    let m = mount();
+    settle().await;
+    stub.reply(
+        "GET",
+        "/api/v1/setup/restore/progress",
+        200,
+        r#"{"state":"failed","part":"history","bytes":10,"total":100,"error":"can't reach the FTP server (timed out)","code":"ftp_unreachable"}"#,
+    );
+    start_ftp_restore(&m.host).await;
+    let shown = text(&m.host);
+    assert!(
+        shown.contains("Can't reach the FTP server. Is it switched on?"),
+        "{shown}"
+    );
+    assert!(!shown.contains("timed out"), "{shown}");
 }

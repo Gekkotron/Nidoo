@@ -5,7 +5,8 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use nidoo_api::{
-    BackupState, BackupSummary, FtpSource, RemoteBackup, RestoreFromFtp, RestoreProgress, SetupStep,
+    BackupState, BackupSummary, FtpSource, RemoteBackup, RestoreErrorCode, RestoreFromFtp,
+    RestoreProgress, SetupStep,
 };
 
 use super::{Applying, setup_href};
@@ -66,6 +67,16 @@ fn ftp_problem(e: FtpError) -> Problem {
         FtpError::Unreachable => Problem::Known(SetupText::RestoreFtpUnreachable),
         FtpError::Api(e) => Problem::Hub(e.error),
     }
+}
+
+/// What a failed restore's progress says went wrong: an unreachable FTP server in the language
+/// in use, else the hub's own words.
+fn progress_problem(p: RestoreProgress) -> Problem {
+    if p.code == Some(RestoreErrorCode::FtpUnreachable) {
+        return Problem::Known(SetupText::RestoreFtpUnreachable);
+    }
+    p.error
+        .map_or(Problem::Known(SetupText::RestoreFailed), Problem::Hub)
 }
 
 /// The FTP fields as the hub's source. A blank port is left out (the hub uses 21), and so is a
@@ -324,7 +335,7 @@ impl Flow {
                         Err(e) => match restore_progress().await {
                             Ok(Some(p)) if p.state == BackupState::Done => self.succeed(run),
                             Ok(Some(p)) if p.state == BackupState::Failed && p.error.is_some() => {
-                                self.fail(run, Problem::Hub(p.error.unwrap_or_default()));
+                                self.fail(run, progress_problem(p));
                             }
                             _ => self.fail(run, Problem::Hub(e.error)),
                         },
@@ -348,10 +359,7 @@ impl Flow {
                 true
             }
             BackupState::Failed | BackupState::Cancelled => {
-                let problem = p
-                    .error
-                    .map_or(Problem::Known(SetupText::RestoreFailed), Problem::Hub);
-                self.fail(run, problem);
+                self.fail(run, progress_problem(p));
                 true
             }
         }
@@ -403,11 +411,42 @@ impl Flow {
         }
     }
 
+    /// On opening the step (a reload, say): a restore the hub is still running is followed, and
+    /// one that failed shows why. Skipped once the user has moved on from the first screen.
+    fn resume(self) {
+        let Some(opened) = self.run.try_get_untracked() else {
+            return;
+        };
+        leptos::task::spawn_local(async move {
+            let Ok(Some(p)) = restore_progress().await else {
+                return;
+            };
+            if !self.is_current(opened) || self.stage.try_get_untracked() != Some(Stage::Source) {
+                return;
+            }
+            match p.state {
+                BackupState::Running => {
+                    let run = self.bump();
+                    self.progress.try_set(Some(p));
+                    self.problem.try_set(None);
+                    self.stage.try_set(Stage::Running);
+                    self.follow(run);
+                }
+                BackupState::Failed => {
+                    let run = self.bump();
+                    self.fail(run, progress_problem(p));
+                }
+                BackupState::Done | BackupState::Cancelled => {}
+            }
+        });
+    }
+
     /// Failed → Retry: an FTP restore runs again with the same source; an upload needs its file
-    /// again.
+    /// again, and so does a failure found on opening the step, whose source is not known.
     fn retry(self) {
         match self.via.get_untracked() {
-            Via::Ftp => self.start(),
+            Via::Ftp if self.source.with_untracked(Option::is_some) => self.start(),
+            Via::Ftp => self.go(Stage::Source),
             Via::Upload => {
                 self.file.set(None);
                 self.password.set(String::new());
@@ -729,6 +768,7 @@ fn failed_view(flow: Flow) -> impl IntoView {
 pub fn RestoreStep() -> impl IntoView {
     let t = use_setup_text();
     let flow = Flow::new();
+    flow.resume();
     // Leaving the step ends a run's polling.
     on_cleanup(move || {
         flow.bump();
@@ -806,6 +846,37 @@ mod tests {
     #[test]
     fn an_unparsable_summary_date_is_shown_as_received() {
         assert_eq!(summary_date(Lang::En, "yesterday"), "yesterday");
+    }
+
+    #[test]
+    fn a_failed_run_is_worded_from_its_code_when_it_has_one() {
+        let failed = RestoreProgress {
+            state: BackupState::Failed,
+            part: nidoo_api::BackupPart::History,
+            bytes: 10,
+            total: None,
+            error: Some("can't reach the FTP server (timed out)".into()),
+            code: Some(RestoreErrorCode::FtpUnreachable),
+        };
+        assert_eq!(
+            progress_problem(failed.clone()),
+            Problem::Known(SetupText::RestoreFtpUnreachable)
+        );
+        let plain = RestoreProgress {
+            code: None,
+            ..failed
+        };
+        assert_eq!(
+            progress_problem(plain.clone()),
+            Problem::Hub("can't reach the FTP server (timed out)".into())
+        );
+        assert_eq!(
+            progress_problem(RestoreProgress {
+                error: None,
+                ..plain
+            }),
+            Problem::Known(SetupText::RestoreFailed)
+        );
     }
 
     #[test]
