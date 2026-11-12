@@ -375,6 +375,10 @@ async fn put_mqtt(State(s): State<RouteState>, Json(input): Json<MqttInput>) -> 
     }
     let z2m = input.z2m_base.clone().filter(|z| !z.is_empty());
     finish_write(&s, true, |f| {
+        // Another broker has not been checked for data: a pending restore starts over.
+        if f.restore.is_some() && f.mqtt.as_ref() != Some(&cfg) {
+            f.restore = Some(RestoreState::default());
+        }
         f.mqtt = Some(cfg);
         if z2m.is_some() {
             f.z2m_base = z2m;
@@ -417,6 +421,22 @@ async fn database_candidate(ctx: &SetupCtx, input: &DatabaseInput) -> Result<Str
         input,
     )
     .ok_or_else(|| error(StatusCode::UNPROCESSABLE_ENTITY, "The address is not valid"))
+}
+
+/// Whether two database URLs reach the same database as the same user: host, port, database,
+/// user and password, decoded (a re-saved URL may encode them differently).
+fn same_database(a: &str, b: &str) -> bool {
+    let target = |u: &str| {
+        let u = Url::parse(u).ok()?;
+        Some((
+            u.host_str()?.to_ascii_lowercase(),
+            u.port().unwrap_or(BUNDLED_DB_PORT),
+            decode(u.path().trim_start_matches('/')),
+            decode(u.username()),
+            u.password().map(decode),
+        ))
+    };
+    matches!((target(a), target(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// The URL to save: the stored one with the address, user and database replaced (a kept password
@@ -469,6 +489,15 @@ async fn put_database(State(s): State<RouteState>, Json(input): Json<DatabaseInp
         return (StatusCode::UNPROCESSABLE_ENTITY, Json(result)).into_response();
     }
     finish_write(&s, true, |f| {
+        // Another database has not been checked for data: a pending restore starts over.
+        if f.restore.is_some()
+            && !f
+                .database_url
+                .as_deref()
+                .is_some_and(|old| same_database(old, &url))
+        {
+            f.restore = Some(RestoreState::default());
+        }
         f.database_url = Some(url);
         f.step = if f.restore.is_some() {
             SetupStep::Restore
@@ -574,6 +603,25 @@ mod tests {
         let opts: sqlx::postgres::PgConnectOptions = file.database_url.unwrap().parse().unwrap();
         assert_eq!(opts.get_username(), "me@home");
         assert_eq!(opts.get_database(), Some("my db"));
+    }
+
+    #[test]
+    fn same_database_ignores_the_encoding() {
+        let stored = "postgres://nidoo:pw@db.local:5432/nidoo_test_1";
+        assert!(same_database(
+            stored,
+            "postgres://nidoo:pw@DB.local/nidoo%5Ftest%5F1"
+        ));
+        for other in [
+            "postgres://nidoo:pw@db.local:5432/nidoo_test_2",
+            "postgres://nidoo:pw@db2.local:5432/nidoo_test_1",
+            "postgres://nidoo:pw@db.local:5433/nidoo_test_1",
+            "postgres://other:pw@db.local:5432/nidoo_test_1",
+            "postgres://nidoo:pw2@db.local:5432/nidoo_test_1",
+            "not a url",
+        ] {
+            assert!(!same_database(stored, other), "{other}");
+        }
     }
 
     #[test]

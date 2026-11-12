@@ -494,11 +494,12 @@ async fn refuses_a_hub_with_data() {
     assert_eq!(t.file(), before, "attempted is still false");
     assert_eq!(t.restarts.load(Ordering::SeqCst), 0);
 
-    // A flow on the broker.
-    sqlx::query("TRUNCATE entity_state")
+    // A flow on the broker. The insert above also wrote `entity_latest`: empty both.
+    sqlx::query("TRUNCATE entity_state, entity_latest")
         .execute(b.db.pool())
         .await
         .unwrap();
+    assert_eq!(holds_history(b.db.pool()).await.unwrap(), None);
     let flow = (
         "nidoo/automation/mine".to_owned(),
         Bytes::from_static(br#"{"id":"mine"}"#),
@@ -506,12 +507,9 @@ async fn refuses_a_hub_with_data() {
     t.broker.publish_retained(vec![flow.clone()]).await.unwrap();
     let (code, body) = t.upload("/upload", PASSWORD_HEADER, file).await;
     assert_eq!(code, StatusCode::CONFLICT, "{body}");
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("already holds data"),
-        "{body}"
+    assert_eq!(
+        body["error"],
+        "This hub already holds data (flows or settings on the broker)"
     );
     assert_eq!(t.docs(), BTreeMap::from([flow]));
     assert_eq!(holds_history(b.db.pool()).await.unwrap(), None);

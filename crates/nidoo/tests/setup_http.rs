@@ -1585,3 +1585,82 @@ async fn pending_refused_on_a_running_hub() {
     }
     assert!(s.hub_json().is_none(), "nothing saved");
 }
+
+/// Restore mode with a restore already attempted, MQTT on the local port `mqtt_port`.
+async fn attempted_restore(mqtt_port: u16, database_url: Option<&str>) -> Server {
+    let mut file = HubFile {
+        restore: Some(nidoo::setup::hub_file::RestoreState { attempted: true }),
+        ..restoring()
+    };
+    if let Some(mqtt) = file.mqtt.as_mut() {
+        mqtt.host = "127.0.0.1".into();
+        mqtt.port = mqtt_port;
+    }
+    if let Some(url) = database_url {
+        file.database_url = Some(url.into());
+    }
+    serve(Mode::Restore, file, None, false).await
+}
+
+fn attempted(s: &Server) -> Option<bool> {
+    HubFile::load(s.dir.path())
+        .unwrap()
+        .unwrap()
+        .restore
+        .map(|r| r.attempted)
+}
+
+/// Ruling M: a broker the first attempt never checked must be checked before a restore.
+#[tokio::test]
+async fn a_new_broker_resets_an_attempted_restore() {
+    let port = fake_broker(0).await;
+    let s = attempted_restore(port, None).await;
+    let (code, body) = s
+        .put(
+            "/mqtt",
+            json!({"host": "127.0.0.1", "port": port, "user": "u"}),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(attempted(&s), Some(true), "the same broker again");
+
+    let other = fake_broker(0).await;
+    let s = attempted_restore(port, None).await;
+    let (code, body) = s
+        .put(
+            "/mqtt",
+            json!({"host": "127.0.0.1", "port": other, "user": "u", "password": "new-pass"}),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(attempted(&s), Some(false), "another broker");
+}
+
+/// Ruling M, for the database.
+#[tokio::test]
+async fn a_new_database_resets_an_attempted_restore() {
+    let Some(a) = crate::common::db::fresh_db().await else {
+        return;
+    };
+    let Some(b) = crate::common::db::fresh_db().await else {
+        return;
+    };
+    // The password is kept: both databases are on the same server.
+    let input = |url: &str| {
+        let url = url::Url::parse(url).unwrap();
+        json!({
+            "host": url.host_str().unwrap(),
+            "port": url.port().unwrap_or(5432),
+            "database": url.path().trim_start_matches('/'),
+            "user": url.username(),
+        })
+    };
+    for (target, still) in [(&a.url, true), (&b.url, false)] {
+        let s = attempted_restore(closed_port().await, Some(&a.url)).await;
+        let (code, body) = s.put("/database", input(target)).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        assert_eq!(attempted(&s), Some(still), "{target}");
+    }
+    a.drop_db().await;
+    b.drop_db().await;
+}
