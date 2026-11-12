@@ -514,6 +514,48 @@ fn flow_enable_fields(
     }
 }
 
+/// The longest time limit a `backup.run` card takes, in minutes.
+const BACKUP_MAX_TIMEOUT_MINUTES: u32 = 1440;
+
+/// The `backup.run` editor: how many minutes the card gives the backup before it takes `failed`.
+fn backup_run_fields(
+    form: Form,
+    id: String,
+    p: nidoo_core::flow::BackupRunParams,
+) -> impl IntoView {
+    let t = use_flow_text();
+    let on_timeout = move |ev: web_sys::Event| {
+        let Some(m) = parse_decimal(&event_target_value(&ev)) else {
+            return;
+        };
+        let m = (m as u32).clamp(1, BACKUP_MAX_TIMEOUT_MINUTES);
+        // Show the value that was kept, so a typed 5000 reads 1440 in the field.
+        let input = event_target::<web_sys::HtmlInputElement>(&ev);
+        if input.value() != m.to_string() {
+            input.set_value(&m.to_string());
+        }
+        form.update(&id, |n| {
+            if let NodeKind::BackupRun(ref mut b) = n.kind {
+                b.timeout_minutes = m;
+            }
+        });
+    };
+    view! {
+        <label class="node-editor__field">
+            <span class="node-editor__label">{move || t(FlowText::BackupTimeout)}</span>
+            <input
+                type="number"
+                class="field"
+                min="1"
+                max=BACKUP_MAX_TIMEOUT_MINUTES.to_string()
+                step="1"
+                prop:value=p.timeout_minutes.to_string()
+                on:input=on_timeout
+            />
+        </label>
+    }
+}
+
 /// The `flow.label` editor: what to do (pick, turn on, turn off); for a pick the choice then one
 /// of its labels, otherwise any label; and a live preview of the flows it reaches.
 fn flow_label_fields(
@@ -1916,8 +1958,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
         NodeKind::TriggerManual(p) => manual_fields(form, id, p.value).into_any(),
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
         NodeKind::FlowLabel(p) => flow_label_fields(form, id, p).into_any(),
-        // The real card comes with the backup flow-step editor.
-        NodeKind::BackupRun(_) => ().into_any(),
+        NodeKind::BackupRun(p) => backup_run_fields(form, id, p).into_any(),
         NodeKind::Notify(p) => notify_fields(form, id, p).into_any(),
         NodeKind::Speak(p) => speak_fields(form, id, p).into_any(),
         NodeKind::Ask(p) => ask_fields(form, id, p).into_any(),

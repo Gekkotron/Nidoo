@@ -456,7 +456,10 @@ fn card(id: String, c: Shared, house: House) -> impl IntoView {
                 let mut class = format!("{NODE_CLASS} {}", role_class(role(k)));
                 if matches!(
                     k,
-                    NodeKind::Switch(_) | NodeKind::Ask(_) | NodeKind::TimeBetween(_)
+                    NodeKind::Switch(_)
+                        | NodeKind::Ask(_)
+                        | NodeKind::TimeBetween(_)
+                        | NodeKind::BackupRun(_)
                 ) {
                     class.push_str(" flow-node--exits");
                 }

@@ -2,11 +2,11 @@
 
 use nidoo_core::flow::TriggerSignalParams;
 use nidoo_core::flow::{
-    AskAnswer, AskParams, CommandParams, DelayParams, FlowEnableParams, FlowLabelParams, IfParams,
-    LabelAction, LimitParams, MathParams, Node, NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp,
-    Scalar, SpeakParams, SunWhich, SwitchParams, SwitchRule, TimeBetweenParams,
-    TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams, TriggerSilentParams,
-    TriggerStateParams,
+    AskAnswer, AskParams, BackupRunParams, CommandParams, DelayParams, FlowEnableParams,
+    FlowLabelParams, IfParams, LabelAction, LimitParams, MathParams, Node, NodeKind, NotifyParams,
+    OffPeakEdge, Op, RuleOp, Scalar, SpeakParams, SunWhich, SwitchParams, SwitchRule,
+    TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
+    TriggerSilentParams, TriggerStateParams,
 };
 use nidoo_core::model::Command;
 use serde_json::Value;
@@ -279,6 +279,12 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             }),
             Some(FlowText::NodeFlowLabel),
             FlowText::NodeFlowLabelSub,
+        ),
+        (
+            Group::Flow,
+            NodeKind::BackupRun(BackupRunParams::default()),
+            Some(FlowText::NodeBackupRun),
+            FlowText::NodeBackupRunSub,
         ),
     ];
     // The label a generic card reads in `lang`; the sentence of a card with no target reads
@@ -562,6 +568,28 @@ mod tests {
     }
 
     #[test]
+    fn library_lists_back_up() {
+        let entities = BTreeMap::new();
+        for query in ["back up", "sauvegarde", "ftp"] {
+            let got = run(query, &entities);
+            let card = got
+                .iter()
+                .find(|e| matches!(&e.kind, NodeKind::BackupRun(_)))
+                .unwrap_or_else(|| panic!("{query}: {got:?}"));
+            assert_eq!(card.group, Group::Flow);
+            assert_eq!(card.label, "Back up");
+            assert_eq!(
+                card.sub.as_deref(),
+                Some("Backs up the hub to the FTP server and waits for the result")
+            );
+            assert!(matches!(
+                &card.kind,
+                NodeKind::BackupRun(p) if p.timeout_minutes == 120
+            ));
+        }
+    }
+
+    #[test]
     fn empty_query_has_generic_entries() {
         let entities = house(vec![ent("l1", "Lumière table", Kind::Light)]);
         let got = run("", &entities);
@@ -587,6 +615,7 @@ mod tests {
                 (Group::Flow, "Disable this flow"),
                 (Group::Flow, "Enable a flow"),
                 (Group::Flow, "Pick a label"),
+                (Group::Flow, "Back up"),
             ]
         );
         let subs: Vec<_> = got.iter().map(|e| e.sub.as_deref()).collect();
@@ -611,6 +640,7 @@ mod tests {
                 Some("Stops it from running again"),
                 Some("Switches another flow on or off"),
                 Some("Pick a season, or turn a label's flows on or off"),
+                Some("Backs up the hub to the FTP server and waits for the result"),
             ]
         );
         assert!(matches!(

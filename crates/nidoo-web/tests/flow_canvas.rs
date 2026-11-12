@@ -1083,7 +1083,7 @@ async fn library_open_in_edit_mode() {
     let html = host.inner_html();
     assert_eq!(count(&host, ".flow-drawer--open"), 1, "{html}");
     assert_eq!(count(&host, ".flow-library"), 1, "{html}");
-    assert_eq!(count(&host, ".flow-library__item"), 18, "{html}");
+    assert_eq!(count(&host, ".flow-library__item"), 19, "{html}");
     assert_eq!(count(&host, ".flow-picker-wrap"), 0, "{html}");
 }
 
@@ -2952,6 +2952,55 @@ async fn flow_label_card_turns_a_label_off() {
     assert_eq!(
         nodes[1]["params"],
         serde_json::json!({"label": "ete", "action": "off"})
+    );
+    settle_history().await;
+}
+
+#[wasm_bindgen_test]
+async fn backup_card_saves_timeout() {
+    let (host, _mounted, _) = editing(reference_view(None, vec![])).await;
+    add_row(&host, "Back up").await;
+    let view = line_view(r#"[{ "id": "start", "type": "trigger.manual", "params": {} }]"#);
+    assert_eq!(
+        text(&host, "[data-node=backup_1] .flow-node__title"),
+        "Back up to the FTP server"
+    );
+    select_card(&host, "backup_1").await;
+    let input: web_sys::HtmlInputElement =
+        element(&host, ".flow-drawer input[type=number]").unchecked_into();
+    type_into(&input, "30", "input");
+    tick().await;
+    // The card shows two exits, one per port.
+    assert!(
+        element(&host, "[data-node=backup_1]")
+            .class_name()
+            .contains("flow-node--exits")
+    );
+    assert_eq!(
+        text(
+            &host,
+            "[data-node=backup_1] [data-port=ok] .flow-node__exit"
+        ),
+        "Backed up"
+    );
+    assert_eq!(
+        text(
+            &host,
+            "[data-node=backup_1] [data-port=failed] .flow-node__exit"
+        ),
+        "Failed"
+    );
+    let nodes = saved_nodes(&host, &view).await;
+    let card = nodes.iter().find(|n| n["id"] == "backup_1").unwrap();
+    assert_eq!(
+        card,
+        &serde_json::json!({
+            "id": "backup_1",
+            "type": "backup.run",
+            "params": {"destination": "ftp", "timeout_minutes": 30},
+            "position": card["position"],
+        }),
+        "{card}"
     );
     settle_history().await;
 }
