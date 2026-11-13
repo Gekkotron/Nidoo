@@ -9151,9 +9151,29 @@ dialog.popup::backdrop {
   margin-bottom: 8px;
 }
 
-.solar-tabs {
+.solar-page__day {
   display: inline-flex;
-  gap: 4px;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.solar-page__day-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.solar-page__today {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-amber);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.solar-page__today:hover {
+  text-decoration: underline;
 }
 
 /* Each swatch draws its series the way the chart does. */
@@ -9211,21 +9231,6 @@ dialog.popup::backdrop {
   border-left: 1px dashed var(--muted);
 }
 
-.solar-tabs button {
-  padding: 4px 12px;
-  border: 1px solid var(--card-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.solar-tabs button[aria-pressed="true"] {
-  border-color: var(--accent-amber);
-  color: var(--ink);
-}
 
 .solar-page__svg {
   display: block;
@@ -9316,8 +9321,20 @@ dialog.popup::backdrop {
 }
 
 .solar-day {
+  width: 100%;
   padding: 12px 8px;
+  color: inherit;
+  font: inherit;
   text-align: center;
+  cursor: pointer;
+}
+
+.solar-day:hover {
+  border-color: color-mix(in srgb, var(--accent-amber) 50%, var(--card-border));
+}
+
+.solar-day[aria-pressed="true"] {
+  border-color: var(--accent-amber);
 }
 
 .solar-day__name {
