@@ -277,27 +277,24 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
             on,
             names,
             colour,
+            brightness,
             unable,
         } => {
             let mut text = lights(
                 house.area_name(area),
                 *on,
-                colour.as_deref(),
+                (colour.as_deref(), *brightness),
                 names,
                 results,
                 lang,
             );
+            let lack = lack(colour.is_some(), brightness.is_some(), lang);
             match (unable.as_slice(), en) {
                 ([], _) => {}
-                ([one], false) => text.push_str(&format!(" « {one} » ne prend pas de couleur.")),
-                ([one], true) => text.push_str(&format!(" \"{one}\" can't take a colour.")),
-                (many, false) => text.push_str(&format!(
-                    " Ne prennent pas de couleur : {}.",
-                    many.join(", ")
-                )),
-                (many, true) => {
-                    text.push_str(&format!(" Can't take a colour: {}.", many.join(", ")))
-                }
+                ([one], false) => text.push_str(&format!(" « {one} » {}.", lack.one)),
+                ([one], true) => text.push_str(&format!(" \"{one}\" {}.", lack.one)),
+                (many, false) => text.push_str(&format!(" {} : {}.", lack.many, many.join(", "))),
+                (many, true) => text.push_str(&format!(" {}: {}.", lack.many, many.join(", "))),
             }
             text
         }
@@ -576,19 +573,24 @@ fn one_failed(name: &str, why: &str, place: &str, lang: Lang) -> String {
 fn lights(
     area: &str,
     on: bool,
-    colour: Option<&str>,
+    (colour, brightness): (Option<&str>, Option<u8>),
     names: &[String],
     results: &[ActionResult],
     lang: Lang,
 ) -> String {
     if lang == Lang::En {
-        return lights_en(area, on, colour, names, results);
+        return lights_en(area, on, (colour, brightness), names, results);
     }
     let n = names.len();
-    let (verb_m, verb_f) = match (on, colour) {
-        (true, Some(c)) => (format!("allumé en {c}"), format!("allumée en {c}")),
-        (true, None) => ("allumé".into(), "allumée".into()),
-        (false, _) => ("éteint".into(), "éteinte".into()),
+    let how = format!(
+        "{}{}",
+        colour.map(|c| format!(" en {c}")).unwrap_or_default(),
+        brightness.map(|b| format!(" à {b} %")).unwrap_or_default()
+    );
+    let (verb_m, verb_f) = if on {
+        (format!("allumé{how}"), format!("allumée{how}"))
+    } else {
+        ("éteint".into(), "éteinte".into())
     };
     let (verb_m, verb_f) = (verb_m.as_str(), verb_f.as_str());
     let failed = failures(names, results, lang);
@@ -623,20 +625,63 @@ fn lights(
     text
 }
 
+/// How lights that lack what was asked are told: after one name (`one`), after "Aucune lumière"
+/// / "No light" (`none`), and at the head of a list of names (`many`).
+pub struct Lack {
+    pub one: &'static str,
+    pub none: &'static str,
+    pub many: &'static str,
+}
+
+/// What lights lack when a colour, a brightness or both were asked.
+pub fn lack(colour: bool, brightness: bool, lang: Lang) -> Lack {
+    let (one, none, many) = match (lang, colour, brightness) {
+        (Lang::Fr, true, false) => (
+            "ne prend pas de couleur",
+            "ne prend de couleur",
+            "Ne prennent pas de couleur",
+        ),
+        (Lang::Fr, false, true) => (
+            "n'a pas de luminosité réglable",
+            "n'a de luminosité réglable",
+            "N'ont pas de luminosité réglable",
+        ),
+        (Lang::Fr, ..) => (
+            "ne prend pas ce réglage",
+            "ne prend ce réglage",
+            "Ne prennent pas ce réglage",
+        ),
+        (Lang::En, true, false) => (
+            "can't take a colour",
+            "takes a colour",
+            "Can't take a colour",
+        ),
+        (Lang::En, false, true) => ("can't be dimmed", "can be dimmed", "Can't be dimmed"),
+        (Lang::En, ..) => (
+            "can't take that setting",
+            "takes that setting",
+            "Can't take that setting",
+        ),
+    };
+    Lack { one, none, many }
+}
+
 /// [`lights`] in English: "Desk lamp on in the Office.", "Living room lights on (3 lights)."
 fn lights_en(
     area: &str,
     on: bool,
-    colour: Option<&str>,
+    (colour, brightness): (Option<&str>, Option<u8>),
     names: &[String],
     results: &[ActionResult],
 ) -> String {
     let lang = Lang::En;
     let n = names.len();
-    let verb = match (on, colour) {
-        (true, Some(c)) => format!("on in {c}"),
-        (true, None) => "on".into(),
-        (false, _) => "off".into(),
+    let verb = match (on, colour, brightness) {
+        (true, Some(c), None) => format!("on in {c}"),
+        (true, Some(c), Some(b)) => format!("on in {c} at {b} %"),
+        (true, None, Some(b)) => format!("on at {b} %"),
+        (true, None, None) => "on".into(),
+        (false, ..) => "off".into(),
     };
     let failed = failures(names, results, lang);
     let skipped = results
@@ -906,8 +951,45 @@ mod tests {
             on,
             names: names.iter().map(|n| n.to_string()).collect(),
             colour: None,
+            brightness: None,
             unable: vec![],
         }
+    }
+
+    #[test]
+    fn brightness_reply_shapes() {
+        use ActionResult::{Ok, Skipped};
+        let dimmed = |names: &[&str], colour: Option<&str>, unable: &[&str]| Done::Lights {
+            area: "salon".into(),
+            on: true,
+            names: names.iter().map(|n| n.to_string()).collect(),
+            colour: colour.map(Into::into),
+            brightness: Some(100),
+            unable: unable.iter().map(|n| n.to_string()).collect(),
+        };
+        assert_eq!(
+            said(&dimmed(&["Led"], Some("bleu"), &[]), &[Ok]),
+            "Led allumée en bleu à 100 % dans le Salon."
+        );
+        assert_eq!(
+            said(&dimmed(&["Led"], None, &[]), &[Skipped]),
+            "Led déjà allumée à 100 % dans le Salon."
+        );
+        assert_eq!(
+            said(
+                &dimmed(&["Led", "Lampe table"], None, &["Plafonnier"]),
+                &[Ok, Ok]
+            ),
+            "Salon allumé à 100 % (2 lumières). « Plafonnier » n'a pas de luminosité réglable."
+        );
+        assert_eq!(
+            said(&dimmed(&["Led"], None, &["Plafonnier", "Lampe"]), &[Ok]),
+            "Led allumée à 100 % dans le Salon. N'ont pas de luminosité réglable : Plafonnier, Lampe."
+        );
+        assert_eq!(
+            said(&dimmed(&["Led"], Some("bleu"), &["Plafonnier"]), &[Ok]),
+            "Led allumée en bleu à 100 % dans le Salon. « Plafonnier » ne prend pas ce réglage."
+        );
     }
 
     #[test]
@@ -918,6 +1000,7 @@ mod tests {
             on: true,
             names: names.iter().map(|n| n.to_string()).collect(),
             colour: Some("rouge".into()),
+            brightness: None,
             unable: unable.iter().map(|n| n.to_string()).collect(),
         };
         assert_eq!(
@@ -1510,6 +1593,7 @@ mod tests {
             on: true,
             names: names.iter().map(|n| n.to_string()).collect(),
             colour: Some("red".into()),
+            brightness: None,
             unable: unable.iter().map(|n| n.to_string()).collect(),
         };
         assert_eq!(

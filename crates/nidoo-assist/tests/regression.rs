@@ -2,10 +2,12 @@
 
 use nidoo_assist::fixture;
 use nidoo_assist::{Action, Plan, plan};
-use nidoo_core::model::Command;
+use nidoo_core::model::{Command, Hs};
 
 enum Expect {
     Lights(bool, &'static [&'static str]),
+    /// Every light listed, in order, sent the same command (a colour, a brightness).
+    LightsCmd(Command, &'static [&'static str]),
     Setpoint(&'static str, f64),
     Confirm(&'static str, f64),
     Answer(&'static str),
@@ -65,6 +67,50 @@ const ROWS: &[(&str, Expect)] = &[
         "allume le plafonnier en bleu",
         Answer("« Plafonnier » ne prend pas de couleur."),
     ),
+    (
+        "allume les leds du salon en bleu à 100 %",
+        LightsCmd(
+            Command::TurnOn {
+                brightness: Some(255),
+                color: Some(Hs { h: 225.0, s: 100.0 }),
+                effect: None,
+            },
+            &["light_led"],
+        ),
+    ),
+    (
+        "allume la led à 50 %",
+        LightsCmd(
+            Command::TurnOn {
+                brightness: Some(128),
+                color: None,
+                effect: None,
+            },
+            &["light_led"],
+        ),
+    ),
+    (
+        "allume la led du salon à 50 % en rouge",
+        LightsCmd(
+            Command::TurnOn {
+                brightness: Some(128),
+                color: Some(Hs { h: 0.0, s: 100.0 }),
+                effect: None,
+            },
+            &["light_led"],
+        ),
+    ),
+    (
+        "allume le plafonnier à 50 %",
+        Answer("« Plafonnier » n'a pas de luminosité réglable."),
+    ),
+    (
+        "allume la led à 150 %",
+        Answer("La luminosité va de 1 à 100 %."),
+    ),
+    ("éteins le salon à 50 %", NotUnderstood),
+    ("mets le salon à 20 %", NotUnderstood),
+    ("allume la prise du bureau à 50 %", NotUnderstood),
     ("éteins le salon en rouge", NotUnderstood),
     ("mets le chauffage du salon en rouge", NotUnderstood),
     (
@@ -267,6 +313,12 @@ fn regression_table() {
                         .iter()
                         .zip(ids.iter())
                         .all(|(g, id)| g.as_ref().is_some_and(|(e, c)| e == id && *c == want))
+            }
+            (LightsCmd(want, ids), Plan::Act { actions, .. }) => {
+                actions.len() == ids.len()
+                    && actions.iter().zip(ids.iter()).all(|(a, id)| {
+                        matches!(a, Action::Light { entity, command } if entity == id && command == want)
+                    })
             }
             (Setpoint(zone, value), Plan::Act { actions, .. }) => matches!(
                 actions.as_slice(),

@@ -213,8 +213,17 @@ fn what(action: &Action, lang: Lang) -> (String, String) {
         Action::Light { command, .. } => match command {
             Command::TurnOff => "turn off".into(),
             Command::TurnOn {
-                color: Some(hs), ..
-            } => format!("turn on in colour (hue {} °)", hs.h.round()),
+                color, brightness, ..
+            } => {
+                let mut what = match color {
+                    Some(hs) => format!("turn on in colour (hue {} °)", hs.h.round()),
+                    None => "turn on".into(),
+                };
+                if let Some(b) = brightness {
+                    what.push_str(&format!(" at {b} of 255"));
+                }
+                what
+            }
             _ => "turn on".into(),
         },
         Action::Switch { command, .. } => match command {
@@ -254,8 +263,19 @@ fn what_fr(action: &Action) -> (String, String) {
             let what = match command {
                 Command::TurnOff => "éteindre".into(),
                 Command::TurnOn {
-                    color: Some(hs), ..
-                } => format!("allumer en couleur (teinte {} °)", reply::number(hs.h)),
+                    color, brightness, ..
+                } => {
+                    let mut what = match color {
+                        Some(hs) => {
+                            format!("allumer en couleur (teinte {} °)", reply::number(hs.h))
+                        }
+                        None => "allumer".into(),
+                    };
+                    if let Some(b) = brightness {
+                        what.push_str(&format!(" à {b} sur 255"));
+                    }
+                    what
+                }
                 _ => "allumer".into(),
             };
             (entity.clone(), what)

@@ -12,7 +12,7 @@ use crate::house::House;
 use crate::intent::{Change, Intent, MediaIntent, parse_in, play_by_name_in};
 use crate::lexicon::Colour;
 use crate::reply::{
-    cannot_in, dans, de, le, number, number_in, place, room_in, temp, temp_in, the,
+    Lack, cannot_in, dans, de, lack, le, number, number_in, place, room_in, temp, temp_in, the,
 };
 use crate::room::{RoomMatch, name_words, resolve_room};
 use crate::text::{Word, words};
@@ -89,13 +89,15 @@ pub enum Action {
 /// What the actions do, for the reply. `names` are in the actions' order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Done {
-    /// `colour`: the colour's name in the house's language ("rouge", "red"); `unable`: the room's lights left as they
-    /// were because they take no colour.
+    /// `colour`: the colour's name in the house's language ("rouge", "red"); `brightness`: the
+    /// percent asked; `unable`: the room's lights left as they were because they take no colour
+    /// or no brightness.
     Lights {
         area: String,
         on: bool,
         names: Vec<String>,
         colour: Option<String>,
+        brightness: Option<u8>,
         unable: Vec<String>,
     },
     Setpoint {
@@ -223,8 +225,9 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
             names,
             room,
             colour,
+            brightness,
             ..
-        } => lights(req, *on, *colour, names, room, house),
+        } => lights(req, *on, *colour, *brightness, names, room, house),
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
         Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
@@ -264,6 +267,17 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
             ),
             Trace {
                 intent: Some("media_hint".into()),
+                ..Default::default()
+            },
+        ),
+        Intent::BrightnessRange => answer(
+            say(
+                house,
+                "La luminosité va de 1 à 100 %.",
+                "The brightness goes from 1 to 100 %.",
+            ),
+            Trace {
+                intent: Some("lights_range".into()),
                 ..Default::default()
             },
         ),
@@ -378,23 +392,29 @@ fn lights(
     req: &Request,
     on: bool,
     colour: Option<Colour>,
+    brightness: Option<u8>,
     names: &[String],
     room: &[String],
     house: &House,
 ) -> Plan {
     let mut trace = Trace {
         intent: Some(
-            match (on, colour) {
-                (true, Some(_)) => "lights_colour",
-                (true, None) => "lights_on",
-                (false, _) => "lights_off",
+            match (on, colour, brightness) {
+                (true, Some(_), _) => "lights_colour",
+                (true, None, Some(_)) => "lights_brightness",
+                (true, None, None) => "lights_on",
+                (false, ..) => "lights_off",
             }
             .into(),
         ),
         ..Default::default()
     };
     let en = house.lang == Lang::En;
-    let coloured = |l: &&EntityView| colour.is_none() || takes_colour(l);
+    // A light must take everything asked: the colour and the brightness.
+    let able = |l: &&EntityView| {
+        (colour.is_none() || takes_colour(l)) && (brightness.is_none() || l.capabilities.brightness)
+    };
+    let lack = lack(colour.is_some(), brightness.is_some(), house.lang);
     // In English the words before the light word may be part of its name, not a room ("turn on
     // the desk lamp": names `lamp`, room `desk`).
     let together: Vec<String> = names.iter().chain(room).cloned().collect();
@@ -427,21 +447,15 @@ fn lights(
         .into_iter()
         .filter(|l| names.is_empty() || named(l, names))
         .collect();
-    let candidates: Vec<&EntityView> = all_named.iter().copied().filter(coloured).collect();
-    let none = if colour.is_some() && !all_named.is_empty() {
+    let candidates: Vec<&EntityView> = all_named.iter().copied().filter(able).collect();
+    let none = if (colour.is_some() || brightness.is_some()) && !all_named.is_empty() {
         match (all_named.as_slice(), en) {
-            _ if names.is_empty() => say(
-                house,
-                "Aucune lumière ne prend de couleur.",
-                "No light takes a colour.",
-            ),
-            ([one], false) => format!("« {} » ne prend pas de couleur.", one.name),
-            ([one], true) => format!("\"{}\" can't take a colour.", one.name),
-            (_, false) => format!(
-                "Aucune lumière « {} » ne prend de couleur.",
-                names.join(" ")
-            ),
-            (_, true) => format!("No \"{}\" light takes a colour.", names.join(" ")),
+            _ if names.is_empty() && en => format!("No light {}.", lack.none),
+            _ if names.is_empty() => format!("Aucune lumière {}.", lack.none),
+            ([one], false) => format!("« {} » {}.", one.name, lack.one),
+            ([one], true) => format!("\"{}\" {}.", one.name, lack.one),
+            (_, false) => format!("Aucune lumière « {} » {}.", names.join(" "), lack.none),
+            (_, true) => format!("No \"{}\" light {}.", names.join(" "), lack.none),
         }
     } else if names.is_empty() {
         say(
@@ -494,7 +508,7 @@ fn lights(
     if chosen.is_empty() {
         let choices = members
             .iter()
-            .filter(|l| coloured(l))
+            .filter(|l| able(l))
             .take(MAX_CHOICES)
             .map(|l| {
                 let mut next = req.clone();
@@ -504,7 +518,7 @@ fn lights(
             })
             .collect::<Vec<_>>();
         if choices.is_empty() {
-            return answer(no_colour_in(&area_name, house), trace);
+            return answer(no_light_in(&area_name, &lack, house), trace);
         }
         return Plan::Ask {
             question: if en {
@@ -516,20 +530,19 @@ fn lights(
             trace,
         };
     }
-    // A colour goes to the lights that take one; the others are left as they are.
-    let (chosen, unable): (Vec<&EntityView>, Vec<&EntityView>) =
-        chosen.into_iter().partition(coloured);
+    // A colour or a brightness goes to the lights that take it; the others are left as they are.
+    let (chosen, unable): (Vec<&EntityView>, Vec<&EntityView>) = chosen.into_iter().partition(able);
     if chosen.is_empty() {
         let reply = match (unable.as_slice(), en) {
-            ([one], false) => format!("« {} » ne prend pas de couleur.", one.name),
-            ([one], true) => format!("\"{}\" can't take a colour.", one.name),
-            _ => no_colour_in(&area_name, house),
+            ([one], false) => format!("« {} » {}.", one.name, lack.one),
+            ([one], true) => format!("\"{}\" {}.", one.name, lack.one),
+            _ => no_light_in(&area_name, &lack, house),
         };
         return answer(reply, trace);
     }
     let command = if on {
         Command::TurnOn {
-            brightness: None,
+            brightness: brightness.map(|p| ((u16::from(p) * 255 + 50) / 100) as u8),
             color: colour.map(Colour::hs),
             effect: None,
         }
@@ -550,6 +563,7 @@ fn lights(
             on,
             names: chosen.iter().map(|l| l.name.clone()).collect(),
             colour: colour.map(|c| c.name_in(house.lang).to_string()),
+            brightness,
             unable: unable.iter().map(|l| l.name.clone()).collect(),
         },
         trace,
@@ -557,10 +571,10 @@ fn lights(
 }
 
 /// "No light in the Salon takes a colour."
-fn no_colour_in(area_name: &str, house: &House) -> String {
+fn no_light_in(area_name: &str, lack: &Lack, house: &House) -> String {
     match house.lang {
-        Lang::Fr => format!("Aucune lumière ne prend de couleur {}.", dans(area_name)),
-        Lang::En => format!("No light {} takes a colour.", place(area_name, house.lang)),
+        Lang::Fr => format!("Aucune lumière {} {}.", lack.none, dans(area_name)),
+        Lang::En => format!("No light {} {}.", place(area_name, house.lang), lack.none),
     }
 }
 
@@ -2080,6 +2094,7 @@ mod tests {
                 on: false,
                 names: vec!["Led".into()],
                 colour: None,
+                brightness: None,
                 unable: vec![],
             }
         );
@@ -2111,6 +2126,7 @@ mod tests {
                 on: true,
                 names: vec!["Lampe table".into(), "Led".into()],
                 colour: Some("rouge".into()),
+                brightness: None,
                 unable: vec!["Plafonnier".into(), "Ambiance TV".into()],
             }
         );
@@ -2135,6 +2151,91 @@ mod tests {
             p("allume en vert"),
             Plan::Act { done: Done::Lights { area, .. }, .. } if area == "salon"
         ));
+    }
+
+    fn dimmed(brightness: u8, colour: Option<nidoo_core::model::Hs>) -> Command {
+        Command::TurnOn {
+            brightness: Some(brightness),
+            color: colour,
+            effect: None,
+        }
+    }
+
+    #[test]
+    fn brightness_goes_to_the_lights_that_dim() {
+        let half = dimmed(128, None);
+        let plan = p("allume le salon à 50 %");
+        assert_eq!(
+            lights_of(&plan),
+            vec![
+                ("light_lampe_table".to_string(), half.clone()),
+                ("light_led".to_string(), half.clone()),
+            ]
+        );
+        let Plan::Act { done, trace, .. } = &plan else {
+            unreachable!()
+        };
+        assert_eq!(trace.intent.as_deref(), Some("lights_brightness"));
+        assert_eq!(
+            *done,
+            Done::Lights {
+                area: "salon".into(),
+                on: true,
+                names: vec!["Lampe table".into(), "Led".into()],
+                colour: None,
+                brightness: Some(50),
+                unable: vec!["Plafonnier".into(), "Ambiance TV".into()],
+            }
+        );
+        assert_eq!(
+            lights_of(&p("allume la led à 50 %")),
+            vec![("light_led".to_string(), half)]
+        );
+        let blue = Some(nidoo_core::model::Hs { h: 225.0, s: 100.0 });
+        assert_eq!(
+            lights_of(&p("allume les leds du salon en bleu à 100 %")),
+            vec![("light_led".to_string(), dimmed(255, blue))]
+        );
+        let Plan::Act { trace, .. } = p("allume la led en bleu à 100 %") else {
+            unreachable!()
+        };
+        assert_eq!(trace.intent.as_deref(), Some("lights_colour"));
+    }
+
+    #[test]
+    fn brightness_without_a_dimmable_light_answers() {
+        assert_eq!(
+            reply_of(&p("allume le plafonnier à 50 %")),
+            "« Plafonnier » n'a pas de luminosité réglable."
+        );
+        assert_eq!(
+            reply_of(&p("allume la chambre de Léa à 50 %")),
+            "« Lampe » n'a pas de luminosité réglable."
+        );
+    }
+
+    #[test]
+    fn brightness_out_of_range_and_refused_cases() {
+        assert_eq!(
+            reply_of(&p("allume la led à 0 %")),
+            "La luminosité va de 1 à 100 %."
+        );
+        assert_eq!(
+            reply_of(&p("allume la led à 150 %")),
+            "La luminosité va de 1 à 100 %."
+        );
+        for s in [
+            "éteins le salon à 50 %",
+            "mets le salon à 20 %",
+            "allume la prise du bureau à 50 %",
+        ] {
+            assert!(
+                !matches!(p(s), Plan::Act { actions, .. } if actions.iter().any(
+                    |a| matches!(a, Action::Light { command: Command::TurnOn { brightness: Some(_), .. }, .. })
+                )),
+                "{s}"
+            );
+        }
     }
 
     fn reply_of(plan: &Plan) -> String {
@@ -2747,6 +2848,7 @@ mod tests {
             names: vec!["salon".into()],
             room: vec![],
             colour: None,
+            brightness: None,
         });
         let plan = plan_request(&req, &h);
         assert_eq!(
@@ -3408,6 +3510,7 @@ mod tests {
             names: words(names),
             room: words(room),
             colour: None,
+            brightness: None,
         }
     }
 
@@ -3467,6 +3570,7 @@ mod tests {
             names: words("led"),
             room: vec![],
             colour: Some(Colour::Red),
+            brightness: None,
         });
         let Plan::Act { done, .. } = plan else {
             panic!("{plan:?}")
@@ -3480,9 +3584,40 @@ mod tests {
                 names: words("ceiling"),
                 room: vec![],
                 colour: Some(Colour::Blue),
+                brightness: None,
             })
             .1,
             "\"Ceiling\" can't take a colour."
+        );
+    }
+
+    #[test]
+    fn english_brightness() {
+        let intent = |names: &str, colour, brightness| Intent::Lights {
+            on: true,
+            all: false,
+            names: words(names),
+            room: vec![],
+            colour,
+            brightness,
+        };
+        let (plan, text) = en(intent("led", None, Some(50)));
+        assert_eq!(text, "Led on at 50 % in the Living room.");
+        assert_eq!(
+            lights_of(&plan),
+            vec![("light_led".to_string(), dimmed(128, None))]
+        );
+        assert_eq!(
+            en(intent("led", Some(Colour::Blue), Some(100))).1,
+            "Led on in blue at 100 % in the Living room."
+        );
+        assert_eq!(
+            en(intent("ceiling", None, Some(50))).1,
+            "\"Ceiling\" can't be dimmed."
+        );
+        assert_eq!(
+            en(Intent::BrightnessRange).1,
+            "The brightness goes from 1 to 100 %."
         );
     }
 
