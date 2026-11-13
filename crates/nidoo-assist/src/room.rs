@@ -115,9 +115,50 @@ pub fn resolve_room(house: &House, room_words: &[String]) -> RoomMatch {
         };
     }
     match found.len() {
-        0 => RoomMatch::Unknown,
+        0 => without_stray_words(house, &said_flat),
         1 => RoomMatch::One(found.remove(0)),
         _ => RoomMatch::Many(found),
+    }
+}
+
+/// Small talk and speech-to-text slips put words before the room ("comment salon", "mais
+/// salon"). A word no room and no device is named after is left out, and the room is the one
+/// whose whole name the rest says; never a guess from part of a name, and never when the stray
+/// word names a device ("led salon" is the Led, not every light of the Salon) or is a number.
+fn without_stray_words(house: &House, said: &[String]) -> RoomMatch {
+    let room_words: Vec<Vec<String>> = house
+        .areas
+        .iter()
+        .flat_map(|a| [name_words(&a.name), name_words(&a.id)])
+        .collect();
+    let in_a_room = |w: &String| is_bedroom_word(w) || room_words.iter().any(|n| n.contains(w));
+    let (kept, stray): (Vec<String>, Vec<String>) = said.iter().cloned().partition(in_a_room);
+    if kept.is_empty() || stray.is_empty() {
+        return RoomMatch::Unknown;
+    }
+    let names_a_device = |w: &String| {
+        house.entities.iter().any(|e| {
+            name_words(&e.name).contains(w)
+                || e.device_name.as_deref().is_some_and(|d| name_words(d).contains(w))
+        })
+    };
+    // A stray number is part of a value ("à 19 , 5" is 19.5, not 19 in the Salon).
+    let is_number = |w: &String| w.chars().any(|c| c.is_ascii_digit());
+    if stray.iter().any(|w| names_a_device(w) || is_number(w)) {
+        return RoomMatch::Unknown;
+    }
+    let whole = |name: &[String]| {
+        !name.is_empty() && name.iter().all(|w| kept.contains(w)) && score(&kept, name) > 0
+    };
+    let found: Vec<String> = house
+        .areas
+        .iter()
+        .filter(|a| whole(&name_words(&a.name)) || whole(&name_words(&a.id)))
+        .map(|a| a.id.clone())
+        .collect();
+    match found.as_slice() {
+        [one] => RoomMatch::One(one.clone()),
+        _ => RoomMatch::Unknown,
     }
 }
 
@@ -204,6 +245,37 @@ mod tests {
             resolve_room(&f.house(), &words),
             RoomMatch::Many(vec!["lea".into(), "tom".into()])
         );
+    }
+
+    #[test]
+    fn a_stray_word_beside_a_full_room_name_is_left_out() {
+        // Small talk and speech-to-text slips: « Salut ! Comment tu vas ? … du salon ».
+        assert_eq!(r(&["comment", "salon"]), RoomMatch::One("salon".into()));
+        assert_eq!(r(&["mais", "salon", "tv"]), RoomMatch::One("salon_tv".into()));
+        assert_eq!(
+            person(&["chambre", "de", "lea", "blanc"]),
+            RoomMatch::One("lea".into())
+        );
+    }
+
+    #[test]
+    fn a_stray_word_never_makes_a_partial_room_name_enough() {
+        // What is left must be a whole room name: no guess between bedrooms.
+        assert_eq!(r(&["chambre", "julia"]), RoomMatch::Unknown);
+        assert_eq!(person(&["chambre", "cuisine"]), RoomMatch::Unknown);
+        assert_eq!(r(&["cuisine"]), RoomMatch::Unknown);
+    }
+
+    #[test]
+    fn a_device_name_is_not_a_stray_word() {
+        // « la lumière du canapé au salon »: dropping « led » would act on the whole room.
+        assert_eq!(r(&["led", "salon"]), RoomMatch::Unknown);
+        assert_eq!(r(&["plafonnier", "bureau"]), RoomMatch::Unknown);
+    }
+
+    #[test]
+    fn a_number_is_not_a_stray_word() {
+        assert_eq!(r(&["salon", "5"]), RoomMatch::Unknown);
     }
 
     #[test]

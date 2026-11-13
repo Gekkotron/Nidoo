@@ -2023,6 +2023,31 @@ mod tests {
     }
 
     #[test]
+    fn mais_heard_for_mets_still_names_the_room() {
+        // Speech to text writes the homophone "mais" for "mets".
+        assert_eq!(
+            setpoint_of(&p("mais le chauffage au salon à 20 degrés.")),
+            ("salon".into(), 20.0)
+        );
+        assert_eq!(
+            setpoint_of(&p("Mais le salon à vingt.")),
+            ("salon".into(), 20.0)
+        );
+    }
+
+    #[test]
+    fn a_filler_word_is_not_a_room_word() {
+        for s in [
+            "Ah salut ? Quelle est la température du salon ?",
+            "euh quelle est la température du salon ?",
+            "bah quelle est la température du salon ?",
+            "Salut ! Comment tu vas ? Quelle est la température du salon ?",
+        ] {
+            assert_eq!(p(s).trace().room.as_deref(), Some("salon"), "{s}");
+        }
+    }
+
+    #[test]
     fn relative_from_decided_setpoint() {
         assert_eq!(
             setpoint_of(&p("baisse un peu le chauffage du salon")),

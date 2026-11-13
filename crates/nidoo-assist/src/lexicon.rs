@@ -102,6 +102,8 @@ const TABLE: &[(Class, &[&str])] = &[
         &[
             "mets", "met", "mettre", "mettez", "regle", "regler", "regles", "reglez", "passe",
             "passer", "passes", "passez",
+            // Speech to text writes the homophone "mais" for "mets"; "but" has no use in an order.
+            "mais",
         ],
     ),
     (
@@ -314,6 +316,12 @@ const TABLE: &[(Class, &[&str])] = &[
             "merci",
             "bonjour",
             "salut",
+            // Fillers heard by a satellite ("ah salut ? quelle est…"): never a room word.
+            "ah",
+            "oh",
+            "euh",
+            "bah",
+            "hein",
             "maintenant",
             "ok",
             "vas",
