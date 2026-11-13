@@ -1,9 +1,9 @@
-//! The solar page the header's solar card links to: today and tomorrow, the day curve, the
-//! figures that compare forecast and production, the next days and the source.
+//! The solar page the header's solar card links to: today, the day curve, the figures that
+//! compare forecast and production, the next days (each one opens its own curve) and the source.
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -32,12 +32,6 @@ const H: f64 = 180.0;
 /// today−(n−1)…today and accepts only 7, 30 or 365, so on the 31st the 1st needs the long one.
 fn history_days(today: NaiveDate) -> u16 {
     if today.day() > 30 { 365 } else { 30 }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Tab {
-    Today,
-    Tomorrow,
 }
 
 /// What the page shows besides the curve; recomputed when the forecast, the clock or the
@@ -182,20 +176,25 @@ fn page_data(
     })
 }
 
-/// The curve of the chosen tab, whether its measured line is the forecast's own estimates, and
+/// The day the curve shows: the picked one while it is still ahead, else today (`None`).
+fn shown_day(picked: Option<NaiveDate>, today: NaiveDate) -> Option<NaiveDate> {
+    picked.filter(|d| *d > today)
+}
+
+/// The curve of the shown day, whether its measured line is the forecast's own estimates, and
 /// the `(x, local hour)` ticks of its span.
 fn page_curve(
     house: House,
     now: u64,
     measured: Option<SolarMeasured>,
-    tab: Tab,
+    picked: Option<NaiveDate>,
 ) -> Option<PageCurve> {
     let zone = house.flows_config.with(|c| house_place(c.as_ref()).1);
     house.solar.with(|s| {
         let s: &SolarView = s.as_ref()?;
         let today = local_date(zone, now);
-        match tab {
-            Tab::Today => {
+        match shown_day(picked, today) {
+            None => {
                 let (from, to) = day_bounds(zone, today);
                 let day = periods_in(&s.periods, from, to);
                 let real = measured.map(|m| m.periods.get()).unwrap_or_default();
@@ -207,8 +206,8 @@ fn page_curve(
                     hour_ticks(span, zone, W),
                 ))
             }
-            Tab::Tomorrow => {
-                let (from, to) = day_bounds(zone, today + Duration::days(1));
+            Some(date) => {
+                let (from, to) = day_bounds(zone, date);
                 let day = periods_in(&s.periods, from, to);
                 let span = producing_span(&day)?;
                 Some((
@@ -250,7 +249,13 @@ fn tile(label: String, value: String, sub: String) -> impl IntoView {
     }
 }
 
-fn day_column(lang: Lang, d: (NaiveDate, f64, f64, f64), max: f64) -> impl IntoView {
+/// One day of the next days: a button that shows its curve, or today's again when it is shown.
+fn day_column(
+    lang: Lang,
+    d: (NaiveDate, f64, f64, f64),
+    max: f64,
+    picked: RwSignal<Option<NaiveDate>>,
+) -> impl IntoView {
     let (date, estimate, low, high) = d;
     let pct = if max > 0.0 {
         estimate / max * 100.0
@@ -258,7 +263,12 @@ fn day_column(lang: Lang, d: (NaiveDate, f64, f64, f64), max: f64) -> impl IntoV
         0.0
     };
     view! {
-        <div class="solar-day">
+        <button
+            type="button"
+            class="solar-day"
+            aria-pressed=move || (picked.get() == Some(date)).to_string()
+            on:click=move |_| picked.update(|p| *p = (*p != Some(date)).then_some(date))
+        >
             <div class="solar-day__name">{i18n::short_weekday(lang, date)}</div>
             <div class="solar-day__track">
                 <div class="solar-day__bar" style=format!("height: {pct:.0}%")></div>
@@ -274,7 +284,7 @@ fn day_column(lang: Lang, d: (NaiveDate, f64, f64, f64), max: f64) -> impl IntoV
                     )}
                 </span>
             </div>
-        </div>
+        </button>
     }
 }
 
@@ -352,14 +362,15 @@ fn tiles(d: &PageData, lang: Lang) -> Vec<AnyView> {
     out
 }
 
-/// The curve card: a Today / Tomorrow switch over the day's curve.
+/// The curve card: the shown day's name over its curve, with a way back to today.
 #[component]
 fn CurveCard(
     lang: RwSignal<Lang>,
     curve: Memo<Option<PageCurve>>,
-    tab: RwSignal<Tab>,
+    shown: Memo<Option<NaiveDate>>,
+    picked: RwSignal<Option<NaiveDate>>,
 ) -> impl IntoView {
-    let pressed = move |t: Tab| move || (tab.get() == t).to_string();
+    let is_today = move || shown.get().is_none();
     let field = move |pick: fn(&Curve) -> String| {
         move || curve.get().map(|c| pick(&c.0)).unwrap_or_default()
     };
@@ -425,7 +436,7 @@ fn CurveCard(
     // the now line while it is inside the span.
     let legend = move || {
         let l = lang.get();
-        let today = tab.get() == Tab::Today;
+        let today = is_today();
         let (estimated, has_now) = curve
             .get()
             .map(|c| (c.1, c.0.now_x.is_some()))
@@ -452,20 +463,20 @@ fn CurveCard(
     view! {
         <div class="solar-page__curve">
             <div class="solar-page__curve-head">
-                <div class="solar-tabs">
+                <div class="solar-page__day">
+                    <span class="solar-page__day-name">
+                        {move || match shown.get() {
+                            Some(date) => i18n::short_weekday(lang.get(), date),
+                            None => solar_text(lang.get(), T::Today).to_owned(),
+                        }}
+                    </span>
                     <button
                         type="button"
-                        aria-pressed=pressed(Tab::Today)
-                        on:click=move |_| tab.set(Tab::Today)
+                        class="solar-page__today"
+                        hidden=is_today
+                        on:click=move |_| picked.set(None)
                     >
-                        {move || solar_text(lang.get(), T::Today)}
-                    </button>
-                    <button
-                        type="button"
-                        aria-pressed=pressed(Tab::Tomorrow)
-                        on:click=move |_| tab.set(Tab::Tomorrow)
-                    >
-                        {move || solar_text(lang.get(), T::Tomorrow)}
+                        {move || solar_text(lang.get(), T::BackToToday)}
                     </button>
                 </div>
                 <ul class="solar-legend">{legend}</ul>
@@ -475,12 +486,12 @@ fn CurveCard(
                 {grid}
                 <path class="solar-curve__band" d=field(|c| c.band.clone()) />
                 {move || {
-                    (tab.get() == Tab::Today)
+                    is_today()
                         .then(|| view! { <path class="solar-curve__measured" d=measured_area /> })
                 }}
                 <path class="solar-curve__line solar-curve__line--dashed" d=field(|c| c.forecast_line.clone()) />
                 {move || {
-                    (tab.get() == Tab::Today)
+                    is_today()
                         .then(|| view! { <path class="solar-curve__measured-line" d=measured_line /> })
                 }}
                 {now_line}
@@ -496,7 +507,8 @@ fn content(
     data: Memo<Option<PageData>>,
     lang: RwSignal<Lang>,
     curve: Memo<Option<PageCurve>>,
-    tab: RwSignal<Tab>,
+    shown: Memo<Option<NaiveDate>>,
+    picked: RwSignal<Option<NaiveDate>>,
 ) -> impl IntoView {
     let from_data = move |f: fn(&PageData, Lang) -> String| {
         move || data.get().map(|d| f(&d, lang.get())).unwrap_or_default()
@@ -521,7 +533,7 @@ fn content(
             </div>
         </div>
 
-        <CurveCard lang curve tab />
+        <CurveCard lang curve shown picked />
 
         <div class="solar-tiles">
             {move || data.get().map(|d| tiles(&d, lang.get()))}
@@ -534,7 +546,10 @@ fn content(
                     .map(|d| {
                         let l = lang.get();
                         let max = d.days.iter().map(|d| d.1).fold(0.0_f64, f64::max);
-                        d.days.into_iter().map(|day| day_column(l, day, max)).collect_view()
+                        d.days
+                            .into_iter()
+                            .map(|day| day_column(l, day, max, picked))
+                            .collect_view()
                     })
             }}
         </div>
@@ -560,7 +575,8 @@ pub fn SolarScreen() -> impl IntoView {
     let lang = use_context::<RwSignal<Lang>>().unwrap_or_else(|| RwSignal::new(Lang::En));
     let now = use_context::<Now>().map_or_else(|| RwSignal::new(unix_now()), |n| n.0);
     let measured = use_context::<SolarMeasured>();
-    let tab = RwSignal::new(Tab::Today);
+    // The next day picked in the list; `None` shows today.
+    let picked: RwSignal<Option<NaiveDate>> = RwSignal::new(None);
     let daily: RwSignal<Option<BTreeMap<NaiveDate, f64>>> = RwSignal::new(None);
 
     // The house-local date: a new day makes yesterday a different day, so the history is re-read.
@@ -593,14 +609,15 @@ pub fn SolarScreen() -> impl IntoView {
 
     let data =
         Memo::new(move |_| daily.with(|d| page_data(house, now.get(), measured, d.as_ref())));
-    let curve = Memo::new(move |_| page_curve(house, now.get(), measured, tab.get()));
+    let shown = Memo::new(move |_| shown_day(picked.get(), date.get()));
+    let curve = Memo::new(move |_| page_curve(house, now.get(), measured, picked.get()));
     let has_solar = Memo::new(move |_| house.solar.with(Option::is_some));
     view! {
         <section class="solar-page">
             <BackLink />
             {move || {
                 if has_solar.get() {
-                    content(data, lang, curve, tab).into_any()
+                    content(data, lang, curve, shown, picked).into_any()
                 } else if !house.solar_loaded.get() {
                     // Nothing until the first fetch has answered, then the hint.
                     ().into_any()

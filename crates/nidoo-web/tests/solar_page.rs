@@ -155,17 +155,38 @@ async fn solar_page_shows_top_curve_tiles_days_footer() {
     assert!(text.contains("Solcast calls 3 / 10 today"), "{text}");
 }
 
+/// The `n`-th card of the next days.
+fn day_card(host: &web_sys::Element, n: u32) -> web_sys::HtmlElement {
+    let cards = host.query_selector_all(".solar-day").unwrap();
+    cards.item(n).unwrap().unchecked_into()
+}
+
+fn back_to_today(host: &web_sys::Element) -> web_sys::HtmlElement {
+    host.query_selector(".solar-page__today")
+        .unwrap()
+        .expect("back to today")
+        .unchecked_into()
+}
+
+fn shown_day(host: &web_sys::Element) -> String {
+    host.query_selector(".solar-page__day-name")
+        .unwrap()
+        .and_then(|e| e.text_content())
+        .unwrap_or_default()
+}
+
 #[wasm_bindgen_test]
-async fn tomorrow_tab_hides_measured_area() {
+async fn day_card_shows_its_curve_and_back_to_today() {
     let host = mount(Some(solar(2)), true).await;
+    assert!(host.query_selector(".solar-tabs").unwrap().is_none());
     assert!(
         host.query_selector(".solar-curve__measured")
             .unwrap()
             .is_some()
     );
-    let buttons = host.query_selector_all(".solar-tabs button").unwrap();
-    assert_eq!(buttons.length(), 2);
-    let tomorrow: web_sys::HtmlElement = buttons.item(1).unwrap().unchecked_into();
+    assert_eq!(shown_day(&host), "Today");
+    assert!(back_to_today(&host).hidden());
+    let tomorrow = day_card(&host, 0);
     tomorrow.click();
     tick().await;
     assert!(
@@ -174,10 +195,39 @@ async fn tomorrow_tab_hides_measured_area() {
             .is_none()
     );
     assert!(host.query_selector(".solar-curve__band").unwrap().is_some());
+    assert_ne!(shown_day(&host), "Today");
     assert_eq!(
         tomorrow.get_attribute("aria-pressed").as_deref(),
         Some("true")
     );
+    assert!(!back_to_today(&host).hidden());
+    back_to_today(&host).click();
+    tick().await;
+    assert_eq!(shown_day(&host), "Today");
+    assert_eq!(
+        tomorrow.get_attribute("aria-pressed").as_deref(),
+        Some("false")
+    );
+    // Clicking the shown day again also goes back to today.
+    tomorrow.click();
+    tick().await;
+    tomorrow.click();
+    tick().await;
+    assert_eq!(shown_day(&host), "Today");
+}
+
+#[wasm_bindgen_test]
+async fn a_day_without_periods_draws_no_curve() {
+    // The fixture has periods for today and tomorrow only.
+    let host = mount(Some(solar(2)), true).await;
+    day_card(&host, 3).click();
+    tick().await;
+    let d = host
+        .query_selector(".solar-curve__band")
+        .unwrap()
+        .and_then(|e| e.get_attribute("d"))
+        .unwrap_or_default();
+    assert_eq!(d, "");
 }
 
 /// The legend's entries, in order.
@@ -197,9 +247,7 @@ async fn legend_names_each_series_of_the_tab() {
         ["Likely range", "Forecast", "Estimated so far", "Now"]
     );
     assert_eq!(count(&host, ".solar-legend__swatch"), 4);
-    let buttons = host.query_selector_all(".solar-tabs button").unwrap();
-    let tomorrow: web_sys::HtmlElement = buttons.item(1).unwrap().unchecked_into();
-    tomorrow.click();
+    day_card(&host, 0).click();
     tick().await;
     assert_eq!(legend(&host), ["Likely range", "Forecast"]);
 }
@@ -236,9 +284,9 @@ async fn clock_tick_keeps_the_page_nodes() {
     let clock = RwSignal::new(noon());
     let host = mount_with(Some(solar(2)), true, clock).await;
     let button = host
-        .query_selector(".solar-tabs button")
+        .query_selector(".solar-day")
         .unwrap()
-        .expect("today button");
+        .expect("day card");
     let curve = host
         .query_selector(".solar-page__curve")
         .unwrap()
@@ -248,6 +296,6 @@ async fn clock_tick_keeps_the_page_nodes() {
     tick().await;
     assert_ne!(before, host.inner_html(), "the tick changed nothing");
     assert!(button.is_connected() && curve.is_connected());
-    let again = host.query_selector(".solar-tabs button").unwrap().unwrap();
+    let again = host.query_selector(".solar-day").unwrap().unwrap();
     assert!(button.is_same_node(Some(&again)));
 }

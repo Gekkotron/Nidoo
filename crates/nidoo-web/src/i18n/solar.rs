@@ -22,6 +22,7 @@ pub enum SolarText {
     Roof,
     Month,
     NextDays,
+    BackToToday,
     Unavailable,
     EnableHint,
     Credit,
@@ -54,6 +55,7 @@ pub fn solar_text(lang: Lang, k: SolarText) -> &'static str {
         Roof => ("Roof", "Toit"),
         Month => ("This month", "Ce mois-ci"),
         NextDays => ("Next days", "Prochains jours"),
+        BackToToday => ("Back to today", "Revenir à aujourd'hui"),
         Unavailable => (
             "The solar forecast is unavailable.",
             "Les prévisions solaires sont indisponibles.",
