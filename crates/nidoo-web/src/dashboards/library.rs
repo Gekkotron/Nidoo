@@ -19,7 +19,7 @@ use crate::flow_edit::fold_accents;
 use crate::format::{entity_title, kind_search_words, room_name};
 use crate::house::House;
 use crate::i18n::{DashText, Lang, dash_text, widget_text};
-use crate::icons::{BOLT, HOUSE, PLAY, channel_icon, entity_icon};
+use crate::icons::{BOLT, HOUSE, PLAY, X_MARK, channel_icon, entity_icon};
 
 /// A timestamp is unique enough: widgets are added by hand, one click at a time.
 #[cfg(target_arch = "wasm32")]
@@ -410,7 +410,12 @@ pub(super) fn flow_names(house: House) -> Vec<(String, String)> {
 /// focus, calls `on_add`; the library stays as it is so several widgets can go in a row. Esc
 /// in the search box clears it.
 #[component]
-pub fn WidgetLibrary(on_add: Callback<Widget>) -> impl IntoView {
+pub fn WidgetLibrary(
+    on_add: Callback<Widget>,
+    /// Closes the drawer the library sits in; `None` where it is always shown.
+    #[prop(optional)]
+    on_close: Option<Callback<()>>,
+) -> impl IntoView {
     let house = expect_context::<House>();
     let lang = crate::i18n::use_lang();
     let query = RwSignal::new(String::new());
@@ -504,6 +509,15 @@ pub fn WidgetLibrary(on_add: Callback<Widget>) -> impl IntoView {
         <section class="flow-library dashboard-library" aria-label=move || dash_text(lang(), DashText::AddWidget)>
             <header class="flow-drawer__header">
                 <h2 class="flow-drawer__title">{move || dash_text(lang(), DashText::AddWidget)}</h2>
+                {on_close.map(|close| view! {
+                    <button
+                        type="button"
+                        class="btn btn--round flow-drawer__close dashboard-library__close"
+                        aria-label=move || dash_text(lang(), DashText::Close)
+                        on:click=move |_| close.run(())
+                        inner_html=X_MARK
+                    ></button>
+                })}
             </header>
             <input
                 class="field flow-library__search"

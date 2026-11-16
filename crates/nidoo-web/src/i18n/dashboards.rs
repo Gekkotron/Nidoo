@@ -91,6 +91,8 @@ pub enum DashText {
     // Library.
     WidgetLibrary,
     AddWidget,
+    /// The edit toolbar's button that opens the widget library.
+    Widget,
     SearchPlaceholder,
     SearchWidgets,
     NothingMatches,
@@ -147,6 +149,7 @@ pub fn dash_text(lang: Lang, k: DashText) -> &'static str {
         T::DeleteDashboard => ("Delete dashboard", "Supprimer le tableau de bord"),
         T::WidgetLibrary => ("Widget library", "Bibliothèque de widgets"),
         T::AddWidget => ("Add a widget", "Ajouter un widget"),
+        T::Widget => ("Widget", "Widget"),
         T::SearchPlaceholder => (
             "Search a widget, a device or a room",
             "Rechercher un widget, un appareil ou une pièce",
@@ -324,6 +327,7 @@ mod tests {
             T::DeleteDashboard,
             T::WidgetLibrary,
             T::AddWidget,
+            T::Widget,
             T::SearchPlaceholder,
             T::SearchWidgets,
             T::NothingMatches,
@@ -341,7 +345,7 @@ mod tests {
             T::SectionEnergy,
             T::SectionHistory,
         ];
-        crate::i18n::assert_table(ALL, dash_text, &[]);
+        crate::i18n::assert_table(ALL, dash_text, &[T::Widget]);
     }
 
     #[test]
