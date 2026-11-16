@@ -19,8 +19,8 @@ use nidoo_api::{
     EntityView, FlowLabelsView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec,
     GroupView, HistoryDaily, HistoryRange, HistorySeries, HistoryToday, HomeSettings, IgnoredView,
     LabelEdit, LabelSwitchBody, LabelSwitchResult, LastChange, NetworkWatchSpec, NetworkWatchView,
-    NotifyInput, OverridePatch, RunView, SchedulePreview, Snapshot, SystemView, VirtualSpec,
-    WeatherView,
+    NotifyInput, OverridePatch, RunView, SchedulePreview, Snapshot, SupervisorSettings,
+    SupervisorView, SystemView, VirtualSpec, WeatherView,
 };
 use nidoo_climate::doc::{HouseSettings, Rules, ZoneSettings};
 use nidoo_climate::view::{ClimateView, DecisionLog, LearnStatus, OverrideRequest, RoomEcoRequest};
@@ -80,6 +80,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         )
         .route("/system", get(system_view))
         .route("/system/notify", put(put_system_notify))
+        .route("/supervisor", get(supervisor_view).put(put_supervisor))
         .route("/ambiances", get(list_ambiances))
         .route("/ambiances/{id}", put(put_ambiance).delete(delete_ambiance))
         .route("/ambiances/{id}/apply", post(apply_ambiance))
@@ -937,6 +938,21 @@ async fn put_system_notify(
     let Json(input) = body?;
     let notify = hub.set_system_notify(input.notify).await?;
     Ok(Json(NotifyInput { notify }))
+}
+
+/// The sensor supervisor (`200`): settings, open problems, sensors still learning.
+async fn supervisor_view(State(hub): HubState) -> Json<SupervisorView> {
+    Json(hub.supervisor_view())
+}
+
+/// Saves the supervisor settings live (`200` with the view); `422` for a bad body, `503`
+/// while the database cannot save them.
+async fn put_supervisor(
+    State(hub): HubState,
+    body: Body<SupervisorSettings>,
+) -> Result<Json<SupervisorView>, HttpError> {
+    let Json(settings) = body?;
+    Ok(Json(hub.set_supervisor(settings).await?))
 }
 
 /// The stored ambiances (`200`), the unreadable ones included with their reason.

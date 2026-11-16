@@ -61,6 +61,67 @@ The switch is also `PUT /api/v1/system/notify` in the [HTTP API](../reference/ht
 
 The restart push still goes out if the database is down at that moment, because the hub keeps the restart record until the database is back.
 
+## Sensor supervisor
+
+The sensor supervisor checks the numeric sensors of the house once an hour and tells you when one looks wrong. It runs one hour after the hub starts, then every hour. It needs the database. Without one it does nothing, and its card says **Needs the database**.
+
+Only sensors that report a number are checked. Secret entities are never checked.
+
+### The three checks
+
+- **Stuck**: the sensor still reports, but its value has not changed for much longer than usual. "Usual" is the longest gap between two value changes over the last 14 days, recomputed once a day. Gaps that overlap an earlier problem of the sensor are left out. The alert needs the time since the last change to pass both the usual gap times the sensitivity factor and 6 hours. It also needs a report from the sensor in the last hour, or in the usual gap if that is longer.
+- **Stopped reporting**: the sensor has not reported for longer than the same limit, or it has been unavailable for more than 1 hour. The report clock starts when the hub starts or when the broker link comes back. This check pauses while the broker link is down or the Zigbee2MQTT bridge is offline, because that outage has its own push.
+- **Impossible value**: the value is outside what the sensor can measure. Only the units in this table are checked. Other device classes, including power, and other units are not checked.
+
+| Sensor | Unit | Accepted range |
+| --- | --- | --- |
+| Temperature | °C | -50 to 150 |
+| Humidity, battery, moisture | % | 0 to 100 |
+| Illuminance | any | 0 or more |
+| Pressure | hPa | 800 to 1200 |
+| Voltage | V | 0 to 300 |
+| CO2 | ppm | 0 to 10 000 |
+
+The impossible-value check works from the first day.
+
+### Learning period
+
+A sensor needs at least 7 days of history and 20 value changes in the 14 days before the stuck and stopped-reporting checks apply to it. The impossible-value check and the "unavailable for more than 1 hour" trigger apply from the first day.
+
+A sensor that is flat by nature, such as a battery at 100 %, never gets a usual gap, so it never alerts as stuck.
+
+### Sensitivity
+
+The sensitivity sets the factor that the usual gap is multiplied by: **low** 3, **normal** 2, **high** 1.5. A higher sensitivity raises alerts sooner.
+
+### Problems and pushes
+
+A problem is one sensor with one check.
+
+- When a problem opens, one warning push is sent. While it stays open, nothing more is sent.
+- A problem closes only on clear evidence: the value changes, the sensor reports again or is back online, or the value is back in range. Then one "back to normal" push is sent. A check that can no longer run keeps its problem open.
+- Open problems are stored. A hub restart does not send their push again and does not lose the "back to normal" push.
+- When more than three problems open in one run, they are sent as one grouped push with no Mute button. The "back to normal" pushes of one run are grouped the same way.
+- Removing a sensor from the house closes its problems without a push.
+
+Each single warning push has a **Mute this sensor** button. Tapping it adds the sensor to the ignored list and closes its problems without a push. To un-mute, remove the sensor from the ignored list on the page.
+
+The push texts and their keys are listed in [Push notifications](push-notifications.md#sensor-supervisor-pushes).
+
+### The card
+
+The card **Sensor supervisor** is on **Settings → System**, under **Notify me**. It has:
+
+- the switches **Supervise sensors**, **Notify me** and **Tell me when it is back to normal**. Turning off **Supervise sensors** clears the open problems without a push. Turning **Notify me** back on does not push the problems already open;
+- the sensitivity chips **Low**, **Normal** and **High**;
+- the open problems, such as "Tank temperature — stuck for 14 h", each with a **Mute** button;
+- a line "Learning: N sensors have less than 7 days of history";
+- the ignored sensors, each with a remove button, and an **Add** button that opens a sensor picker.
+
+Each change is saved at once. The hub does not restart.
+
+The same settings are available over HTTP and MCP, see [HTTP API](../reference/http-api.md#system-health) and [MCP tools](../reference/mcp-tools.md#house).
+
 ## Retention
 
 The system figures are recorded like any other sensor, about one reading a minute each. Their history and the restart log are kept **90 days**, and older rows of those sensors are removed once a day. The rest of the history is not touched: its own rules are the same as before, see [History](history.md#retention).

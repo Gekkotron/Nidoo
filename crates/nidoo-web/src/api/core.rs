@@ -4,7 +4,8 @@ use gloo_net::http::{Request, Response};
 use nidoo_api::{
     ApiError, CamerasView, CommandResponse, Dashboard, DashboardReorder, DashboardView, EntityView,
     FlowView, FlowWriteOutcome, FlowsConfigView, GroupSpec, GroupView, NetworkWatchSpec,
-    NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview, SystemView,
+    NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview, SupervisorSettings,
+    SupervisorView, SystemView,
 };
 use nidoo_core::flow::Flow;
 use nidoo_core::model::{AreasDocument, Command};
@@ -259,6 +260,18 @@ pub async fn set_system_notify(notify: bool) -> Result<NotifyInput, ApiError> {
         None,
     )
     .await?;
+    read_json(response).await
+}
+
+/// The sensor supervisor: settings, open problems, sensors still learning.
+pub async fn get_supervisor() -> Result<SupervisorView, ApiError> {
+    let response = check(Request::get("/api/v1/supervisor").build(), None).await?;
+    read_json(response).await
+}
+
+/// Saves the supervisor settings; the reply is the view after the change.
+pub async fn set_supervisor(settings: &SupervisorSettings) -> Result<SupervisorView, ApiError> {
+    let response = check(Request::put("/api/v1/supervisor").json(settings), None).await?;
     read_json(response).await
 }
 

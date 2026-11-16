@@ -15,7 +15,7 @@ Two places, split by what the hub needs before it can reach anything:
 | Where | What it holds |
 | --- | --- |
 | `data/hub.json` | The bootstrap settings: the MQTT connection, the database URL, the home location, the HTTP bind address, the log level, the wizard's progress and a "setup finished" flag. The hub writes it, one wizard step at a time, with mode `0600`. You do not edit it, except for the rare field with no screen (below). |
-| The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate`, `advanced`, `mobile` and `backup`. Secrets are stored in the same rows. |
+| The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate`, `advanced`, `mobile`, `backup` and `system`. Secrets are stored in the same rows. |
 | `data/settings-cache.json` | A copy of the settings the hub last read, mode `0600`. If the database is down when the hub starts, it starts from this copy with a warning, so the house keeps running. |
 | `data/bundled.json` | Written by the compose `init` service (`nidoo init-bundled`): the credentials of the Mosquitto and TimescaleDB that come with Nidoo, `mqtt_user`, `mqtt_password`, `db_user`, `db_password` and `db_name`, mode `0600`. The wizard reads it to pre-fill the MQTT and Database steps. It is not used once those steps are saved. |
 
@@ -23,7 +23,7 @@ Two places, split by what the hub needs before it can reach anything:
 
 The documents the hub keeps on the broker (home settings, alarm, climate schedules, flows, groups, dashboards, ambiances) are not part of this: they are edited on their own screens and routes.
 
-You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. The exceptions are `mobile` and `backup`, which are stored without a restart. A value it could not start with is refused with the reason, and nothing is saved.
+You read and change the section rows with **Settings**, with `GET`/`PUT /api/v1/settings/{section}` ([HTTP API](http-api.md#setup-and-settings)) or with the `get_settings` and `set_settings` MCP tools ([MCP tools](mcp-tools.md#home-settings)). A change is checked the way the hub checks its settings at start, then saved, and the hub restarts to apply it. The exceptions are `mobile` and `backup`, which are stored without a restart, and the `system` section's sensor supervisor fields (see [System](#system)). A value it could not start with is refused with the reason, and nothing is saved.
 
 The folder is `./data` by default. `nidoo --data <dir>` (or `NIDOO_DATA_DIR`) picks another one; in the Docker image it is `/data`, mounted from `./data`.
 
@@ -212,6 +212,22 @@ Where and how the hub backs up. Read with `GET /api/v1/settings/backup`, change 
 Both passwords are write-only, as in [Secrets](#secrets): a string sets one, `null` clears the FTP one, and leaving it out, `""` or `{"set": true}` keeps it. The backup password can be replaced but not cleared. They are stored in the `settings` table like the other sections and carried by a backup, which is encrypted.
 
 The last backup's record is `data/backup-last.json` (mode `0600`), so it survives a database that is down. The time limit of a run is 2 hours for **Back up now**, and `timeout_minutes` for the [`backup.run`](flow-nodes.md#backuprun) card.
+
+## System
+
+**Settings → System** saves its live settings in the `system` section. Saving them does not restart the hub. The section holds the sensor supervisor, under `supervisor`.
+
+### `supervisor`
+
+Set from the **Sensor supervisor** card on Settings → System, saved as soon as it changes. See [System health](../users/system-health.md#sensor-supervisor) for what the checks do. The same fields are sent by `PUT /api/v1/supervisor` ([HTTP API](http-api.md#system-health)).
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `enabled` | `true` | Run the checks. Off: open problems are cleared without pushes. |
+| `notify` | `true` | Send pushes. Off: problems are still tracked and listed. Turning it back on does not push problems already open. |
+| `notify_recovered` | `true` | Send the "back to normal" push. |
+| `sensitivity` | `normal` | `low`, `normal` or `high`. The usual gap is multiplied by 3, 2 or 1.5. |
+| `ignored` | `[]` | Entity ids never checked. Adding one drops its open problems without a push. |
 
 ## Advanced
 

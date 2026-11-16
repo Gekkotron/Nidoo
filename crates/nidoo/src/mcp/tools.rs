@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nidoo_api::{
     CommandResponse, DeviceView, EntityView, GridDay, GroupView, HomeSettings, NetworkWatchView,
-    SystemView, WeatherView,
+    SupervisorView, SystemView, WeatherView,
 };
 use nidoo_core::flow::{notify_channel_error, notify_severity_error};
 use nidoo_core::model::{AreasDocument, SwitchType};
@@ -136,6 +136,14 @@ impl NidooMcp {
     #[tool(name = "system_status", annotations(read_only_hint = true))]
     async fn system_status(&self) -> Json<SystemView> {
         Json(self.hub.system_view())
+    }
+
+    /// The sensor supervisor: sensors that look stuck, stopped reporting or read an impossible
+    /// value (open problems with their evidence), its settings, and how many sensors are still
+    /// learning their normal. `available` is false without a database.
+    #[tool(name = "supervisor_status", annotations(read_only_hint = true))]
+    async fn supervisor_status(&self) -> Json<SupervisorView> {
+        Json(self.hub.supervisor_view())
     }
 
     /// The rooms, each with the number of entities in it: the declared areas first, then the

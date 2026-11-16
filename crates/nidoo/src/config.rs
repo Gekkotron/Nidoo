@@ -448,11 +448,12 @@ impl Default for AutomationConfig {
     }
 }
 
-/// System health: whether a hub outage pushes a notification.
+/// System health: whether a hub outage pushes a notification, and the sensor supervisor.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SystemConfig {
     pub notify: bool,
+    pub supervisor: nidoo_api::SupervisorSettings,
 }
 
 /// Outdoor weather from Open-Meteo. Nothing leaves the LAN while `enabled` is false.

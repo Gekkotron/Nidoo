@@ -47,6 +47,38 @@ The hub's own services use the same alerts with a shorter wait: the broker, Zigb
 
 When the hub starts after an unexpected stop (a crash, a power cut, a kill), it sends one `system` alert, "Hub restarted", `warning`, with the minutes it was down when that is known. Its localisation key is `hub.restarted_unexpectedly`, with the argument `minutes` as a string; the argument is left out when the downtime is unknown. A clean restart, such as `docker compose restart`, sends nothing. The switch is **Notify me** on [System health](system-health.md#notify-me), off by default.
 
+## Sensor supervisor pushes
+
+The [sensor supervisor](system-health.md#sensor-supervisor) sends on the `system` channel, from source `system`, with a time to live of 24 hours. An opened problem is `warning` and a recovered one is `info`.
+
+| Alert | Title (English fallback) | Key |
+| --- | --- | --- |
+| Stuck sensor | "<name> looks stuck" | `supervisor.stuck` |
+| Stopped reporting | "<name> stopped reporting" | `supervisor.silent` |
+| Impossible value | "<name> reads an impossible value" | `supervisor.impossible` |
+| Back to normal | "<name> is back to normal" | `supervisor.recovered` |
+| Several sensors wrong | "N sensors look wrong" | `supervisor.group`, `state` `wrong` |
+| Several back to normal | "N sensors are back to normal" | `supervisor.group`, `state` `recovered` |
+
+The body gives the evidence, for example "Same value (15.0 °C) for 14 h, usually changes within 3 h. Check the sensor." A grouped body lists the first three names, then "and N more".
+
+The keys `supervisor.stuck`, `supervisor.silent`, `supervisor.impossible` and `supervisor.recovered` take these arguments:
+
+| Argument | Meaning |
+| --- | --- |
+| `name` | The sensor's name. |
+| `check` | `stuck`, `silent` or `impossible`. |
+| `value` | The value, to one decimal, when known. |
+| `unit` | The unit, when known. |
+| `hours` | The hours shown in the alert text. |
+| `usual` | The usual hours between two changes. Only when the check used the usual gap. Absent for the offline trigger and for impossible values. |
+
+`supervisor.group` takes `state` (`wrong` or `recovered`), `n` (the number of sensors), `names` (the first three, comma-separated) and `more` (how many names are left out).
+
+A single alert carries the sensor's `entity_id`, so the app opens the sensor. An opened single alert has one button, **Mute this sensor** (action `mute`). Tapping it publishes `{"id": "<alert id>", "action": "mute"}` on `nidoo/push/responses`. The sensor is added to the ignored list and its problems close without a push. Group alerts have no button.
+
+Alert ids are `supervisor-<check>-<entity_id>-<opened_at>` for an opened problem, `supervisor-recovered-<check>-<entity_id>-<opened_at>` for a recovered one, and `supervisor-group-<check or "problem" or "recovered">-<time>` for a group.
+
 ## Alarm pushes
 
 The native alarm sends on its own channel, `alarm`, from source `alarm`. A triggered alarm is a critical alert with a **Disarm** button: tapping it sends the reply on `nidoo/push/responses`, and the hub disarms the alarm. The hub listens on the reply topic at all times. Arming and disarming send an info push that names the mode and who did it, with any sensor left open at arm. See [Alarm](alarm.md#phone-push).

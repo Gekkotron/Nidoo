@@ -37,4 +37,5 @@ pub mod solar;
 pub mod sound_settings;
 pub mod speech_input;
 pub mod system_settings;
+pub mod system_supervisor;
 pub mod weather;

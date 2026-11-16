@@ -155,6 +155,9 @@ fn instructions() -> String {
          `enabled: false`; a device has at most one watch, and its id is the device id. \
          `system_status` reads the hub's own health: CPU, memory, disk, database size, the \
          broker, Zigbee2MQTT and database services, and the restart log. \
+         `supervisor_status` lists the sensors that look stuck, stopped reporting or read an \
+         impossible value (open problems with their evidence), so you can answer \
+         \"is any sensor misbehaving?\". \
          Ambiances are one-tap house states: `list_ambiances`, `set_ambiance` (create or replace, validated against the house, retained on `<ui_prefix>/ambiances/<id>`), `delete_ambiance` and `apply_ambiance` (runs the actions once, in order, and returns one report line per action: `ok`, `failed` or `skipped` with the entities and reasons). An action is `category` (`what`: `lights`, `plugs` or `covers`; `to`: `on`/`off` or `open`/`close`; optional `brightness` in %, `area`, `except`. The set is resolved at apply time, so new devices are included; only switches typed `showAs: plug` are plugs; an untyped switch is a plain switch and is left out), `device` (`entity` plus the same `command` JSON as `send_command`), `climate` (`zone` or null for every active zone, `setpoint` and/or `mode` for `hours`, or `clear: true`) or `flow` (`flow` id, `do`: `enable`, `disable` or `run`). \
          A flow is a \
          graph of nodes: `trigger.state` (an entity's state changes), `trigger.signal` (a remote press, an event or a tag scan: `entity` is a `device_automation.*`, `event.*` or `tag.*` id and `signal` optionally names one of its announced signals; the trigger value is the signal name, and `trigger.state` is refused on those entities), `trigger.schedule` (a \

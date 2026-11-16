@@ -44,6 +44,25 @@ pub enum SystemText {
     StopUnexpected,
     StopFirst,
     UnitSecond,
+    SupervisorTitle,
+    SupervisorHint,
+    Supervise,
+    SupervisorRecovered,
+    Sensitivity,
+    SensitivityLow,
+    SensitivityNormal,
+    SensitivityHigh,
+    IgnoredSensors,
+    AddSensor,
+    Unignore,
+    OpenProblems,
+    NoProblems,
+    Mute,
+    NeedsDatabase,
+    CheckStuck,
+    CheckSilent,
+    CheckImpossible,
+    For,
 }
 
 /// A fixed word of the system page.
@@ -95,8 +114,46 @@ pub fn system_text(lang: Lang, k: SystemText) -> &'static str {
         StopUnexpected => ("Unexpected stop", "Arrêt inattendu"),
         StopFirst => ("First start", "Premier démarrage"),
         UnitSecond => ("s", "s"),
+        SupervisorTitle => ("Sensor supervisor", "Surveillance des capteurs"),
+        SupervisorHint => (
+            "Flags numeric sensors that look stuck, stop reporting or read an impossible value. Each sensor learns its own normal from 14 days of history.",
+            "Repère les capteurs numériques qui semblent bloqués, ne donnent plus de nouvelles ou affichent une valeur impossible. Chaque capteur apprend son fonctionnement normal sur 14 jours d'historique.",
+        ),
+        Supervise => ("Supervise sensors", "Surveiller les capteurs"),
+        SupervisorRecovered => (
+            "Tell me when it is back to normal",
+            "M'avertir du retour à la normale",
+        ),
+        Sensitivity => ("Sensitivity", "Sensibilité"),
+        SensitivityLow => ("Low", "Faible"),
+        SensitivityNormal => ("Normal", "Normale"),
+        SensitivityHigh => ("High", "Élevée"),
+        IgnoredSensors => ("Ignored sensors", "Capteurs ignorés"),
+        AddSensor => ("Add", "Ajouter"),
+        Unignore => ("Stop ignoring", "Ne plus ignorer"),
+        OpenProblems => ("Open problems", "Problèmes en cours"),
+        NoProblems => (
+            "Every sensor looks fine",
+            "Tous les capteurs semblent normaux",
+        ),
+        Mute => ("Mute", "Ignorer"),
+        NeedsDatabase => ("Needs the database", "Nécessite la base de données"),
+        CheckStuck => ("stuck", "bloquée"),
+        CheckSilent => ("silent", "muette"),
+        CheckImpossible => ("impossible value", "valeur impossible"),
+        For => ("for", "depuis"),
     };
     if lang == Lang::Fr { fr } else { en }
+}
+
+/// The supervisor card's learning line: "Learning: 3 sensors have less than 7 days of history".
+pub fn learning_line(lang: Lang, n: u32) -> String {
+    match (lang, n) {
+        (Lang::Fr, 1) => "Apprentissage : 1 capteur a moins de 7 jours d'historique".to_owned(),
+        (Lang::Fr, n) => format!("Apprentissage : {n} capteurs ont moins de 7 jours d'historique"),
+        (_, 1) => "Learning: 1 sensor has less than 7 days of history".to_owned(),
+        (_, n) => format!("Learning: {n} sensors have less than 7 days of history"),
+    }
 }
 
 /// The text table for the current language.
@@ -118,7 +175,10 @@ mod tests {
             | Database | Hub | DatabaseSize | NotifyMe | NotifyHint | Loading | CouldNotLoad
             | UnitDay | UnitHour | UnitMinute | UnitGb | UnitMb | Back | Server | HubLine
             | RestartsHeading | NoRestarts | DownFor | StopClean | StopUnexpected | StopFirst
-            | UnitSecond => true,
+            | UnitSecond | SupervisorTitle | SupervisorHint | Supervise | SupervisorRecovered
+            | Sensitivity | SensitivityLow | SensitivityNormal | SensitivityHigh
+            | IgnoredSensors | AddSensor | Unignore | OpenProblems | NoProblems | Mute
+            | NeedsDatabase | CheckStuck | CheckSilent | CheckImpossible | For => true,
         }
     }
 
@@ -164,6 +224,25 @@ mod tests {
             StopUnexpected,
             StopFirst,
             UnitSecond,
+            SupervisorTitle,
+            SupervisorHint,
+            Supervise,
+            SupervisorRecovered,
+            Sensitivity,
+            SensitivityLow,
+            SensitivityNormal,
+            SensitivityHigh,
+            IgnoredSensors,
+            AddSensor,
+            Unignore,
+            OpenProblems,
+            NoProblems,
+            Mute,
+            NeedsDatabase,
+            CheckStuck,
+            CheckSilent,
+            CheckImpossible,
+            For,
         ]
     };
 

@@ -278,6 +278,8 @@ pub struct Hub {
     pub(crate) system_retained: Mutex<Option<crate::system::RetainedReport>>,
     /// The system task's figures, service states and published sensors.
     pub(crate) system: Mutex<crate::system::task::SystemState>,
+    /// The sensor supervisor's settings, open problems and report clocks.
+    pub(crate) supervisor: Mutex<crate::supervisor::SupervisorRuntime>,
     pub(crate) weather_refresh_minutes: u64,
     pub(crate) weather_city: String,
     pub(crate) weather_country: Option<String>,
@@ -449,6 +451,10 @@ impl Hub {
             system_retained: Mutex::new(None),
             system: Mutex::new(crate::system::task::SystemState::new(
                 cfg.system.notify,
+                clock::now(),
+            )),
+            supervisor: Mutex::new(crate::supervisor::SupervisorRuntime::new(
+                cfg.system.supervisor.clone(),
                 clock::now(),
             )),
             outages: Mutex::new(crate::outage::Outages::new(
@@ -850,11 +856,22 @@ impl Hub {
             return Vec::new();
         }
         if !retain && topic == self.push.responses_topic() {
-            // Replies to the alarm's alerts go to the alarm, the rest to the climate engine.
-            let alarm_reply = serde_json::from_slice::<serde_json::Value>(payload)
+            // Replies to the alarm's alerts go to the alarm, the supervisor's to the
+            // supervisor, the rest to the climate engine.
+            let reply_id = serde_json::from_slice::<serde_json::Value>(payload)
                 .ok()
-                .and_then(|doc| doc.get("id").and_then(|id| id.as_str().map(str::to_owned)))
-                .is_some_and(|id| id.starts_with(crate::alarm::effects::ALERT_PREFIX));
+                .and_then(|doc| doc.get("id").and_then(|id| id.as_str().map(str::to_owned)));
+            if reply_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with(crate::supervisor::ALERT_PREFIX))
+            {
+                if let Some(hub) = self.me.upgrade() {
+                    hub.on_supervisor_reply(payload);
+                }
+                return Vec::new();
+            }
+            let alarm_reply =
+                reply_id.is_some_and(|id| id.starts_with(crate::alarm::effects::ALERT_PREFIX));
             if alarm_reply || self.climate.is_some() {
                 if let Some(hub) = self.me.upgrade() {
                     if alarm_reply {
