@@ -35,6 +35,7 @@ mod solar_poller;
 mod sound_http;
 mod stt_http;
 mod stt_models;
+mod supervisor_db;
 mod system;
 mod tts_download;
 mod tts_hf;

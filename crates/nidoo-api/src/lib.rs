@@ -22,6 +22,7 @@ mod snapshot;
 mod solar;
 mod sound;
 mod stt;
+mod supervisor;
 pub mod system;
 mod tts;
 mod views;
@@ -72,6 +73,7 @@ pub use solar::{
 };
 pub use sound::{SoundSpeakReply, SoundSpeakRequest};
 pub use stt::{STT_MODEL_ID, SttKey, SttSettings, SttStatus};
+pub use supervisor::{ProblemView, SupervisorSensitivity, SupervisorSettings, SupervisorView};
 pub use system::{
     CpuView, DiskView, MemView, NotifyInput, RestartView, ServiceState, ServiceView, StopKind,
     SystemService, SystemView,

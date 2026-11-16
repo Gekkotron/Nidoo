@@ -145,6 +145,8 @@ impl Default for AdvancedSection {
 #[serde(default)]
 pub struct SystemSection {
     pub notify: bool,
+    /// The sensor supervisor, saved live like `notify` (see `Hub::set_supervisor`).
+    pub supervisor: nidoo_api::SupervisorSettings,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -259,6 +261,7 @@ pub fn assemble(file: &HubFile, s: &Sections) -> Config {
         },
         system: SystemConfig {
             notify: s.system.notify,
+            supervisor: s.system.supervisor.clone(),
         },
         ..Config::default()
     };
@@ -375,6 +378,42 @@ mod tests {
         // An old cache file without the key still parses.
         let old: Sections = serde_json::from_value(json!({"weather": {"enabled": true}})).unwrap();
         assert!(!old.system.notify);
+    }
+
+    #[test]
+    fn supervisor_settings_default_on_and_round_trip() {
+        use nidoo_api::{SupervisorSensitivity, SupervisorSettings};
+        // A row from before the supervisor existed: the supervisor is on with its defaults.
+        let rows = vec![("system".to_owned(), json!({"notify": true}))];
+        let got = Sections::from_rows(rows);
+        assert!(got.system.notify);
+        let sup = &got.system.supervisor;
+        assert!(sup.enabled && sup.notify && sup.notify_recovered);
+        assert_eq!(sup.sensitivity, SupervisorSensitivity::Normal);
+        assert!(sup.ignored.is_empty());
+        assert_eq!(*sup, SupervisorSettings::default());
+
+        let mut changed = Sections::default();
+        changed.system.supervisor = SupervisorSettings {
+            enabled: true,
+            notify: false,
+            notify_recovered: false,
+            sensitivity: SupervisorSensitivity::High,
+            ignored: vec!["sensor.battery".into()],
+        };
+        let back = Sections::from_rows(owned(changed.to_rows()));
+        assert_eq!(back.system.supervisor, changed.system.supervisor);
+        assert_eq!(
+            assemble(&file(), &back).system.supervisor,
+            changed.system.supervisor
+        );
+        let row = changed
+            .to_rows()
+            .into_iter()
+            .find(|(k, _)| *k == "system")
+            .unwrap()
+            .1;
+        assert_eq!(row["supervisor"]["sensitivity"], "high");
     }
 
     #[test]
