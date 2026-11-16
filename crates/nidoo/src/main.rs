@@ -214,6 +214,7 @@ async fn run() -> anyhow::Result<ExitCode> {
             let solar = hub.start_solar();
             let outage_watch = hub.start_outage_watch();
             let system = hub.start_system();
+            let supervisor = hub.start_supervisor();
             tokio::spawn(nidoo::groups::migrate::spawn(Arc::clone(&hub)));
             let finished = setup_ctx.file.lock().await.finished;
             let http_task =
@@ -246,6 +247,9 @@ async fn run() -> anyhow::Result<ExitCode> {
                 task.abort();
             }
             if let Some(task) = &solar {
+                task.abort();
+            }
+            if let Some(task) = &supervisor {
                 task.abort();
             }
             if let Some(task) = &outage_watch {
