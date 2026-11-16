@@ -3599,6 +3599,7 @@ dependencies = [
 name = "nidoo-watchdog"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

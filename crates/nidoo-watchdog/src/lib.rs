@@ -1,4 +1,4 @@
-//! Gateway health and broker ACL watchdogs: pure translators.
+//! Gateway health and broker ACL watchdogs, and the sensor supervisor: pure translators.
 //!
 //! Each watchdog takes the clock as an argument and returns the v1 push alert as JSON; the
 //! caller hands it to the push service (`source` `system`). [`tail`] feeds the ACL watchdog
@@ -7,6 +7,7 @@
 
 mod acl;
 mod gateway;
+pub mod supervisor;
 mod tail;
 
 pub use acl::AclWatchdog;
