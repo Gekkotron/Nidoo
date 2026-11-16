@@ -33,6 +33,7 @@ const LINKQUALITY_TOPIC: &str = "nidoo/sensor/0x847127fffe24e322/linkquality/con
 const EXPECTED_TOOLS: &[&str] = &[
     "bridge_info",
     "system_status",
+    "supervisor_status",
     "get_home_settings",
     "set_home_settings",
     "get_settings",
@@ -1304,6 +1305,30 @@ async fn get_history_is_listed() {
         tool.annotations.as_ref().and_then(|a| a.read_only_hint),
         Some(true)
     );
+
+    client.cancel().await.expect("close");
+}
+
+#[tokio::test]
+async fn supervisor_status_is_listed_read_only() {
+    let server = Server::start().await;
+    let client = server.client().await;
+
+    let tools = client.list_all_tools().await.expect("list tools");
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == "supervisor_status")
+        .expect("supervisor_status is listed");
+    assert_eq!(
+        tool.annotations.as_ref().and_then(|a| a.read_only_hint),
+        Some(true)
+    );
+    let view = json_of(
+        "supervisor_status",
+        &call(&client, "supervisor_status", json!({})).await,
+    );
+    assert_eq!(view["available"], false);
+    assert!(view["problems"].is_array());
 
     client.cancel().await.expect("close");
 }

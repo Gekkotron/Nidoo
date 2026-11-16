@@ -2417,6 +2417,38 @@ async fn put_system_notify_rejects_unknown_fields() {
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+#[tokio::test]
+async fn get_supervisor_returns_defaults() {
+    let server = Server::start().await;
+    let res = server.get("/api/v1/supervisor").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let view: Value = res.json().await.expect("json");
+    assert_eq!(view["available"], false, "{view}");
+    assert_eq!(view["settings"]["enabled"], true, "{view}");
+    assert_eq!(view["settings"]["sensitivity"], "normal", "{view}");
+    assert_eq!(view["problems"], json!([]), "{view}");
+}
+
+#[tokio::test]
+async fn put_supervisor_without_database_is_503() {
+    let server = Server::start().await;
+    let res = server
+        .client
+        .put(server.url("/api/v1/supervisor"))
+        .json(&json!({ "enabled": false }))
+        .send()
+        .await
+        .expect("PUT");
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let view: Value = server
+        .get("/api/v1/supervisor")
+        .await
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(view["settings"]["enabled"], true, "nothing changed: {view}");
+}
+
 // The assistant.
 
 async fn post_assist(server: &Server, body: Value) -> reqwest::Response {
