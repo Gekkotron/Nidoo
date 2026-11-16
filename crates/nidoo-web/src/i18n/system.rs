@@ -146,6 +146,16 @@ pub fn system_text(lang: Lang, k: SystemText) -> &'static str {
     if lang == Lang::Fr { fr } else { en }
 }
 
+/// The supervisor card's learning line: "Learning: 3 sensors have less than 7 days of history".
+pub fn learning_line(lang: Lang, n: u32) -> String {
+    match (lang, n) {
+        (Lang::Fr, 1) => "Apprentissage : 1 capteur a moins de 7 jours d'historique".to_owned(),
+        (Lang::Fr, n) => format!("Apprentissage : {n} capteurs ont moins de 7 jours d'historique"),
+        (_, 1) => "Learning: 1 sensor has less than 7 days of history".to_owned(),
+        (_, n) => format!("Learning: {n} sensors have less than 7 days of history"),
+    }
+}
+
 /// The text table for the current language.
 pub fn use_system_text() -> impl Fn(SystemText) -> &'static str + Copy + 'static {
     let lang = use_lang();

@@ -10,7 +10,7 @@ use crate::api;
 use crate::entity_picker::needs::keep;
 use crate::entity_picker::{EntityPicker, Mode};
 use crate::house::House;
-use crate::i18n::{Lang, SystemText, system_text, use_lang, use_system_text};
+use crate::i18n::{Lang, SystemText, learning_line, system_text, use_lang, use_system_text};
 use crate::screens::alarm_settings::SwitchRow;
 
 /// "2 h" from an hour on, "10 min" below.
@@ -51,16 +51,6 @@ pub fn problem_line(lang: Lang, p: &ProblemView, now: u64) -> String {
         t(SystemText::For),
         duration(lang, lasted)
     )
-}
-
-/// "Learning: 3 sensors have less than 7 days of history".
-pub fn learning_line(lang: Lang, n: u32) -> String {
-    match (lang, n) {
-        (Lang::Fr, 1) => "Apprentissage : 1 capteur a moins de 7 jours d'historique".to_owned(),
-        (Lang::Fr, n) => format!("Apprentissage : {n} capteurs ont moins de 7 jours d'historique"),
-        (_, 1) => "Learning: 1 sensor has less than 7 days of history".to_owned(),
-        (_, n) => format!("Learning: {n} sensors have less than 7 days of history"),
-    }
 }
 
 /// `s` with `id` ignored (once).
