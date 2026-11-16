@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, MutexGuard};
 
 use nidoo_api::{ProblemView, SupervisorSensitivity, SupervisorSettings, SupervisorView};
+use nidoo_core::model::Availability;
 use nidoo_watchdog::supervisor::{Baseline, Problem, Sensitivity, Supervisor};
 
 use crate::history::db::Db;
@@ -39,6 +40,10 @@ pub struct SupervisorRuntime {
     pub(crate) loaded: bool,
     /// When closed problems were last purged.
     pub(crate) purged_at: Option<u64>,
+    /// When the broker link last came online: the retained replay lands right after.
+    pub(crate) online_at: u64,
+    /// A run saw the Zigbee2MQTT bridge offline and has not seen it back yet.
+    pub(crate) bridge_offline: bool,
 }
 
 impl SupervisorRuntime {
@@ -55,8 +60,40 @@ impl SupervisorRuntime {
             learning: 0,
             loaded: false,
             purged_at: None,
+            online_at: now,
+            bridge_offline: false,
         }
     }
+
+    /// The bridge state a run saw. Back online after being seen offline: the report clocks
+    /// start again, as after a broker reconnect, so its sensors are not all silent at once.
+    pub(crate) fn observe_bridge(&mut self, bridge: Availability, now: u64) {
+        match bridge {
+            Availability::Offline => self.bridge_offline = true,
+            Availability::Online if self.bridge_offline => {
+                self.bridge_offline = false;
+                self.armed_at = now;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Reads this long after the broker link comes online are reports; earlier ones are the
+/// retained replay, which says nothing about the sensor being alive now.
+pub(crate) const SETTLE_SECS: u64 = 30;
+
+/// The sensor a single opened alert names (`supervisor-<check>-<entity>-<opened_at>`), so a
+/// Mute works even before the open problems are loaded. Grouped and recovered ids name none.
+pub(crate) fn entity_of_alert(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix(ALERT_PREFIX)?;
+    let (check, rest) = rest.split_once('-')?;
+    if !matches!(check, "stuck" | "silent" | "impossible") {
+        return None;
+    }
+    let (entity, opened_at) = rest.rsplit_once('-')?;
+    (!entity.is_empty() && !opened_at.is_empty() && opened_at.bytes().all(|b| b.is_ascii_digit()))
+        .then_some(entity)
 }
 
 /// The checks' sensitivity for the wire setting.
@@ -162,7 +199,12 @@ impl Hub {
         };
         let (settings, dropped) = {
             let mut rt = self.supervisor_state();
-            let Some(entity) = rt.engine.entity_for_alert(id).map(str::to_owned) else {
+            let Some(entity) = rt
+                .engine
+                .entity_for_alert(id)
+                .or_else(|| entity_of_alert(id))
+                .map(str::to_owned)
+            else {
                 return;
             };
             let dropped = rt.engine.mute(&entity);

@@ -59,6 +59,10 @@ impl Hub {
         let mut link = self.connection();
         let every = Duration::from_secs(RUN_SECS);
         Some(tokio::spawn(async move {
+            // The open problems show on the page and answer a Mute from the start.
+            if let Some(db) = hub.supervisor_db() {
+                hub.supervisor_load(&db).await;
+            }
             let mut next = tokio::time::Instant::now() + every;
             let mut running: Option<JoinHandle<()>> = None;
             loop {
@@ -93,11 +97,13 @@ impl Hub {
     }
 
     /// A state message for `id`: a read one in the current link epoch sets its report clock.
+    /// The retained replay right after the link comes online is not a report.
     pub(crate) fn supervisor_touched(&self, id: &str, epoch: u64, read: bool, now: u64) {
         if read && epoch == self.link_epoch() {
-            self.supervisor_state()
-                .last_report
-                .insert(id.to_owned(), now);
+            let mut rt = self.supervisor_state();
+            if now >= rt.online_at.saturating_add(super::SETTLE_SECS) {
+                rt.last_report.insert(id.to_owned(), now);
+            }
         }
     }
 
@@ -105,6 +111,7 @@ impl Hub {
     pub(crate) fn supervisor_rearm(&self, now: u64) {
         let epoch = self.link_epoch();
         let mut rt = self.supervisor_state();
+        rt.online_at = now;
         if rt.epoch != epoch {
             rt.epoch = epoch;
             rt.armed_at = now;
@@ -122,18 +129,9 @@ impl Hub {
         let Some(db) = self.supervisor_db() else {
             return;
         };
-        if !self.supervisor_state().loaded {
-            match store::load_open(&db).await {
-                Ok(open) => {
-                    let mut rt = self.supervisor_state();
-                    rt.engine = Supervisor::new(open);
-                    rt.loaded = true;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "supervisor run skipped: the database did not answer");
-                    return;
-                }
-            }
+        if !self.supervisor_load(&db).await {
+            tracing::warn!("supervisor run skipped: the database did not answer");
+            return;
         }
 
         let sensors = self.supervised_sensors(&settings);
@@ -202,6 +200,7 @@ impl Hub {
                     value: s.value,
                 })
                 .collect();
+            rt.observe_bridge(bridge, now);
             let ctx = Ctx {
                 now,
                 armed_at: rt.armed_at,
@@ -237,12 +236,45 @@ impl Hub {
         }
     }
 
+    /// Loads the stored open problems once; true when they are loaded. Turned off meanwhile:
+    /// nothing is installed (the rows were deleted).
+    pub(crate) async fn supervisor_load(&self, db: &crate::history::db::Db) -> bool {
+        if self.supervisor_state().loaded {
+            return true;
+        }
+        match store::load_open(db).await {
+            Ok(open) => {
+                let mut rt = self.supervisor_state();
+                if rt.settings.enabled && !rt.loaded {
+                    let ignored = rt.settings.ignored.clone();
+                    rt.engine = Supervisor::new(
+                        open.into_iter()
+                            .filter(|p| !ignored.contains(&p.entity_id))
+                            .collect(),
+                    );
+                    rt.loaded = true;
+                }
+                true
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not load the open problems");
+                false
+            }
+        }
+    }
+
     /// Steps the engine with `readings` and sends the resulting pushes (per the settings).
     /// Returns the step, with `alert_id` set on what was announced, and the alerts sent.
     pub(crate) fn supervisor_step(&self, readings: &[Reading], ctx: &Ctx) -> (Step, Vec<Value>) {
         let (step, sent) = {
             let mut rt = self.supervisor_state();
-            let mut step = rt.engine.step(readings, ctx);
+            // The settings now, not the ones the run read before its database round: a Mute
+            // or a switch-off meanwhile stands.
+            if !rt.settings.enabled {
+                return (Step::default(), Vec::new());
+            }
+            let readings = without_ignored(readings.to_vec(), &rt.settings);
+            let mut step = rt.engine.step(&readings, ctx);
             let sent = alerts(
                 &mut step,
                 rt.settings.notify,
@@ -312,6 +344,7 @@ mod tests {
     use crate::hub::Hub;
     use crate::setup::sections::Sections;
     use crate::setup::{HubFile, Mode, RestartHook, SetupCtx};
+    use crate::supervisor::entity_of_alert;
 
     const NOW: u64 = 1_800_000_000;
     const H: u64 = 3600;
@@ -478,8 +511,9 @@ mod tests {
         assert_eq!(view.problems.len(), 1);
         assert_eq!(view.problems[0].entity_id, "sensor.other");
 
-        // An unknown alert or another action changes nothing.
-        hub.on_supervisor_reply(br#"{"id": "supervisor-stuck-x-1", "action": "mute"}"#);
+        // A malformed or grouped alert id, or another action, changes nothing.
+        hub.on_supervisor_reply(br#"{"id": "supervisor-group-silent-1", "action": "mute"}"#);
+        hub.on_supervisor_reply(br#"{"id": "supervisor-bogus", "action": "mute"}"#);
         let other = stuck_problem("sensor.other", NOW - 5 * H).alert_key();
         hub.on_supervisor_reply(
             serde_json::json!({"id": other, "action": "open"})
@@ -568,5 +602,90 @@ mod tests {
         assert_eq!(rt.last_report.get("sensor.a"), Some(&NOW));
         assert!(!rt.last_report.contains_key("sensor.b"), "not read");
         assert!(!rt.last_report.contains_key("sensor.c"), "stale epoch");
+    }
+
+    #[tokio::test]
+    async fn a_run_respects_settings_changed_while_it_ran() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = hub_with(None, tmp.path());
+        loaded(&hub, Vec::new());
+        // Muted (or switched off) after the run read its settings: the step uses the current
+        // ones.
+        hub.apply_supervisor_settings(SupervisorSettings {
+            ignored: vec!["sensor.tank".into()],
+            ..SupervisorSettings::default()
+        });
+        let (step, sent) = hub.supervisor_step(&[reading("sensor.tank")], &ctx(false));
+        assert!(step.opened.is_empty() && sent.is_empty());
+        hub.apply_supervisor_settings(SupervisorSettings {
+            enabled: false,
+            ..SupervisorSettings::default()
+        });
+        let (step, sent) = hub.supervisor_step(&[reading("sensor.a")], &ctx(false));
+        assert!(step.opened.is_empty() && sent.is_empty());
+        assert!(hub.supervisor_view().problems.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_bridge_coming_back_restarts_the_clocks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = hub_with(None, tmp.path());
+        let mut rt = hub.supervisor_state();
+        rt.armed_at = NOW - 30 * 24 * H;
+        rt.observe_bridge(Availability::Online, NOW - 9 * H);
+        assert_eq!(rt.armed_at, NOW - 30 * 24 * H);
+        rt.observe_bridge(Availability::Offline, NOW - 8 * H);
+        rt.observe_bridge(Availability::Offline, NOW - 7 * H);
+        assert_eq!(rt.armed_at, NOW - 30 * 24 * H, "offline only pauses");
+        rt.observe_bridge(Availability::Online, NOW);
+        assert_eq!(rt.armed_at, NOW);
+        rt.observe_bridge(Availability::Online, NOW + H);
+        assert_eq!(rt.armed_at, NOW, "once per return");
+    }
+
+    #[tokio::test]
+    async fn the_retained_replay_after_a_reconnect_is_not_a_report() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = hub_with(None, tmp.path());
+        let epoch = hub.link_epoch();
+        hub.supervisor_rearm(NOW);
+        hub.supervisor_touched("sensor.a", epoch, true, NOW + 5);
+        assert!(!hub.supervisor_state().last_report.contains_key("sensor.a"));
+        hub.supervisor_touched("sensor.a", epoch, true, NOW + 60);
+        assert_eq!(
+            hub.supervisor_state().last_report.get("sensor.a"),
+            Some(&(NOW + 60))
+        );
+    }
+
+    #[tokio::test]
+    async fn mute_works_before_the_problems_are_loaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hub = hub_with(None, tmp.path());
+        // Right after a restart nothing is loaded yet; the id itself names the sensor.
+        let id = stuck_problem("sensor.tank-2", NOW - 5 * H).alert_key();
+        hub.on_supervisor_reply(
+            serde_json::json!({"id": id, "action": "mute"})
+                .to_string()
+                .as_bytes(),
+        );
+        assert_eq!(
+            hub.supervisor_view().settings.ignored,
+            vec!["sensor.tank-2".to_string()]
+        );
+    }
+
+    #[test]
+    fn alert_ids_name_their_sensor() {
+        assert_eq!(
+            entity_of_alert("supervisor-stuck-sensor.tank-2-1800000000"),
+            Some("sensor.tank-2")
+        );
+        assert_eq!(entity_of_alert("supervisor-silent-x-1"), Some("x"));
+        assert_eq!(entity_of_alert("supervisor-group-silent-1"), None);
+        assert_eq!(entity_of_alert("supervisor-recovered-stuck-x-1"), None);
+        assert_eq!(entity_of_alert("supervisor-stuck--1"), None);
+        assert_eq!(entity_of_alert("supervisor-stuck-x-abc"), None);
+        assert_eq!(entity_of_alert("alarm-x"), None);
     }
 }
