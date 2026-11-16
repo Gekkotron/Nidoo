@@ -7,6 +7,7 @@ use nidoo_api::EntityView;
 use nidoo_core::model::{Command, EntityState, StateValue, WaterHeaterState};
 
 use super::climate::stepped;
+use super::text::decimal;
 use super::{ModeSelect, Sender, Stepper};
 use crate::components::card_frame::{CardFrame, open_entity};
 use crate::components::card_place::{CardPlace, use_card_place};
@@ -86,8 +87,18 @@ pub fn WaterHeaterCard(entity: EntityView) -> impl IntoView {
     let sender = Sender::from_context();
     let t = use_text();
     let ct = use_climate_text();
-    let label = super::live_value(&entity);
     let lang = use_lang();
+    // The reading as the temperature cards show it: the number, then a smaller unit.
+    let current = match &entity.state.value {
+        StateValue::WaterHeater(w) => w.current.filter(|t| t.is_finite()),
+        _ => None,
+    };
+    let reading_unit = entity
+        .unit
+        .clone()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "°C".into());
+    let reading = move || current.map_or_else(|| "—".to_owned(), |v| decimal(lang(), v));
     let target_text = {
         let target = match &entity.state.value {
             StateValue::WaterHeater(w) => w.target,
@@ -196,7 +207,10 @@ pub fn WaterHeaterCard(entity: EntityView) -> impl IntoView {
                     <div class="heater__info">
                         <div class="heater__reading">
                             <span class="heater__caption">{move || ct(ClimateText::Tank)}</span>
-                            <span class="heater__now">{label}</span>
+                            <span class="heater__now">
+                                {reading}
+                                {current.map(|_| view! { " " <small class="heater__unit">{reading_unit}</small> })}
+                            </span>
                         </div>
                         {chip}
                         {inlet}

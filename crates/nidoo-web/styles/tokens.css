@@ -85,6 +85,8 @@
   --grid-gap: 8px;
   --touch-min: 48px;
   --sidebar-w: 248px;
+  /* The dashboard widget library, beside the grid or as a drawer while editing. */
+  --library-w: 360px;
   /* Side padding of the screen and its header; 16px on a phone (main.css). */
   --screen-pad: 24px;
 

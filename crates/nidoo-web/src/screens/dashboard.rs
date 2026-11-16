@@ -85,13 +85,20 @@ pub fn DashboardScreen() -> impl IntoView {
                             <HomeHeader />
                         </Show>
                         <EditToolbar state=edit />
-                        // The library sits beside the grid while editing; the layout wraps
-                        // both only then so the plain grid keeps its full width.
-                        <div class:dashboard-edit-layout=move || edit.active.get()>
+                        // While editing, the tiles keep their size: a wide screen widens the
+                        // page to hold the library beside the grid, a narrower one opens it as
+                        // a drawer over the page, and a phone docks it at the bottom.
+                        <div
+                            class:dashboard-edit-layout=move || edit.active.get()
+                            class:dashboard-edit-layout--library=move || edit.library_open.get()
+                        >
                             <Grid widgets=widgets edit=edit />
                             <Show when=move || edit.active.get()>
                                 <aside class="dashboard-library-panel" aria-label=move || dash_text(lang(), DashText::WidgetLibrary)>
-                                    <WidgetLibrary on_add=add_widget_handler(edit) />
+                                    <WidgetLibrary
+                                        on_add=add_widget_handler(edit)
+                                        on_close=Callback::new(move |()| edit.library_open.set(false))
+                                    />
                                 </aside>
                             </Show>
                         </div>

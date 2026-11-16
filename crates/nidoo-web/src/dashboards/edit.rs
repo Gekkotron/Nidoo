@@ -9,7 +9,7 @@ use nidoo_core::dashboard::{
 use crate::api;
 use crate::house::House;
 use crate::i18n::{DashText, Lang, dash_text, use_lang};
-use crate::icons::{CHECK, GEAR, PENCIL, X_MARK};
+use crate::icons::{CHECK, GEAR, PENCIL, PLUS, X_MARK};
 
 /// Reactive state for the edit mode: active flag, the editable draft, and the saved baseline
 /// for Discard. House never gets one of these.
@@ -24,6 +24,9 @@ pub struct EditState {
     pub settings_open: RwSignal<bool>,
     /// The id of the widget just added from the library, which glows for a moment.
     pub fresh: RwSignal<Option<String>>,
+    /// The widget library drawer is open. Only screens too narrow to hold the library beside a
+    /// full-size grid use it; wide screens always show the library and phones keep it docked.
+    pub library_open: RwSignal<bool>,
 }
 
 impl EditState {
@@ -35,6 +38,7 @@ impl EditState {
             selected_widget: RwSignal::new(None),
             settings_open: RwSignal::new(false),
             fresh: RwSignal::new(None),
+            library_open: RwSignal::new(false),
         }
     }
 
@@ -72,9 +76,10 @@ impl EditState {
         }
     }
 
-    /// Leaves edit mode, closing the widget and dashboard sheets.
+    /// Leaves edit mode, closing the widget and dashboard sheets and the library drawer.
     pub fn close(&self) {
         self.active.set(false);
+        self.library_open.set(false);
         self.selected_widget.set(None);
         self.settings_open.set(false);
     }
@@ -190,6 +195,17 @@ pub fn EditToolbar(state: EditState) -> impl IntoView {
                     on:click=move |_| state.settings_open.update(|o| *o = !*o)
                 >
                     <span class="btn__glyph" inner_html=GEAR></span>
+                </button>
+                // Opens the library drawer where the library cannot sit beside the grid.
+                <button
+                    type="button"
+                    class="btn btn--with-icon dashboard-edit-toolbar__add"
+                    class:btn--active=move || state.library_open.get()
+                    aria-expanded=move || state.library_open.get().to_string()
+                    on:click=move |_| state.library_open.update(|o| *o = !*o)
+                >
+                    <span class="btn__glyph" inner_html=PLUS></span>
+                    {move || dash_text(lang(), DashText::Widget)}
                 </button>
                 <button
                     type="button"
