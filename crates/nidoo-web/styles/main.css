@@ -9959,6 +9959,43 @@ dialog.popup::backdrop {
   margin-top: 8px;
 }
 
+/* The sensor supervisor card, under "Notify me". */
+.system__supervisor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--card-border);
+}
+
+.system__supervisor .system__chips {
+  flex-wrap: wrap;
+}
+
+.system__subheading {
+  margin: 8px 0 0;
+  font: var(--type-label);
+  font-weight: 600;
+}
+
+.system__problems {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.system__problem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
 /* The tiles' two-line trend: the server's line, the hub's beside it. */
 .spark .spark__server {
   stroke: var(--accent-mint);

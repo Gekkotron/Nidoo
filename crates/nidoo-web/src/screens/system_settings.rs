@@ -20,6 +20,7 @@ use crate::i18n::format::{date_time, decimal, decimal_grouped, local_date_time};
 use crate::i18n::history::range_chip;
 use crate::i18n::{Lang, SystemText, system_text, use_lang, use_system_text};
 use crate::screens::alarm_settings::SwitchRow;
+use crate::screens::system_supervisor::SupervisorCard;
 
 /// How often the view is fetched again while the page is open.
 const REFRESH_MS: u32 = 60_000;
@@ -582,6 +583,7 @@ pub fn SystemSettingsPage() -> impl IntoView {
                                     .map(|e| view! { <p class="home-settings__error">{e}</p> })
                             }}
                         </div>
+                        <SupervisorCard />
                     }
                         .into_any()
                 }
