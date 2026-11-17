@@ -7,7 +7,9 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use nidoo_api::{EntityView, OverridePatch};
 use nidoo_core::energy::{ConsumerIcon, EnergyMeters};
-use nidoo_core::model::{ENERGY_ROLES, Kind, LIGHT_ON_PRESETS, SwitchType, UiOverride};
+use nidoo_core::model::{
+    ENERGY_ROLES, Kind, LIGHT_ON_PRESETS, SHUTTER_MARK, SwitchType, UiOverride,
+};
 use serde_json::json;
 
 use crate::api::{clear_override, set_override};
@@ -24,7 +26,7 @@ use crate::i18n::states::switch_type_word;
 use crate::i18n::{Key, Lang, current_lang, text, use_lang, use_text};
 use crate::icons::consumer_icon;
 use crate::screens::alarm_settings::AlarmRoleLine;
-use crate::settings_rules::{Shown, clear_field, other_saved, set_type, shown};
+use crate::settings_rules::{Shown, clear_field, other_saved, set_shutter, set_type, shown};
 
 /// The fields of `after` that differ from `before`, as a patch the hub accepts: camelCase keys,
 /// a cleared `Option` as `null`, flags as booleans, `order` and the brightness as numbers.
@@ -720,6 +722,15 @@ pub fn OverrideEditor(entity: EntityView) -> impl IntoView {
                     get=|d| d.invert
                     set=|d, v| d.invert = v
                 />
+            </Section>
+            <Section title=tt(DeviceText::Type) when=on(|s| s.shutter_mark)>
+                <FlagField
+                    label=tt(DeviceText::ShutterOrBlind)
+                    draft=draft
+                    get=|d| d.show_as.as_deref() == Some(SHUTTER_MARK)
+                    set=set_shutter
+                />
+                <span class="override__hint">{move || t(DeviceText::ShutterHint)}</span>
             </Section>
             <Section title=tt(DeviceText::MainControl) when=on(|s| s.main_control)>
                 <ChipField

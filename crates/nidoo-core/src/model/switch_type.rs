@@ -79,7 +79,7 @@ impl SwitchType {
 #[cfg(test)]
 mod tests {
     use super::SwitchType;
-    use crate::model::{Kind, SHOW_AS, UiOverride};
+    use crate::model::{Kind, SHOW_AS, SHUTTER_MARK, UiOverride};
 
     fn ui(show_as: Option<&str>) -> UiOverride {
         UiOverride {
@@ -99,8 +99,14 @@ mod tests {
 
     #[test]
     fn every_value_maps_to_its_type() {
+        // `shutter` is a cover's mark: on a switch it reads as a plain switch.
+        assert_eq!(
+            SwitchType::of(Kind::Switch, &ui(Some(SHUTTER_MARK))),
+            Some(SwitchType::Switch)
+        );
         let types: Vec<_> = SHOW_AS
             .iter()
+            .filter(|v| **v != SHUTTER_MARK)
             .map(|v| SwitchType::of(Kind::Switch, &ui(Some(v))).unwrap())
             .collect();
         assert_eq!(

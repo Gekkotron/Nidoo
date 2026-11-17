@@ -114,8 +114,16 @@ pub fn coloured(mut light: EntityView) -> EntityView {
     light
 }
 
-/// A shutter, open; `can_position` adds a position (0–100 %) to open/close.
+/// A shutter, open; `can_position` adds a position (0–100 %) to open/close. It has no
+/// `device_class`, so it carries the `showAs: "shutter"` mark.
 pub fn cover(id: &str, name: &str, area: &str, can_position: bool) -> EntityView {
+    let mut e = unmarked_cover(id, name, area, can_position);
+    e.ui.show_as = Some(nidoo_core::model::SHUTTER_MARK.to_owned());
+    e
+}
+
+/// An open cover with no `device_class` and no mark: it could be a garage door.
+pub fn unmarked_cover(id: &str, name: &str, area: &str, can_position: bool) -> EntityView {
     let mut e = entity(id, name, Kind::Cover, area);
     e.capabilities.open_close = true;
     e.capabilities.stop = true;

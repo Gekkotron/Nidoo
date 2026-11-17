@@ -3,7 +3,7 @@
 //! and drains its publishes from the channel given to [`Hub::new`]; the HTTP layer reads it.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{
     Arc, Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
 };
@@ -192,6 +192,15 @@ pub struct MigrationOutcome {
     pub skipped_reason: Option<&'static str>,
 }
 
+/// What [`Hub::run_shutter_mark_once`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShutterMarkOutcome {
+    /// The ids of the covers marked.
+    pub marked: Vec<String>,
+    /// Why nothing was attempted; `None` when the migration ran.
+    pub skipped_reason: Option<&'static str>,
+}
+
 /// The broker ACL watchdog and, for the topic source, the log filter it listens on.
 struct AclWatchdog {
     topic: Option<String>,
@@ -251,6 +260,8 @@ pub struct Hub {
     /// in tasks that only hold the hub, so the counts live here, not in the engine.
     limits: Mutex<crate::flows::LimitCounts>,
     group_store: Mutex<GroupStore>,
+    /// Whether the retained shutter-mark marker was seen or published.
+    shutters_marked: AtomicBool,
     /// `[groups] enabled`: group writes and listing are refused while it is false.
     groups_enabled: bool,
     /// The retained network watch definitions.
@@ -433,6 +444,7 @@ impl Hub {
             recent_readings: Mutex::new(Default::default()),
             limits: Mutex::new(Default::default()),
             group_store: Mutex::new(GroupStore::default()),
+            shutters_marked: AtomicBool::new(false),
             groups_enabled: cfg.groups.enabled,
             network_store: Mutex::new(NetworkStore::default()),
             network_enabled: cfg.network.enabled,
@@ -614,6 +626,11 @@ impl Hub {
         }
         if topic == crate::home::topic(&self.ui_prefix) {
             self.ingest_home(payload);
+            return Vec::new();
+        }
+        if topic == crate::shutter_mark::marker_topic(&self.ui_prefix) {
+            self.shutters_marked
+                .store(!payload.is_empty(), Ordering::SeqCst);
             return Vec::new();
         }
         if topic == self.flow_labels_topic {
@@ -2001,6 +2018,58 @@ impl Hub {
         self.group_store().mark_migrated();
         MigrationOutcome {
             created,
+            skipped_reason: None,
+        }
+    }
+
+    /// Marks the unclassed covers that exist as shutters, once: refused once the retained
+    /// marker is set, or while the house is still empty (the retained sync has not settled).
+    /// With `settled` true an empty house still gets the marker, and nothing is marked.
+    /// A cover whose override cannot be written is logged and skipped.
+    pub async fn run_shutter_mark_once(&self, settled: bool) -> ShutterMarkOutcome {
+        if self.shutters_marked.load(Ordering::SeqCst) {
+            return ShutterMarkOutcome {
+                marked: Vec::new(),
+                skipped_reason: Some("already marked"),
+            };
+        }
+        let views = {
+            let reg = self.read();
+            entity_views(&reg)
+        };
+        if views.is_empty() && !settled {
+            return ShutterMarkOutcome {
+                marked: Vec::new(),
+                skipped_reason: Some("house empty, retained sync not settled"),
+            };
+        }
+        let mut marked = Vec::new();
+        for id in crate::shutter_mark::plan(&views) {
+            let mut patch = serde_json::Map::new();
+            patch.insert(
+                "showAs".to_owned(),
+                serde_json::Value::from(nidoo_core::model::SHUTTER_MARK),
+            );
+            match self.set_override(&id, &patch).await {
+                Ok(_) => marked.push(id),
+                Err(err) => tracing::warn!(cover = %id, %err, "shutter mark skipped a cover"),
+            }
+        }
+        let marker = Publish {
+            topic: crate::shutter_mark::marker_topic(&self.ui_prefix),
+            payload: "1".to_owned(),
+            retain: true,
+        };
+        if let Err(err) = self.publish(marker) {
+            tracing::warn!(%err, "shutter mark marker not published; it will run again");
+            return ShutterMarkOutcome {
+                marked,
+                skipped_reason: None,
+            };
+        }
+        self.shutters_marked.store(true, Ordering::SeqCst);
+        ShutterMarkOutcome {
+            marked,
             skipped_reason: None,
         }
     }

@@ -2300,6 +2300,20 @@ mod tests {
     }
 
     #[test]
+    fn an_unclassed_cover_without_the_mark_is_not_opened_as_a_shutter() {
+        let mut f = fixture::house();
+        f.entities.push(fixture::unmarked_cover(
+            "cover_garage",
+            "Garage",
+            "salon",
+            false,
+        ));
+        let got = covers_of(&plan("ouvre tous les volets", &f.house()));
+        assert_eq!(ids(&got), ["cover_baie", "cover_fenetre", "cover_lea"]);
+        assert!(got.iter().all(|(id, _)| id != "cover_garage"));
+    }
+
+    #[test]
     fn the_house_said_is_the_whole_house() {
         for sentence in [
             "ferme tous les volets de la maison",
