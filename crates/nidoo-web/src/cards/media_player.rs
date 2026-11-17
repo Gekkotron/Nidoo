@@ -24,6 +24,20 @@ pub(crate) fn elapsed_s(s: &MediaPlayerState, now_ms: i64) -> Option<f64> {
     Some((position + moved).clamp(0.0, duration))
 }
 
+/// The state a play (`play` true) or pause tap shows until the player answers. The position is
+/// re-based on the tap: the last report's `position_s`/`position_at` would put the line back
+/// where that report was (pause), or count the whole pause as played time (play). A play holds
+/// the line still (`position_at` null, as while loading): the player's answer says when the
+/// speakers start.
+pub(crate) fn toggle_guess(s: &MediaPlayerState, play: bool, now_ms: i64) -> MediaPlayerState {
+    MediaPlayerState {
+        state: Some(if play { "playing" } else { "paused" }.into()),
+        position_s: elapsed_s(s, now_ms).or(s.position_s),
+        position_at_ms: (!play).then_some(now_ms),
+        ..s.clone()
+    }
+}
+
 /// The card's style for a `#rrggbb` cover colour; anything else leaves the card plain (the
 /// value goes into a `style` attribute).
 pub(crate) fn tint_style(color: Option<&str>) -> Option<String> {
@@ -64,36 +78,35 @@ pub fn MediaPlayerCard(entity: EntityView) -> impl IntoView {
     let tint = tint_style(player.color.as_deref());
 
     // A tap sends the command, the play/pause one with its guess so the button flips at once.
-    let button = |action: &'static str,
-                  label: DeviceText,
-                  icon: &'static str,
-                  class: &'static str| {
-        let id = entity.id.clone();
-        let state = entity.state.clone();
-        let player = player.clone();
-        view! {
-            <button
-                type="button"
-                class=class
-                aria-label=move || td(label)
-                title=move || td(label)
-                inner_html=icon
-                on:click=move |_| {
-                    let guess = match action {
-                        "play" | "pause" => Some(EntityState {
-                            value: StateValue::MediaPlayer(MediaPlayerState {
-                                state: Some(if action == "play" { "playing" } else { "paused" }.into()),
-                                ..player.clone()
+    let button =
+        |action: &'static str, label: DeviceText, icon: &'static str, class: &'static str| {
+            let id = entity.id.clone();
+            let state = entity.state.clone();
+            let player = player.clone();
+            view! {
+                <button
+                    type="button"
+                    class=class
+                    aria-label=move || td(label)
+                    title=move || td(label)
+                    inner_html=icon
+                    on:click=move |_| {
+                        let guess = match action {
+                            "play" | "pause" => Some(EntityState {
+                                value: StateValue::MediaPlayer(toggle_guess(
+                                    &player,
+                                    action == "play",
+                                    now_ms(),
+                                )),
+                                ..state.clone()
                             }),
-                            ..state.clone()
-                        }),
-                        _ => None,
-                    };
-                    sender.send(&id, Command::MediaAction { action: action.into() }, guess);
-                }
-            ></button>
-        }
-    };
+                            _ => None,
+                        };
+                        sender.send(&id, Command::MediaAction { action: action.into() }, guess);
+                    }
+                ></button>
+            }
+        };
     let main_button = if playing {
         has("pause").then(|| button("pause", DeviceText::MediaPause, PAUSE, "media__play"))
     } else {
@@ -192,7 +205,7 @@ pub fn MediaPlayerCard(entity: EntityView) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{elapsed_s, tint_style};
+    use super::{elapsed_s, tint_style, toggle_guess};
     use nidoo_core::model::MediaPlayerState;
 
     const NOW: i64 = 1_793_960_400_000;
@@ -253,6 +266,30 @@ mod tests {
         let mut p = player("playing", None);
         p.position_s = Some(0.0);
         assert_eq!(elapsed_s(&p, NOW), Some(0.0));
+    }
+
+    #[test]
+    fn pause_guess_holds_the_line_where_it_is() {
+        let guess = toggle_guess(&player("playing", Some(NOW - 3000)), false, NOW);
+        assert_eq!(guess.state.as_deref(), Some("paused"));
+        assert_eq!(elapsed_s(&guess, NOW), Some(43.0));
+        assert_eq!(elapsed_s(&guess, NOW + 5000), Some(43.0));
+    }
+
+    #[test]
+    fn play_guess_after_a_long_pause_does_not_jump() {
+        let guess = toggle_guess(&player("paused", Some(NOW - 600_000)), true, NOW);
+        assert_eq!(guess.state.as_deref(), Some("playing"));
+        // Held still until the player says when the speakers start.
+        assert_eq!(elapsed_s(&guess, NOW), Some(40.0));
+        assert_eq!(elapsed_s(&guess, NOW + 5000), Some(40.0));
+    }
+
+    #[test]
+    fn toggle_guess_keeps_the_position_without_a_duration() {
+        let mut p = player("playing", Some(NOW - 3000));
+        p.duration_s = None;
+        assert_eq!(toggle_guess(&p, false, NOW).position_s, Some(40.0));
     }
 
     #[test]
