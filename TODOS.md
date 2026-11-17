@@ -64,3 +64,41 @@ Spec: `docs/superpowers/specs/2026-11-11-backup-design.md`. User docs: `docs/use
 
 - [ ] **P2** More destinations: SFTP, FTPS, SMB, S3-compatible storage, a folder on the hub host. Each is a new way to send, list and fetch a file, not a new format.
 - [ ] **P3** MCP tools `run_backup` and `get_last_backup`.
+
+## Security audit (2026-11-17)
+
+Found by a read-only audit of `main` (31134e23). The documented v1 posture (no login on HTTP, WebSocket and MCP; see [Security](docs/users/security.md)) is not repeated here: these go beyond it. Most broker items share one fix, an ACL with one user per client. Line numbers are as of that commit.
+
+- [ ] **P1** `GET /api/v1/setup/mobile-code` returns the broker, Frigate and gateway passwords in clear (`setup/routes.rs:169`, `setup/mobile.rs:179-199`). With CORS `*`, any web page open in a LAN browser can `fetch` it, no DNS rebinding needed. It contradicts "secrets are write-only". Refuse cross-origin callers now (`Origin` / `Sec-Fetch-Site`), later swap the secrets for a one-time, short-lived token the app exchanges.
+- [ ] **P1** The bundled Mosquitto has no ACL and one shared `nidoo` user on plaintext 1883 (`assets/mosquitto.conf`). Ship a default `acl_file` and one user per client (hub, Zigbee2MQTT, satellites, app, nidoo-sound). Closes the next three items.
+- [ ] **P1** A forged push reply disarms the alarm: any id starting with `alarm-` is accepted while armed, even one never sent (`alarm/effects.rs:390`). Accept only live alert ids. The panel command topic also disarms with no source check (`alarm/hub.rs:326`).
+- [ ] **P1** SSRF with read-back: a camera or image entity's `url_topic` / `url_template` becomes a URL the hub fetches with no host check, and `GET /entities/{id}/picture` returns the body (`hub.rs:1014`, `http/api.rs:184`). Refuse loopback, private and link-local targets after resolving (pin the IP), or allow only the Frigate origin; serve `image/*` bodies only.
+- [ ] **P2** Covers with no `device_class` count as shutters for the Assistant, so "ouvre les volets" opens a garage door discovered without a class (`nidoo-api/src/ambiances.rs:319`). Needs a decision: fail closed, or a per-device "this is a shutter" mark (like the plug rule), without breaking the house's own unclassed shutters.
+- [ ] **P2** Push: any broker publisher can register its own FCM token (and receive every alarm and camera alert), send any push, or delete real tokens; the token list is unbounded (`nidoo-push/src/tokens.rs:45`, `service.rs:144-205`). ACL, cap the tokens, rate-limit per source.
+- [ ] **P2** minijinja templates from discovery run with no fuel: a retained `value_template` with nested loops spins a thread on every message and survives restarts (`nidoo-core/src/template.rs:61`). Enable the `fuel` feature, `set_fuel`, cap template and output length.
+- [ ] **P2** nidoo-sound PCM input (4953), HTTP API (4954) and the satellites' Sendspin socket take any LAN peer; a newer connection replaces the live one, so anyone plays audio in every room or sets volume 100 (`nidoo-sound/src/input.rs:62`, `http.rs:118`, `nidoo-satellite/src/sendspin/conn.rs`). Bind to the hub's interface or require the key; cap connections and `max_message_size`.
+- [ ] **P2** `POST /api/v1/assist/stt/key` mints a new satellite key for any caller: it cuts every real satellite off and hands out a key to forge speech (`http/stt.rs:30`). Require the current key (or auth) to rotate.
+- [ ] **P2** Flows are retained on the broker: any publisher can add or replace flows with `command`, `speak` and `notify` nodes; entries and payloads are unbounded (`flows/store.rs:61-100`). ACL on the flows prefix, cap count and size.
+- [ ] **P3** The hub container runs as root with host networking (no `USER` in the Dockerfile). Add a non-root user and `chown` `./data` in `init-bundled`.
+- [ ] **P3** FCM `token_uri` comes from the uploaded service-account JSON with no host check (`nidoo-push/src/fcm.rs:40`): pin `https://oauth2.googleapis.com/token`.
+- [ ] **P3** `POST /setup/test/{mqtt,database,frigate}` works as an unauthenticated LAN port scanner, and `test/database` runs migrations on any database given; rate-limit, then put behind auth.
+- [ ] **P3** `/ws`: no `Origin` check, no connection cap, axum's default message size. The in-memory picture store has no total cap (5 MiB per entity, any number of entities): use an LRU by bytes.
+- [ ] **P3** Alerts carry attacker-chosen `image_url` / `video_url` that the browser loads when not on the Frigate origin (`alert_detail.rs:64-72`): allow http(s) on the hub or Frigate origin only.
+- [ ] **P3** One `voice_key` is shared by every satellite, and `last_hub_ctr` is memory-only, so a reboot reopens a short replay window (`nidoo-satellite/src/voice.rs:70-85`). Per-satellite keys.
+- [ ] **P3** Backup routes have no login: anyone on the LAN can start a restore or change the FTP target; plain FTP sends the FTP login in clear (the backup file itself is encrypted).
+- [ ] When auth lands: put `/setup/*`, `/settings/*`, `/backup/*`, `/assist/stt/key` behind it; restore MCP's Host allowlist (`disable_allowed_hosts()` in `mcp/mod.rs`); replace `CorsLayer::permissive()`; add an `Origin` check on `/ws`; CSRF tokens if the session is a cookie.
+- [ ] Run `cargo audit` in CI (no dependency scan was done).
+
+## Home Assistant gaps (2026-11-17)
+
+What a Home Assistant user misses in the first week. Each is its own brainstorm.
+
+- [ ] **P1** Prebuilt images: CI only tests and builds the docs, so every install and update compiles the workspace on the home server. Publish multi-arch images to `ghcr.io` on release, let `compose.yml` pull them, and show "update available" in the web UI.
+- [ ] **P1** A Home Assistant bridge: read entities and send commands over HA's WebSocket API, so Z-Wave JS, Matter, Hue, Shelly, Sonos and cloud integrations show up. Lets HA users run Nidoo beside HA instead of migrating.
+- [ ] **P2** Flow triggers: a `for` duration on `trigger.state` ("no motion for 5 min"), numeric above/below crossings, a webhook trigger, a raw MQTT topic trigger.
+- [ ] **P2** Flow actions: an HTTP request, an MQTT publish, reusable scripts (a flow called from flows, with parameters).
+- [ ] **P2** Notification channels beyond Android/FCM: ntfy, Telegram, email (SMTP). Also an iOS answer (ntfy covers it).
+- [ ] **P2** Users and login, with long-lived tokens for MCP and scripts (the fix behind most of the security list).
+- [ ] **P3** Flows as files: export and import a flow (or all) as JSON, so they live in git like HA's YAML; a shared catalogue later (HA blueprints).
+- [ ] **P3** English sentences for the Assistant (French only today).
+- [ ] **P3** A documented Grafana setup on the TimescaleDB history (a ready dashboard JSON).
