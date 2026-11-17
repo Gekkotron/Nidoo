@@ -30,3 +30,18 @@ That guard is for browsers only. A client that is not a browser (curl, a script,
 - With a Frigate address set (**Settings → Cameras**) the hub also fetches alert media from Frigate with the configured login. It only ever requests an event's `snapshot.jpg`, `clip.mp4` or `thumbnail.jpg` on that origin and follows no redirect (plus, with live view on, a camera's `latest.jpg` and MJPEG stream, and `/api/config` for the camera list, which it never passes on), but any LAN client can request those, so give it a Frigate *viewer* account, not the admin. See [Cameras (Frigate)](cameras.md).
 - A camera or image entity whose picture is a URL (`url_topic`, written by any broker login) makes the hub fetch that URL when the picture is asked for, with no login. The fetch refuses loopback, link-local (cloud metadata included), unspecified, multicast and broadcast addresses, unless the URL is on the Frigate address; it resolves the host once and connects to the address it checked, follows no redirect, and serves only an `image/*` reply (anything else answers `502`), under a sandbox policy so an SVG cannot run a script. Private addresses stay allowed so LAN cameras keep working; they include the hub host's Docker bridge networks (`172.17.0.0/16` and up) and any VPN range it routes, so a broker login can still make the hub request a page there (a blind GET: only an image comes back).
 - Flows are retained on the broker in clear, so the hub refuses a flow whose `command` node carries an alarm code. Arm and disarm from a flow only on a panel that needs none. See [Flows](flows.md).
+
+## The broker
+
+The broker that comes with Nidoo refuses anonymous clients, and its login travels in clear on port 1883 (no TLS yet). The hub, Zigbee2MQTT, the satellites and nidoo-sound share the `nidoo` login. The phone app has its own, `nidoo-app`, because the setup QR carries it to every phone (see [Mobile app](mobile-app.md#the-apps-own-broker-login)).
+
+The broker's ACL, `data/mosquitto/config/acl`, keeps every login's access as it was, except that `nidoo-app` cannot:
+
+- publish or read alerts on `nidoo/push/notification/#`, so a leaked app login cannot push a fake alert to every phone;
+- read or change the alarm settings, `nidoo/alarm/settings`;
+- read or change the flow label catalog, `nidoo/flow_labels`;
+- read the broker's own topics, `$SYS/#`.
+
+What it does not cover yet: the app login can still add or replace flows on `nidoo/automation/#`, send push replies and register push tokens, and the shared `nidoo` login can do anything. These have their own fixes on the backlog.
+
+`init-bundled` writes the ACL once and never overwrites it, and on an install from before it, adds the `nidoo-app` login and an `acl_file` line to `mosquitto.conf` (unless that file already names one). If you changed the push, alarm or flow label prefixes in the advanced settings, edit the ACL to match, then reload the broker with `docker compose kill -s HUP mosquitto`; `tools/update.sh` does that reload for you. With your own broker, nothing changes: the file is a sample you can copy from `crates/nidoo/assets/mosquitto.acl`. With the [ACL watchdog](watchdogs.md#broker-acl) on, each denial becomes an alert.

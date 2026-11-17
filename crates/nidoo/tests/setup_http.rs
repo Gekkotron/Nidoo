@@ -1440,6 +1440,45 @@ async fn mobile_code_carries_the_broker() {
 }
 
 #[tokio::test]
+async fn mobile_code_gives_the_app_login_on_the_bundled_broker() {
+    let mut file = mqtt_file("192.0.2.7");
+    let mqtt = file.mqtt.as_mut().unwrap();
+    mqtt.user = Some("nidoo".into());
+    mqtt.password = Some("bundled-mqtt-secret".into());
+    let s = serve(Mode::Run, file, None, false).await;
+    std::fs::write(
+        s.dir.path().join("bundled.json"),
+        json!({
+            "mqtt_user": "nidoo", "mqtt_password": "bundled-mqtt-secret",
+            "db_user": "nidoo", "db_password": "bundled-db-secret", "db_name": "nidoo",
+            "app_mqtt_user": "nidoo-app", "app_mqtt_password": "bundled-app-secret"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (code, body) = mobile_get(&s, "/api/v1/setup/mobile-code", None).await;
+    assert_eq!(code, StatusCode::OK);
+    let p = payload_of(&body);
+    assert_eq!(p["local"]["user"], "nidoo-app");
+    assert_eq!(p["local"]["pass"], "bundled-app-secret");
+    assert!(!body.to_string().contains("bundled-mqtt-secret"));
+}
+
+#[tokio::test]
+async fn mobile_code_keeps_the_hub_login_before_the_app_login_exists() {
+    let mut file = mqtt_file("192.0.2.7");
+    let mqtt = file.mqtt.as_mut().unwrap();
+    mqtt.user = Some("nidoo".into());
+    mqtt.password = Some("bundled-mqtt-secret".into());
+    let s = serve(Mode::Run, file, None, false).await;
+    write_bundled(s.dir.path());
+    let (_, body) = mobile_get(&s, "/api/v1/setup/mobile-code", None).await;
+    let p = payload_of(&body);
+    assert_eq!(p["local"]["user"], "nidoo");
+    assert_eq!(p["local"]["pass"], "bundled-mqtt-secret");
+}
+
+#[tokio::test]
 async fn mobile_code_swaps_localhost_for_the_request_host() {
     let s = serve(Mode::Run, mqtt_file("localhost"), None, false).await;
     let (code, body) = mobile_get(&s, "/api/v1/setup/mobile-code", Some("192.0.2.5:8081")).await;

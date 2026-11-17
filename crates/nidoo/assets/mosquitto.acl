@@ -1,0 +1,17 @@
+# Written once by `nidoo init-bundled`; edit freely, it is never overwritten.
+# Mosquitto reads it at start and on SIGHUP: `docker compose kill -s HUP mosquitto`.
+#
+# Every user keeps full access, as before this file existed: the hub's own login,
+# and any login you added for Zigbee2MQTT or another client. Mosquitto logs a
+# harmless warning at start because these patterns name no %u or %c.
+pattern readwrite #
+pattern read $SYS/#
+
+# The phone app's login, which travels in the setup QR. A deny wins over the
+# grants above, so whoever reads the QR cannot send alerts to every phone,
+# change the alarm settings or the flow labels, or read the broker's own log.
+user nidoo-app
+topic deny nidoo/push/notification/#
+topic deny nidoo/alarm/settings
+topic deny nidoo/flow_labels
+topic deny $SYS/#

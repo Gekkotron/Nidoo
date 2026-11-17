@@ -38,7 +38,7 @@ Open that address from any device on the LAN. The [setup wizard](getting-started
 
 | Service | What it is |
 | --- | --- |
-| `init` | A one-shot job. The first time, it generates a password for the broker and one for the database, then exits. |
+| `init` | A one-shot job. The first time, it generates the broker's logins (one for the hub and its clients, one for the phone app), the broker's ACL and a password for the database, then exits. On an older install it adds the app login and the ACL. |
 | `mosquitto` | The MQTT broker (container `nidoo-mosquitto`), on port 1883. |
 | `timescaledb` | The history and settings database (container `nidoo-timescaledb`), on port 5432. |
 | `hub` | Nidoo itself (container `nidoo-hub`), on port 8081. |
@@ -49,7 +49,7 @@ Everything the stack writes lives in `./data/` next to `compose.yml`:
 | --- | --- |
 | `data/hub.json` | The hub's own settings: broker, database, address, language, location. |
 | `data/bundled.json` | The generated broker and database passwords, readable only by its owner (mode 0600). The wizard pre-fills them from here. |
-| `data/mosquitto/` | The broker's config, retained messages and log. |
+| `data/mosquitto/` | The broker's config (with `config/acl`, its ACL; see [Security](security.md#the-broker)), retained messages and log. |
 | `data/timescaledb/` | The database files. |
 | `data/system-heartbeat.json` | The hub's heartbeat, refreshed every minute, and the note of a clean stop. It tells the next start whether the last stop was clean; see [System health](system-health.md#clean-and-unexpected-stops). |
 
@@ -66,7 +66,7 @@ mqtt:
   password: <mqtt_password from data/bundled.json>   # sudo jq -r .mqtt_password data/bundled.json
 ```
 
-Then set the discovery prefix as described in [Zigbee2MQTT](zigbee2mqtt.md). If you prefer a separate login for Zigbee2MQTT, add a second user inside the broker container and restart it:
+Then set the discovery prefix as described in [Zigbee2MQTT](zigbee2mqtt.md). If you prefer a separate login for Zigbee2MQTT, add a second user inside the broker container and restart it. The broker's ACL gives every login full access except the app's `nidoo-app`:
 
 ```bash
 docker exec -it nidoo-mosquitto mosquitto_passwd /mosquitto/config/passwd zigbee2mqtt

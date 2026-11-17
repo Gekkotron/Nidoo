@@ -17,7 +17,7 @@ Two places, split by what the hub needs before it can reach anything:
 | `data/hub.json` | The bootstrap settings: the MQTT connection, the database URL, the home location, the HTTP bind address, the log level, the wizard's progress and a "setup finished" flag. The hub writes it, one wizard step at a time, with mode `0600`. You do not edit it, except for the rare field with no screen (below). |
 | The `settings` table in the database | Everything else, one JSON row per section: `weather`, `solcast`, `frigate`, `push`, `climate`, `advanced`, `mobile`, `backup` and `system`. Secrets are stored in the same rows. |
 | `data/settings-cache.json` | A copy of the settings the hub last read, mode `0600`. If the database is down when the hub starts, it starts from this copy with a warning, so the house keeps running. |
-| `data/bundled.json` | Written by the compose `init` service (`nidoo init-bundled`): the credentials of the Mosquitto and TimescaleDB that come with Nidoo, `mqtt_user`, `mqtt_password`, `db_user`, `db_password` and `db_name`, mode `0600`. The wizard reads it to pre-fill the MQTT and Database steps. It is not used once those steps are saved. |
+| `data/bundled.json` | Written by the compose `init` service (`nidoo init-bundled`): the credentials of the Mosquitto and TimescaleDB that come with Nidoo, `mqtt_user`, `mqtt_password`, `db_user`, `db_password` and `db_name`, plus the phone app's broker login `app_mqtt_user` and `app_mqtt_password` (missing in a file written before it existed), mode `0600`. The wizard reads it to pre-fill the MQTT and Database steps; the phone setup code reads the app login (see [Mobile](#mobile)). |
 
 `data/backup-last.json` holds the record of the last backup (see [Backup](#backup)). After a restore from a backup that held Zigbee2MQTT data, `data/zigbee2mqtt-restored.zip` (mode `0600`) holds that data until it is deleted in **Settings → Backup**.
 
@@ -109,7 +109,7 @@ Command line:
 | --- | --- |
 | `nidoo` or `nidoo run` | Run the hub. |
 | `nidoo mcp-stdio --server <url>` | Serve MCP over stdio, proxying to a running hub (for example `http://localhost:8081`). It reads the log level from `data/hub.json` when that exists. |
-| `nidoo init-bundled` | Create the bundled broker and database credentials in `data/` and exit. The compose `init` service runs it; it changes nothing once `data/bundled.json` exists. |
+| `nidoo init-bundled` | Create the bundled broker and database credentials, the app's broker login and the broker ACL in `data/`, and exit. The compose `init` service runs it. Once `data/bundled.json` exists it only adds the app login and the ACL to an install that lacks them (reload the broker afterwards: `docker compose kill -s HUP mosquitto`), and otherwise changes nothing. |
 | `--data <dir>` | The data folder (default `./data`, or `NIDOO_DATA_DIR`). Works with every command. |
 
 ## Weather
@@ -191,7 +191,7 @@ The remote gateway the Android app uses away from home, carried by the phone set
 | `gateway_url` | none | The gateway address, for example `https://house.example.ts.net`. It must start with `https://` and name a host. |
 | `gateway_key` | none | The gateway key (a secret): 64 hex characters. A read shows `{"set": bool}` and `gateway_ready`, which is true when both fields are set. |
 
-`GET /api/v1/setup/mobile-code` returns `{"payload": "<json>"}`, the `v:1` JSON the phone reads from a QR code. It is built from the broker in `hub.json`, the `mobile` section and the `Host` of the request (a broker on `localhost` is replaced by that host, so the phone can reach it). It answers 409 outside Run mode or before the MQTT step is saved, and 403 to a browser page of another origin (see [Security](../users/security.md#the-phone-setup-code)). The code holds secrets: the broker login and the gateway key. Show it only to someone you trust, and do not share a screenshot of it. The hub never logs it.
+`GET /api/v1/setup/mobile-code` returns `{"payload": "<json>"}`, the `v:1` JSON the phone reads from a QR code. It is built from the broker in `hub.json` (with the app login of `data/bundled.json` instead of the hub's when the hub uses the bundled login), the `mobile` section and the `Host` of the request (a broker on `localhost` is replaced by that host, so the phone can reach it). It answers 409 outside Run mode or before the MQTT step is saved, and 403 to a browser page of another origin (see [Security](../users/security.md#the-phone-setup-code)). The code holds secrets: the broker login and the gateway key. Show it only to someone you trust, and do not share a screenshot of it. The hub never logs it.
 
 ## Backup
 

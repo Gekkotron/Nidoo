@@ -143,6 +143,36 @@ STUB
   assert_content "$T/repo/data/secrets/firebase.json" fb
 }
 
+HUP='docker compose kill -s HUP mosquitto'
+
+test_reloads_the_bundled_broker() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/bundled.json"
+  run_update
+  assert_log "$ALL"
+  [ "$(grep -n -Fx -- "$HUP" "$LOG" | cut -d: -f1)" -gt "$(grep -n -Fx -- "$ALL" "$LOG" | cut -d: -f1)" ] \
+    || fail "the reload must come after the rebuild"
+}
+
+test_no_reload_without_the_bundled_broker() {
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/hub.json"
+  run_update
+  assert_no_log "$HUP"
+  setup
+  touch "$T/repo/compose.override.yml"
+  run_update
+  assert_log "$ALL"
+  assert_no_log "$HUP"
+  setup
+  mkdir -p "$T/repo/data"
+  echo '{}' > "$T/repo/data/bundled.json"
+  run_update --hub-only
+  assert_no_log "$HUP"
+}
+
 test_rejects_bad_arguments() {
   setup
   if (cd "$T/repo" && PATH="$T/bin:$PATH" bash tools/update.sh --bogus >/dev/null 2>&1); then fail "--bogus accepted"; fi
@@ -152,7 +182,8 @@ test_rejects_bad_arguments() {
 
 for t in test_moves_legacy_files test_never_overwrites_data test_bundled_runs_everything \
   test_override_runs_everything test_flags_win test_reexecs_after_pull \
-  test_uses_sudo_when_data_is_not_writable test_rejects_bad_arguments; do
+  test_uses_sudo_when_data_is_not_writable test_reloads_the_bundled_broker \
+  test_no_reload_without_the_bundled_broker test_rejects_bad_arguments; do
   echo "==> $t"
   "$t"
 done

@@ -274,6 +274,12 @@ async fn run() -> anyhow::Result<ExitCode> {
                     data_dir.join(bundled::BUNDLED_FILE).display()
                 ),
                 InitOutcome::Kept => println!("bundled credentials already exist; nothing changed"),
+                InitOutcome::AppLoginAdded => println!(
+                    "added the phone app's broker login ({}) and the broker ACL; reload \
+                     Mosquitto with `docker compose kill -s HUP mosquitto`, then scan the \
+                     setup QR again on each phone",
+                    bundled::APP_MQTT_USER
+                ),
                 InitOutcome::HubConfigured => {
                     println!("this hub is already set up; no bundled credentials created")
                 }
