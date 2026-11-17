@@ -14,7 +14,7 @@ nidoo-sound run [--config nidoo-sound.toml]
 | Feature | Supported | Details |
 |---|---|---|
 | Synchronised playback | yes | One PCM input played on every approved satellite on one shared clock |
-| Music input | PCM only | Raw s16le, 48 kHz, stereo on TCP `input_port`; one sender at a time, a new one replaces it without a break; `idle_stop_ms` of silence stops playback |
+| Music input | PCM only | Raw s16le, 48 kHz, stereo on TCP `input_port`; one sender at a time: a new connection takes over only from the same IP (a Wi-Fi reconnect, no break) or when the current one is not streaming, otherwise it is refused; `idle_stop_ms` of silence stops playback |
 | Finding satellites | yes | mDNS `_sendspin._tcp`; the server connects and reconnects every 2 s |
 | Players that connect themselves | yes | `ws://<host>:<listen_port>/sendspin` (a browser player, for example); they reconnect on their own |
 | Approval | yes | A new satellite plays nothing until Allowed is switched on |
@@ -53,6 +53,7 @@ the same values as `NIDOO_SOUND_MQTT__*`.
 | `input_port` | `NIDOO_SOUND_INPUT_PORT` | `4953` | TCP port of the PCM input (s16le, 48 kHz, stereo) |
 | `listen_port` | `NIDOO_SOUND_LISTEN_PORT` | `8927` | players that connect themselves open `ws://<host>:<port>/sendspin`; `0` turns it off |
 | `http_port` | `NIDOO_SOUND_HTTP_PORT` | `4954` | TCP port of the HTTP API (see below); `0` turns it off |
+| `http_bind` | `NIDOO_SOUND_HTTP_BIND` | `127.0.0.1` | Address the HTTP API listens on; `0.0.0.0` opens it to the LAN |
 | `data_dir` | `NIDOO_SOUND_DATA_DIR` | `./data` | holds `sound/identity.key` and `sound/players.json` |
 | `lead_ms` | `NIDOO_SOUND_LEAD_MS` | `500` | how far ahead audio is timestamped; raised to cover the players' `min_buffer_ms + output_delay_ms` |
 | `input_buffer_ms` | `NIDOO_SOUND_INPUT_BUFFER_MS` | `250` | phone audio gathered before playback starts, so Wi-Fi stalls up to about this long play through without gaps; adds this much delay |
@@ -71,7 +72,7 @@ keep it with your backups.
 
 ## HTTP API
 
-On `http_port` (default `4954`, all interfaces, no login: keep it on the LAN),
+On `http_port` (default `4954`) and `http_bind` (default `127.0.0.1`, this machine only; set `http_bind = "0.0.0.0"` to reach it from the LAN; there is no login, so keep it on the LAN),
 `nidoo-sound` lists the approved satellites and sets their volume and mute. A
 change goes through the same path as an MQTT command, so it is saved in
 `players.json` and reaches Nidoo like a change made there. If the port cannot

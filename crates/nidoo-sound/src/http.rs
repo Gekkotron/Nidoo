@@ -112,13 +112,18 @@ pub fn router(satellites: Satellites, control: mpsc::Sender<Control>) -> Router 
         .with_state((satellites, control))
 }
 
-/// Serves the API on `0.0.0.0:port` until the process ends. A bind error is
+/// Serves the API on `bind:port` until the process ends. A bind error is
 /// logged and the function returns: audio playback does not depend on it.
-pub async fn serve(port: u16, satellites: Satellites, control: mpsc::Sender<Control>) {
-    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+pub async fn serve(
+    bind: std::net::IpAddr,
+    port: u16,
+    satellites: Satellites,
+    control: mpsc::Sender<Control>,
+) {
+    let listener = match tokio::net::TcpListener::bind((bind, port)).await {
         Ok(listener) => listener,
         Err(e) => {
-            tracing::warn!(port, error = %e, "HTTP API cannot listen, running without it");
+            tracing::warn!(%bind, port, error = %e, "HTTP API cannot listen, running without it");
             return;
         }
     };

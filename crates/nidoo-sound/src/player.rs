@@ -27,6 +27,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, timeout};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::clock::Clock;
@@ -123,6 +124,18 @@ pub enum PlayerCmd {
 /// An open WebSocket to a player, whichever side opened it.
 pub type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// Largest WebSocket message or frame accepted from a player. Sendspin
+/// messages are small JSON and a Noise message is at most 65535 bytes.
+const MAX_WS_BYTES: usize = 128 * 1024;
+
+/// WebSocket limits for both directions of connection (tungstenite's
+/// defaults allow 64 MiB messages).
+pub fn ws_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_BYTES))
+        .max_frame_size(Some(MAX_WS_BYTES))
+}
+
 /// Connects to an advertised player and runs the connection until it ends.
 /// Sends [`PlayerEvent::Gone`] on every exit after [`PlayerEvent::Connected`].
 pub async fn run_player(
@@ -135,7 +148,7 @@ pub async fn run_player(
     // No Origin header: tungstenite only sends what the URL implies.
     let (ws, _) = timeout(
         CONNECT_TIMEOUT,
-        tokio_tungstenite::connect_async(url.as_str()),
+        tokio_tungstenite::connect_async_with_config(url.as_str(), Some(ws_config()), false),
     )
     .await
     .context("connect timed out")?

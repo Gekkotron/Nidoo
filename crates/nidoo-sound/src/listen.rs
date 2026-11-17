@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio::time::timeout;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 
 use crate::clock::Clock;
 use crate::group::FromPlayer;
-use crate::player::{Liveness, PlayerEvent, serve_player};
+use crate::player::{Liveness, PlayerEvent, serve_player, ws_config};
 use crate::proto::noise::ServerIdentity;
 
 /// The WebSocket path players connect to (the spec's recommended one).
@@ -25,6 +25,9 @@ pub const PATH: &str = "/sendspin";
 pub const DEFAULT_PORT: u16 = 8927;
 
 const UPGRADE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Connections that have not yet completed their handshake and `client/hello`;
+/// more are closed at once.
+const MAX_PENDING: usize = 8;
 
 /// Accepts players forever. Each one reaches the group only once its
 /// handshake and `client/hello` are done: [`FromPlayer::Accepted`] (under a
@@ -37,6 +40,7 @@ pub async fn accept_players(
     liveness: Liveness,
 ) {
     let mut count = 0u64;
+    let pending = Arc::new(Semaphore::new(MAX_PENDING));
     loop {
         let (tcp, peer) = match listener.accept().await {
             Ok(accepted) => accepted,
@@ -46,11 +50,17 @@ pub async fn accept_players(
                 continue;
             }
         };
+        let Ok(permit) = pending.clone().try_acquire_owned() else {
+            tracing::info!(%peer, "player connection refused: too many handshakes pending");
+            continue;
+        };
         count += 1;
         let instance = format!("inbound-{count}");
         let (identity, clock, to_group) = (identity.clone(), clock.clone(), to_group.clone());
         tokio::spawn(async move {
-            if let Err(e) = serve_one(tcp, &instance, identity, clock, to_group, liveness).await {
+            if let Err(e) =
+                serve_one(tcp, &instance, identity, clock, to_group, liveness, permit).await
+            {
                 tracing::info!(%instance, %peer, error = %format!("{e:#}"), "player connection ended");
             }
         });
@@ -64,10 +74,15 @@ async fn serve_one(
     clock: Arc<dyn Clock>,
     to_group: mpsc::Sender<FromPlayer>,
     liveness: Liveness,
+    permit: OwnedSemaphorePermit,
 ) -> anyhow::Result<()> {
     let ws = timeout(
         UPGRADE_TIMEOUT,
-        tokio_tungstenite::accept_hdr_async(MaybeTlsStream::Plain(tcp), check_path),
+        tokio_tungstenite::accept_hdr_async_with_config(
+            MaybeTlsStream::Plain(tcp),
+            check_path,
+            Some(ws_config()),
+        ),
     )
     .await??;
 
@@ -79,10 +94,13 @@ async fn serve_one(
         tokio::spawn(async move {
             // Held until the player is connected, then handed to the group.
             let mut cmds = Some(cmds);
+            let mut permit = Some(permit);
             while let Some(event) = ev_rx.recv().await {
                 if matches!(event, PlayerEvent::Connected(_))
                     && let Some(cmds) = cmds.take()
                 {
+                    // The handshake is done: the slot is free for the next one.
+                    permit.take();
                     let accepted = FromPlayer::Accepted {
                         instance: instance.clone(),
                         cmds,

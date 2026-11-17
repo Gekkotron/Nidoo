@@ -32,6 +32,15 @@ That guard is for browsers only. A client that is not a browser (curl, a script,
 - Discovery templates (`value_template` and the like) come from retained broker messages, so any broker login can supply one. The hub bounds each render: a template longer than 16 KiB is refused, a render stops after 50 000 instructions, and output past 64 KiB is an error. A runaway template fails instead of tying up the hub.
 - Flows are retained on the broker in clear, so the hub refuses a flow whose `command` node carries an alarm code. Arm and disarm from a flow only on a panel that needs none. See [Flows](flows.md).
 
+## Sound
+
+`nidoo-sound` has no login either. Its ports are limited so that a device on the LAN cannot take over music that is already playing:
+
+- The music input (TCP 4953) takes raw PCM from anyone, because the casting app cannot send a key. While music plays, only the device that is playing can reconnect; another one waits until the music stops. When nothing plays, any device on the LAN can start music in every room.
+- The HTTP API (4954) that sets volume and mute listens on the hub host only (`127.0.0.1`). Set `http_bind = "0.0.0.0"` to open it to the LAN, with no login.
+- A Mac satellite trusts the first `nidoo-sound` that connects to it and refuses any other server after that (**Forget server** resets it). A connection that has not finished the handshake no longer cuts the music. See [A Mac as a satellite](mac-satellite.md).
+- The ESP32 satellites use Sendspin's unpaired key: any device on the LAN can still connect to one as its server, play on it or set its volume. Keep them on your own network.
+
 ## The broker
 
 The broker that comes with Nidoo refuses anonymous clients, and its login travels in clear on port 1883 (no TLS yet). The hub, Zigbee2MQTT, the satellites and nidoo-sound share the `nidoo` login. The phone app has its own, `nidoo-app`, because the setup QR carries it to every phone (see [Mobile app](mobile-app.md#the-apps-own-broker-login)).

@@ -3,18 +3,22 @@
 //! Both live in one directory (on a Mac, `~/Library/Application Support/Nidoo Satellite/`),
 //! every file mode `0600`. Keep `player.key`: a new key makes the satellite a stranger to
 //! `nidoo-sound`, which then lists it as a new player to Allow and place in a room.
+//! `server.pub` is the other way round: the one `nidoo-sound` this satellite accepts.
 
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nidoo_voice::Key;
 use serde::{Deserialize, Serialize};
+use tokio::sync::watch;
 
 const PLAYER_KEY: &str = "player.key";
+const SERVER_PIN: &str = "server.pub";
 const SETTINGS: &str = "settings.json";
 
 /// The satellite's Sendspin identity: a Curve25519 keypair made once and kept.
@@ -110,6 +114,7 @@ pub struct Store {
     dir: PathBuf,
     identity: PlayerIdentity,
     settings: Settings,
+    pin: ServerPin,
 }
 
 impl Store {
@@ -122,10 +127,12 @@ impl Store {
             .with_context(|| format!("creating {}", dir.display()))?;
         let identity = load_or_create_identity(&dir.join(PLAYER_KEY))?;
         let settings = read_settings(&dir.join(SETTINGS))?;
+        let pin = ServerPin::load(&dir.join(SERVER_PIN));
         Ok(Store {
             dir: dir.to_path_buf(),
             identity,
             settings,
+            pin,
         })
     }
 
@@ -140,6 +147,11 @@ impl Store {
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// The pinned `nidoo-sound`, shared with the Sendspin server.
+    pub fn server_pin(&self) -> ServerPin {
+        self.pin.clone()
     }
 
     /// Switches the microphone and keeps the choice.
@@ -162,6 +174,101 @@ impl Store {
         write_settings(&self.dir.join(SETTINGS), &next)?;
         self.settings = next;
         Ok(())
+    }
+}
+
+/// The one `nidoo-sound` this satellite plays for: its static public key
+/// (base64url, as `server/init` sends it), kept in `server.pub`. Trust on first use:
+/// the first server that completes the Noise handshake is pinned, any other is refused
+/// until [`ServerPin::forget`]. Clones share the same pin.
+#[derive(Debug, Clone)]
+pub struct ServerPin {
+    inner: Arc<PinInner>,
+}
+
+#[derive(Debug)]
+struct PinInner {
+    path: PathBuf,
+    id: Mutex<Option<String>>,
+    /// Counts forgets, so the Sendspin server can drop the live connection.
+    forgotten: watch::Sender<u64>,
+}
+
+impl ServerPin {
+    /// Reads `path`; a missing or unreadable file means no server pinned yet.
+    fn load(path: &Path) -> Self {
+        let id = match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let id = text.trim().to_owned();
+                if nidoo_sound::proto::noise::decode_client_id(&id).is_ok() {
+                    Some(id)
+                } else {
+                    tracing::warn!(path = %path.display(), "ignoring a malformed server pin");
+                    None
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), "reading the server pin");
+                None
+            }
+        };
+        Self {
+            inner: Arc::new(PinInner {
+                path: path.to_path_buf(),
+                id: Mutex::new(id),
+                forgotten: watch::channel(0).0,
+            }),
+        }
+    }
+
+    fn id(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.inner.id.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The pinned server key, if any.
+    pub fn get(&self) -> Option<String> {
+        self.id().clone()
+    }
+
+    /// True when `server_id` may be served: it is the pinned one, or nothing is pinned
+    /// yet and it now becomes the pinned one. Call it only once the handshake proved
+    /// the peer holds that key.
+    pub fn accept(&self, server_id: &str) -> bool {
+        let mut id = self.id();
+        match id.as_deref() {
+            Some(pinned) => pinned == server_id,
+            None => {
+                if let Err(e) = write_private_atomic(&self.inner.path, server_id.as_bytes()) {
+                    // Pinned for this run only; the next run pins again.
+                    tracing::warn!(error = %e, "saving the server pin");
+                }
+                *id = Some(server_id.to_owned());
+                true
+            }
+        }
+    }
+
+    /// Clears the pin (and its file) and tells the Sendspin server to drop the live
+    /// connection. On a failed delete the pin is kept.
+    pub fn forget(&self) -> anyhow::Result<()> {
+        let mut id = self.id();
+        match std::fs::remove_file(&self.inner.path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("removing {}", self.inner.path.display()));
+            }
+        }
+        *id = None;
+        drop(id);
+        self.inner.forgotten.send_modify(|n| *n += 1);
+        Ok(())
+    }
+
+    /// Changes each time the pin is forgotten.
+    pub fn subscribe_forget(&self) -> watch::Receiver<u64> {
+        self.inner.forgotten.subscribe()
     }
 }
 
@@ -358,5 +465,37 @@ mod tests {
         store.set_listening(false).unwrap();
         let store = Store::open(dir.path()).unwrap();
         assert_eq!(store.settings().personal_threshold, Some(0.95));
+    }
+
+    #[test]
+    fn server_pin_is_kept_private_and_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = URL_SAFE_NO_PAD.encode([7u8; 32]);
+        let other = URL_SAFE_NO_PAD.encode([8u8; 32]);
+        let pin = Store::open(dir.path()).unwrap().server_pin();
+        assert_eq!(pin.get(), None);
+        assert!(pin.accept(&id));
+        assert!(pin.accept(&id));
+        assert!(!pin.accept(&other));
+
+        let mode = std::fs::metadata(dir.path().join("server.pub"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let reopened = Store::open(dir.path()).unwrap().server_pin();
+        assert_eq!(reopened.get(), Some(id));
+
+        reopened.forget().unwrap();
+        assert!(!dir.path().join("server.pub").exists());
+        assert_eq!(Store::open(dir.path()).unwrap().server_pin().get(), None);
+        assert!(reopened.accept(&other));
+    }
+
+    #[test]
+    fn a_malformed_server_pin_file_means_unpinned() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("server.pub"), "not a key").unwrap();
+        assert_eq!(Store::open(dir.path()).unwrap().server_pin().get(), None);
     }
 }

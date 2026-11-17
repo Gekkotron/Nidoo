@@ -1,11 +1,17 @@
 //! The music input: raw s16le / 48 kHz / stereo PCM on a TCP port (the
 //! phone app, reconnecting every 2 s while casting).
 //!
-//! One sender at a time: a new connection replaces the current one without
-//! a stop/start, so a phone reconnecting after a Wi-Fi blip does not restart
-//! the stream. The stream stops when the current connection closes or sends
-//! nothing for `idle_stop`, and starts again with the next bytes.
+//! One sender at a time. The sender is a third-party casting app that cannot
+//! send a key, so a newcomer takes over only when there is no current
+//! connection, when it comes from the same IP as the current one (the phone
+//! reconnecting after a Wi-Fi blip, replaced without a stop/start), or when
+//! the current one is not streaming (never sent bytes, or idle for
+//! `idle_stop`). Any other newcomer is refused while a stream is playing, so
+//! a second device on the LAN cannot hijack the music. The stream stops when
+//! the current connection closes or sends nothing for `idle_stop`, and starts
+//! again with the next bytes.
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -19,6 +25,15 @@ pub enum InputEvent {
     Started,
     Pcm(Bytes),
     Stopped,
+}
+
+/// Whether a connection from `newcomer` may replace the current one.
+/// `current` is the current connection's peer IP, `None` when there is none.
+fn may_replace(current: Option<IpAddr>, streaming: bool, newcomer: IpAddr) -> bool {
+    match current {
+        None => true,
+        Some(ip) => ip == newcomer || !streaming,
+    }
 }
 
 enum Step {
@@ -35,6 +50,7 @@ pub async fn run_pcm_input(
     out: mpsc::Sender<InputEvent>,
 ) -> anyhow::Result<()> {
     let mut current: Option<TcpStream> = None;
+    let mut current_ip: Option<IpAddr> = None;
     let mut started = false;
     let mut last_byte = Instant::now();
     let mut buf = vec![0u8; 16 * 1024];
@@ -49,8 +65,13 @@ pub async fn run_pcm_input(
         };
         let event = match step {
             Step::Accepted(s, peer) => {
-                tracing::info!(%peer, replaced = current.is_some(), "music input connected");
-                current = Some(s);
+                if may_replace(current_ip, started, peer.ip()) {
+                    tracing::info!(%peer, replaced = current.is_some(), "music input connected");
+                    current = Some(s);
+                    current_ip = Some(peer.ip());
+                } else {
+                    tracing::info!(%peer, "music input refused: another sender is streaming");
+                }
                 None
             }
             Step::AcceptFailed(e) => {
@@ -75,6 +96,7 @@ pub async fn run_pcm_input(
                     tracing::info!("music input disconnected");
                 }
                 current = None;
+                current_ip = None;
                 started.then(|| {
                     started = false;
                     InputEvent::Stopped
@@ -142,6 +164,26 @@ mod tests {
             got.push(e);
         }
         got
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn may_replace_rules() {
+        let a = ip("192.168.1.10");
+        let b = ip("192.168.1.11");
+        // Nothing connected: anyone.
+        assert!(may_replace(None, false, a));
+        // Streaming: only the same IP.
+        assert!(may_replace(Some(a), true, a));
+        assert!(!may_replace(Some(a), true, b));
+        // Not streaming (no bytes yet, or idle): anyone.
+        assert!(may_replace(Some(a), false, b));
+        assert!(may_replace(Some(a), false, a));
+        // IPv6 compares like IPv4.
+        assert!(!may_replace(Some(ip("fe80::1")), true, ip("fe80::2")));
     }
 
     #[tokio::test]

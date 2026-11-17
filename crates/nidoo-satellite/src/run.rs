@@ -36,12 +36,15 @@ pub enum Control {
     SetVoiceKey(String),
     TrainWake,
     CancelTraining,
+    /// Forgets the pinned `nidoo-sound` and drops its connection, so a server with a new
+    /// key can pair.
+    ForgetServer,
     Quit,
 }
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Where `player.key`, `settings.json` and `head.bin` live.
+    /// Where `player.key`, `server.pub`, `settings.json` and `head.bin` live.
     pub store_dir: PathBuf,
     /// The player name Nidoo shows (the computer's name).
     pub name: String,
@@ -104,6 +107,7 @@ pub async fn start_with_greeting_ttl(
 
     let settings = store.settings().clone();
     let identity = Arc::new(store.identity().clone());
+    let pin = store.server_pin();
     let (sendspin_tx, sendspin_rx) = mpsc::channel(256);
     let (local_tx, local_rx) = watch::channel(LocalPlayerState {
         volume: 100,
@@ -112,6 +116,7 @@ pub async fn start_with_greeting_ttl(
     let server = tokio::spawn(sendspin::serve(
         tcp,
         identity.clone(),
+        pin,
         PlayerConfig {
             name: cfg.name.clone(),
             buffer_capacity: BUFFER_CAPACITY,
@@ -244,6 +249,12 @@ impl Runtime {
             },
             Control::TrainWake => self.brain.train(now),
             Control::CancelTraining => self.brain.cancel_training(now),
+            Control::ForgetServer => {
+                if let Err(e) = self.store.server_pin().forget() {
+                    tracing::warn!(error = %format!("{e:#}"), "forgetting the server");
+                }
+                Vec::new()
+            }
             Control::Quit => unreachable!("handled by run"),
         }
     }

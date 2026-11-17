@@ -9,13 +9,14 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use futures_util::{SinkExt, StreamExt};
 use nidoo_sound::proto::audio::{CHUNK_HEADER_LEN, MSG_JSON, MSG_PLAYER_AUDIO, Reassembler};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use super::clock::{ClockSync, now_us};
 use super::messages::{
@@ -23,7 +24,7 @@ use super::messages::{
 };
 use super::noise::{NoiseClient, NoiseTransport};
 use super::{LocalPlayerState, PATH, PlayerConfig, SendspinEvent};
-use crate::store::PlayerIdentity;
+use crate::store::{PlayerIdentity, ServerPin};
 
 type Ws = WebSocketStream<TcpStream>;
 
@@ -32,6 +33,12 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// This long without any frame from the server ends the connection (the server
 /// answers our `client/time` at least every 10 s).
 const SILENCE: Duration = Duration::from_secs(35);
+
+/// Most upgrades and handshakes in flight at once; further connections are closed.
+const MAX_PENDING: usize = 4;
+/// Largest WebSocket message or frame: a Noise message is at most 65535 bytes and
+/// Sendspin's JSON and audio chunks fit.
+const MAX_WS_BYTES: usize = 128 * 1024;
 
 /// The pause after a failed `accept`.
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
@@ -46,18 +53,22 @@ impl Drop for Owned {
 }
 
 /// Accepts WebSocket upgrades on `/sendspin` and plays the player role on the newest
-/// one. A newer connection replaces the live one once its upgrade succeeds, so a stray
-/// TCP probe cannot cut the music.
+/// connection. A newer connection replaces the live one only once it has completed the
+/// whole handshake and passed the server pin, so neither a stray TCP probe nor a rogue
+/// server can cut the music.
 pub async fn serve(
     listener: TcpListener,
     identity: Arc<PlayerIdentity>,
+    pin: ServerPin,
     cfg: PlayerConfig,
     events: mpsc::Sender<SendspinEvent>,
     local: watch::Receiver<LocalPlayerState>,
 ) -> anyhow::Result<()> {
-    let (up_tx, mut upgraded) = mpsc::channel::<Ws>(4);
+    let (up_tx, mut upgraded) = mpsc::channel::<(Ws, NoiseTransport)>(MAX_PENDING);
+    let pending = Arc::new(Semaphore::new(MAX_PENDING));
     let mut upgrades: Vec<Owned> = Vec::new();
     let mut current: Option<(oneshot::Sender<()>, Owned)> = None;
+    let mut forgotten = pin.subscribe_forget();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -71,19 +82,26 @@ pub async fn serve(
                         continue;
                     }
                 };
+                let Ok(permit) = pending.clone().try_acquire_owned() else {
+                    tracing::debug!(%peer, "too many pending connections, closed");
+                    continue;
+                };
                 let up_tx = up_tx.clone();
+                let identity = identity.clone();
+                let pin = pin.clone();
                 upgrades.retain(|u| !u.0.is_finished());
                 upgrades.push(Owned(tokio::spawn(async move {
-                    match timeout(HANDSHAKE_TIMEOUT, tokio_tungstenite::accept_hdr_async(tcp, only_our_path)).await {
-                        Ok(Ok(ws)) => {
-                            let _ = up_tx.send(ws).await;
+                    let _permit = permit;
+                    match timeout(HANDSHAKE_TIMEOUT, upgrade_and_handshake(tcp, &identity, &pin)).await {
+                        Ok(Ok(ready)) => {
+                            let _ = up_tx.send(ready).await;
                         }
-                        Ok(Err(e)) => tracing::debug!(%peer, error = %e, "not a Sendspin upgrade"),
-                        Err(_) => tracing::debug!(%peer, "upgrade timed out"),
+                        Ok(Err(e)) => tracing::debug!(%peer, error = %format!("{e:#}"), "not a Sendspin player connection"),
+                        Err(_) => tracing::debug!(%peer, "handshake timed out"),
                     }
                 })));
             }
-            Some(ws) = upgraded.recv() => {
+            Some((ws, noise)) = upgraded.recv() => {
                 if let Some((stop, mut task)) = current.take() {
                     let _ = stop.send(());
                     let _ = (&mut task.0).await;
@@ -91,6 +109,7 @@ pub async fn serve(
                 let (stop_tx, stop_rx) = oneshot::channel();
                 let task = tokio::spawn(connection(
                     ws,
+                    noise,
                     identity.clone(),
                     cfg.clone(),
                     events.clone(),
@@ -99,8 +118,31 @@ pub async fn serve(
                 ));
                 current = Some((stop_tx, Owned(task)));
             }
+            Ok(()) = forgotten.changed() => {
+                if let Some((stop, mut task)) = current.take() {
+                    tracing::info!("server forgotten, dropping its connection");
+                    let _ = stop.send(());
+                    let _ = (&mut task.0).await;
+                }
+            }
         }
     }
+}
+
+/// The WebSocket upgrade, then the cleartext init and the Noise exchange.
+async fn upgrade_and_handshake(
+    tcp: TcpStream,
+    identity: &PlayerIdentity,
+    pin: &ServerPin,
+) -> anyhow::Result<(Ws, NoiseTransport)> {
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_BYTES))
+        .max_frame_size(Some(MAX_WS_BYTES));
+    let mut ws = tokio_tungstenite::accept_hdr_async_with_config(tcp, only_our_path, Some(config))
+        .await
+        .context("upgrade")?;
+    let noise = handshake(&mut ws, identity, pin).await?;
+    Ok((ws, noise))
 }
 
 #[allow(clippy::result_large_err)] // the signature tungstenite asks for
@@ -118,6 +160,7 @@ fn only_our_path(req: &Request, resp: Response) -> Result<Response, ErrorRespons
 /// after a `Connected`.
 async fn connection(
     ws: Ws,
+    noise: NoiseTransport,
     identity: Arc<PlayerIdentity>,
     cfg: PlayerConfig,
     events: mpsc::Sender<SendspinEvent>,
@@ -126,7 +169,7 @@ async fn connection(
 ) {
     let mut connected = false;
     let result = tokio::select! {
-        r = session(ws, &identity, &cfg, &events, local, &mut connected) => r,
+        r = session(ws, noise, &identity, &cfg, &events, local, &mut connected) => r,
         _ = stop => Ok(()),
     };
     if let Err(e) = result {
@@ -138,14 +181,14 @@ async fn connection(
 }
 
 async fn session(
-    mut ws: Ws,
+    ws: Ws,
+    noise: NoiseTransport,
     identity: &PlayerIdentity,
     cfg: &PlayerConfig,
     events: &mpsc::Sender<SendspinEvent>,
     mut local: watch::Receiver<LocalPlayerState>,
     connected: &mut bool,
 ) -> anyhow::Result<()> {
-    let noise = handshake(&mut ws, identity).await?;
     let mut conn = Conn {
         ws,
         noise,
@@ -232,8 +275,14 @@ fn on_server_msg(msg: ServerMsg, arrived: i64, clock: &mut ClockSync) -> Option<
     }
 }
 
-/// Cleartext init exchange, then Noise KKpsk2 as the responder.
-async fn handshake(ws: &mut Ws, identity: &PlayerIdentity) -> anyhow::Result<NoiseTransport> {
+/// Cleartext init exchange, then Noise KKpsk2 as the responder. A server other than the
+/// pinned one is refused before the Noise exchange; the first server is pinned once
+/// the exchange succeeds (KK proves it holds the private half of `server_id`).
+async fn handshake(
+    ws: &mut Ws,
+    identity: &PlayerIdentity,
+    pin: &ServerPin,
+) -> anyhow::Result<NoiseTransport> {
     let init = client_init(&identity.client_id);
     ws.send(Message::Text(init.clone().into())).await?;
     let server_init = recv_text(ws).await.context("waiting for server/init")?;
@@ -242,6 +291,16 @@ async fn handshake(ws: &mut Ws, identity: &PlayerIdentity) -> anyhow::Result<Noi
         Ok(ServerMsg::Error { reason }) => bail!("the server refused client/init: {reason}"),
         _ => bail!("expected server/init, got {server_init:.80}"),
     };
+    if let Some(pinned) = pin.get()
+        && pinned != server_id
+    {
+        let offered: String = server_id.chars().take(8).collect();
+        tracing::warn!(
+            offered = %offered,
+            "refused a server other than the pinned one (use Forget server to pair a new one)"
+        );
+        bail!("server_id is not the pinned server");
+    }
     let prologue = [init.as_bytes(), server_init.as_bytes()].concat();
     let noise = NoiseClient::new(&identity.private_key(), &server_id, &prologue)?;
 
@@ -257,6 +316,9 @@ async fn handshake(ws: &mut Ws, identity: &PlayerIdentity) -> anyhow::Result<Noi
         noise_handshake(&URL_SAFE_NO_PAD.encode(msg2)).into(),
     ))
     .await?;
+    if !pin.accept(&server_id) {
+        bail!("another server was pinned meanwhile");
+    }
     Ok(transport)
 }
 
