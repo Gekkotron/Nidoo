@@ -5,10 +5,24 @@
 //! as JSON when it is an object or an array; otherwise the name stays undefined). Undefined
 //! values are strict: printing or testing one is an error, so a template whose payload lacks
 //! the key it reads fails instead of rendering an empty string.
+//!
+//! Templates come from retained discovery messages, so any broker client can supply one.
+//! Every render is bounded: the source by [`MAX_TEMPLATE_LEN`], the work by [`FUEL`] and the
+//! output by [`MAX_OUTPUT_LEN`]. A template past a limit fails instead of spinning or growing.
 
 use minijinja::value::{Kwargs, Rest, Serde, ValueKind};
 use minijinja::{Environment, Error as JinjaError, ErrorKind, UndefinedBehavior, Value};
 use serde_json::Map;
+use std::io;
+
+/// Longest template source accepted, in bytes. Real discovery templates stay under 1 KiB.
+pub const MAX_TEMPLATE_LEN: usize = 16 * 1024;
+
+/// Longest rendered output, in bytes.
+pub const MAX_OUTPUT_LEN: usize = 64 * 1024;
+
+/// Instructions one render may execute before it fails with "out of fuel".
+pub const FUEL: u64 = 50_000;
 
 /// Why a template could not be rendered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -60,6 +74,7 @@ impl Templates {
     pub fn new() -> Self {
         let mut env = Environment::new();
         env.set_undefined_behavior(UndefinedBehavior::Strict);
+        env.set_fuel(Some(FUEL));
         env.add_filter("float", filters::float);
         env.add_filter("int", filters::int);
         env.add_filter("is_defined", filters::is_defined);
@@ -103,12 +118,54 @@ impl Templates {
         for (name, value) in extra {
             ctx.insert((*name).to_owned(), value.clone());
         }
-        Ok(self.env.render_str(template, Serde(&ctx))?)
+        let compiled = self.compile(template)?;
+        let mut out = BoundedOutput::default();
+        compiled
+            .render_captured_to(Serde(&ctx), &mut out)
+            .map_err(|err| match err.kind() {
+                ErrorKind::WriteFailure => {
+                    TemplateError::Other(format!("output longer than {MAX_OUTPUT_LEN} bytes"))
+                }
+                _ => err.into(),
+            })?;
+        String::from_utf8(out.buf).map_err(|err| TemplateError::Other(err.to_string()))
     }
 
-    /// Compiles `template` without rendering it; `Err(Syntax)` when it does not parse.
+    /// Compiles `template` without rendering it; `Err(Syntax)` when it does not parse or is
+    /// longer than [`MAX_TEMPLATE_LEN`].
     pub fn check(&self, template: &str) -> Result<(), TemplateError> {
-        self.env.template_from_str(template)?;
+        self.compile(template).map(drop)
+    }
+
+    fn compile<'s>(
+        &'s self,
+        template: &'s str,
+    ) -> Result<minijinja::Template<'s, 's>, TemplateError> {
+        if template.len() > MAX_TEMPLATE_LEN {
+            return Err(TemplateError::Syntax(format!(
+                "template longer than {MAX_TEMPLATE_LEN} bytes"
+            )));
+        }
+        Ok(self.env.template_from_str(template)?)
+    }
+}
+
+/// Collects rendered output and refuses to grow past [`MAX_OUTPUT_LEN`].
+#[derive(Default)]
+struct BoundedOutput {
+    buf: Vec<u8>,
+}
+
+impl io::Write for BoundedOutput {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if self.buf.len() + data.len() > MAX_OUTPUT_LEN {
+            return Err(io::Error::other("template output too long"));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
 }

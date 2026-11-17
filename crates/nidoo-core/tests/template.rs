@@ -388,3 +388,37 @@ fn dict_get_with_and_without_default() {
         "n"
     );
 }
+
+#[test]
+fn runaway_loops_run_out_of_fuel() {
+    let t = t();
+    let spin = "{% for a in range(100000) %}{% for b in range(100000) %}{% endfor %}{% endfor %}";
+    assert!(matches!(t.render(spin, "x"), Err(TemplateError::Other(_))));
+}
+
+#[test]
+fn oversized_output_is_an_error() {
+    let t = t();
+    assert!(matches!(
+        t.render("{{ 'x' * 1000000 }}", "x"),
+        Err(TemplateError::Other(_))
+    ));
+    let max = nidoo_core::template::MAX_OUTPUT_LEN;
+    assert_eq!(
+        t.render(&format!("{{{{ 'x' * {max} }}}}"), "x")
+            .unwrap()
+            .len(),
+        max
+    );
+}
+
+#[test]
+fn oversized_templates_are_rejected_before_compiling() {
+    let t = t();
+    let long = "x".repeat(nidoo_core::template::MAX_TEMPLATE_LEN + 1);
+    assert!(matches!(t.check(&long), Err(TemplateError::Syntax(_))));
+    assert!(matches!(
+        t.render(&long, "x"),
+        Err(TemplateError::Syntax(_))
+    ));
+}
