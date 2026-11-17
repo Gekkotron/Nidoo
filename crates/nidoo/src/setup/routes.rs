@@ -173,6 +173,7 @@ async fn mobile_code(State(s): State<RouteState>, headers: HeaderMap) -> Respons
     let Some(mqtt) = s.ctx.file.lock().await.mqtt.clone() else {
         return error(StatusCode::CONFLICT, "finish MQTT and database setup first");
     };
+    let mqtt = super::mobile::phone_mqtt(&mqtt, bundled::load(&s.ctx.data_dir).as_ref());
     let sections = s.ctx.sections.lock().await.clone();
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
     Json(MobileCode {

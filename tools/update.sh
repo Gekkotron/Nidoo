@@ -77,6 +77,14 @@ main() {
   echo "==> docker compose up -d --build${services[*]+ ${services[*]}}"
   docker compose up -d --build ${services[@]+"${services[@]}"}
 
+  # init may have added a login or the ACL to the bundled broker's files; a
+  # running Mosquitto only reads them again on SIGHUP, which keeps every
+  # client connected.
+  if [ "$mode" = all ] && [ -e data/bundled.json ]; then
+    echo "==> docker compose kill -s HUP mosquitto"
+    docker compose kill -s HUP mosquitto || echo "could not reload Mosquitto; restart it with: docker compose restart mosquitto"
+  fi
+
   echo "==> docker compose logs --tail 20 hub"
   docker compose logs --tail 20 hub
 }

@@ -2,8 +2,9 @@
 # See docs/users/install-on-linux.md for the full install.
 #
 # `docker compose up` starts four services:
-#   init         one-shot: writes the Mosquitto and TimescaleDB credentials
-#                into ./data the first time, then exits.
+#   init         one-shot: writes the Mosquitto logins and ACL and the
+#                TimescaleDB credentials into ./data the first time (on an
+#                older install, adds the app login and the ACL), then exits.
 #   mosquitto    the MQTT broker, on port 1883.
 #   timescaledb  the history database, on port 5432.
 #   hub          Nidoo itself, on port 8081.

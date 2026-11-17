@@ -28,6 +28,12 @@ To use the app away from home, the code must also carry the address of your encr
 
 Press **Save**. The hub does not restart. Once both fields are set, the code is redrawn with the gateway and the row reads **At home and away**. Scan the new code with the phone. The fields are also described in the [Settings reference](../reference/configuration.md#mobile).
 
+## The app's own broker login
+
+With the broker that comes with Nidoo, the code carries a login of its own, `nidoo-app`, not the hub's. The broker's ACL lets that login do everything the app needs, but not send alerts to every phone, change the alarm settings or the flow labels, or read the broker's own log. Anyone who reads the code therefore cannot forge an alert or quietly change how the alarm behaves. It can still add or change flows, a gap with its own fix on the backlog. See [Security](security.md#the-broker).
+
+A phone paired before the upgrade that added this login keeps the hub's login until you scan the code again. With your own broker the code carries the hub's login, as before.
+
 ## Keep the code private
 
 The code holds your passwords: the broker login, the gateway key and, when cameras are set up, the Frigate login. Show it only to people you trust, never share a screenshot of it, and blur it again when you are done. The hub never writes it to its logs.

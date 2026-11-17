@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::config::MqttConfig;
+use crate::setup::bundled::Bundled;
 use crate::setup::secret;
 use crate::setup::sections::Sections;
 
@@ -165,6 +166,24 @@ pub fn phone_host<'a>(broker_host: &'a str, request_host: Option<&'a str>) -> &'
     if host.is_empty() { broker_host } else { host }
 }
 
+/// The broker settings the phone gets: the bundled app login, which the broker ACL keeps away
+/// from alerts, alarm settings and flow labels, when the hub itself uses the bundled login;
+/// the hub's own settings otherwise (an own broker, or a `bundled.json` from before the app
+/// login).
+pub fn phone_mqtt(mqtt: &MqttConfig, bundled: Option<&Bundled>) -> MqttConfig {
+    let mut out = mqtt.clone();
+    let Some(b) = bundled else {
+        return out;
+    };
+    let on_bundled = mqtt.user.as_deref() == Some(b.mqtt_user.as_str())
+        && mqtt.password.as_deref() == Some(b.mqtt_password.as_str());
+    if let (true, Some((user, password))) = (on_bundled, b.app_login()) {
+        out.user = Some(user.to_owned());
+        out.password = Some(password.to_owned());
+    }
+    out
+}
+
 /// The JSON the QR encodes, compact.
 pub fn build_payload(mqtt: &MqttConfig, sections: &Sections, request_host: Option<&str>) -> String {
     let host = phone_host(&mqtt.host, request_host);
@@ -234,6 +253,48 @@ mod tests {
         s.mobile.gateway_url = Some("https://house.example.ts.net".into());
         s.mobile.gateway_key = Some(KEY.into());
         s
+    }
+
+    fn bundled(app: bool) -> Bundled {
+        Bundled {
+            mqtt_user: "u".into(),
+            mqtt_password: "p".into(),
+            db_user: "nidoo".into(),
+            db_password: "d".into(),
+            db_name: "nidoo".into(),
+            app_mqtt_user: app.then(|| "nidoo-app".into()),
+            app_mqtt_password: app.then(|| "ap".into()),
+        }
+    }
+
+    #[test]
+    fn phone_gets_the_app_login_on_the_bundled_broker() {
+        let b = bundled(true);
+        let m = phone_mqtt(&mqtt(), Some(&b));
+        assert_eq!(m.user.as_deref(), Some("nidoo-app"));
+        assert_eq!(m.password.as_deref(), Some("ap"));
+        assert_eq!(m.host, "192.0.2.7");
+        assert_eq!(m.port, 1884);
+        let v = payload(&m, &Sections::default(), None);
+        assert_eq!(v["local"]["user"], "nidoo-app");
+        assert_eq!(v["local"]["pass"], "ap");
+    }
+
+    #[test]
+    fn phone_keeps_the_hub_login_otherwise() {
+        let hub = mqtt();
+        assert_eq!(phone_mqtt(&hub, None), hub);
+        assert_eq!(phone_mqtt(&hub, Some(&bundled(false))), hub);
+        let own = MqttConfig {
+            user: Some("me".into()),
+            ..mqtt()
+        };
+        assert_eq!(phone_mqtt(&own, Some(&bundled(true))), own);
+        let changed = MqttConfig {
+            password: Some("other".into()),
+            ..mqtt()
+        };
+        assert_eq!(phone_mqtt(&changed, Some(&bundled(true))), changed);
     }
 
     #[test]
