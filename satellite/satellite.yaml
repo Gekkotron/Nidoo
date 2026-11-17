@@ -7,6 +7,8 @@
 # Per-board values come from substitutions (override with --substitution or a
 # per-board file under satellite/boards/) and from the git-ignored secrets.yaml.
 #
+# No microphone, or no hub? See music-only.yaml (music only, same Sendspin settings).
+#
 # Pinned to ESPHome 2026.10.2: the Sendspin protocol version must match nidoo-sound.
 #   uvx esphome==2026.10.2 run satellite.yaml
 
