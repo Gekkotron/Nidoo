@@ -2,7 +2,9 @@
 //! (no house needed); checks against the house belong to the hub.
 
 use crate::views::EntityView;
-use nidoo_core::model::{Availability, Command, EntityCategory, Hs, Kind, StateValue};
+use nidoo_core::model::{
+    Availability, Command, EntityCategory, Hs, Kind, StateValue, is_window_covering,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -267,9 +269,6 @@ fn validate_climate(c: &ClimateAction) -> Result<(), String> {
     }
 }
 
-/// Cover classes that are window coverings; garages, gates, doors and dampers never belong.
-const WINDOW_COVERINGS: [&str; 6] = ["shutter", "blind", "curtain", "shade", "awning", "window"];
-
 /// Whether an entity may be commanded as a member of a category or of an assistant order: a
 /// primary, enabled entity that is not part of a device, a group (hub or Zigbee2MQTT), a
 /// hub-owned virtual entity or the Zigbee2MQTT bridge. A hidden entity still belongs: hiding only
@@ -313,10 +312,7 @@ fn in_category(what: Category, e: &EntityView) -> bool {
                 && e.ui.show_as.as_deref() == Some("plug")
         }
         Category::Covers => {
-            e.kind == Kind::Cover
-                && e.device_class
-                    .as_deref()
-                    .is_none_or(|class| WINDOW_COVERINGS.contains(&class))
+            e.kind == Kind::Cover && is_window_covering(e.device_class.as_deref(), &e.ui)
         }
     }
 }
@@ -749,7 +745,6 @@ mod tests {
             e
         };
         let all = [
-            cover("plain", None),
             cover("shutter", Some("shutter")),
             cover("blind", Some("blind")),
             cover("curtain", Some("curtain")),
@@ -764,10 +759,36 @@ mod tests {
         let a = act(Category::Covers, Target::Close);
         assert_eq!(
             ids(category_members(&a, &all)),
-            [
-                "plain", "shutter", "blind", "curtain", "shade", "awning", "window"
-            ]
+            ["shutter", "blind", "curtain", "shade", "awning", "window"]
         );
+    }
+
+    fn cover_marked(id: &str, class: Option<&str>, mark: bool) -> EntityView {
+        let mut e = entity(id, Kind::Cover);
+        e.device_class = class.map(Into::into);
+        e.ui.show_as = mark.then(|| "shutter".to_owned());
+        e
+    }
+
+    #[test]
+    fn unclassed_cover_is_left_out() {
+        let all = [cover_marked("plain", None, false)];
+        let a = act(Category::Covers, Target::Close);
+        assert!(category_members(&a, &all).is_empty());
+    }
+
+    #[test]
+    fn unclassed_cover_with_the_mark_is_included() {
+        let all = [cover_marked("plain", None, true)];
+        let a = act(Category::Covers, Target::Close);
+        assert_eq!(ids(category_members(&a, &all)), ["plain"]);
+    }
+
+    #[test]
+    fn garage_class_with_the_mark_is_left_out() {
+        let all = [cover_marked("garage", Some("garage"), true)];
+        let a = act(Category::Covers, Target::Close);
+        assert!(category_members(&a, &all).is_empty());
     }
 
     #[test]

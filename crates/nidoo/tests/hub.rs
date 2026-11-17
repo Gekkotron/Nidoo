@@ -2435,3 +2435,138 @@ async fn media_player_cannot_join_a_group() {
     ));
     assert!(drain(&mut rx).is_empty());
 }
+
+const SHUTTER_MARK_TOPIC: &str = "nidoo/ui/_shutters_marked";
+
+/// The recorded cover `n`, with `device_class` set when given.
+fn feed_cover(hub: &Hub, n: u8, class: Option<&str>) -> String {
+    let hw = format!("0xcccc00000000000{n}");
+    let mut text = String::from_utf8(fixture("discovery/cover__0x000d6ffffe9d44e4__cover.json"))
+        .expect("utf8")
+        .replace("0x000d6ffffe9d44e4", &hw)
+        .replace("rooms/office/shutter", &format!("rooms/office/cover{n}"));
+    if let Some(class) = class {
+        text = text.replace(
+            "\"name\":null,",
+            &format!("\"device_class\":\"{class}\",\"name\":null,"),
+        );
+    }
+    hub.ingest(&format!("nidoo/cover/{hw}/cover/config"), text.as_bytes());
+    hub.snapshot()
+        .entities
+        .into_iter()
+        .find(|e| e.id.starts_with(&hw))
+        .expect("cover entity")
+        .id
+}
+
+fn show_as(hub: &Hub, id: &str) -> Option<String> {
+    hub.snapshot()
+        .entities
+        .into_iter()
+        .find(|e| e.id == id)
+        .expect("entity")
+        .ui
+        .show_as
+}
+
+#[tokio::test]
+async fn shutter_mark_marks_existing_unclassed_covers_only() {
+    let (hub, mut rx) = migration_hub(true);
+    let plain = feed_cover(&hub, 1, None);
+    let garage = feed_cover(&hub, 2, Some("garage"));
+    feed_switch(&hub);
+    let mut patch = serde_json::Map::new();
+    patch.insert("name".to_owned(), serde_json::Value::from("Bureau"));
+    hub.set_override(&plain, &patch).await.expect("name");
+    drain(&mut rx);
+
+    let outcome = hub.run_shutter_mark_once(false).await;
+    assert_eq!(outcome.skipped_reason, None);
+    assert_eq!(outcome.marked, std::slice::from_ref(&plain));
+    assert_eq!(show_as(&hub, &plain).as_deref(), Some("shutter"));
+    assert_eq!(show_as(&hub, &garage), None);
+    assert_eq!(show_as(&hub, SWITCH_ID), None);
+    let renamed = hub
+        .snapshot()
+        .entities
+        .into_iter()
+        .find(|e| e.id == plain)
+        .expect("cover");
+    assert_eq!(renamed.name, "Bureau", "other override fields are kept");
+
+    let published = drain(&mut rx);
+    let marker = published
+        .iter()
+        .find(|p| p.topic == SHUTTER_MARK_TOPIC)
+        .expect("marker");
+    assert!(marker.retain && !marker.payload.is_empty());
+    assert_eq!(
+        published
+            .iter()
+            .filter(|p| p.topic == format!("nidoo/ui/{plain}"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn shutter_mark_second_run_does_nothing() {
+    let (hub, mut rx) = migration_hub(true);
+    feed_cover(&hub, 1, None);
+    hub.run_shutter_mark_once(false).await;
+    drain(&mut rx);
+    feed_cover(&hub, 3, None);
+    let outcome = hub.run_shutter_mark_once(true).await;
+    assert_eq!(outcome.skipped_reason, Some("already marked"));
+    assert!(outcome.marked.is_empty());
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn shutter_mark_is_a_no_op_when_the_marker_was_retained() {
+    let (hub, mut rx) = migration_hub(true);
+    let plain = feed_cover(&hub, 1, None);
+    hub.ingest(SHUTTER_MARK_TOPIC, b"1");
+    drain(&mut rx);
+    let outcome = hub.run_shutter_mark_once(true).await;
+    assert_eq!(outcome.skipped_reason, Some("already marked"));
+    assert_eq!(show_as(&hub, &plain), None);
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn shutter_mark_on_an_empty_house_writes_only_the_marker() {
+    let (hub, mut rx) = migration_hub(true);
+    let outcome = hub.run_shutter_mark_once(true).await;
+    assert_eq!(outcome.skipped_reason, None);
+    assert!(outcome.marked.is_empty());
+    let published = drain(&mut rx);
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].topic, SHUTTER_MARK_TOPIC);
+    assert!(published[0].retain);
+}
+
+#[tokio::test]
+async fn shutter_mark_waits_while_the_house_is_empty_and_unsettled() {
+    let (hub, mut rx) = migration_hub(true);
+    let outcome = hub.run_shutter_mark_once(false).await;
+    assert_eq!(
+        outcome.skipped_reason,
+        Some("house empty, retained sync not settled")
+    );
+    assert!(drain(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn the_shutter_marker_is_never_an_override() {
+    let (hub, _rx) = migration_hub(true);
+    feed_cover(&hub, 1, None);
+    hub.ingest(SHUTTER_MARK_TOPIC, b"1");
+    assert!(
+        hub.snapshot()
+            .entities
+            .iter()
+            .all(|e| e.ui.show_as.is_none())
+    );
+}

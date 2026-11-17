@@ -19,8 +19,9 @@ pub const ENERGY_ROLES: &[&str] = &[
 /// Valid `lightOnPreset` values (the app's `LightOnPreset` keys).
 pub const LIGHT_ON_PRESETS: &[&str] = &["white", "warm", "red", "green", "blue"];
 
-/// Valid `showAs` values: what a switch entity drives. Absent means a plain switch.
-pub const SHOW_AS: &[&str] = &["light", "door", "siren", "chime", "plug", "tv"];
+/// Valid `showAs` values: what a switch entity drives (absent means a plain switch), or
+/// `shutter` on a cover with no `device_class` (see [`super::is_window_covering`]).
+pub const SHOW_AS: &[&str] = &["light", "door", "siren", "chime", "plug", "tv", "shutter"];
 
 /// The retired flag a light-typed switch used to carry; read on decode, written next to
 /// `showAs: "light"` until the app reads `showAs` (device sheet spec §10, step 4).
@@ -68,7 +69,7 @@ pub struct UiOverride {
     pub security_ask: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub ungrouped: bool,
-    /// One of [`SHOW_AS`] when written by this hub; only read on a switch.
+    /// One of [`SHOW_AS`] when written by this hub; read on a switch, and `shutter` on a cover.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_as: Option<String>,
     /// One of [`LIGHT_ON_PRESETS`] when written by this hub.

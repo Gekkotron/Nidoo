@@ -25,6 +25,7 @@ pub mod outage;
 pub mod picture_fetch;
 pub mod pictures;
 pub mod setup;
+pub mod shutter_mark;
 pub mod solar;
 pub mod sound;
 pub mod supervisor;
