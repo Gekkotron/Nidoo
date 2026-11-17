@@ -813,6 +813,46 @@ async fn other_replies_are_ignored() {
     assert_eq!(rig.state(), "triggered");
 }
 
+/// Sends a non-retained Disarm reply for `id`.
+async fn disarm_reply(rig: &mut Rig, id: &str) {
+    let reply = json!({"id": id, "action": "disarm", "install_id": "x", "ts": 1}).to_string();
+    rig.hub
+        .ingest_message("nidoo/push/responses", reply.as_bytes(), false);
+    rig.pump().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_disarm_reply_to_an_alert_never_sent_is_ignored() {
+    let mut rig = armed_rig().await;
+    let armed_note = rig.alarm_alerts()[0].id.clone();
+    assert!(armed_note.starts_with("alarm-armed-"), "{armed_note}");
+    let forged = ["alarm-forged", "alarm-0-0", "alarm-offline-front_door"];
+    for id in forged.iter().copied().chain([armed_note.as_str()]) {
+        disarm_reply(&mut rig, id).await;
+        assert_eq!(rig.state(), "armed_away", "armed, reply to {id}");
+    }
+    trip(&mut rig).await;
+    for id in forged.iter().copied().chain([armed_note.as_str()]) {
+        disarm_reply(&mut rig, id).await;
+        assert_eq!(rig.state(), "triggered", "triggered, reply to {id}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_disarm_reply_to_a_resolved_alert_does_not_disarm_a_rearmed_alarm() {
+    let mut rig = armed_rig().await;
+    trip(&mut rig).await;
+    let old = rig.trigger_alerts()[0].id.clone();
+    rig.command(nidoo_core::model::Command::Disarm { code: None })
+        .await;
+    rig.hub.ingest_message("fx/front_door", b"closed", false);
+    rig.command(arm(nidoo_core::model::AlarmMode::Away)).await;
+    rig.advance(61).await;
+    assert_eq!(rig.state(), "armed_away");
+    disarm_reply(&mut rig, &old).await;
+    assert_eq!(rig.state(), "armed_away");
+}
+
 #[tokio::test(start_paused = true)]
 async fn failing_siren_does_not_block_others() {
     let mut rig = Rig::with(|hub, settings| {
