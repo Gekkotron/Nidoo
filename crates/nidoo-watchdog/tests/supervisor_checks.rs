@@ -19,6 +19,7 @@ fn probe() -> Reading {
         baseline: Some(Baseline {
             max_gap: 3 * H,
             changes: 400,
+            rest: None,
         }),
     }
 }
@@ -115,23 +116,109 @@ fn silent_paused_finds_nothing() {
 }
 
 #[test]
-fn offline_over_an_hour_is_silent() {
+fn offline_waits_the_learned_threshold() {
+    // max_gap 3 h × 2 = 6 h.
     let offline = Reading {
         last_change: Some(NOW - 60),
-        unavailable_since: Some(NOW - 61 * 60),
+        unavailable_since: Some(NOW - 6 * H - 60),
         ..probe()
     };
     let found = evaluate(&offline, &ctx());
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].check, Check::Silent);
-    assert_eq!(found[0].evidence.for_secs, 61 * 60);
+    assert_eq!(found[0].evidence.for_secs, 6 * H + 60);
     assert_eq!(found[0].evidence.usual_secs, None);
 
     let brief = Reading {
-        unavailable_since: Some(NOW - 59 * 60),
-        ..offline
+        unavailable_since: Some(NOW - 5 * H),
+        ..offline.clone()
     };
     assert!(evaluate(&brief, &ctx()).is_empty());
+
+    // A PC switched off every night: 10 h gaps are its normal, so 12 h off is not a problem.
+    let nightly = Reading {
+        unavailable_since: Some(NOW - 12 * H),
+        baseline: Some(Baseline {
+            max_gap: 10 * H,
+            changes: 400,
+            rest: None,
+        }),
+        ..offline
+    };
+    assert!(evaluate(&nightly, &ctx()).is_empty());
+    let days = Reading {
+        unavailable_since: Some(NOW - 21 * H),
+        ..nightly
+    };
+    assert_eq!(checks(&days, &ctx()), vec![Check::Silent]);
+}
+
+#[test]
+fn offline_without_a_baseline_waits_a_day() {
+    let learning = Reading {
+        baseline: None,
+        last_change: Some(NOW - 60),
+        unavailable_since: Some(NOW - 23 * H),
+        ..probe()
+    };
+    assert!(evaluate(&learning, &ctx()).is_empty());
+    let dead = Reading {
+        unavailable_since: Some(NOW - 24 * H - 60),
+        ..learning
+    };
+    let found = evaluate(&dead, &ctx());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].check, Check::Silent);
+    assert_eq!(found[0].evidence.usual_secs, None);
+}
+
+#[test]
+fn resting_value_is_not_stuck() {
+    // A plug at 0 W for the whole holiday: 0 is where it rests.
+    let resting = Reading {
+        baseline: Some(Baseline {
+            max_gap: 3 * H,
+            changes: 400,
+            rest: Some(15.0),
+        }),
+        ..probe()
+    };
+    assert!(evaluate(&resting, &ctx()).is_empty());
+
+    let elsewhere = Reading {
+        value: Some(15.5),
+        ..resting
+    };
+    assert_eq!(checks(&elsewhere, &ctx()), vec![Check::Stuck]);
+}
+
+#[test]
+fn rest_is_a_value_held_by_three_of_the_longest_gaps() {
+    let t = NOW - 10 * D;
+    let plug = GapStats {
+        entity_id: "sensor.plug_power".into(),
+        changes: 900,
+        first: NOW - 14 * D,
+        top_gaps: vec![
+            (t, t + 10 * H, 0.0),
+            (t + D, t + D + 9 * H, 0.0),
+            (t + 2 * D, t + 2 * D + 8 * H, 3.5),
+            (t + 3 * D, t + 3 * D + 7 * H, 0.0),
+            (t + 4 * D, t + 4 * D + 6 * H, 3.5),
+        ],
+    };
+    let b = baseline(&plug, NOW, &[]).unwrap();
+    assert_eq!(b.max_gap, 10 * H);
+    assert_eq!(b.rest, Some(0.0));
+
+    // Two gaps at one value is a coincidence, not a rest.
+    let mut probe = plug.clone();
+    probe.top_gaps[3].2 = 21.5;
+    assert_eq!(baseline(&probe, NOW, &[]).unwrap().rest, None);
+
+    // A recorded problem (stuck at 0) does not teach 0 as the rest.
+    let stuck = [(t + 3 * D, t + 3 * D + H)];
+    assert_eq!(baseline(&plug, NOW, &stuck).unwrap().rest, None);
 }
 
 #[test]
@@ -158,7 +245,10 @@ fn battery_flat_for_14_days_has_no_baseline() {
         entity_id: "sensor.battery".into(),
         changes: 3,
         first: NOW - 14 * D,
-        top_gaps: vec![(NOW - 14 * D, NOW - 2 * D), (NOW - 2 * D, NOW - D)],
+        top_gaps: vec![
+            (NOW - 14 * D, NOW - 2 * D, 100.0),
+            (NOW - 2 * D, NOW - D, 100.0),
+        ],
     };
     assert_eq!(baseline(&stats, NOW, &[]), None);
 
@@ -179,11 +269,11 @@ fn excluded_outage_does_not_inflate_the_baseline() {
         changes: 300,
         first: NOW - 14 * D,
         top_gaps: vec![
-            (t, t + 5 * D),
-            (u, u + 4 * H),
-            (u + D, u + D + 3 * H),
-            (u + 2 * D, u + 2 * D + 2 * H),
-            (u - D, u - D + H),
+            (t, t + 5 * D, 15.0),
+            (u, u + 4 * H, 16.0),
+            (u + D, u + D + 3 * H, 17.0),
+            (u + 2 * D, u + 2 * D + 2 * H, 18.0),
+            (u - D, u - D + H, 19.0),
         ],
     };
     assert_eq!(baseline(&stats, NOW, &[]).map(|b| b.max_gap), Some(5 * D));
@@ -193,7 +283,8 @@ fn excluded_outage_does_not_inflate_the_baseline() {
         baseline(&stats, NOW, &outage),
         Some(Baseline {
             max_gap: 4 * H,
-            changes: 300
+            changes: 300,
+            rest: None,
         })
     );
 

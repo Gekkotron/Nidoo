@@ -14,8 +14,11 @@ const MIN_HISTORY: u64 = 7 * DAY;
 const MIN_CHANGES: u32 = 20;
 /// Floor of the stuck and silent thresholds.
 const MIN_THRESHOLD: u64 = 6 * HOUR;
-/// How long an entity may be unavailable before it counts as silent.
-const OFFLINE_LIMIT: u64 = HOUR;
+/// How long a sensor without a baseline may be unavailable before it counts as silent. With
+/// a baseline, the silent threshold applies: a device switched off every night has learned it.
+const OFFLINE_LIMIT_LEARNING: u64 = DAY;
+/// How many of the longest gaps must hold one value for it to be the sensor's rest.
+const REST_GAPS: usize = 3;
 
 /// What looks wrong with a sensor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -62,45 +65,60 @@ impl Sensitivity {
 }
 
 /// A sensor's learned normal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Baseline {
     /// Longest gap between two changes in the window, seconds.
     pub max_gap: u64,
     /// Changes in the window.
     pub changes: u32,
+    /// The value the sensor rests at (a plug at 0 W): sitting there, however long, is not
+    /// stuck.
+    pub rest: Option<f64>,
 }
 
 /// One sensor's change statistics over the baseline window.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GapStats {
     pub entity_id: String,
     /// Changes recorded in the window.
     pub changes: u32,
     /// Time of the first recorded change in the window.
     pub first: u64,
-    /// The largest gaps between consecutive changes, as (start, end), at most five.
-    pub top_gaps: Vec<(u64, u64)>,
+    /// The largest gaps between consecutive changes, as (start, end, value held), at most
+    /// five.
+    pub top_gaps: Vec<(u64, u64, f64)>,
+}
+
+/// The same reading, give or take float noise.
+fn same(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
 }
 
 /// The sensor's baseline, or `None` while it has less than 7 days of history or fewer than
 /// 20 changes. Gaps overlapping an `excluded` interval (a recorded problem of that sensor)
-/// are left out; when all of them overlap, the smallest one is used.
+/// are left out; when all of them overlap, the smallest one is used. The rest is a value held
+/// through at least three of the gaps kept.
 pub fn baseline(stats: &GapStats, now: u64, excluded: &[(u64, u64)]) -> Option<Baseline> {
     if now.saturating_sub(stats.first) < MIN_HISTORY || stats.changes < MIN_CHANGES {
         return None;
     }
-    let len = |&(start, end): &(u64, u64)| end.saturating_sub(start);
-    let overlaps = |gap: &(u64, u64)| excluded.iter().any(|ex| gap.0 < ex.1 && ex.0 < gap.1);
-    let max_gap = stats
-        .top_gaps
+    let len = |&(start, end, _): &(u64, u64, f64)| end.saturating_sub(start);
+    let overlaps = |gap: &(u64, u64, f64)| excluded.iter().any(|ex| gap.0 < ex.1 && ex.0 < gap.1);
+    let kept: Vec<_> = stats.top_gaps.iter().filter(|g| !overlaps(g)).collect();
+    let max_gap = kept
         .iter()
-        .filter(|g| !overlaps(g))
+        .copied()
         .map(len)
         .max()
         .or_else(|| stats.top_gaps.iter().map(len).min())?;
+    let rest = kept
+        .iter()
+        .map(|g| g.2)
+        .find(|&v| kept.iter().filter(|g| same(g.2, v)).count() >= REST_GAPS);
     Some(Baseline {
         max_gap,
         changes: stats.changes,
+        rest,
     })
 }
 
@@ -189,7 +207,8 @@ pub fn evaluate(r: &Reading, ctx: &Ctx) -> Vec<Finding> {
     if let (Some(b), Some(changed), Some(report)) = (&r.baseline, r.last_change, r.last_report) {
         let flat_for = now.saturating_sub(changed);
         let recent = now.saturating_sub(report) <= b.max_gap.max(HOUR);
-        if flat_for > threshold(b, ctx.factor) && recent {
+        let resting = matches!((b.rest, r.value), (Some(rest), Some(v)) if same(rest, v));
+        if flat_for > threshold(b, ctx.factor) && recent && !resting {
             found.push(Finding {
                 check: Check::Stuck,
                 evidence: evidence(flat_for, Some(b.max_gap)),
@@ -199,7 +218,11 @@ pub fn evaluate(r: &Reading, ctx: &Ctx) -> Vec<Finding> {
 
     if !ctx.silent_paused {
         let offline_for = r.unavailable_since.map(|since| now.saturating_sub(since));
-        if let Some(offline_for) = offline_for.filter(|&d| d > OFFLINE_LIMIT) {
+        let offline_limit = r
+            .baseline
+            .as_ref()
+            .map_or(OFFLINE_LIMIT_LEARNING, |b| threshold(b, ctx.factor));
+        if let Some(offline_for) = offline_for.filter(|&d| d > offline_limit) {
             found.push(Finding {
                 check: Check::Silent,
                 evidence: evidence(offline_for, None),

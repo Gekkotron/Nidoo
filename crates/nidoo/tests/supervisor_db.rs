@@ -103,7 +103,8 @@ async fn supervisor_gap_stats_and_last_changes() {
     assert_eq!(s.first, start);
     assert_eq!(s.top_gaps.len(), 5);
     let big = start + 10 * 600;
-    assert_eq!(s.top_gaps[0], (big, big + 5 * H));
+    // The value held through the gap is the one before it.
+    assert_eq!(s.top_gaps[0], (big, big + 5 * H, 10.0));
 
     let last = store::last_changes(&tdb.db, &ids).await.unwrap();
     assert_eq!(last.get("sensor.tank"), Some(&(t - 600)));

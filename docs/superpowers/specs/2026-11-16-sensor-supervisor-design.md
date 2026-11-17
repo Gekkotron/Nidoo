@@ -46,15 +46,16 @@ History holds one row per *change* (the writer only records changed states), so 
   - *(my call)* Gaps that overlap a recorded problem of that sensor (open or closed in the last 14 days) are left out, so a past outage does not inflate the baseline and hide the next one.
   - *(my call)* The baseline is computed **once a day** (and at the first run after start) and kept in memory; the hourly run uses it with the live "last change" and "last report" times. This keeps the 14-day scan over compressed chunks to one run a day. A baseline up to a day old is fine for this purpose.
 - **Fires when:** time since the last change > `max(max_gap × factor, 6 h)` **and** the hub received a report of that entity within the last `max(max_gap, 1 h)` (it is still talking — otherwise it is check 2).
+- *(amended 2026-11-17)* **Rest value.** A value held through at least 3 of the 5 longest gaps kept for the baseline is the sensor's rest (a plug at 0 W overnight). Sitting at the rest value never fires this check, however long: a plug at 0 W through a two-week holiday is not stuck. Gaps overlapping a recorded problem do not count, so a fault never teaches itself as the rest. Cost: a sensor that freezes exactly at its rest value is not caught by this check.
 - `factor` comes from the sensitivity setting (below). With the tank probe (dozens of changes a day, longest gap a few hours) this fires within roughly 6–12 h of going flat.
 
 ### 2. Silent — stopped reporting
 
 Reports (messages, changed or not) are not in the history, so this check uses the live report times the hub already sees (`StateTouched`, the same source `trigger.silent` uses).
 
-- **Fires when:** no report for > `max(max_gap × factor, 6 h)` (same baseline as check 1), **or** the entity has been `unavailable` for > 1 h.
+- **Fires when:** no report for > `max(max_gap × factor, 6 h)` (same baseline as check 1), **or** the entity has been `unavailable` for longer than that same threshold. *(amended 2026-11-17)* Without a baseline, `unavailable` for > 24 h. A device switched off every night (a PC's sensors, a plug on a switched strip) has learned its nightly gap, so it no longer pushes every evening and morning; a dead sensor still learning is reported within a day.
 - *(my call)* A **report** means a `StateTouched` that read a value for the entity (`read: true`). A message carrying `null` or no value does not count, so a sensor that only sends garbage ends up "silent", not "stuck".
-- *(my call)* `unavailable` and since when come from the live registry, not the `entity_availability` table; after a restart the hour starts counting from the start (the rule just below).
+- *(my call)* `unavailable` and since when come from the live registry, not the `entity_availability` table; after a restart the offline time starts counting from the start (the rule just below).
 - Clocks follow `trigger.silent`'s rules: they start when the hub starts or the broker link comes back, and are frozen while the link is down. Nothing fires for a sensor until the hub has been up and linked for at least the threshold, so a restart never makes everything look silent.
 
 ### 3. Impossible — physically out of range
