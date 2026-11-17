@@ -29,7 +29,8 @@ pub struct SoundConfig {
     /// TCP port where players that connect to us (e.g. a browser player)
     /// open `ws://<host>:<port>/sendspin`; 0 turns this endpoint off.
     pub listen_port: u16,
-    /// TCP port of the HTTP API (GET /players, PUT /players/{id}); 0 turns it off.
+    /// TCP port of the HTTP API (list, change, allow and forget speakers under
+    /// /players); 0 turns it off.
     pub http_port: u16,
     /// Address the HTTP API listens on; it has no login, so it is the loopback
     /// by default. `0.0.0.0` opens it to the LAN.
