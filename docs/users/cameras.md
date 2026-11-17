@@ -14,6 +14,8 @@ Set it up in **Settings → Cameras** (or the Cameras card in the Services step 
 
 **Test connection** checks the address and login before you save. Saving restarts the hub.
 
+A camera or image entity discovered over MQTT can also carry its picture as a URL (`url_topic`). The hub fetches it when the picture is asked for, and refuses its own host and link-local addresses unless the URL is on the Frigate address; see [Security](security.md). The camera must answer with an `image/*` content type: a reply without one (some older IP cameras' snapshot pages) shows no picture, and the picture route answers `502`.
+
 ## The Frigate bridge
 
 With **Alerts** on (and a Frigate address or a media URL) the hub reads `<topic_prefix>/events` (subscribed only then) and raises a `camera` alert for each tracked object that qualifies. The first qualifying message (`new`, or the `update` that enters a watched zone) rings with the snapshot; `end` with a clip re-sends the same alert id silently with the clip; an event that only qualifies at `end` gets one audible alert with its clip. The title is the camera, the body `Person detected`, `Person in Porch` or `Alice (person) detected`, and `loc` (`frigate.object`) lets the app write it in the phone's language.
