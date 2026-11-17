@@ -172,11 +172,12 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     ));
     if cfg.http_port != 0 {
         tokio::spawn(nidoo_sound::http::serve(
+            cfg.http_bind,
             cfg.http_port,
             satellites.clone(),
             control_tx.clone(),
         ));
-        tracing::info!(http_port = cfg.http_port, "HTTP API on /players");
+        tracing::info!(http_bind = %cfg.http_bind, http_port = cfg.http_port, "HTTP API on /players");
     }
     let mqtt = {
         let cfg = cfg.clone();

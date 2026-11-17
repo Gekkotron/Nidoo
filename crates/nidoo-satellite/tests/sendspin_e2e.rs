@@ -3,10 +3,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nidoo_satellite::sendspin::{
     LocalPlayerState, PlayerConfig, SendspinEvent, clock::now_us, serve,
 };
-use nidoo_satellite::store::Store;
+use nidoo_satellite::store::{ServerPin, Store};
 use nidoo_sound::clock::{Clock, MonotonicClock};
 use nidoo_sound::player::{PlayerCmd, PlayerEvent, run_player};
 use nidoo_sound::proto::messages::PCM_48K_STEREO_16;
@@ -21,6 +23,7 @@ struct Mac {
     url: url::Url,
     events: mpsc::Receiver<SendspinEvent>,
     local: watch::Sender<LocalPlayerState>,
+    pin: ServerPin,
     _dir: tempfile::TempDir,
     _serve: JoinHandle<anyhow::Result<()>>,
 }
@@ -31,6 +34,7 @@ async fn mac() -> Mac {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url =
         url::Url::parse(&format!("ws://{}/sendspin", listener.local_addr().unwrap())).unwrap();
+    let pin = store.server_pin();
     let (ev_tx, events) = mpsc::channel(64);
     let (local, local_rx) = watch::channel(LocalPlayerState {
         volume: 100,
@@ -43,6 +47,7 @@ async fn mac() -> Mac {
     let serve = tokio::spawn(serve(
         listener,
         Arc::new(store.identity().clone()),
+        pin.clone(),
         cfg,
         ev_tx,
         local_rx,
@@ -51,6 +56,7 @@ async fn mac() -> Mac {
         url,
         events,
         local,
+        pin,
         _dir: dir,
         _serve: serve,
     }
@@ -61,13 +67,19 @@ struct Server {
     events: mpsc::Receiver<PlayerEvent>,
     cmds: mpsc::Sender<PlayerCmd>,
     task: JoinHandle<anyhow::Result<()>>,
-    _dir: tempfile::TempDir,
 }
 
-fn server(url: &url::Url) -> Server {
+fn new_identity() -> Arc<ServerIdentity> {
     let dir = tempfile::tempdir().unwrap();
-    let identity =
-        Arc::new(ServerIdentity::load_or_create(&dir.path().join("server.key")).unwrap());
+    Arc::new(ServerIdentity::load_or_create(&dir.path().join("server.key")).unwrap())
+}
+
+/// A server with a key of its own.
+fn server(url: &url::Url) -> Server {
+    server_as(url, new_identity())
+}
+
+fn server_as(url: &url::Url, identity: Arc<ServerIdentity>) -> Server {
     let clock = Arc::new(MonotonicClock::new());
     let (ev_tx, events) = mpsc::channel(64);
     let (cmds, cmd_rx) = mpsc::channel(64);
@@ -83,7 +95,6 @@ fn server(url: &url::Url) -> Server {
         events,
         cmds,
         task,
-        _dir: dir,
     }
 }
 
@@ -227,7 +238,8 @@ async fn volume_and_mute_round_trip() {
 #[tokio::test]
 async fn accepts_a_new_connection_after_the_first_drops() {
     let mut mac = mac().await;
-    let mut first = server(&mac.url);
+    let id = new_identity();
+    let mut first = server_as(&mac.url, id.clone());
     connected(&mut mac, &mut first).await;
     first.task.abort();
     next(&mut mac.events, "Disconnected", |e| {
@@ -235,17 +247,18 @@ async fn accepts_a_new_connection_after_the_first_drops() {
     })
     .await;
 
-    let mut second = server(&mac.url);
+    let mut second = server_as(&mac.url, id);
     connected(&mut mac, &mut second).await;
 }
 
 #[tokio::test]
 async fn a_newer_connection_replaces_the_live_one() {
     let mut mac = mac().await;
-    let mut first = server(&mac.url);
+    let id = new_identity();
+    let mut first = server_as(&mac.url, id.clone());
     connected(&mut mac, &mut first).await;
 
-    let mut second = server(&mac.url);
+    let mut second = server_as(&mac.url, id);
     next(&mut mac.events, "Disconnected", |e| {
         matches!(e, SendspinEvent::Disconnected)
     })
@@ -255,4 +268,84 @@ async fn a_newer_connection_replaces_the_live_one() {
         matches!(e, PlayerEvent::Gone { .. })
     })
     .await;
+}
+
+/// No `Disconnected` for a while, and the live session still carries commands.
+async fn live_session_survives(mac: &mut Mac, srv: &Server, volume: u8) {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok(ev) = mac.events.try_recv() {
+        assert!(
+            !matches!(ev, SendspinEvent::Disconnected),
+            "the live session was cut"
+        );
+    }
+    srv.cmds.send(PlayerCmd::Volume(volume)).await.unwrap();
+    next(
+        &mut mac.events,
+        "Volume on the live session",
+        |e| matches!(e, SendspinEvent::Volume(v) if *v == volume),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn the_first_server_is_pinned_after_the_handshake() {
+    let mut mac = mac().await;
+    assert_eq!(mac.pin.get(), None);
+    let id = new_identity();
+    let mut srv = server_as(&mac.url, id.clone());
+    connected(&mut mac, &mut srv).await;
+    assert_eq!(mac.pin.get(), Some(URL_SAFE_NO_PAD.encode(id.public_key())));
+}
+
+#[tokio::test]
+async fn another_server_is_refused_and_the_live_session_keeps_running() {
+    let mut mac = mac().await;
+    let mut first = server(&mac.url);
+    connected(&mut mac, &mut first).await;
+    let pinned = mac.pin.get();
+
+    let mut rogue = server(&mac.url);
+    let outcome = tokio::time::timeout(WAIT, rogue.task).await;
+    assert!(
+        matches!(outcome, Ok(Ok(Err(_)))),
+        "the rogue server should be turned away: {outcome:?}"
+    );
+    while let Ok(ev) = rogue.events.try_recv() {
+        assert!(!matches!(ev, PlayerEvent::Connected(_)));
+    }
+    assert_eq!(mac.pin.get(), pinned);
+    live_session_survives(&mut mac, &first, 33).await;
+}
+
+#[tokio::test]
+async fn a_bare_upgrade_does_not_cut_the_live_session() {
+    let mut mac = mac().await;
+    let mut first = server(&mac.url);
+    connected(&mut mac, &mut first).await;
+
+    let (_probe, _) = tokio_tungstenite::connect_async(mac.url.as_str())
+        .await
+        .unwrap();
+    live_session_survives(&mut mac, &first, 21).await;
+}
+
+#[tokio::test]
+async fn forgetting_the_server_lets_a_new_key_pair() {
+    let mut mac = mac().await;
+    let mut first = server(&mac.url);
+    connected(&mut mac, &mut first).await;
+
+    mac.pin.forget().unwrap();
+    assert_eq!(mac.pin.get(), None);
+    next(&mut mac.events, "Disconnected", |e| {
+        matches!(e, SendspinEvent::Disconnected)
+    })
+    .await;
+    first.task.abort();
+
+    let id = new_identity();
+    let mut second = server_as(&mac.url, id.clone());
+    connected(&mut mac, &mut second).await;
+    assert_eq!(mac.pin.get(), Some(URL_SAFE_NO_PAD.encode(id.public_key())));
 }

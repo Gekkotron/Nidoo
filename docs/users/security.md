@@ -31,6 +31,15 @@ That guard is for browsers only. A client that is not a browser (curl, a script,
 - A camera or image entity whose picture is a URL (`url_topic`, written by any broker login) makes the hub fetch that URL when the picture is asked for, with no login. The fetch refuses loopback, link-local (cloud metadata included), unspecified, multicast and broadcast addresses, unless the URL is on the Frigate address; it resolves the host once and connects to the address it checked, follows no redirect, and serves only an `image/*` reply (anything else answers `502`), under a sandbox policy so an SVG cannot run a script. Private addresses stay allowed so LAN cameras keep working; they include the hub host's Docker bridge networks (`172.17.0.0/16` and up) and any VPN range it routes, so a broker login can still make the hub request a page there (a blind GET: only an image comes back).
 - Flows are retained on the broker in clear, so the hub refuses a flow whose `command` node carries an alarm code. Arm and disarm from a flow only on a panel that needs none. See [Flows](flows.md).
 
+## Sound
+
+`nidoo-sound` has no login either. Its ports are limited so that a device on the LAN cannot take over music that is already playing:
+
+- The music input (TCP 4953) takes raw PCM from anyone, because the casting app cannot send a key. While music plays, only the device that is playing can reconnect; another one waits until the music stops. When nothing plays, any device on the LAN can start music in every room.
+- The HTTP API (4954) that sets volume and mute listens on the hub host only (`127.0.0.1`). Set `http_bind = "0.0.0.0"` to open it to the LAN, with no login.
+- A Mac satellite trusts the first `nidoo-sound` that connects to it and refuses any other server after that (**Forget server** resets it). A connection that has not finished the handshake no longer cuts the music. See [A Mac as a satellite](mac-satellite.md).
+- The ESP32 satellites use Sendspin's unpaired key: any device on the LAN can still connect to one as its server, play on it or set its volume. Keep them on your own network.
+
 ## The broker
 
 The broker that comes with Nidoo refuses anonymous clients, and its login travels in clear on port 1883 (no TLS yet). The hub, Zigbee2MQTT, the satellites and nidoo-sound share the `nidoo` login. The phone app has its own, `nidoo-app`, because the setup QR carries it to every phone (see [Mobile app](mobile-app.md#the-apps-own-broker-login)).

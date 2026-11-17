@@ -14,6 +14,10 @@ listen_port = 8927
 # PUT /players/{id} sets a satellite's volume and mute. 0 turns it off.
 http_port = 4954
 
+# Address the HTTP API listens on. It has no login, so it stays on this
+# machine by default. Set "0.0.0.0" to reach it from the LAN.
+# http_bind = "127.0.0.1"
+
 # Holds sound/identity.key (the server's Sendspin identity: keep it) and
 # sound/players.json (each satellite's volume, mute and approval).
 data_dir = "./data"

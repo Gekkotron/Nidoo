@@ -26,6 +26,7 @@ struct MenuBar {
     listening: CheckMenuItem,
     set_key: MenuItem,
     train: MenuItem,
+    forget_server: MenuItem,
     login: CheckMenuItem,
     quit: MenuItem,
     last: UiState,
@@ -40,6 +41,7 @@ impl MenuBar {
             listening: CheckMenuItem::new("Listening", true, ui.listening, None),
             set_key: MenuItem::new("Set voice key from the clipboard", true, None),
             train: MenuItem::new("Train Hey Jarvis…", true, None),
+            forget_server: MenuItem::new("Forget server", true, None),
             login: CheckMenuItem::new("Start at login", true, login::enabled(), None),
             quit: MenuItem::new("Quit Nidoo Satellite", true, None),
             last: ui,
@@ -57,6 +59,7 @@ impl MenuBar {
                 &self.listening,
                 &self.set_key,
                 &self.train,
+                &self.forget_server,
                 &PredefinedMenuItem::separator(),
                 &self.login,
                 &PredefinedMenuItem::separator(),
@@ -129,6 +132,8 @@ impl MenuBar {
             } else {
                 Control::TrainWake
             });
+        } else if e.id == *self.forget_server.id() {
+            send(Control::ForgetServer);
         } else if e.id == *self.login.id() {
             if let Err(e) = login::set(self.login.is_checked()) {
                 tracing::warn!(error = %format!("{e:#}"), "start at login");

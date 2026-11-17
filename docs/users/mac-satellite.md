@@ -53,6 +53,18 @@ app's folder.
    Within 5 seconds the icon stops being gray.
 3. Say **"Hey Jarvis"**, then a request.
 
+## Which Nidoo it plays for
+
+The Mac plays music only for the first Nidoo that connects to it. That
+server is remembered, by its key, in `server.pub` in the app's folder.
+After that the Mac refuses any other server, so a stranger on your network
+cannot take over the music or the volume. A refused server is logged and
+the music keeps playing.
+
+If you reinstall Nidoo or replace its sound key (`identity.key`) the Mac
+refuses the new one. Choose **Forget server** in the menu: the music stops,
+and the next Nidoo that connects is remembered instead.
+
 ## Train Hey Jarvis
 
 The wake word was taught on English voices, so it may miss a "Hey Jarvis"
@@ -82,7 +94,8 @@ leave the Mac.
   follow-up questions). Music and spoken announcements keep playing. The
   choice survives a restart.
 - **Set voice key from the clipboard**, **Train Hey Jarvis…** (or **Cancel
-  training** while it runs).
+  training** while it runs), **Forget server** (see
+  [Which Nidoo it plays for](#which-nidoo-it-plays-for)).
 - **Start at login**: opens the app when you log in.
 - **Quit Nidoo Satellite**: the Mac leaves the house, with no music and no
   voice, until you open it again.
@@ -115,7 +128,7 @@ The same rules as a board:
 - Every message to the hub is signed with the shared key; the key is kept in
   the app's folder, readable only by you, and never written to a log.
 - The app's folder is `~/Library/Application Support/Nidoo Satellite`: the
-  Mac's player identity (`player.key`), the settings, the wake-word model and
+  Mac's player identity (`player.key`), the remembered server (`server.pub`), the settings, the wake-word model and
   the trained model. Keep `player.key`: without it the Mac shows up in Nidoo
   as a new satellite to allow again.
 

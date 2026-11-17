@@ -66,7 +66,9 @@ phone ──TCP 4953, raw PCM──▶ nidoo-sound ──WebSocket (Sendspin)─
 
 The input is raw PCM: 16-bit little-endian, 48 kHz, stereo, sent to TCP port
 **4953** (an Android casting app does this). One sender at a time: a new
-connection replaces the current one without a break. When the phone stops
+connection from the same device (a Wi-Fi reconnect) replaces the current one
+without a break, and one from another device is refused while music is
+playing. When the phone stops
 sending for 5 seconds, or closes the connection, the satellites go quiet.
 The phone's audio arrives over Wi-Fi in bursts, so `nidoo-sound` gathers a
 quarter of a second of it before playing (`input_buffer_ms`): stalls up to
@@ -78,7 +80,7 @@ that long play through without a click, longer ones are filled with silence.
 |---|---|---|
 | 4953/TCP | phone → `nidoo-sound` | music in |
 | 8928/TCP | `nidoo-sound` → satellite | Sendspin WebSocket (the server connects to each satellite) |
-| 4954/TCP | client → `nidoo-sound` | HTTP API: list the satellites, set volume and mute (`GET /players`, `PUT /players/{id}`; see the crate's README) |
+| 4954/TCP | client → `nidoo-sound` | HTTP API: list the satellites, set volume and mute (`GET /players`, `PUT /players/{id}`; see the crate's README). Listens on `127.0.0.1` only; set `http_bind = "0.0.0.0"` to open it to the LAN |
 | 8927/TCP | player → `nidoo-sound` | Sendspin WebSocket at `/sendspin`, for players that connect themselves |
 | 5353/UDP | both | mDNS: satellites advertise `_sendspin._tcp` |
 | 1883/TCP | `nidoo-sound` → broker | MQTT, same broker as the hub |
@@ -127,7 +129,8 @@ startup when no login is set.
 
 If something else already listens on port 4953 (a Snapcast server from an
 older setup, for example), stop it first. With a firewall on the host, allow
-4953/TCP in from the phones, 4954/TCP in from clients of the HTTP API, 8927/TCP in
+4953/TCP in from the phones, 4954/TCP in from clients of the HTTP API (only if
+you set `http_bind = "0.0.0.0"`), 8927/TCP in
 from players that connect themselves and 5353/UDP (mDNS).
 
 Check that it runs and found the satellites:
