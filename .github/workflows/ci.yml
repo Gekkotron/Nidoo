@@ -49,6 +49,8 @@ jobs:
   test:
     name: cargo test
     runs-on: ubuntu-latest
+    # A normal run takes ~7 min; a hung test should fail the job, not hold it for hours.
+    timeout-minutes: 30
     # The history tests skip themselves without TEST_DATABASE_URL; give them a
     # throwaway TimescaleDB so they run here.
     services:

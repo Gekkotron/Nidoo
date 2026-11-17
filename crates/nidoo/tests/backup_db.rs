@@ -309,10 +309,13 @@ async fn sequences_of_empty_tables_start_at_one() {
 async fn snapshot_ignores_later_writes() {
     let Some(a) = fresh_db().await else { return };
     let pa = a.db.pool();
+    // Rows at now(), not in 2025: the compression policy (7 days on entity_state) may run on an
+    // old chunk while the snapshot holds it, and then waits for the snapshot before truncating;
+    // the insert below queues behind that compression, and the test hangs for good.
     exec(
         pa,
         "INSERT INTO entity_state (time, entity_id, num, value)
-         VALUES ('2025-01-01T00:00:00Z', 'before', 1, '1')",
+         VALUES (now(), 'before', 1, '1')",
     )
     .await;
 
@@ -320,7 +323,7 @@ async fn snapshot_ignores_later_writes() {
     exec(
         pa,
         "INSERT INTO entity_state (time, entity_id, num, value)
-         VALUES ('2025-01-01T00:00:01Z', 'after', 2, '2')",
+         VALUES (now(), 'after', 2, '2')",
     )
     .await;
     exec(
