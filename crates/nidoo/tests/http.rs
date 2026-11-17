@@ -1924,6 +1924,92 @@ async fn oversized_picture_is_dropped() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+/// A picture host on `127.0.0.1`: `/pic.jpg` is a JPEG, `/data.json` a JSON page.
+async fn picture_server() -> std::net::SocketAddr {
+    use axum::routing::get;
+    let app = axum::Router::new()
+        .route(
+            "/pic.jpg",
+            get(|| async { ([("content-type", "image/jpeg")], vec![0xFFu8, 0xD8, 9]) }),
+        )
+        .route(
+            "/data.json",
+            get(|| async { ([("content-type", "application/json")], r#"{"secret":1}"#) }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(axum::serve(listener, app).into_future());
+    addr
+}
+
+const IMAGE_ID: &str = "door_image";
+
+/// An image entity whose picture is the URL `url`.
+fn with_picture_url(server: &Server, url: &str) {
+    let config = serde_json::to_vec(&json!({
+        "unique_id": IMAGE_ID,
+        "name": "Door",
+        "url_topic": "img/url",
+    }))
+    .expect("json");
+    server.hub.ingest("nidoo/image/door/config", &config);
+    server.hub.ingest_message("img/url", url.as_bytes(), false);
+}
+
+fn frigate_at(addr: std::net::SocketAddr) -> Config {
+    let mut cfg = config();
+    cfg.frigate.url = Some(format!("http://{addr}"));
+    cfg
+}
+
+#[tokio::test]
+async fn picture_url_on_loopback_is_refused() {
+    let host = picture_server().await;
+    let server = Server::start().await;
+    with_picture_url(&server, &format!("http://{host}/pic.jpg"));
+
+    let response = server
+        .get(&format!("/api/v1/entities/{IMAGE_ID}/picture"))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[tokio::test]
+async fn picture_url_on_the_frigate_origin_is_served() {
+    let host = picture_server().await;
+    let server = Server::start_with(frigate_at(host)).await;
+    with_picture_url(&server, &format!("http://{host}/pic.jpg"));
+
+    let response = server
+        .get(&format!("/api/v1/entities/{IMAGE_ID}/picture"))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("image/jpeg")
+    );
+    assert_eq!(
+        response.bytes().await.expect("body").as_ref(),
+        &[0xFF, 0xD8, 9]
+    );
+}
+
+#[tokio::test]
+async fn non_image_picture_reply_is_refused() {
+    let host = picture_server().await;
+    let server = Server::start_with(frigate_at(host)).await;
+    with_picture_url(&server, &format!("http://{host}/data.json"));
+
+    let response = server
+        .get(&format!("/api/v1/entities/{IMAGE_ID}/picture"))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    assert!(!response.text().await.expect("body").contains("secret"));
+}
+
 fn groups_config() -> Config {
     let mut cfg = config();
     cfg.groups.enabled = true;

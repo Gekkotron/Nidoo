@@ -145,7 +145,10 @@ async fn entity_picture(
     match picture {
         Picture::Bytes { content_type, body } => Ok(picture_response(&content_type, body)),
         Picture::Url(url) => {
-            let (content_type, body) = fetch_picture(&url).await.map_err(|err| {
+            let media = hub.media();
+            let frigate_origin = media.as_deref().map(|m| m.origin());
+            let fetched = crate::picture_fetch::fetch(&url, frigate_origin).await;
+            let (content_type, body) = fetched.map_err(|err| {
                 tracing::warn!(%id, %err, "could not fetch picture URL");
                 HttpError {
                     status: StatusCode::BAD_GATEWAY,
@@ -161,11 +164,7 @@ async fn entity_picture(
 /// served as an opaque download, and sniffing is off, so a broker-supplied page cannot run
 /// from the hub's origin.
 fn picture_response(content_type: &str, body: impl Into<axum::body::Body>) -> Response {
-    let content_type = if content_type
-        .trim()
-        .get(..6)
-        .is_some_and(|p| p.eq_ignore_ascii_case("image/"))
-    {
+    let content_type = if crate::picture_fetch::is_image(content_type) {
         content_type
     } else {
         "application/octet-stream"
@@ -178,36 +177,6 @@ fn picture_response(content_type: &str, body: impl Into<axum::body::Body>) -> Re
         body.into(),
     )
         .into_response()
-}
-
-/// Fetches `url` (no redirects, 10 s, 2xx, at most 5 MiB).
-async fn fetch_picture(url: &str) -> Result<(String, bytes::Bytes), String> {
-    use crate::pictures::MAX_PICTURE_BYTES;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|err| err.to_string())?;
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|err| err.to_string())?;
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .to_owned();
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|err| err.to_string())? {
-        if body.len() + chunk.len() > MAX_PICTURE_BYTES {
-            return Err("picture over 5 MiB".to_owned());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok((content_type, bytes::Bytes::from(body)))
 }
 
 /// An error reply: the status and an [`ApiError`] body.

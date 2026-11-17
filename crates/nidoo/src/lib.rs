@@ -22,6 +22,7 @@ pub mod media;
 pub mod mqtt;
 pub mod network;
 pub mod outage;
+pub mod picture_fetch;
 pub mod pictures;
 pub mod setup;
 pub mod solar;
