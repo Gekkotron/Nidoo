@@ -139,7 +139,7 @@ A [flow](flows.md) can arm or disarm the alarm. In the editor's card library, se
 
 The alarm sends its pushes on the `alarm` channel. Three kinds of push can arrive:
 
-- **Triggered**: a critical alert, titled *Alarm*, that names what tripped it: the door or window, the motions and their rooms, or an SOS. It has a **Disarm** button. Tapping it disarms the alarm and stops the sirens. Each new trip sends a new alert, and the earlier one is cleared when the alarm is disarmed.
+- **Triggered**: a critical alert, titled *Alarm*, that names what tripped it: the door or window, the motions and their rooms, or an SOS. It has a **Disarm** button. Tapping it disarms the alarm and stops the sirens. Only the button of an alert still open counts: once the alarm is disarmed, tapping Disarm on an older alert does nothing, even if the alarm was armed again since. Each new trip sends a new alert, and the earlier one is cleared when the alarm is disarmed.
 - **Armed and disarmed**: a plain alert with the normal sound, sent when the alarm becomes armed (at the end of the exit delay) and when it is disarmed. It names the mode and who did it: *Armed night*, *Armed away (everyone left)*, *Armed home by remote*, *Disarmed (someone came home)*. When something is open at arm, the same push names the sensors watched for closing: *Armed away. Office window open, watched for closing*. Disarming an alarm that is already disarmed sends nothing.
 - **Sensor offline**: a warning when a watched sensor goes unavailable while armed.
 

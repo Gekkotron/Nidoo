@@ -12,7 +12,7 @@ No port forwarding, and no exposure through a reverse proxy without authenticati
 
 ## The native alarm
 
-The hub can run the alarm itself, optional and off by default (see [Alarm](alarm.md)). It has **no codes or PINs**: the panel asks for none to arm or disarm, because the hub has no authentication to protect a code with. Anyone who can reach the hub on your LAN can disarm it, and the remote and push Disarm buttons work without any check. Keep the alarm's sirens and the hub on your own network, and read the caveat above before you rely on it.
+The hub can run the alarm itself, optional and off by default (see [Alarm](alarm.md)). It has **no codes or PINs**: the panel asks for none to arm or disarm, because the hub has no authentication to protect a code with. Anyone who can reach the hub on your LAN can disarm it. Anything that can publish on the broker can disarm it too: the panel's command topic `<alarm prefix>/panel/set` takes `DISARM` from any login allowed to publish there (the phone app's alarm buttons use it, so its login keeps that right), and a remote's button press is just a message on the broker. The hub cannot tell who sent such a message. The push **Disarm** button is checked: the hub acts only on the reply to a trigger alert it sent and that is still open, so a reply with a made-up id, or one to an alert already cleared, does nothing. Keep the broker private (no anonymous access, a login per client), keep the alarm's sirens and the hub on your own network, and read the caveat above before you rely on it.
 
 ## Settings and secrets
 

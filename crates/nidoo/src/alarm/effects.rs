@@ -372,8 +372,9 @@ impl Hub {
         }
     }
 
-    /// A push response whose alert id starts with `alarm-`. Only the Disarm button does
-    /// anything, and only while the alarm is on and something is armed or ringing.
+    /// A push response whose alert id starts with `alarm-`. Only the Disarm button of a trigger
+    /// alert still open does anything: an id the hub never sent, an info note, an offline warning
+    /// or an alert already resolved is ignored, so a forged or stale reply cannot disarm.
     pub(crate) fn on_alarm_reply(self: &Arc<Self>, payload: &[u8]) {
         use nidoo_alarm::machine::{Event, Source};
         let Ok(reply) = serde_json::from_slice::<Reply>(payload) else {
@@ -385,9 +386,7 @@ impl Hub {
         {
             return;
         }
-        let known = lock(&self.alarm.runtime).alert_ids.contains(&reply.id);
-        let armed = lock(&self.alarm.runtime).state_name() != "disarmed";
-        if !(known || (reply.id.starts_with(ALERT_PREFIX) && armed))
+        if !lock(&self.alarm.runtime).alert_ids.contains(&reply.id)
             || tokio::runtime::Handle::try_current().is_err()
         {
             return;
