@@ -164,9 +164,42 @@ fn database_view(file: &HubFile, bundled: Option<&Bundled>) -> Option<DatabaseVi
     })
 }
 
+/// Whether a browser sent the request from a page of another origin. The hub answers every
+/// origin (CORS `*`), so without this any page open on the LAN could read a secret-bearing
+/// reply. `Sec-Fetch-Site` is set by the browser and cannot be forged by a page, so it
+/// decides when present: only `same-origin` (the hub's own page) and `none` (the address
+/// typed in the bar) pass. A browser without it still sends `Origin` across origins, which
+/// must then name the `Host` the request came to. A client that is not a browser sends
+/// neither and passes: without auth, anyone on the LAN can read the route with curl.
+fn from_another_origin(headers: &HeaderMap) -> bool {
+    if let Some(site) = headers.get("sec-fetch-site") {
+        return !matches!(site.as_bytes(), b"same-origin" | b"none");
+    }
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return false;
+    };
+    let authority = origin.to_str().ok().and_then(|o| {
+        o.strip_prefix("http://")
+            .or_else(|| o.strip_prefix("https://"))
+    });
+    match (
+        authority,
+        headers.get(header::HOST).and_then(|v| v.to_str().ok()),
+    ) {
+        (Some(a), Some(host)) => !a.eq_ignore_ascii_case(host),
+        _ => true,
+    }
+}
+
 /// The text the phone setup QR encodes. It holds the broker login and the gateway key: it is
-/// never logged, and only served in Run mode.
+/// never logged, only served in Run mode, and refused to a page of another origin.
 async fn mobile_code(State(s): State<RouteState>, headers: HeaderMap) -> Response {
+    if from_another_origin(&headers) {
+        return error(
+            StatusCode::FORBIDDEN,
+            "the phone setup code is only shown on the hub's own page",
+        );
+    }
     if s.ctx.mode != Mode::Run {
         return error(StatusCode::CONFLICT, "finish MQTT and database setup first");
     }
