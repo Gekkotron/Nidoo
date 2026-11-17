@@ -117,6 +117,12 @@ impl SoundConfig {
 
     /// Where the hub answers: `hub_url`, else the address in `hub.json`, else
     /// the hub's default port on this machine.
+    /// The broker link runs only when a broker is named (here, in the
+    /// environment or in the hub's `hub.json`).
+    pub fn mqtt_enabled(&self) -> bool {
+        self.mqtt.host.is_some()
+    }
+
     pub fn hub_base_url(&self) -> String {
         self.hub_url
             .clone()
@@ -177,7 +183,8 @@ fn read_hub_file(path: &Path) -> Option<HubFile> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MqttSettings {
-    pub host: String,
+    /// `None` runs without a broker.
+    pub host: Option<String>,
     pub port: u16,
     pub user: Option<String>,
     pub password: Option<String>,
@@ -187,7 +194,7 @@ pub struct MqttSettings {
 impl Default for MqttSettings {
     fn default() -> Self {
         Self {
-            host: "localhost".into(),
+            host: None,
             port: 1883,
             user: None,
             password: None,
@@ -215,7 +222,8 @@ mod tests {
             assert_eq!((c.lead_ms, c.idle_stop_ms), (500, 5000));
             assert_eq!(c.discovery_prefix, "homeassistant");
             assert_eq!(c.ui_prefix, "nidoo/ui");
-            assert_eq!(c.mqtt, MqttSettings::default());
+            assert_eq!(c.mqtt.host, None);
+            assert!(!c.mqtt_enabled());
             Ok(())
         });
     }
@@ -240,9 +248,21 @@ mod tests {
             )?;
             jail.set_env("NIDOO_SOUND_MQTT__HOST", "broker");
             let c = SoundConfig::load(Some(Path::new("custom.toml"))).unwrap();
-            assert_eq!(c.mqtt.host, "broker");
+            assert_eq!(c.mqtt.host.as_deref(), Some("broker"));
+            assert!(c.mqtt_enabled());
             assert_eq!(c.mqtt.user.as_deref(), Some("hub"));
             assert_eq!(c.mqtt.port, 1883);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn mqtt_on_when_the_host_is_set_in_env() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("NIDOO_SOUND_MQTT__HOST", "broker");
+            let c = SoundConfig::load(None).unwrap();
+            assert_eq!(c.mqtt.host.as_deref(), Some("broker"));
+            assert!(c.mqtt_enabled());
             Ok(())
         });
     }
@@ -284,7 +304,11 @@ mod tests {
             jail.create_dir("data")?;
             jail.create_file("data/hub.json", HUB_JSON)?;
             let c = SoundConfig::load(None).unwrap();
-            assert_eq!((c.mqtt.host.as_str(), c.mqtt.port), ("hub-broker", 1884));
+            assert_eq!(
+                (c.mqtt.host.as_deref(), c.mqtt.port),
+                (Some("hub-broker"), 1884)
+            );
+            assert!(c.mqtt_enabled());
             assert_eq!(c.mqtt.user.as_deref(), Some("hub"));
             assert_eq!(c.mqtt.password.as_deref(), Some("secret"));
             // Our own client id: two clients with one id kick each other off.

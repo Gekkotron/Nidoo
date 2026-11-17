@@ -86,12 +86,12 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     tracing::info!(
         server_id = %identity.server_id,
         input_port = cfg.input_port,
-        broker = %format!("{}:{}", cfg.mqtt.host, cfg.mqtt.port),
+        broker = %cfg.mqtt.host.as_ref().map_or_else(|| "off".to_string(), |h| format!("{h}:{}", cfg.mqtt.port)),
         broker_user = cfg.mqtt.user.as_deref().unwrap_or("(none)"),
         login_from = if cfg.broker_from_hub { "hub.json" } else { "settings" },
         "nidoo-sound started"
     );
-    if cfg.mqtt.user.is_none() {
+    if cfg.mqtt_enabled() && cfg.mqtt.user.is_none() {
         // A broker with access rules accepts an anonymous login and then
         // drops its messages without an error: the satellites never show up
         // in Nidoo.
@@ -111,24 +111,30 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     // Requests wait here while one clip is fetched: no more than the sentences the mixer queues.
     let (speak_tx, speak_rx) = mpsc::channel(nidoo_sound::mixer::MAX_QUEUED);
     let (speech_tx, speech_rx) = mpsc::channel(4);
-    let (publish_tx, publish_rx) = mpsc::channel(256);
+    let (publish_tx, mut publish_rx) = mpsc::channel(256);
     // The group publishes here; the tee keeps the HTTP snapshot current and
     // passes every message on to the MQTT link unchanged.
     let (group_publish_tx, mut group_publish_rx) = mpsc::channel(256);
     let satellites = Satellites::default();
     {
         let satellites = satellites.clone();
-        let publish_tx = publish_tx.clone();
+        let publish_tx = cfg.mqtt_enabled().then(|| publish_tx.clone());
         tokio::spawn(async move {
             while let Some(msg) = group_publish_rx.recv().await {
                 satellites.apply(&msg);
-                if publish_tx.send(msg).await.is_err() {
+                if let Some(tx) = &publish_tx
+                    && tx.send(msg).await.is_err()
+                {
                     break;
                 }
             }
         });
     }
-    tracing::info!(hub = %cfg.hub_base_url(), "speech clips come from the hub");
+    if cfg.mqtt_enabled() {
+        tracing::info!(hub = %cfg.hub_base_url(), "speech clips come from the hub");
+    } else {
+        tracing::info!("MQTT off: no broker set; approve speakers over the HTTP API");
+    }
     tokio::spawn(nidoo_sound::speech::run_speech_fetcher(
         cfg.hub_base_url(),
         speak_rx,
@@ -179,7 +185,7 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         ));
         tracing::info!(http_bind = %cfg.http_bind, http_port = cfg.http_port, "HTTP API on /players");
     }
-    let mqtt = {
+    let mqtt = if cfg.mqtt_enabled() {
         let cfg = cfg.clone();
         tokio::spawn(async move {
             run_mqtt(
@@ -194,11 +200,22 @@ async fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
             )
             .await
         })
+    } else {
+        // Nothing reads the MQTT messages: drain them so no sender ever waits.
+        tokio::spawn(async move {
+            while publish_rx.recv().await.is_some() {}
+            Ok(())
+        })
     };
 
-    tokio::select! {
-        _ = shutdown => tracing::info!("shutting down"),
-        r = mqtt => anyhow::bail!("MQTT link ended: {r:?}"),
+    if cfg.mqtt_enabled() {
+        tokio::select! {
+            _ = shutdown => tracing::info!("shutting down"),
+            r = mqtt => anyhow::bail!("MQTT link ended: {r:?}"),
+        }
+    } else {
+        shutdown.await;
+        tracing::info!("shutting down");
     }
     // End every stream, give the connections a moment to send it, then stop
     // the group: the MQTT link sees its channel close, publishes `offline`

@@ -268,7 +268,11 @@ pub fn route(topic: &str, payload: &[u8], ha_status: &str) -> Incoming {
 
 /// The broker session: keep-alive, login, the `offline` will and the packet limits.
 fn mqtt_options(cfg: &MqttSettings) -> MqttOptions {
-    let mut options = MqttOptions::new(cfg.client_id.clone(), cfg.host.clone(), cfg.port);
+    let mut options = MqttOptions::new(
+        cfg.client_id.clone(),
+        cfg.host.as_deref().unwrap_or("localhost"),
+        cfg.port,
+    );
     options.set_keep_alive(Duration::from_secs(30));
     if let Some(user) = &cfg.user {
         options.set_credentials(user.clone(), cfg.password.clone().unwrap_or_default());
@@ -303,7 +307,7 @@ pub async fn run_mqtt(
         tokio::select! {
             event = eventloop.poll() => match event {
                 Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                    tracing::info!(host = %cfg.host, port = cfg.port, "connected to the broker");
+                    tracing::info!(host = cfg.host.as_deref().unwrap_or("localhost"), port = cfg.port, "connected to the broker");
                     client.publish(STATUS_TOPIC, QoS::AtLeastOnce, true, "online").await?;
                     client.subscribe(format!("{TOPIC_ROOT}/+/+/set"), QoS::AtLeastOnce).await?;
                     client.subscribe(ha_status.clone(), QoS::AtLeastOnce).await?;
