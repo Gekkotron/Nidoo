@@ -130,8 +130,8 @@ uvx esphome==2026.10.2 run music-only.yaml --device /dev/cu.usbmodem*   # macOS;
 The board is named `nidoo-speaker` by default; pass `--substitution name …`
 for more than one, as in "Adding a satellite". Like any satellite it plays
 nothing until it is approved: in the Nidoo hub, with
-`POST /players/{id}/allow` on `nidoo-sound`'s HTTP API, or with Allow in
-Pinson's Speakers sheet.
+`POST /players/{id}/allow` on `nidoo-sound`'s HTTP API, or from a media
+player's speaker settings.
 
 ## Security note
 

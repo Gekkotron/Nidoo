@@ -6,15 +6,14 @@ description: Run nidoo-sound on its own to try multi-room music, in sync, with E
 
 `nidoo-sound` is the part of Nidoo that plays music in every room at once. It
 runs on its own: no hub, no MQTT broker, no database. Use it to try
-multi-room audio with a music app such as [Pinson](https://github.com/Gekkotron/Pinson),
-then add the hub later if you want dashboards, rooms and voice.
+multi-room audio with a media player that can send to it, then add the hub later if you want dashboards, rooms and voice.
 
 What you get without the hub:
 
 - one music input played on every speaker, in sync;
 - speakers: ESP32-S3 boards running ESPHome, and browser tabs;
 - approve, forget, and set each speaker's volume and mute over a small HTTP API
-  (Pinson does it from its Speakers sheet).
+  (a media player can do it from its speaker settings).
 
 What needs the hub: names and rooms given in Nidoo, dashboards and flows,
 spoken answers and announcements, "Hey Jarvis".
@@ -69,15 +68,14 @@ needs no microphone and no key from the hub: see "Music only" in
 [`satellite/README.md`](https://github.com/Gekkotron/Nidoo/tree/main/satellite).
 Within a few seconds of joining Wi-Fi it is waiting for approval.
 
-**A browser tab, no hardware.** In Pinson, open **Speakers** and turn on
-**Also play on this device**. Two phones are enough to hear two rooms in sync.
+**A browser tab, no hardware.** If your media player offers browser speakers,
+turn them on in its speaker settings. Two phones are enough to hear two rooms in sync.
 
 ## 3. Allow them
 
-**From Pinson:** choose the **Nidoo** output with the address of the machine
-running `nidoo-sound` (port 4953). Open **Speakers**: new speakers are listed
-under **Waiting**. Press **Allow**; the speaker joins the music in sync. **✕**
-forgets one.
+**From a media player:** point its output at the machine running
+`nidoo-sound` (port 4953). New speakers are listed as waiting in its speaker
+settings; allow one and it joins the music in sync, or forget it.
 
 **From a terminal** (replace `HOST`):
 
@@ -98,7 +96,7 @@ trust.
 ## 4. Play music
 
 Send the music to port **4953**: raw PCM, 16-bit little-endian, 48 kHz, stereo.
-Pinson does it when its output is **Nidoo**. One sender at a time.
+A media player does it when its output points there. One sender at a time.
 
 ## Adding the hub later
 
