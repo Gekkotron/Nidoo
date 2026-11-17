@@ -69,8 +69,8 @@ Only sensors that report a number are checked. Secret entities are never checked
 
 ### The three checks
 
-- **Stuck**: the sensor still reports, but its value has not changed for much longer than usual. "Usual" is the longest gap between two value changes over the last 14 days, recomputed once a day. Gaps that overlap an earlier problem of the sensor are left out. The alert needs the time since the last change to pass both the usual gap times the sensitivity factor and 6 hours. It also needs a report from the sensor in the last hour, or in the usual gap if that is longer.
-- **Stopped reporting**: the sensor has not reported for longer than the same limit, or it has been unavailable for more than 1 hour. The report clock starts when the hub starts or when the broker link comes back. This check pauses while the broker link is down or the Zigbee2MQTT bridge is offline, because that outage has its own push.
+- **Stuck**: the sensor still reports, but its value has not changed for much longer than usual. "Usual" is the longest gap between two value changes over the last 14 days, recomputed once a day. Gaps that overlap an earlier problem of the sensor are left out. The alert needs the time since the last change to pass both the usual gap times the sensitivity factor and 6 hours. It also needs a report from the sensor in the last hour, or in the usual gap if that is longer. A value the sensor rests at is never stuck: when at least 3 of its 5 longest flat periods held the same value, such as a plug at 0 W overnight, it can sit there as long as it likes, for example through a two-week holiday.
+- **Stopped reporting**: the sensor has not reported for longer than the same limit, or it has been unavailable for longer than that same limit. A device you switch off every night, such as a PC, has learned its nightly gap, so it does not alert every evening. The report clock starts when the hub starts or when the broker link comes back. This check pauses while the broker link is down or the Zigbee2MQTT bridge is offline, because that outage has its own push.
 - **Impossible value**: the value is outside what the sensor can measure. Only the units in this table are checked. Other device classes, including power, and other units are not checked.
 
 | Sensor | Unit | Accepted range |
@@ -86,7 +86,7 @@ The impossible-value check works from the first day.
 
 ### Learning period
 
-A sensor needs at least 7 days of history and 20 value changes in the 14 days before the stuck and stopped-reporting checks apply to it. The impossible-value check and the "unavailable for more than 1 hour" trigger apply from the first day.
+A sensor needs at least 7 days of history and 20 value changes in the 14 days before the stuck and stopped-reporting checks apply to it. The impossible-value check applies from the first day. A sensor still learning counts as stopped reporting once it has been unavailable for more than 24 hours.
 
 A sensor that is flat by nature, such as a battery at 100 %, never gets a usual gap, so it never alerts as stuck.
 

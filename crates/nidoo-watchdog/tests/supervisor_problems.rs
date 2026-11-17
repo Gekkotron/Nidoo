@@ -20,6 +20,7 @@ fn sensor(id: &str, name: &str) -> Reading {
         baseline: Some(Baseline {
             max_gap: 3 * H,
             changes: 400,
+            rest: None,
         }),
     }
 }

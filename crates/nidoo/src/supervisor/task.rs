@@ -377,6 +377,7 @@ mod tests {
             baseline: Some(Baseline {
                 max_gap: 3 * H,
                 changes: 400,
+                rest: None,
             }),
         }
     }

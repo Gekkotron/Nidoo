@@ -142,7 +142,8 @@ pub async fn purge(db: &Db, before: u64) -> Result<(), sqlx::Error> {
 }
 
 /// Per entity in `ids` with numeric history since `since`: the change count, the first
-/// change, and the five largest gaps between consecutive changes (largest first). One grouped
+/// change, and the five largest gaps between consecutive changes (largest first) with the
+/// value held through each. One grouped
 /// query; entities without rows are absent.
 pub async fn gap_stats(db: &Db, ids: &[String], since: u64) -> Result<Vec<GapStats>, sqlx::Error> {
     if ids.is_empty() {
@@ -151,7 +152,8 @@ pub async fn gap_stats(db: &Db, ids: &[String], since: u64) -> Result<Vec<GapSta
     let rows = sqlx::query(
         "WITH s AS (
              SELECT entity_id, time,
-                    lag(time) OVER (PARTITION BY entity_id ORDER BY time, seq) AS prev
+                    lag(time) OVER (PARTITION BY entity_id ORDER BY time, seq) AS prev,
+                    lag(num) OVER (PARTITION BY entity_id ORDER BY time, seq) AS held
              FROM entity_state
              WHERE entity_id = ANY($1) AND num IS NOT NULL
                AND time >= to_timestamp($2::double precision)
@@ -159,13 +161,13 @@ pub async fn gap_stats(db: &Db, ids: &[String], since: u64) -> Result<Vec<GapSta
              SELECT entity_id, count(*) AS changes, min(time) AS first
              FROM s GROUP BY entity_id
          ), g AS (
-             SELECT entity_id, prev, time,
+             SELECT entity_id, prev, time, held,
                     row_number() OVER (PARTITION BY entity_id ORDER BY time - prev DESC, time)
                         AS rk
              FROM s WHERE prev IS NOT NULL
          )
          SELECT c.entity_id, c.changes, extract(epoch FROM c.first)::bigint,
-                extract(epoch FROM g.prev)::bigint, extract(epoch FROM g.time)::bigint
+                extract(epoch FROM g.prev)::bigint, extract(epoch FROM g.time)::bigint, g.held
          FROM c LEFT JOIN g ON g.entity_id = c.entity_id AND g.rk <= $3
          ORDER BY c.entity_id, g.rk",
     )
@@ -185,9 +187,13 @@ pub async fn gap_stats(db: &Db, ids: &[String], since: u64) -> Result<Vec<GapSta
                 top_gaps: Vec::new(),
             });
         }
-        if let (Some(start), Some(end)) = (r.get::<Option<i64>, _>(3), r.get::<Option<i64>, _>(4)) {
+        if let (Some(start), Some(end), Some(held)) = (
+            r.get::<Option<i64>, _>(3),
+            r.get::<Option<i64>, _>(4),
+            r.get::<Option<f64>, _>(5),
+        ) {
             let stats = out.last_mut().expect("pushed above");
-            stats.top_gaps.push((unsecs(start), unsecs(end)));
+            stats.top_gaps.push((unsecs(start), unsecs(end), held));
         }
     }
     Ok(out)
