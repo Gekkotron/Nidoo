@@ -3,6 +3,14 @@
 
 use serde_json::Value;
 
+/// Installs registered at once. A house has a handful of phones; a full list refuses new
+/// installs (an install already listed can still update its token).
+pub const MAX_INSTALLS: usize = 32;
+/// An FCM token is ~160 characters; anything much longer is not one.
+pub const MAX_TOKEN_LEN: usize = 1024;
+/// A registration is `{token, device_name, lang, updated_at}`: a few hundred bytes.
+pub const MAX_PAYLOAD: usize = 4096;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenStatus {
     Registered,
@@ -10,6 +18,8 @@ pub enum TokenStatus {
     Removed,
     Noop,
     Ignored,
+    /// A new install while `MAX_INSTALLS` are registered: refused.
+    Full,
 }
 
 #[derive(Debug, Default)]
@@ -21,6 +31,9 @@ pub struct Tokens {
 impl Tokens {
     /// Apply one retained token message: an empty payload unregisters.
     pub fn handle(&mut self, topic: &str, payload: &[u8]) -> TokenStatus {
+        if payload.len() > MAX_PAYLOAD {
+            return TokenStatus::Ignored;
+        }
         let text = String::from_utf8_lossy(payload);
         if text.trim().is_empty() {
             return if self.remove(topic) {
@@ -32,15 +45,17 @@ impl Tokens {
         let token = serde_json::from_str::<Value>(&text)
             .ok()
             .and_then(|v| v.get("token")?.as_str().map(|t| t.trim().to_string()))
-            .filter(|t| !t.is_empty());
+            .filter(|t| !t.is_empty() && t.len() <= MAX_TOKEN_LEN);
         let Some(token) = token else {
             return TokenStatus::Ignored;
         };
+        let full = self.entries.len() >= MAX_INSTALLS;
         match self.entries.iter_mut().find(|(t, _)| t == topic) {
             Some(slot) => {
                 slot.1 = token;
                 TokenStatus::Updated
             }
+            None if full => TokenStatus::Full,
             None => {
                 self.entries.push((topic.to_string(), token));
                 TokenStatus::Registered
@@ -192,6 +207,42 @@ mod tests {
         r.handle("t/b", &reg("b"));
         r.handle("t/a", &reg("a2"));
         assert_eq!(r.tokens(), ["a2", "b"]);
+    }
+
+    #[test]
+    fn the_list_is_capped_but_listed_installs_still_update() {
+        let mut r = Tokens::default();
+        for i in 0..MAX_INSTALLS {
+            assert_eq!(
+                r.handle(&format!("t/{i}"), &reg(&format!("k{i}"))),
+                TokenStatus::Registered
+            );
+        }
+        assert_eq!(r.handle("t/extra", &reg("x")), TokenStatus::Full);
+        assert_eq!(r.len(), MAX_INSTALLS);
+        assert!(!r.tokens().contains(&"x".to_string()));
+        assert_eq!(r.handle("t/0", &reg("k0-new")), TokenStatus::Updated);
+        // Unregistering frees a slot.
+        assert_eq!(r.handle("t/1", b""), TokenStatus::Removed);
+        assert_eq!(r.handle("t/extra", &reg("x")), TokenStatus::Registered);
+    }
+
+    #[test]
+    fn oversized_tokens_and_payloads_are_ignored() {
+        let mut r = Tokens::default();
+        r.handle("t/a", &reg("keep"));
+        let long = "k".repeat(MAX_TOKEN_LEN + 1);
+        assert_eq!(r.handle("t/a", &reg(&long)), TokenStatus::Ignored);
+        let padded = format!(
+            "{{\"token\":\"ok\",\"device_name\":\"{}\"}}",
+            "x".repeat(MAX_PAYLOAD)
+        );
+        assert_eq!(r.handle("t/a", padded.as_bytes()), TokenStatus::Ignored);
+        let blank = " ".repeat(MAX_PAYLOAD + 1);
+        assert_eq!(r.handle("t/a", blank.as_bytes()), TokenStatus::Ignored);
+        assert_eq!(r.tokens(), ["keep"]);
+        let max = "k".repeat(MAX_TOKEN_LEN);
+        assert_eq!(r.handle("t/a", &reg(&max)), TokenStatus::Updated);
     }
 
     #[test]
