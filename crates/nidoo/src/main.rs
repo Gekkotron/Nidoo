@@ -216,6 +216,7 @@ async fn run() -> anyhow::Result<ExitCode> {
             let system = hub.start_system();
             let supervisor = hub.start_supervisor();
             tokio::spawn(nidoo::groups::migrate::spawn(Arc::clone(&hub)));
+            tokio::spawn(nidoo::shutter_mark::spawn(Arc::clone(&hub)));
             let finished = setup_ctx.file.lock().await.finished;
             let http_task =
                 http::serve(&cfg.http, http::router(Arc::clone(&hub), setup_ctx)).await?;

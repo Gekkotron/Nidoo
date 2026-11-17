@@ -107,7 +107,7 @@ An override is a retained JSON document at `<ui_prefix>/<entity id>` that change
 | `securityAction` | bool | Offer a `switch` or `button` as an action on the Security tab. |
 | `securityAsk` | bool (default `true`) | Ask for confirmation before the Security action. |
 | `ungrouped` | bool | Keep the entity out of the derived room groups used by the one-time group migration. |
-| `showAs` | string | `light`, `door`, `siren`, `chime`, `plug` or `tv`: what a switch drives. Only read on a switch. Absent is a plain switch. |
+| `showAs` | string | `light`, `door`, `siren`, `chime`, `plug` or `tv`: what a switch drives (absent is a plain switch). `shutter` on a cover with no `device_class`: the cover is a window covering for the Assistant and the ambiances' `covers` category (a class always wins). Other values are ignored on a kind that does not read them. |
 | `lightOnPreset` | string | `white`, `warm`, `red`, `green` or `blue`: the colour a light takes when switched on. |
 | `lightOnBrightness` | integer | 1 to 255: the brightness a light takes when switched on. |
 | `climatePresets` | string | Preset buttons of a climate entity's card in the app. |

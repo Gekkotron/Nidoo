@@ -747,9 +747,17 @@ fn set_shutter(hub: &Hub, position: u8) {
 async fn shutter_house() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
     let (hub, rx) = house().await;
     hub.ingest(SHUTTER_TOPIC, &fixture(SHUTTER_FIXTURE));
-    place(&hub, "0x847127fffe08106c", "living").await;
+    let id = place(&hub, "0x847127fffe08106c", "living").await;
+    mark_shutter(&hub, &id).await;
     set_shutter(&hub, 100);
     (hub, rx)
+}
+
+/// Gives an unclassed cover the `showAs: "shutter"` mark.
+async fn mark_shutter(hub: &Hub, id: &str) {
+    let mut patch = serde_json::Map::new();
+    patch.insert("showAs".to_owned(), serde_json::Value::from("shutter"));
+    hub.set_override(id, &patch).await.expect("shutter mark");
 }
 
 /// Plays the broker for the shutter: logs every publish and echoes the shutter's new position.
@@ -831,6 +839,37 @@ async fn simulated_shutters_publish_nothing() {
         .expect("assist");
     assert!(turn.reply.starts_with("Simulation :"), "{}", turn.reply);
     assert!(drain(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn an_unmarked_unclassed_cover_is_not_a_shutter() {
+    let (hub, rx) = shutter_house().await;
+    let garage_hw = "0x847127fffe0810aa";
+    let garage_text = String::from_utf8(fixture(SHUTTER_FIXTURE))
+        .expect("utf8")
+        .replace("0x847127fffe08106c", garage_hw)
+        .replace("rooms/living/shutter_south", "rooms/living/garage_door");
+    hub.ingest(
+        &format!("nidoo/cover/{garage_hw}/cover/config"),
+        garage_text.as_bytes(),
+    );
+    place(&hub, garage_hw, "living").await;
+    hub.ingest(
+        "zigbee2mqtt/rooms/living/garage_door",
+        br#"{"position":0,"state":"CLOSE"}"#,
+    );
+    let log = shutter_echo(rx, Arc::clone(&hub));
+    let turn = say(&hub, "ouvre les volets du salon").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(turn.trace.actions.len(), 1, "{turn:?}");
+    assert!(
+        log.lock()
+            .unwrap()
+            .iter()
+            .all(|(topic, _)| topic != "zigbee2mqtt/rooms/living/garage_door/set"),
+        "{:?}",
+        log.lock().unwrap()
+    );
 }
 
 #[tokio::test]

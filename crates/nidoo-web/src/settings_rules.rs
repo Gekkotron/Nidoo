@@ -13,6 +13,8 @@ use crate::cards::light::has_colour;
 pub struct Shown {
     /// The "Show as" chips: switches only.
     pub show_as: bool,
+    /// "Shutter or blind": covers with no `device_class`, which a class would otherwise decide.
+    pub shutter_mark: bool,
     /// "Show on Home" instead of "Hide from Home": Energy or Security already shows it.
     pub show_on_home: bool,
     pub group_with_room: bool,
@@ -49,6 +51,7 @@ pub fn shown(entity: &EntityView, draft: &UiOverride) -> Shown {
     let energy_meter = role.is_some_and(EnergyRole::power);
     Shown {
         show_as: switch_type.is_some(),
+        shutter_mark: entity.protocol_kind == Kind::Cover && class.is_none(),
         show_on_home: Placement::elsewhere(kind, class, draft),
         group_with_room: false,
         light_on,
@@ -74,6 +77,11 @@ pub fn shown(entity: &EntityView, draft: &UiOverride) -> Shown {
                 .as_ref()
                 .is_some_and(|g| !g.controls.is_empty()),
     }
+}
+
+/// Turns the shutter mark on or off in the draft: `showAs` is `shutter` or unset.
+pub fn set_shutter(draft: &mut UiOverride, on: bool) {
+    draft.show_as = on.then(|| nidoo_core::model::SHUTTER_MARK.to_owned());
 }
 
 /// Picks a type in the draft. A light cannot be a Security action, so Light also drops it.
@@ -146,7 +154,7 @@ pub fn other_saved(draft: &UiOverride, shown: &Shown) -> Vec<(&'static str, Stri
         ),
         (
             "showAs",
-            shown.show_as,
+            shown.show_as || shown.shutter_mark,
             draft.show_as != default.show_as,
             text(&draft.show_as),
         ),
@@ -295,6 +303,56 @@ mod tests {
     #[test]
     fn plain_light_has_no_light_on_chips() {
         assert!(!shown(&entity(Kind::Light, None, None), &UiOverride::default()).light_on);
+    }
+
+    #[test]
+    fn shutter_mark_is_for_unclassed_covers_only() {
+        assert!(shown(&entity(Kind::Cover, None, None), &UiOverride::default()).shutter_mark);
+        assert!(
+            !shown(
+                &entity(Kind::Cover, Some("garage"), None),
+                &UiOverride::default()
+            )
+            .shutter_mark
+        );
+        assert!(
+            !shown(
+                &entity(Kind::Cover, Some("shutter"), None),
+                &UiOverride::default()
+            )
+            .shutter_mark
+        );
+        assert!(!shown(&entity(Kind::Switch, None, None), &UiOverride::default()).shutter_mark);
+        assert!(!shown(&entity(Kind::Light, None, None), &UiOverride::default()).shutter_mark);
+    }
+
+    #[test]
+    fn shutter_mark_on_an_unclassed_cover_is_not_an_orphan_value() {
+        let marked = UiOverride {
+            show_as: Some("shutter".into()),
+            ..UiOverride::default()
+        };
+        let cover = entity(Kind::Cover, None, None);
+        assert!(other_saved(&marked, &shown(&cover, &marked)).is_empty());
+        let classed = entity(Kind::Cover, Some("garage"), None);
+        assert_eq!(
+            other_saved(&marked, &shown(&classed, &marked)),
+            vec![("showAs", "shutter".to_string())]
+        );
+    }
+
+    #[test]
+    fn shutter_mark_does_not_change_the_switch_type() {
+        let marked = UiOverride {
+            show_as: Some("shutter".into()),
+            ..UiOverride::default()
+        };
+        let switch = entity(Kind::Switch, None, None);
+        assert_eq!(
+            SwitchType::of(Kind::Switch, &marked),
+            Some(SwitchType::Switch)
+        );
+        assert!(shown(&switch, &marked).show_as);
     }
 
     #[test]

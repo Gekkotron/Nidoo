@@ -2,6 +2,7 @@
 
 mod area;
 mod command;
+mod cover_type;
 mod device;
 mod entity;
 mod kind;
@@ -12,6 +13,7 @@ pub(crate) mod ui_override;
 
 pub use area::{Area, AreasDocument, UNASSIGNED_AREA};
 pub use command::{AlarmMode, Command, Hs};
+pub use cover_type::{SHUTTER_MARK, WINDOW_COVERINGS, is_window_covering};
 pub use device::{BridgeInfo, Device};
 pub use entity::{Bindings, Capabilities, CodeFormat, Entity, EntityCategory};
 pub use kind::{IGNORED_COMPONENTS, Kind};

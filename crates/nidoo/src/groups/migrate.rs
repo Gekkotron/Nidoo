@@ -74,22 +74,30 @@ pub fn plan(
     out
 }
 
-/// Boot entry point: waits for the broker link, then for the retained sync to go quiet,
-/// then migrates once and logs the outcome.
-pub async fn spawn(hub: Arc<Hub>) {
+/// Waits for the broker link, then for the retained sync to go quiet. False when the hub
+/// shut down first.
+pub(crate) async fn wait_until_settled(hub: &Hub) -> bool {
     let mut connection = hub.connection();
     while !matches!(*connection.borrow_and_update(), ConnectionStatus::Online) {
         if connection.changed().await.is_err() {
-            return;
+            return false;
         }
     }
     let mut seen = hub.subscribe_state_seen();
     loop {
         match timeout(SETTLE_QUIET, seen.recv()).await {
-            Err(_) => break,
+            Err(_) => return true,
             Ok(Ok(_)) | Ok(Err(RecvError::Lagged(_))) => {}
-            Ok(Err(RecvError::Closed)) => return,
+            Ok(Err(RecvError::Closed)) => return false,
         }
+    }
+}
+
+/// Boot entry point: waits for the broker link, then for the retained sync to go quiet,
+/// then migrates once and logs the outcome.
+pub async fn spawn(hub: Arc<Hub>) {
+    if !wait_until_settled(&hub).await {
+        return;
     }
     let outcome = hub.run_group_migration_once().await;
     match outcome.skipped_reason {

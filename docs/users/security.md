@@ -43,6 +43,6 @@ The broker's ACL, `data/mosquitto/config/acl`, keeps every login's access as it 
 - read or change the flow label catalog, `nidoo/flow_labels`;
 - read the broker's own topics, `$SYS/#`.
 
-What it does not cover yet: the app login can still add or replace flows on `nidoo/automation/#`, send push replies and register push tokens, and the shared `nidoo` login can do anything. These have their own fixes on the backlog.
+What it does not cover yet: the app login can still add or replace flows on `nidoo/automation/#`, send push replies and register push tokens, and the shared `nidoo` login can do anything. These have their own fixes on the backlog. Until then the hub bounds the damage on the push topics: it registers at most 32 installs and rate-limits alerts per source (see [Push notifications](push-notifications.md#limits)).
 
 `init-bundled` writes the ACL once and never overwrites it, and on an install from before it, adds the `nidoo-app` login and an `acl_file` line to `mosquitto.conf` (unless that file already names one). If you changed the push, alarm or flow label prefixes in the advanced settings, edit the ACL to match, then reload the broker with `docker compose kill -s HUP mosquitto`; `tools/update.sh` does that reload for you. With your own broker, nothing changes: the file is a sample you can copy from `crates/nidoo/assets/mosquitto.acl`. With the [ACL watchdog](watchdogs.md#broker-acl) on, each denial becomes an alert.
