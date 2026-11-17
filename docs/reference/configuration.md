@@ -191,7 +191,7 @@ The remote gateway the Android app uses away from home, carried by the phone set
 | `gateway_url` | none | The gateway address, for example `https://house.example.ts.net`. It must start with `https://` and name a host. |
 | `gateway_key` | none | The gateway key (a secret): 64 hex characters. A read shows `{"set": bool}` and `gateway_ready`, which is true when both fields are set. |
 
-`GET /api/v1/setup/mobile-code` returns `{"payload": "<json>"}`, the `v:1` JSON the phone reads from a QR code. It is built from the broker in `hub.json`, the `mobile` section and the `Host` of the request (a broker on `localhost` is replaced by that host, so the phone can reach it). It answers 409 outside Run mode or before the MQTT step is saved. The code holds secrets: the broker login and the gateway key. Show it only to someone you trust, and do not share a screenshot of it. The hub never logs it.
+`GET /api/v1/setup/mobile-code` returns `{"payload": "<json>"}`, the `v:1` JSON the phone reads from a QR code. It is built from the broker in `hub.json`, the `mobile` section and the `Host` of the request (a broker on `localhost` is replaced by that host, so the phone can reach it). It answers 409 outside Run mode or before the MQTT step is saved, and 403 to a browser page of another origin (see [Security](../users/security.md#the-phone-setup-code)). The code holds secrets: the broker login and the gateway key. Show it only to someone you trust, and do not share a screenshot of it. The hub never logs it.
 
 ## Backup
 

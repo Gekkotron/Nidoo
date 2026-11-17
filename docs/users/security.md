@@ -16,7 +16,13 @@ The hub can run the alarm itself, optional and off by default (see [Alarm](alarm
 
 ## Settings and secrets
 
-The setup and settings routes have no login either: anyone on the LAN can read or change the hub's settings, and can reach the wizard of a hub that has not finished setup. Secrets are write-only through the API (a read says only `{"set": true}`), the MQTT, database and Frigate passwords must be entered again when their address (host and port) changes, and no log line or error carries one. They are stored in the hub's database (and in `data/settings-cache.json` and `data/hub.json`, both readable by the hub's user only). Back up and protect `./data/` and the database like any other secret store. See the [Settings reference](../reference/configuration.md#secrets).
+The setup and settings routes have no login either: anyone on the LAN can read or change the hub's settings, and can reach the wizard of a hub that has not finished setup. Secrets are write-only through the API (a read says only `{"set": true}`; the one exception is the [phone setup code](#the-phone-setup-code)), the MQTT, database and Frigate passwords must be entered again when their address (host and port) changes, and no log line or error carries one. They are stored in the hub's database (and in `data/settings-cache.json` and `data/hub.json`, both readable by the hub's user only). Back up and protect `./data/` and the database like any other secret store. See the [Settings reference](../reference/configuration.md#secrets).
+
+### The phone setup code
+
+One read is the exception: `GET /api/v1/setup/mobile-code`, the text of the QR code under **Settings → Mobile app**, carries the broker login, the Frigate login and the gateway key in clear, because the Android app reads them from it. The hub refuses it (`403`) to a browser page of another origin, so a web page open on the LAN cannot `fetch` it even though the rest of the API answers any origin: a browser that sends `Sec-Fetch-Site` gets it only from the hub's own page or the address bar, and an older one only when its `Origin` names the address the request came to.
+
+That guard is for browsers only. A client that is not a browser (curl, a script, a device on the LAN) sends neither header and still gets the code: without authentication, anyone who can reach the hub can read the broker login. A page that uses DNS rebinding (a name of its own pointed at the hub's address) also looks like the hub's own page to the browser and still gets through; refusing it needs a list of the names the hub is reached by, planned with authentication. The broker login opens the whole broker, so treat the LAN as trusted, as above.
 
 ## What else to know
 
