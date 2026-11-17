@@ -81,4 +81,4 @@ Alert ids are `supervisor-<check>-<entity_id>-<opened_at>` for an opened problem
 
 ## Alarm pushes
 
-The native alarm sends on its own channel, `alarm`, from source `alarm`. A triggered alarm is a critical alert with a **Disarm** button: tapping it sends the reply on `nidoo/push/responses`, and the hub disarms the alarm. The hub listens on the reply topic at all times. Arming and disarming send an info push that names the mode and who did it, with any sensor left open at arm. See [Alarm](alarm.md#phone-push).
+The native alarm sends on its own channel, `alarm`, from source `alarm`. A triggered alarm is a critical alert with a **Disarm** button: tapping it sends the reply on `nidoo/push/responses`, and the hub disarms the alarm if that alert is still open (a reply to an alert already cleared, or to an id it never sent, is ignored). The hub listens on the reply topic at all times. Arming and disarming send an info push that names the mode and who did it, with any sensor left open at arm. See [Alarm](alarm.md#phone-push).

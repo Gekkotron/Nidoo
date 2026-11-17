@@ -1486,6 +1486,90 @@ async fn mobile_code_swaps_localhost_for_the_request_host() {
     assert_eq!(payload_of(&body)["local"]["host"], "192.0.2.5");
 }
 
+async fn mobile_code_with(s: &Server, headers: &[(&str, &str)]) -> (StatusCode, String) {
+    let mut req = s
+        .client
+        .get(format!("http://{}/api/v1/setup/mobile-code", s.addr));
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let r = req.send().await.unwrap();
+    (r.status(), r.text().await.unwrap())
+}
+
+#[tokio::test]
+async fn mobile_code_refuses_a_cross_origin_browser() {
+    let s = serve(Mode::Run, mqtt_file("192.0.2.7"), None, false).await;
+    let refused: &[&[(&str, &str)]] = &[
+        // A page on another site, with Fetch Metadata.
+        &[("Sec-Fetch-Site", "cross-site")],
+        // Another service on the same machine or site (another port is another origin).
+        &[("Sec-Fetch-Site", "same-site")],
+        &[
+            ("Sec-Fetch-Site", "cross-site"),
+            ("Origin", "http://192.0.2.5:8081"),
+            ("Host", "192.0.2.5:8081"),
+        ],
+        // An older browser without Fetch Metadata still sends Origin across origins.
+        &[
+            ("Origin", "http://evil.example"),
+            ("Host", "192.0.2.5:8081"),
+        ],
+        &[
+            ("Origin", "http://192.0.2.5:8080"),
+            ("Host", "192.0.2.5:8081"),
+        ],
+        &[("Origin", "https://192.0.2.5:8081"), ("Host", "192.0.2.5")],
+        // A sandboxed frame or a file:// page.
+        &[("Origin", "null"), ("Host", "192.0.2.5:8081")],
+    ];
+    for headers in refused {
+        let (code, body) = mobile_code_with(&s, headers).await;
+        assert_eq!(code, StatusCode::FORBIDDEN, "{headers:?}");
+        assert!(!body.contains("payload"), "{headers:?}: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["error"],
+            "the phone setup code is only shown on the hub's own page"
+        );
+    }
+}
+
+#[tokio::test]
+async fn mobile_code_serves_the_hubs_own_page() {
+    let s = serve(Mode::Run, mqtt_file("192.0.2.7"), None, false).await;
+    let served: &[&[(&str, &str)]] = &[
+        // The web UI's same-origin fetch.
+        &[("Sec-Fetch-Site", "same-origin")],
+        // The URL typed in the address bar.
+        &[("Sec-Fetch-Site", "none")],
+        // Fetch Metadata decides when present, even behind a proxy that rewrites Host.
+        &[
+            ("Sec-Fetch-Site", "same-origin"),
+            ("Origin", "https://house.example"),
+            ("Host", "192.0.2.5:8081"),
+        ],
+        // An older browser on the same origin; ports and case as browsers write them.
+        &[
+            ("Origin", "http://192.0.2.5:8081"),
+            ("Host", "192.0.2.5:8081"),
+        ],
+        &[("Origin", "http://Nidoo.local"), ("Host", "nidoo.local")],
+        &[
+            ("Origin", "http://[2001:db8::5]:8081"),
+            ("Host", "[2001:db8::5]:8081"),
+        ],
+        // A client that is not a browser (curl, a script) sends neither header.
+        &[],
+    ];
+    for headers in served {
+        let (code, body) = mobile_code_with(&s, headers).await;
+        assert_eq!(code, StatusCode::OK, "{headers:?}: {body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload_of(&v)["v"], 1, "{headers:?}");
+    }
+}
+
 #[tokio::test]
 async fn mobile_read_never_shows_the_key() {
     let s = serve(Mode::Run, HubFile::default(), None, false).await;
