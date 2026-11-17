@@ -465,6 +465,22 @@ fn puts(fetch: &FakeFetch) -> Vec<(String, String, String)> {
         .collect()
 }
 
+/// The requests `read` returns once at least one has arrived. A fixed wait failed on a slow CI
+/// runner (the save had started but not reached fetch yet), so this polls for up to 2 s, then
+/// reads again 50 ms later so a second, unwanted request still shows up.
+async fn wait_for_requests(
+    read: impl Fn() -> Vec<(String, String, String)>,
+) -> Vec<(String, String, String)> {
+    for _ in 0..200 {
+        if !read().is_empty() {
+            break;
+        }
+        gloo_timers::future::TimeoutFuture::new(10).await;
+    }
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    read()
+}
+
 impl Drop for FakeFetch {
     fn drop(&mut self) {
         js_sys::Reflect::set(&js_sys::global(), &"fetch".into(), &self.0).unwrap();
@@ -1358,8 +1374,7 @@ async fn rename_updates_draft_name() {
     // Saving sends the new name under the original id.
     let fetch = FakeFetch::answer(&write_outcome(&reference_view(None, vec![])));
     click(&host, ".flow-toolbar button[aria-label=Save]");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let requests = puts(&fetch);
+    let requests = wait_for_requests(|| puts(&fetch)).await;
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert_eq!(requests[0].1, "/api/v1/flows/living_led_motion");
     let sent: serde_json::Value = serde_json::from_str(&requests[0].2).unwrap();
@@ -1830,8 +1845,7 @@ async fn the_mode_select_saves_the_other_mode() {
     tick().await;
     let fetch = FakeFetch::answer(&write_outcome(&view));
     click(&host, ".flow-toolbar button[aria-label=Save]");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let requests = puts(&fetch);
+    let requests = wait_for_requests(|| puts(&fetch)).await;
     assert_eq!(requests.len(), 1, "{requests:?}");
     let sent: serde_json::Value = serde_json::from_str(&requests[0].2).unwrap();
     assert_eq!(sent["mode"], want);
@@ -1925,8 +1939,7 @@ async fn manual_button_posts_the_card() {
     pointer_at(&button, "pointerdown", at);
     pointer_at(&button, "pointerup", at);
     click(&host, ".flow-node__run");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let sent = runs(&fetch);
+    let sent = wait_for_requests(|| runs(&fetch)).await;
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].1, "/api/v1/flows/living_led_motion/run");
     let body: serde_json::Value = serde_json::from_str(&sent[0].2).unwrap();
@@ -1993,8 +2006,7 @@ async fn manual_number_box_keeps_what_is_typed() {
     type_into(&input, "-1.5", "input");
     let fetch = FakeFetch::answer(&write_outcome(&saved));
     click(&host, ".flow-toolbar button[aria-label=Save]");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let sent = puts(&fetch);
+    let sent = wait_for_requests(|| puts(&fetch)).await;
     assert_eq!(sent.len(), 1, "{sent:?}");
     let body: serde_json::Value = serde_json::from_str(&sent[0].2).unwrap();
     let go = body["nodes"]
@@ -2422,8 +2434,7 @@ fn change(el: &web_sys::Element) {
 async fn saved_node(host: &web_sys::Element, id: &str) -> serde_json::Value {
     let fetch = FakeFetch::answer(&write_outcome(&result_view()));
     click(host, ".flow-toolbar button[aria-label=Save]");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let sent = puts(&fetch);
+    let sent = wait_for_requests(|| puts(&fetch)).await;
     let (_, _, body) = sent
         .last()
         .unwrap_or_else(|| panic!("no save: {}", host.inner_html()));
@@ -2598,8 +2609,7 @@ async fn switch_result_makes_the_rule_values_numbers() {
 async fn saved_nodes(host: &web_sys::Element, view: &FlowView) -> Vec<serde_json::Value> {
     let fetch = FakeFetch::answer(&write_outcome(view));
     click(host, ".flow-toolbar button[aria-label=Save]");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let requests = puts(&fetch);
+    let requests = wait_for_requests(|| puts(&fetch)).await;
     assert_eq!(requests.len(), 1, "{requests:?}");
     let sent: serde_json::Value = serde_json::from_str(&requests[0].2).unwrap();
     sent["nodes"].as_array().unwrap().clone()
@@ -2812,8 +2822,7 @@ fn label_names(host: &web_sys::Element) -> Vec<String> {
 async fn saved_flow(host: &web_sys::Element, view: &FlowView) -> serde_json::Value {
     let fetch = FakeFetch::answer(&write_outcome(view));
     click(host, ".flow-toolbar button[aria-label=Save]");
-    gloo_timers::future::TimeoutFuture::new(50).await;
-    let requests = puts(&fetch);
+    let requests = wait_for_requests(|| puts(&fetch)).await;
     assert_eq!(requests.len(), 1, "{requests:?}");
     serde_json::from_str(&requests[0].2).unwrap()
 }
