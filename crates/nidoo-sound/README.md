@@ -4,6 +4,7 @@ A Sendspin-compatible server for Nidoo's sound satellites. It plays one raw
 PCM input on every approved satellite in sync and exposes each satellite's
 volume, mute and approval to Nidoo through Home Assistant MQTT discovery.
 User guide: `docs/users/sound.md`; satellites: `satellite/README.md`.
+Without the hub or a broker: `docs/users/sound-without-the-hub.md`.
 
 ```sh
 nidoo-sound run [--config nidoo-sound.toml]
@@ -60,7 +61,7 @@ the same values as `NIDOO_SOUND_MQTT__*`.
 | `idle_stop_ms` | `NIDOO_SOUND_IDLE_STOP_MS` | `5000` | silence on a connected input that stops playback |
 | `discovery_prefix` | `NIDOO_SOUND_DISCOVERY_PREFIX` | `homeassistant` | MQTT discovery prefix |
 | `ui_prefix` | `NIDOO_SOUND_UI_PREFIX` | `nidoo/ui` | the hub's override sub-tree (its `[topics] ui_prefix`), read for the names given in Nidoo |
-| `mqtt.host` | `NIDOO_SOUND_MQTT__HOST` | the hub's, else `localhost` | broker |
+| `mqtt.host` | `NIDOO_SOUND_MQTT__HOST` | the hub's, else none: MQTT off | broker; with none set, `nidoo-sound` runs without MQTT and speakers are approved over the HTTP API |
 | `mqtt.port` | `NIDOO_SOUND_MQTT__PORT` | the hub's, else `1883` | |
 | `mqtt.user` | `NIDOO_SOUND_MQTT__USER` | the hub's, else none | |
 | `mqtt.password` | `NIDOO_SOUND_MQTT__PASSWORD` | the hub's, else none | |
@@ -105,6 +106,26 @@ It answers `204` with no body. Errors have the body `{"error": "<text>"}`:
 | `400` | no field given, `volume` above 100, or a body that is not valid JSON of that shape; nothing is changed |
 | `404` | the id is unknown, or the satellite is not approved |
 | `503` | `nidoo-sound` is stopping |
+
+Without a broker, or without the hub, speakers are approved here:
+
+`GET /players/waiting` returns `200` with the connected speakers that are not
+allowed yet, sorted by name:
+
+```json
+[{"id": "0123456789ab", "name": "satellite-kitchen", "connected": true}]
+```
+
+`POST /players/{id}/allow` allows a speaker (`204`, no body); `DELETE
+/players/{id}` forgets one, allowed or waiting (`204`). A forgotten speaker that
+is still on the network comes back as waiting. Both take the `id` from either
+list:
+
+| Status | When |
+|---|---|
+| `204` | done |
+| `404` | no speaker with this id; the body is `{"error": "no speaker <id>"}` |
+| `503` | `nidoo-sound` is stopping; the body is `{"error": "nidoo-sound is stopping"}` |
 
 ## MQTT
 

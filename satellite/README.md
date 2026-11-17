@@ -109,6 +109,30 @@ A new satellite shows up in Nidoo as **not allowed**: it plays nothing until
 you switch its **Allowed** control on. Set its room in Nidoo like any other
 device.
 
+## Music only
+
+`music-only.yaml` is a smaller configuration for a board that only plays
+music: no microphone, no wake word, no chime, and no Nidoo hub needed (see
+`docs/users/sound-without-the-hub.md`). Keep it in step with `satellite.yaml`.
+
+- Parts: a Seeed Studio **XIAO ESP32S3** and a **PCM5102A** DAC.
+- Wiring: the PCM5102A rows of the table above (BCK to D8, LRCK to D9, DIN to
+  D10, SCK to GND, VIN to 5V, GND to GND), with the same configuration pads.
+- Secrets: `wifi_ssid`, `wifi_password` and `ota_password` in `secrets.yaml`.
+  There is no `voice_key`.
+
+```sh
+cd satellite
+cp secrets.example.yaml secrets.yaml   # then fill in Wi-Fi and an OTA password
+uvx esphome==2026.10.2 run music-only.yaml --device /dev/cu.usbmodem*   # macOS; /dev/ttyACM0 on Linux
+```
+
+The board is named `nidoo-speaker` by default; pass `--substitution name …`
+for more than one, as in "Adding a satellite". Like any satellite it plays
+nothing until it is approved: in the Nidoo hub, with
+`POST /players/{id}/allow` on `nidoo-sound`'s HTTP API, or from a media
+player's speaker settings.
+
 ## Security note
 
 The satellites accept the Sendspin protocol's unpaired access, so any

@@ -9,6 +9,8 @@ ESPHome. `nidoo-sound`, a Sendspin-compatible server that runs next to the
 hub, takes the music from your phone and plays it on every satellite at the
 same time: standing between two rooms you hear one sound, not an echo.
 
+No hub? See [Sound without the hub](sound-without-the-hub.md).
+
 Each satellite shows up in Nidoo as a device with:
 
 - **Music volume** and **Speech volume** (both 0–100) and **Mute**, usable
@@ -80,10 +82,10 @@ that long play through without a click, longer ones are filled with silence.
 |---|---|---|
 | 4953/TCP | phone → `nidoo-sound` | music in |
 | 8928/TCP | `nidoo-sound` → satellite | Sendspin WebSocket (the server connects to each satellite) |
-| 4954/TCP | client → `nidoo-sound` | HTTP API: list the satellites, set volume and mute (`GET /players`, `PUT /players/{id}`; see the crate's README). Listens on `127.0.0.1` only; set `http_bind = "0.0.0.0"` to open it to the LAN |
+| 4954/TCP | client → `nidoo-sound` | HTTP API: list the satellites, set volume and mute, approve or forget one (`GET /players`, `PUT /players/{id}`, `GET /players/waiting`, `POST /players/{id}/allow`, `DELETE /players/{id}`; see the crate's README). Listens on `127.0.0.1` only; set `http_bind = "0.0.0.0"` to open it to the LAN |
 | 8927/TCP | player → `nidoo-sound` | Sendspin WebSocket at `/sendspin`, for players that connect themselves |
 | 5353/UDP | both | mDNS: satellites advertise `_sendspin._tcp` |
-| 1883/TCP | `nidoo-sound` → broker | MQTT, same broker as the hub |
+| 1883/TCP | `nidoo-sound` → broker | MQTT, same broker as the hub; only when a broker is set |
 
 `nidoo-sound` and the satellites must be on the same LAN (mDNS does not cross
 routers).

@@ -1,4 +1,5 @@
-//! HTTP API: lists the approved satellites and sets their volume and mute.
+//! HTTP API: lists the approved satellites and sets their volume and mute,
+//! lists the speakers waiting for approval, and allows or forgets one.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -7,7 +8,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -22,6 +23,14 @@ pub struct SatelliteView {
     pub name: String,
     pub volume: u8,
     pub muted: bool,
+    pub connected: bool,
+}
+
+/// One connected speaker that is not allowed yet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WaitingView {
+    pub id: String,
+    pub name: String,
     pub connected: bool,
 }
 
@@ -81,6 +90,28 @@ impl Satellites {
         out
     }
 
+    /// The connected speakers still waiting for approval, sorted by name and then id.
+    pub fn waiting(&self) -> Vec<WaitingView> {
+        let map = self.inner.read().unwrap();
+        let names = self.names.read().unwrap();
+        let mut out: Vec<WaitingView> = map
+            .iter()
+            .filter(|(_, (prefs, connected))| !prefs.allowed && *connected)
+            .map(|(id, (prefs, connected))| WaitingView {
+                id: id.clone(),
+                name: names.get(id).unwrap_or(&prefs.name).clone(),
+                connected: *connected,
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        out
+    }
+
+    /// Whether the group has this speaker, allowed or not.
+    pub fn is_known(&self, id: &str) -> bool {
+        self.inner.read().unwrap().contains_key(id)
+    }
+
     pub fn is_approved(&self, id: &str) -> bool {
         self.inner
             .read()
@@ -103,12 +134,15 @@ fn error(status: StatusCode, text: impl Into<String>) -> Response {
     (status, Json(serde_json::json!({ "error": text.into() }))).into_response()
 }
 
-/// `GET /players` and `PUT /players/{id}`. A PUT is turned into the same
-/// `Control` commands the MQTT link sends.
+/// `GET /players`, `GET /players/waiting`, `PUT /players/{id}`,
+/// `POST /players/{id}/allow` and `DELETE /players/{id}`. Each change is turned
+/// into the same `Control` commands the MQTT link sends.
 pub fn router(satellites: Satellites, control: mpsc::Sender<Control>) -> Router {
     Router::new()
         .route("/players", get(list_players))
-        .route("/players/{id}", put(change_player))
+        .route("/players/waiting", get(list_waiting))
+        .route("/players/{id}", put(change_player).delete(forget_player))
+        .route("/players/{id}/allow", post(allow_player))
         .with_state((satellites, control))
 }
 
@@ -134,6 +168,47 @@ pub async fn serve(
 
 async fn list_players(State((satellites, _)): State<ApiState>) -> Json<Vec<SatelliteView>> {
     Json(satellites.list())
+}
+
+async fn list_waiting(State((satellites, _)): State<ApiState>) -> Json<Vec<WaitingView>> {
+    Json(satellites.waiting())
+}
+
+/// Sends `command` for a known speaker: 204, 404 or 503.
+async fn control_known(
+    satellites: &Satellites,
+    control: &mpsc::Sender<Control>,
+    id: &str,
+    command: Control,
+) -> Response {
+    if !satellites.is_known(id) {
+        return error(StatusCode::NOT_FOUND, format!("no speaker {id}"));
+    }
+    if control.send(command).await.is_err() {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "nidoo-sound is stopping");
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn allow_player(
+    State((satellites, control)): State<ApiState>,
+    Path(id): Path<String>,
+) -> Response {
+    let command = Control::SetAllowed {
+        short_id: id.clone(),
+        allowed: true,
+    };
+    control_known(&satellites, &control, &id, command).await
+}
+
+async fn forget_player(
+    State((satellites, control)): State<ApiState>,
+    Path(id): Path<String>,
+) -> Response {
+    let command = Control::Remove {
+        short_id: id.clone(),
+    };
+    control_known(&satellites, &control, &id, command).await
 }
 
 async fn change_player(
@@ -352,6 +427,92 @@ mod tests {
             assert_eq!(res.status(), 400, "{body}");
             let json: serde_json::Value = res.json().await.unwrap();
             assert!(json["error"].is_string(), "{body}");
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn waiting_lists_connected_unallowed_only() {
+        let s = Satellites::default();
+        s.apply(&player(prefs("A", "Alpha", true), true));
+        s.apply(&player(prefs("B", "Bravo", false), true));
+        s.apply(&player(prefs("C", "Charlie", false), false));
+        assert_eq!(
+            s.waiting(),
+            [WaitingView {
+                id: short_id("B"),
+                name: "Bravo".into(),
+                connected: true
+            }]
+        );
+        let names: Vec<String> = s.list().into_iter().map(|v| v.name).collect();
+        assert_eq!(names, ["Alpha"]);
+    }
+
+    #[tokio::test]
+    async fn get_waiting_over_http() {
+        let (base, _rx) = fixture().await;
+        let res = reqwest::get(format!("{base}/players/waiting"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 200);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!([{"id": short_id("garage-id"), "name": "Garage", "connected": true}])
+        );
+    }
+
+    async fn send(base: &str, method: reqwest::Method, path: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .request(method, format!("{base}{path}"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn allow_sends_set_allowed() {
+        let (base, mut rx) = fixture().await;
+        // Garage is waiting; Kitchen is already allowed: both get the command.
+        for id in [short_id("garage-id"), short_id("kitchen-id")] {
+            let res = send(
+                &base,
+                reqwest::Method::POST,
+                &format!("/players/{id}/allow"),
+            )
+            .await;
+            assert_eq!(res.status(), 204);
+            assert_eq!(
+                rx.try_recv(),
+                Ok(Control::SetAllowed {
+                    short_id: id,
+                    allowed: true
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn forget_sends_remove() {
+        let (base, mut rx) = fixture().await;
+        let id = short_id("kitchen-id");
+        let res = send(&base, reqwest::Method::DELETE, &format!("/players/{id}")).await;
+        assert_eq!(res.status(), 204);
+        assert_eq!(rx.try_recv(), Ok(Control::Remove { short_id: id }));
+    }
+
+    #[tokio::test]
+    async fn allow_and_forget_unknown_is_404() {
+        let (base, mut rx) = fixture().await;
+        for (method, path) in [
+            (reqwest::Method::POST, "/players/ffffffffffff/allow"),
+            (reqwest::Method::DELETE, "/players/ffffffffffff"),
+        ] {
+            let res = send(&base, method, path).await;
+            assert_eq!(res.status(), 404);
+            let json: serde_json::Value = res.json().await.unwrap();
+            assert_eq!(json["error"], "no speaker ffffffffffff");
         }
         assert!(rx.try_recv().is_err());
     }
