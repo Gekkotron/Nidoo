@@ -1899,6 +1899,13 @@ async fn camera_bytes_are_served_by_the_picture_route() {
         Some("nosniff")
     );
     assert_eq!(
+        response
+            .headers()
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok()),
+        Some("sandbox")
+    );
+    assert_eq!(
         response.bytes().await.expect("body").as_ref(),
         &[0xFF, 0xD8, 1, 2, 3]
     );

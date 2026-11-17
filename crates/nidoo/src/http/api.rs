@@ -161,8 +161,9 @@ async fn entity_picture(
 }
 
 /// A picture reply that can only be shown as an image: anything that is not `image/*` is
-/// served as an opaque download, and sniffing is off, so a broker-supplied page cannot run
-/// from the hub's origin.
+/// served as an opaque download, sniffing is off, and the sandbox policy keeps a script
+/// in an SVG opened on its own from running, so a broker-supplied page cannot run from
+/// the hub's origin.
 fn picture_response(content_type: &str, body: impl Into<axum::body::Body>) -> Response {
     let content_type = if crate::picture_fetch::is_image(content_type) {
         content_type
@@ -173,6 +174,7 @@ fn picture_response(content_type: &str, body: impl Into<axum::body::Body>) -> Re
         [
             (header::CONTENT_TYPE, content_type),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::CONTENT_SECURITY_POLICY, "sandbox"),
         ],
         body.into(),
     )

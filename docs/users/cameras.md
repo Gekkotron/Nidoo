@@ -14,7 +14,7 @@ Set it up in **Settings → Cameras** (or the Cameras card in the Services step 
 
 **Test connection** checks the address and login before you save. Saving restarts the hub.
 
-A camera or image entity discovered over MQTT can also carry its picture as a URL (`url_topic`). The hub fetches it when the picture is asked for, and refuses its own host and link-local addresses unless the URL is on the Frigate address; see [Security](security.md).
+A camera or image entity discovered over MQTT can also carry its picture as a URL (`url_topic`). The hub fetches it when the picture is asked for, and refuses its own host and link-local addresses unless the URL is on the Frigate address; see [Security](security.md). The camera must answer with an `image/*` content type: a reply without one (some older IP cameras' snapshot pages) shows no picture, and the picture route answers `502`.
 
 ## The Frigate bridge
 

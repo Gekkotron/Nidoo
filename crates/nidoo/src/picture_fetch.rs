@@ -6,12 +6,12 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-/// Where a picture fetch goes: the URL and, unless it is on the Frigate origin, the one
-/// address it may connect to.
+/// Where a picture fetch goes: the URL and, unless it is on the Frigate origin (empty
+/// then), the checked addresses it may connect to, tried in order.
 #[derive(Debug)]
 pub struct Target {
     pub url: url::Url,
-    pub pin: Option<SocketAddr>,
+    pub pins: Vec<SocketAddr>,
 }
 
 /// Whether the hub must never fetch a picture from `ip`.
@@ -61,7 +61,7 @@ pub async fn target(url: &str, frigate_origin: Option<&str>) -> Result<Target, S
     if frigate_origin.is_some() && crate::media::origin_of(url).as_deref() == frigate_origin {
         return Ok(Target {
             url: parsed,
-            pin: None,
+            pins: Vec::new(),
         });
     }
     let port = parsed.port_or_known_default().ok_or("no port")?;
@@ -76,10 +76,12 @@ pub async fn target(url: &str, frigate_origin: Option<&str>) -> Result<Target, S
     if let Some(bad) = addrs.iter().find(|addr| blocked(addr.ip())) {
         return Err(format!("address {} is not allowed", bad.ip()));
     }
-    let pin = *addrs.first().ok_or("host resolves to no address")?;
+    if addrs.is_empty() {
+        return Err("host resolves to no address".to_owned());
+    }
     Ok(Target {
         url: parsed,
-        pin: Some(pin),
+        pins: addrs,
     })
 }
 
@@ -95,8 +97,8 @@ pub async fn fetch(
         .timeout(std::time::Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy();
-    if let (Some(pin), Some(url::Host::Domain(name))) = (target.pin, target.url.host()) {
-        builder = builder.resolve(name, pin);
+    if let (false, Some(url::Host::Domain(name))) = (target.pins.is_empty(), target.url.host()) {
+        builder = builder.resolve_to_addrs(name, &target.pins);
     }
     let client = builder.build().map_err(|err| err.to_string())?;
     let mut response = client
@@ -195,7 +197,10 @@ mod tests {
         let target = target("http://192.168.1.20:8080/a.jpg", None)
             .await
             .expect("LAN camera");
-        assert_eq!(target.pin, Some("192.168.1.20:8080".parse().expect("addr")));
+        assert_eq!(
+            target.pins,
+            vec!["192.168.1.20:8080".parse().expect("addr")]
+        );
     }
 
     #[tokio::test]
@@ -204,7 +209,7 @@ mod tests {
         let target = target(url, Some("http://127.0.0.1:5000"))
             .await
             .expect("Frigate origin");
-        assert_eq!(target.pin, None);
+        assert!(target.pins.is_empty());
         assert!(
             super::target(url, Some("http://127.0.0.1:5001"))
                 .await
