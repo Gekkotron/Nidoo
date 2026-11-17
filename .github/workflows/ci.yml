@@ -87,6 +87,10 @@ jobs:
   web:
     name: web UI browser tests (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
+    # A shard takes about 4 minutes. Headless Chrome once hung on a test file with no output,
+    # which would hold the job until GitHub's 6-hour limit; fail it instead. 20 leaves room for
+    # a build with a cold cache.
+    timeout-minutes: 20
     # Each test file is its own wasm binary with its own Chrome; three jobs share them out.
     strategy:
       fail-fast: false
