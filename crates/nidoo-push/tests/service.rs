@@ -920,3 +920,49 @@ async fn dropping_the_service_ends_the_sender_task() {
     assert_eq!(Arc::strong_count(&fcm), 1, "the transport was released too");
     drop(rx);
 }
+
+// ---------- broker abuse limits ----------
+
+#[tokio::test(start_paused = true)]
+async fn a_flooding_broker_source_is_throttled() {
+    use nidoo_push::limit::{SOURCE_BURST, SOURCE_EVERY};
+    let h = harness().ready().await;
+    h.register(&tok("inst-a"), "tokA");
+    for i in 0..50 {
+        h.notify("spam", &v1(json!({"id": format!("s{i}")})));
+    }
+    flush().await;
+    assert_eq!(h.fcm.calls().len(), SOURCE_BURST as usize);
+    // Another producer still gets through.
+    h.notify("frigate", &v1(json!({"id": "real"})));
+    flush().await;
+    assert_eq!(h.fcm.calls().len(), SOURCE_BURST as usize + 1);
+    // The flooding source recovers at its sustained rate.
+    advance(SOURCE_EVERY as f64).await;
+    h.notify("spam", &v1(json!({"id": "later"})));
+    flush().await;
+    assert_eq!(h.fcm.calls().len(), SOURCE_BURST as usize + 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn in_process_alerts_are_not_throttled() {
+    let h = harness().ready().await;
+    h.register(&tok("inst-a"), "tokA");
+    for i in 0..50 {
+        h.svc
+            .submit("alarm", &v1(json!({"id": format!("a{i}")})))
+            .unwrap();
+    }
+    flush().await;
+    assert_eq!(h.fcm.calls().len(), 50);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_token_list_is_capped() {
+    use nidoo_push::tokens::MAX_INSTALLS;
+    let h = harness().ready().await;
+    for i in 0..MAX_INSTALLS + 5 {
+        h.register(&tok(&format!("i{i}")), &format!("k{i}"));
+    }
+    assert_eq!(h.svc.status().installs, MAX_INSTALLS);
+}

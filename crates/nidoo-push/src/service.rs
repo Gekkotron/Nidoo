@@ -15,6 +15,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::fcm::{FcmTransport, SendResult, send_data};
 use crate::history::History;
+use crate::limit::{RateLimit, Verdict};
 use crate::normalize::{Alert, Rejected, android_priority, normalize, to_fcm_data, ttl_seconds};
 use crate::queue::{Pending, RetryQueue};
 use crate::tokens::{TokenStatus, Tokens};
@@ -72,6 +73,8 @@ struct State {
     history: History,
     tokens: Tokens,
     queue: RetryQueue,
+    /// Throttles alerts arriving on the broker (not the in-process ones).
+    limit: RateLimit,
 }
 
 /// One FCM send for the sender task: the item, the tokens to send it to now, and whether it
@@ -113,6 +116,7 @@ impl PushService {
             history: History::new(settings.history_size, settings.history_days),
             tokens: Tokens::default(),
             queue: RetryQueue::new(settings.retry_interval, settings.max_retries),
+            limit: RateLimit::new(clock()),
         };
         let (jobs, jobs_rx) = mpsc::unbounded_channel();
         Arc::new(PushService {
@@ -190,6 +194,9 @@ impl PushService {
                     tracing::warn!(%topic, "ignoring notification on unexpected topic");
                     return;
                 }
+                if !self.admit(source) {
+                    return;
+                }
                 let parsed = std::str::from_utf8(payload)
                     .map_err(|e| e.to_string())
                     .and_then(|text| {
@@ -205,6 +212,24 @@ impl PushService {
         }
     }
 
+    /// The broker rate limit for `source`, logged once per run of refusals.
+    fn admit(&self, source: &str) -> bool {
+        let verdict = self.lock().limit.check(source, (self.clock)());
+        match verdict {
+            Verdict::Allowed { resumed: 0 } => true,
+            Verdict::Allowed { resumed } => {
+                tracing::info!(%source, dropped = resumed, "push source back under its rate limit");
+                true
+            }
+            Verdict::Refused { first_drop } => {
+                if first_drop {
+                    tracing::warn!(%source, "push source over its rate limit; dropping its alerts");
+                }
+                false
+            }
+        }
+    }
+
     fn on_token(&self, topic: &str, install: &str, payload: &[u8]) {
         if install.is_empty() || install.contains('/') {
             tracing::warn!(%topic, "ignoring token message on unexpected topic");
@@ -213,6 +238,11 @@ impl PushService {
         // Never log the payload: it holds the FCM token.
         match self.lock().tokens.handle(topic, payload) {
             TokenStatus::Ignored => tracing::warn!(%topic, "ignoring malformed token message"),
+            TokenStatus::Full => tracing::warn!(
+                %topic,
+                max = crate::tokens::MAX_INSTALLS,
+                "push token list full; install not registered"
+            ),
             TokenStatus::Noop => tracing::debug!(%topic, "token message: nothing to remove"),
             status => tracing::info!(%topic, ?status, "token message"),
         }

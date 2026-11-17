@@ -37,6 +37,13 @@ Producers publish an alert (a v1 or legacy payload) on `nidoo/push/notification/
 
 After each (re)connect the hub waits for its subscription to be acknowledged, then 2 s more for the retained tokens, before it sends; alerts arriving meanwhile wait in the queue. The history is the retained `nidoo/push/history` itself: the hub adopts it at its first sync.
 
+### Limits
+
+Anything that can publish on the broker can reach these topics, so the hub bounds what it takes from them:
+
+- **Alerts on the broker**: each `<source>` gets a burst of 10 alerts, then one every 6 s; all sources together get a burst of 30, then one every 2 s. Alerts over the limit are dropped (the hub logs the first drop of a run, then how many it dropped once the source is back under). Alerts the hub raises itself (alarm, Frigate, watchdogs, flows, MCP) are not limited.
+- **Installs**: at most 32 registered at once. A new install past that is refused and logged; one already registered can still update its token, and an empty payload frees its slot. A token over 1024 characters, or a registration over 4 KiB, is ignored.
+
 ## Service outage pushes
 
 Weather and the Solar forecast can each send a `system` alert when their outside service has been unreachable for 30 minutes ("Weather unreachable", `warning`), and one more when it answers again ("Weather reachable again", `info`). Each is a switch, off by default, in that service's settings. See [Weather](weather.md#tell-me-when-open-meteo-is-unreachable) and [Solar forecast](solar-forecast.md#tell-me-when-solcast-is-unreachable).
