@@ -99,7 +99,8 @@ impl NidooMcp {
     }
 
     /// Holds a temperature and/or a mode on a zone, for `minutes` from now or `until` a Unix
-    /// time (exactly one of the two). Safety still acts.
+    /// time (exactly one of the two). Safety still acts. A whole-zone temperature ends the zone's
+    /// eco.
     #[tool(name = "set_climate_override")]
     async fn set_climate_override(
         &self,
@@ -126,7 +127,8 @@ impl NidooMcp {
     }
 
     /// Puts a zone in eco until a Unix time: it holds the house eco setpoint (never above its
-    /// schedule) and the eco actions, then goes back to its schedule by itself.
+    /// schedule) and the eco actions, then goes back to its schedule by itself. A whole-zone
+    /// temperature override ends it early.
     #[tool(name = "set_climate_eco")]
     async fn set_climate_eco(
         &self,

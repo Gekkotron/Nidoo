@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use nidoo_climate::doc::{
-    Mode, Override, OverrideOrigin, Proposal, ProposalKind, Rejection, RoomEco, Rules, ZoneState,
-    check_setpoint,
+    Mode, Override, OverrideOrigin, Proposal, ProposalKind, Rejection, RoomEco, Rules, Setpoint,
+    ZoneState, check_setpoint,
 };
 use nidoo_climate::topics::{self, ZoneDoc};
 use nidoo_climate::view::LearnStatus;
@@ -240,6 +240,18 @@ impl Hub {
             origin: OverrideOrigin::User,
             ..ov
         };
+        // A boost (whole-zone temperature) means the room is wanted warm: it ends the room's
+        // eco, so the schedule follows the boost instead of eco coming back.
+        let boost = ov.entity.is_none() && matches!(ov.setpoint, Some(Setpoint::Temp(_)));
+        let in_eco = self
+            .climate_store()
+            .zones
+            .get(zone)
+            .is_some_and(|docs| docs.eco.is_some());
+        if boost && in_eco {
+            self.publish_zone_doc(zone, ZoneDoc::Eco, None::<&RoomEco>)?;
+            tracing::info!(zone, "boost: room eco ended");
+        }
         self.update_overrides(zone, |list| {
             list.retain(|o| {
                 o.until > now
