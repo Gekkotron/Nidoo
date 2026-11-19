@@ -835,6 +835,12 @@
   --live-tone: currentColor;
 }
 
+/* A tile icon is drawn in amber, the colour of heat and of a moving robot: a live icon is drawn
+   in ink instead, so its tinted parts stand out. */
+.card__icon .live-icon {
+  color: var(--ink);
+}
+
 .live-icon--cool {
   --live-tone: var(--ring-cool);
 }

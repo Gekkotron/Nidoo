@@ -224,3 +224,64 @@ async fn the_big_robot_picture_stays() {
     tick().await;
     assert!(has(&host, "svg.robot--cleaning"));
 }
+
+/// Loads the real stylesheets once, so computed colours are the ones a user sees.
+fn with_styles() {
+    let document = web_sys::window().unwrap().document().unwrap();
+    if document
+        .get_element_by_id("live-icon-test-styles")
+        .is_some()
+    {
+        return;
+    }
+    let style = document.create_element("style").unwrap();
+    style.set_id("live-icon-test-styles");
+    style.set_text_content(Some(concat!(
+        include_str!("../styles/tokens.css"),
+        include_str!("../styles/main.css"),
+        include_str!("../styles/cards.css"),
+    )));
+    document.head().unwrap().append_child(&style).unwrap();
+}
+
+fn computed(el: &web_sys::Element, property: &str) -> String {
+    web_sys::window()
+        .unwrap()
+        .get_computed_style(el)
+        .unwrap()
+        .unwrap()
+        .get_property_value(property)
+        .unwrap()
+}
+
+#[wasm_bindgen_test]
+async fn heating_air_stands_out_from_the_unit() {
+    with_styles();
+    let host = mount(climate("heat"));
+    tick().await;
+    let svg = host
+        .query_selector(".card__tile svg.live-icon")
+        .unwrap()
+        .unwrap();
+    let flow = host
+        .query_selector(".card__tile .live-icon__flow")
+        .unwrap()
+        .unwrap();
+    assert_ne!(computed(&svg, "color"), computed(&flow, "stroke"));
+}
+
+#[wasm_bindgen_test]
+async fn a_cleaning_robot_stands_out_from_the_room() {
+    with_styles();
+    let host = mount(vacuum("cleaning"));
+    tick().await;
+    let svg = host
+        .query_selector(".card__tile svg.live-icon")
+        .unwrap()
+        .unwrap();
+    let robot = host
+        .query_selector(".card__tile .live-icon__robot")
+        .unwrap()
+        .unwrap();
+    assert_ne!(computed(&svg, "color"), computed(&robot, "color"));
+}

@@ -96,9 +96,9 @@ pub fn trail_dash_offset(t: f64) -> f64 {
 /// One pass over all the rows, in ms, for a fan speed: a stronger suction cleans faster.
 pub fn row_period_ms(fan_speed: Option<&str>) -> f64 {
     match fan_speed.map(str::to_ascii_lowercase).as_deref() {
-        Some("quiet") => 11000.0,
-        Some("turbo") => 6000.0,
-        Some("max") => 4500.0,
+        Some("silent" | "silence" | "quiet" | "eco" | "low") => 11000.0,
+        Some("turbo" | "high") => 6000.0,
+        Some("max" | "max+" | "max_plus") => 4500.0,
         _ => 8000.0,
     }
 }
@@ -183,6 +183,17 @@ mod tests {
         assert_eq!(row_period_ms(Some("max")), 4500.0);
         assert_eq!(row_period_ms(Some("standard")), 8000.0);
         assert_eq!(row_period_ms(None), 8000.0);
+    }
+
+    #[test]
+    fn row_periods_match_the_app_aliases() {
+        for fan in ["silent", "silence", "eco", "low"] {
+            assert_eq!(row_period_ms(Some(fan)), 11000.0, "{fan}");
+        }
+        assert_eq!(row_period_ms(Some("high")), 6000.0);
+        for fan in ["max+", "max_plus"] {
+            assert_eq!(row_period_ms(Some(fan)), 4500.0, "{fan}");
+        }
     }
 
     #[test]
