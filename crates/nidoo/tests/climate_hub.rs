@@ -1588,6 +1588,58 @@ mod engine {
         assert_eq!(temperature_commands(&rig.pass(60).await), vec![19.0]);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn boost_ends_room_eco() {
+        let mut rig = Rig::new(None).await;
+        rig.settings(heat_rules(19.0));
+        rig.hub
+            .set_climate_eco("living", eco_for(&rig, 3 * 3600))
+            .await
+            .unwrap();
+        assert_eq!(temperature_commands(&rig.pass(0).await), vec![16.0]);
+        let one_hour = Override {
+            until: rig.t0 + 3600,
+            ..boost(&rig, 22.0)
+        };
+        rig.hub
+            .set_climate_override("living", one_hour)
+            .await
+            .unwrap();
+        assert_eq!(rig.zone().eco, None);
+        assert_eq!(temperature_commands(&rig.pass(60).await), vec![22.0]);
+        // The boost over, the schedule applies: eco does not come back.
+        assert_eq!(temperature_commands(&rig.pass(3700).await), vec![19.0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn device_and_mode_holds_keep_room_eco() {
+        let mut rig = Rig::new(None).await;
+        rig.settings(heat_rules(19.0));
+        let eco = eco_for(&rig, 3 * 3600);
+        rig.hub
+            .set_climate_eco("living", eco.clone())
+            .await
+            .unwrap();
+        let device = Override {
+            entity: Some(rig.id.clone()),
+            ..boost(&rig, 22.0)
+        };
+        rig.hub
+            .set_climate_override("living", device)
+            .await
+            .unwrap();
+        let mode_only = Override {
+            setpoint: None,
+            mode: Some(Mode::Heat),
+            ..boost(&rig, 22.0)
+        };
+        rig.hub
+            .set_climate_override("living", mode_only)
+            .await
+            .unwrap();
+        assert_eq!(rig.zone().eco, Some(eco));
+    }
+
     /// A test alarm panel in the house presence list; returns its state topic.
     fn alarm_presence(rig: &Rig) -> &'static str {
         rig.hub.ingest(
