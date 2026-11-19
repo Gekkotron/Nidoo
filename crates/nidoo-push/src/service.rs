@@ -3,6 +3,7 @@
 //! service publishes through the hub's channel. The broker is the database: the history is
 //! adopted from the retained `<prefix>/history` at the first sync, the queue is memory only.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 
@@ -16,7 +17,9 @@ use tokio::time::MissedTickBehavior;
 use crate::fcm::{FcmTransport, SendResult, send_data};
 use crate::history::History;
 use crate::limit::{RateLimit, Verdict};
-use crate::normalize::{Alert, Rejected, android_priority, normalize, to_fcm_data, ttl_seconds};
+use crate::normalize::{
+    Alert, Priority, Rejected, android_priority, normalize, to_fcm_data, ttl_seconds,
+};
 use crate::queue::{Pending, RetryQueue};
 use crate::tokens::{TokenStatus, Tokens};
 
@@ -287,11 +290,39 @@ impl PushService {
         Ok(id)
     }
 
+    /// Asks every phone to do something without showing anything: a data message that holds
+    /// only `cmd`, sent at high priority so a sleeping phone wakes for it. It is not an alert,
+    /// so the history never sees it. `ttl` is how long the request stays worth answering.
+    pub fn command(self: &Arc<Self>, cmd: &str, ttl: u32) {
+        if self.transport.is_none() {
+            return;
+        }
+        let now = (self.clock)();
+        let data = BTreeMap::from([
+            ("v".to_owned(), "1".to_owned()),
+            ("cmd".to_owned(), cmd.to_owned()),
+        ]);
+        let pending = Pending {
+            id: format!("cmd-{cmd}-{now}"),
+            data,
+            tokens: None,
+            priority: Priority::High,
+            ttl,
+            queued_at: now,
+            attempts: 0,
+            next_at: now,
+        };
+        let mut st = self.lock();
+        if let Some(job) = self.dispatch(&mut st, pending) {
+            self.enqueue(job);
+        }
+    }
+
     /// After the history holds `alert`: the send to run now, or the queueing while unsynced.
     fn outgoing(&self, st: &mut State, alert: &Alert) -> Option<Job> {
         self.transport.as_ref()?;
         let now = (self.clock)();
-        let mut pending = Pending {
+        let pending = Pending {
             id: alert.id.clone(),
             data: to_fcm_data(alert),
             tokens: None,
@@ -301,6 +332,11 @@ impl PushService {
             attempts: 0,
             next_at: now,
         };
+        self.dispatch(st, pending)
+    }
+
+    /// The send of `pending` to run now, or its queueing while the token map is unsynced.
+    fn dispatch(&self, st: &mut State, mut pending: Pending) -> Option<Job> {
         if !st.synced {
             // Token map not rebuilt yet: resolve the tokens at send time.
             st.queue.add(pending);
@@ -308,7 +344,7 @@ impl PushService {
         }
         let tokens = st.tokens.tokens();
         if tokens.is_empty() {
-            tracing::info!(id = %alert.id, "no registered tokens; alert kept in history only");
+            tracing::info!(id = %pending.id, "no registered tokens; alert kept in history only");
             return None;
         }
         pending.tokens = Some(tokens.clone());

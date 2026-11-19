@@ -193,6 +193,10 @@ pub enum Effect {
     Disarmed {
         source: Source,
     },
+    /// A sensor started the entry delay or the ring while a tracker is away: the phones are
+    /// asked to report where they are now, so a homecoming the phone has not reported yet
+    /// still disarms.
+    AskPresence,
 }
 
 /// The action a remote's signal is mapped to.
@@ -360,7 +364,25 @@ fn opening(
     }
 }
 
+/// A sensor event. When it takes an armed alarm to the entry delay or to the ring, and presence
+/// may disarm, the phones of the trackers that are away are asked for a fresh reading.
 fn sensor(rt: &mut Runtime, s: &AlarmSettings, entity: &str, on: bool, now: u64) -> Vec<Effect> {
+    let was_armed = matches!(rt.phase, Phase::Armed { .. });
+    let mut fx = sensor_event(rt, s, entity, on, now);
+    let someone_away = s.presence.trackers.iter().any(|t| rt.was_away.contains(t));
+    if was_armed && !matches!(rt.phase, Phase::Armed { .. }) && s.presence.disarm && someone_away {
+        fx.push(Effect::AskPresence);
+    }
+    fx
+}
+
+fn sensor_event(
+    rt: &mut Runtime,
+    s: &AlarmSettings,
+    entity: &str,
+    on: bool,
+    now: u64,
+) -> Vec<Effect> {
     let Some(mode) = (match rt.phase {
         Phase::Armed { mode } | Phase::Pending { mode, .. } => Some(mode),
         _ => None,
@@ -812,6 +834,66 @@ mod tests {
                 }
             ]
         );
+    }
+
+    /// Armed away with `tracker.a` watched and last seen away.
+    fn armed_with_tracker_away(s: &mut AlarmSettings) -> Runtime {
+        s.presence.trackers = vec!["tracker.a".into()];
+        let mut rt = armed(s, ArmMode::Away);
+        let away = Event::Tracker {
+            entity: "tracker.a".into(),
+            seen: Presence::Away,
+        };
+        go(&mut rt, s, away, 50);
+        rt
+    }
+
+    #[test]
+    fn entry_delay_asks_the_phones_where_they_are() {
+        let mut s = settings();
+        let mut rt = armed_with_tracker_away(&mut s);
+        let fx = go(&mut rt, &s, sensor_ev("door", true), 100);
+        assert!(matches!(rt.phase, Phase::Pending { .. }));
+        assert_eq!(fx, vec![Effect::AskPresence]);
+        // The phone answers home during the delay: presence disarms.
+        let home = Event::Tracker {
+            entity: "tracker.a".into(),
+            seen: Presence::Home,
+        };
+        let fx = go(&mut rt, &s, home, 110);
+        assert_eq!(rt.phase, Phase::Disarmed);
+        assert!(fx.contains(&Effect::Disarmed {
+            source: Source::Presence
+        }));
+    }
+
+    #[test]
+    fn a_ring_from_armed_asks_the_phones_once() {
+        let mut s = settings();
+        let mut rt = armed_with_tracker_away(&mut s);
+        let fx = go(&mut rt, &s, sensor_ev("window", true), 100);
+        assert!(matches!(rt.phase, Phase::Triggered { .. }));
+        assert_eq!(fx.last(), Some(&Effect::AskPresence));
+        // The end of the entry delay rings without asking again.
+        let mut rt = armed_with_tracker_away(&mut s);
+        go(&mut rt, &s, sensor_ev("door", true), 100);
+        let fx = go(&mut rt, &s, Event::Tick, 130);
+        assert!(matches!(rt.phase, Phase::Triggered { .. }));
+        assert!(!fx.contains(&Effect::AskPresence));
+    }
+
+    #[test]
+    fn nobody_is_asked_when_presence_cannot_disarm() {
+        // No tracker away.
+        let mut s = settings();
+        s.presence.trackers = vec!["tracker.a".into()];
+        let mut rt = armed(&s, ArmMode::Away);
+        assert_eq!(go(&mut rt, &s, sensor_ev("door", true), 100), vec![]);
+        // Disarm by presence switched off.
+        let mut s = settings();
+        let mut rt = armed_with_tracker_away(&mut s);
+        s.presence.disarm = false;
+        assert_eq!(go(&mut rt, &s, sensor_ev("door", true), 100), vec![]);
     }
 
     #[test]

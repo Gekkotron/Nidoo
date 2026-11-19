@@ -129,6 +129,8 @@ Presence works on edges, not levels. It arms once for each time the house emptie
 
 A presence arm skips the exit delay, because you have already left. A manual arm waits out the exit delay (**Exit delay (s)**, 60 s by default, 0 to 300).
 
+A phone can be slow to notice it is home. When a sensor starts the entry delay or the ring while a tracker is away, and presence may disarm, the hub sends the phones a silent push that asks them where they are now. A phone that answers home disarms the alarm as any homecoming does; a phone that is away, off or unreachable changes nothing. This needs push to be set up.
+
 The hub reads the trackers' state at start-up too. A phone that came home while the hub was down disarms the alarm once the hub is back, and a house that emptied while it was down starts the 120 s timer.
 
 ## From a flow

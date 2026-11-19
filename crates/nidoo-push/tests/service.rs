@@ -537,6 +537,25 @@ async fn v1_notification_is_sent_with_normalized_data_priority_and_ttl() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_command_is_a_silent_high_priority_data_message_outside_the_history() {
+    let mut h = harness().ready().await;
+    h.register(&tok("inst-a"), "tokA");
+    h.svc.command("presence_refresh", 60);
+    flush().await;
+    let calls = h.fcm.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].token, "tokA");
+    assert_eq!(calls[0].priority, Priority::High);
+    assert_eq!(calls[0].ttl, 60);
+    let expected = BTreeMap::from([
+        ("cmd".to_string(), "presence_refresh".to_string()),
+        ("v".to_string(), "1".to_string()),
+    ]);
+    assert_eq!(calls[0].data, expected);
+    assert!(h.history_publishes().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn legacy_notification_is_normalized_before_sending() {
     let h = harness().ready().await;
     h.register(&tok("inst-a"), "tokA");

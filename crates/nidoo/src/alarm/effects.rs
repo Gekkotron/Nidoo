@@ -26,6 +26,12 @@ pub(crate) const ALERT_PREFIX: &str = "alarm-";
 /// unresponsive siren delays neither the alert nor a disarm.
 const ALARM_SIREN_CONFIRM: Duration = Duration::from_secs(2);
 
+/// The silent command that makes the app take a position fix and publish its tracker again.
+const PRESENCE_REFRESH: &str = "presence_refresh";
+
+/// An answer later than this no longer helps: the entry delay is over.
+const PRESENCE_REFRESH_TTL: u32 = 60;
+
 /// The id of the offline warning of a watched sensor.
 fn offline_id(entity: &str) -> String {
     format!("{ALERT_PREFIX}offline-{entity}")
@@ -98,6 +104,7 @@ impl Hub {
                 Effect::Disarmed { source } => {
                     self.alarm_state_push("disarmed", &disarmed_body(source));
                 }
+                Effect::AskPresence => self.push().command(PRESENCE_REFRESH, PRESENCE_REFRESH_TTL),
             }
         }
     }
