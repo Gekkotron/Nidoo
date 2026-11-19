@@ -10,10 +10,14 @@ use super::ac::{
     flow_dash_offset, is_dry, vane_y,
 };
 use super::clock::{animations_on, use_phase};
+use super::robot::{
+    BOLT_PERIOD_MS, DOCK_AT, RETURN_HEADING, RETURN_PERIOD_MS, ROWS_D, RobotPose, VacuumScene,
+    bolt_opacity, pose_at, return_pose, row_period_ms, trail_dash_offset, vacuum_scene,
+};
 
 /// Whether `kind` gets a live icon on its card tile.
 pub fn has_live_icon(kind: Kind) -> bool {
-    matches!(kind, Kind::Climate)
+    matches!(kind, Kind::Climate | Kind::Vacuum)
 }
 
 /// The live icon for `entity`, or its static glyph for a kind without one.
@@ -21,6 +25,7 @@ pub fn has_live_icon(kind: Kind) -> bool {
 pub fn LiveIcon(entity: EntityView) -> impl IntoView {
     match entity.kind {
         Kind::Climate => view! { <AcIcon entity=entity /> }.into_any(),
+        Kind::Vacuum => view! { <VacuumIcon entity=entity /> }.into_any(),
         _ => {
             let glyph = crate::icons::entity_icon(&entity);
             view! { <span class="live-icon__glyph" inner_html=glyph></span> }.into_any()
@@ -158,6 +163,124 @@ fn AcIcon(entity: EntityView) -> impl IntoView {
             ></line>
             {air}
             {wet}
+        </svg>
+    }
+}
+
+/// Draws a part in the icon's tone: its `currentColor` becomes `--live-tone`.
+const TINT: &str = "color: var(--live-tone)";
+
+/// The robot, drawn around the origin facing +x and moved to `pose`: a disc, its front bumper and
+/// its centre puck. `tinted` draws it in the icon's tone, else in the tile's colour.
+fn robot(pose: Signal<RobotPose>, tinted: bool, fill_opacity: &'static str) -> impl IntoView {
+    view! {
+        <g
+            class="live-icon__robot"
+            style=tinted.then_some(TINT)
+            transform=move || pose.get().transform()
+            stroke-width="1.3"
+        >
+            <circle r="3.1" fill="currentColor" fill-opacity=fill_opacity></circle>
+            <path d="M2.05 -2.05A2.9 2.9 0 0 1 2.05 2.05"></path>
+            <circle r="1.05" fill="currentColor" stroke="none"></circle>
+        </g>
+    }
+}
+
+/// The dock in the room's bottom right corner; `tinted` while the robot charges in it.
+fn dock(tinted: bool) -> impl IntoView {
+    view! {
+        <rect
+            class="live-icon__dock"
+            style=tinted.then_some(TINT)
+            x="18"
+            y="16.5"
+            width="4"
+            height="5"
+            rx="1"
+            fill="currentColor"
+            fill-opacity="0.22"
+        ></rect>
+    }
+}
+
+/// A robot vacuum in its room: cleaning the rows with a trail, gliding into its dock, charging
+/// there, or still at the start.
+#[component]
+fn VacuumIcon(entity: EntityView) -> impl IntoView {
+    let (state, fan) = match &entity.state.value {
+        StateValue::Vacuum(v) => (v.state.clone(), v.fan_speed.clone()),
+        _ => (None, None),
+    };
+    let scene = vacuum_scene(state.as_deref(), available(&entity));
+    let id = &entity.id;
+    let class = [
+        "live-icon",
+        match scene {
+            VacuumScene::Cleaning | VacuumScene::Returning => "live-icon--moving",
+            VacuumScene::Docked => "live-icon--docked",
+            VacuumScene::Idle => "live-icon--plain",
+        },
+    ]
+    .join(" ");
+    let parts = match scene {
+        VacuumScene::Cleaning => {
+            let rows = phase(id, "rows", row_period_ms(fan.as_deref()), true, 0.5);
+            view! {
+                <path
+                    class="live-icon__trail live-icon__tint"
+                    d=ROWS_D
+                    stroke-width="4.4"
+                    opacity="0.16"
+                    stroke-dasharray="69.5 69.5"
+                    stroke-dashoffset=move || trail_dash_offset(rows.get())
+                ></path>
+                {robot(Signal::derive(move || pose_at(rows.get())), true, "0.35")}
+            }
+            .into_any()
+        }
+        VacuumScene::Returning => {
+            let home = phase(id, "return", RETURN_PERIOD_MS, true, 1.0);
+            view! {
+                {dock(false)}
+                {robot(Signal::derive(move || return_pose(home.get())), true, "0.35")}
+            }
+            .into_any()
+        }
+        VacuumScene::Docked => {
+            let bolt = phase(id, "bolt", BOLT_PERIOD_MS, true, 0.75);
+            let at = RobotPose {
+                x: DOCK_AT.0,
+                y: DOCK_AT.1,
+                heading_deg: RETURN_HEADING,
+            };
+            view! {
+                {dock(true)}
+                {robot(Signal::stored(at), false, "0.22")}
+                <path
+                    class="live-icon__bolt"
+                    d="M12.3 8 L10 12 h2.5 l-.8 3.8 L14.4 11.5 H11.9 L12.8 8z"
+                    opacity=move || bolt_opacity(bolt.get())
+                ></path>
+            }
+            .into_any()
+        }
+        VacuumScene::Idle => robot(Signal::stored(pose_at(0.0)), false, "0.22").into_any(),
+    };
+    view! {
+        <svg
+            class=class
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <rect x="1.5" y="2" width="21" height="20.5" rx="3" stroke-width="1" opacity="0.28"></rect>
+            {parts}
         </svg>
     }
 }

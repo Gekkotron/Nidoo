@@ -40,8 +40,10 @@ const NUMBER: &str =
 const SELECT: &str =
     svg!(r#"<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9 11 3 3 3-3"/>"#);
 const BUTTON: &str = svg!(r#"<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/>"#);
+/// A robot vacuum still at the start of its room: the still pose of the live tile icon
+/// (`live_icon::view`).
 const VACUUM: &str = svg!(
-    r#"<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M6 17.5l2-2"/>"#
+    r#"<rect x="1.5" y="2" width="21" height="20.5" rx="3" stroke-width="1" opacity=".28"/><circle cx="5" cy="5.5" r="3.1" stroke-width="1.3"/><path d="M7.05 3.45A2.9 2.9 0 0 1 7.05 7.55" stroke-width="1.3"/><circle cx="5" cy="5.5" r="1.05" fill="currentColor" stroke="none"/>"#
 );
 const WATER_HEATER: &str = svg!(
     r#"<path d="M12 3s6 6.2 6 11a6 6 0 0 1-12 0c0-4.8 6-11 6-11z"/><path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5"/>"#

@@ -149,3 +149,78 @@ async fn airflow_moves_between_frames() {
     sleep_ms(250).await;
     assert_ne!(before, flow.get_attribute("stroke-dashoffset"));
 }
+
+fn vacuum(activity: &str) -> EntityView {
+    let mut e = entity(
+        "vacuum.robot",
+        Kind::Vacuum,
+        StateValue::Vacuum(VacuumState {
+            state: Some(activity.into()),
+            battery: Some(100),
+            fan_speed: Some("turbo".into()),
+        }),
+    );
+    e.state.availability = Availability::Online;
+    e.capabilities.vacuum_actions = ["start", "pause", "return_to_base", "clean_spot"]
+        .map(String::from)
+        .to_vec();
+    e.capabilities.fan_speeds = vec!["quiet".into(), "turbo".into()];
+    e
+}
+
+#[wasm_bindgen_test]
+async fn cleaning_tile_drives_rows() {
+    let host = mount(vacuum("cleaning"));
+    tick().await;
+    assert!(has(
+        &host,
+        ".card__tile svg.live-icon--moving .live-icon__trail"
+    ));
+    let robot = host
+        .query_selector(".card__tile .live-icon__robot")
+        .unwrap()
+        .unwrap();
+    let before = robot.get_attribute("transform");
+    sleep_ms(250).await;
+    assert_ne!(before, robot.get_attribute("transform"));
+}
+
+#[wasm_bindgen_test]
+async fn returning_tile_heads_for_the_dock() {
+    let host = mount(vacuum("returning"));
+    tick().await;
+    assert!(has(
+        &host,
+        ".card__tile svg.live-icon--moving .live-icon__dock"
+    ));
+    assert!(!has(&host, ".card__tile .live-icon__trail"));
+}
+
+#[wasm_bindgen_test]
+async fn docked_tile_charges() {
+    let host = mount(vacuum("docked"));
+    tick().await;
+    assert!(has(
+        &host,
+        ".card__tile svg.live-icon--docked .live-icon__bolt"
+    ));
+}
+
+#[wasm_bindgen_test]
+async fn error_tile_is_still() {
+    let host = mount(vacuum("error"));
+    tick().await;
+    assert!(has(
+        &host,
+        ".card__tile svg.live-icon--plain .live-icon__robot"
+    ));
+    assert!(!has(&host, ".card__tile .live-icon__trail"));
+    assert!(!has(&host, ".card__tile .live-icon__bolt"));
+}
+
+#[wasm_bindgen_test]
+async fn the_big_robot_picture_stays() {
+    let host = mount(vacuum("cleaning"));
+    tick().await;
+    assert!(has(&host, "svg.robot--cleaning"));
+}
