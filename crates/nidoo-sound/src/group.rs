@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -34,6 +34,9 @@ const TICK: Duration = Duration::from_millis(5);
 const SPEECH_END_MARGIN_US: i64 = 100_000;
 /// Pause between connection attempts to an advertised player.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+/// Slots of a player's command queue that audio leaves free, so stream and
+/// volume changes still fit when its connection stops taking audio.
+const CONTROL_ROOM: usize = 16;
 
 /// Changes asked for from Nidoo (MQTT commands).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +207,8 @@ struct Link {
     /// timestamps only go up, even when music and speech take turns.
     /// `NO_TS` when the stream has sent nothing yet.
     next_ts: AtomicI64,
+    /// Audio chunks dropped in a row because the queue was full.
+    dropped: AtomicU64,
 }
 
 /// `Link::next_ts` before the first chunk of a stream.
@@ -230,6 +235,7 @@ impl Link {
             held: false,
             fade_from: None,
             next_ts: AtomicI64::new(NO_TS),
+            dropped: AtomicU64::new(0),
         }
     }
 
@@ -269,7 +275,7 @@ impl Link {
     }
 
     async fn send_volume(&mut self, device: u8) {
-        self.send(PlayerCmd::Volume(device)).await;
+        self.send(PlayerCmd::Volume(device));
         self.sent_volume = Some(device);
         self.expect_volume = Some(device);
     }
@@ -296,21 +302,38 @@ impl Link {
         }
         self.next_ts
             .store(timestamp_us + CHUNK_US, Ordering::Relaxed);
-        if self
-            .cmds
-            .try_send(PlayerCmd::Audio { timestamp_us, data })
-            .is_err()
-        {
-            tracing::debug!(client_id = ?self.client_id, "player queue full, chunk dropped");
+        // The group is the queue's only sender: the room it sees stays free.
+        let queued = self.cmds.capacity() > CONTROL_ROOM
+            && self
+                .cmds
+                .try_send(PlayerCmd::Audio { timestamp_us, data })
+                .is_ok();
+        if queued {
+            let dropped = self.dropped.swap(0, Ordering::Relaxed);
+            if dropped > 0 {
+                tracing::info!(client_id = ?self.client_id, dropped, "player takes audio again");
+            }
+        } else if self.dropped.fetch_add(1, Ordering::Relaxed) == 0 && !self.cmds.is_closed() {
+            tracing::warn!(client_id = ?self.client_id, "player queue full, dropping audio");
         }
     }
 
-    async fn send(&self, cmd: PlayerCmd) {
+    /// Queues a command without waiting: one stuck player must not hold up the
+    /// group. A command that finds no room is dropped; the stuck connection
+    /// ends ([`crate::player::Liveness::write_stall`]) and the reconnect sends
+    /// the player's whole state again.
+    fn send(&self, cmd: PlayerCmd) {
         if matches!(cmd, PlayerCmd::StreamStart(_) | PlayerCmd::StreamEnd) {
             self.next_ts.store(NO_TS, Ordering::Relaxed);
         }
-        if self.cmds.send(cmd).await.is_err() {
-            tracing::debug!(client_id = ?self.client_id, "player connection gone");
+        match self.cmds.try_send(cmd) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(cmd)) => {
+                tracing::warn!(client_id = ?self.client_id, ?cmd, "player queue full, command dropped");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!(client_id = ?self.client_id, "player connection gone");
+            }
         }
     }
 }
@@ -437,7 +460,7 @@ impl Group {
     pub async fn end_streams(&mut self) {
         for link in self.links_mut() {
             if link.streaming {
-                link.send(PlayerCmd::StreamEnd).await;
+                link.send(PlayerCmd::StreamEnd);
                 link.streaming = false;
             }
         }
@@ -587,13 +610,12 @@ impl Group {
                 link.connected = true;
                 link.send(PlayerCmd::Activate {
                     playback: prefs.allowed,
-                })
-                .await;
+                });
                 link.set_levels(&prefs, true).await;
-                link.send(PlayerCmd::Mute(prefs.muted)).await;
+                link.send(PlayerCmd::Mute(prefs.muted));
                 link.expect_mute = Some(prefs.muted);
                 if playing && prefs.allowed {
-                    link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16)).await;
+                    link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16));
                     link.streaming = true;
                 }
                 self.publish(publish, &info.client_id).await;
@@ -680,7 +702,7 @@ impl Group {
             tracing::info!(old = %name, new = %instance, %client_id, "player connected again, closing its older connection");
             link.connected = false;
             link.streaming = false;
-            link.send(PlayerCmd::Close).await;
+            link.send(PlayerCmd::Close);
         }
     }
 
@@ -708,22 +730,22 @@ impl Group {
                     link.set_levels(&prefs, false).await;
                 }
                 Control::SetMute { .. } => {
-                    link.send(PlayerCmd::Mute(prefs.muted)).await;
+                    link.send(PlayerCmd::Mute(prefs.muted));
                     link.expect_mute = Some(prefs.muted);
                 }
                 Control::SetAllowed { allowed: true, .. } => {
-                    link.send(PlayerCmd::Activate { playback: true }).await;
+                    link.send(PlayerCmd::Activate { playback: true });
                     if playing && !link.streaming {
-                        link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16)).await;
+                        link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16));
                         link.streaming = true;
                     }
                 }
                 Control::SetAllowed { allowed: false, .. } => {
                     if link.streaming {
-                        link.send(PlayerCmd::StreamEnd).await;
+                        link.send(PlayerCmd::StreamEnd);
                         link.streaming = false;
                     }
-                    link.send(PlayerCmd::Activate { playback: false }).await;
+                    link.send(PlayerCmd::Activate { playback: false });
                 }
                 Control::Remove { .. } => {}
             }
@@ -752,11 +774,11 @@ impl Group {
                 continue;
             }
             if link.streaming {
-                link.send(PlayerCmd::StreamEnd).await;
+                link.send(PlayerCmd::StreamEnd);
                 link.streaming = false;
             }
             link.connected = false;
-            link.send(PlayerCmd::Close).await;
+            link.send(PlayerCmd::Close);
         }
         publish.send(Published::Removed { prefs }).await.ok();
     }
@@ -780,7 +802,7 @@ impl Group {
                 for link in self.links_mut() {
                     let is_allowed = link.client_id.as_ref().is_some_and(|c| allowed.contains(c));
                     if link.connected && is_allowed && !link.streaming {
-                        link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16)).await;
+                        link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16));
                         link.streaming = true;
                     }
                 }
@@ -859,7 +881,7 @@ impl Group {
                     next = next.max(n);
                 }
             } else {
-                link.send(PlayerCmd::StreamEnd).await;
+                link.send(PlayerCmd::StreamEnd);
                 link.streaming = false;
             }
         }
@@ -969,7 +991,7 @@ impl Group {
         for link in self.links_mut() {
             let target = link.short_id().is_some_and(|s| targets.contains(&s));
             if target && link.connected && !link.streaming {
-                link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16)).await;
+                link.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16));
                 link.streaming = true;
             }
         }
@@ -1264,7 +1286,12 @@ mod tests {
 
         /// A player that connected to us and finished its handshake.
         async fn accepted(&mut self, instance: &str) -> Fake {
-            let (tx, cmds) = mpsc::channel(4096);
+            self.accepted_with(instance, 4096).await
+        }
+
+        /// [`Harness::accepted`] with a command queue of `capacity`.
+        async fn accepted_with(&mut self, instance: &str, capacity: usize) -> Fake {
+            let (tx, cmds) = mpsc::channel(capacity);
             self.to_group
                 .send(FromPlayer::Accepted {
                     instance: instance.into(),
@@ -2422,5 +2449,48 @@ mod tests {
         assert!(got_b.iter().any(|(_, d)| has_sample(d, quiet)));
         assert!(!got_b.iter().any(|(_, d)| has_sample(d, 8_000)));
         assert_eq!(got_a, got_c, "equal pairs get identical bytes");
+    }
+
+    #[tokio::test]
+    async fn a_stuck_player_does_not_hold_up_the_others() {
+        let mut h = Harness::start_with(&[("A", 30, false, true), ("B", 30, false, true)]).await;
+        let (mut a, _) = h.ready_player("a", "A").await;
+        // B's connection stopped taking commands: its small queue fills up.
+        let mut b = h.accepted_with("b", 32).await;
+        b.connected("B").await;
+        b.state("B", 30, false).await;
+        h.play().await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+        h.input
+            .send(InputEvent::Pcm(bytes::Bytes::from(vec![
+                1u8;
+                200 * CHUNK_BYTES
+            ])))
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            h.clock.advance(CHUNK_US);
+            a.audio().await;
+        }
+
+        // Stopping and restarting sends B control commands while its queue is full.
+        h.input.send(InputEvent::Stopped).await.unwrap();
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamEnd));
+        h.play().await;
+        assert!(matches!(a.control_cmd().await, PlayerCmd::StreamStart(_)));
+
+        // Room was kept for B's control commands: it ends and restarts its stream.
+        let got = b.drain().await;
+        let controls: Vec<_> = got
+            .iter()
+            .filter(|c| !matches!(c, PlayerCmd::Audio { .. }))
+            .collect();
+        assert!(
+            matches!(
+                controls[controls.len() - 2..],
+                [PlayerCmd::StreamEnd, PlayerCmd::StreamStart(_)]
+            ),
+            "{controls:?}"
+        );
     }
 }

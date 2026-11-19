@@ -55,6 +55,11 @@ pub struct Liveness {
     pub silence: Duration,
     /// Send a WebSocket ping this often; the pong counts as a frame.
     pub ping_every: Option<Duration>,
+    /// One frame not taken by the player within this long ends the
+    /// connection: a player that stopped reading (or a link that dropped
+    /// without a reset) would otherwise block the write until TCP gives up,
+    /// many minutes later, while every chunk for it is dropped.
+    pub write_stall: Duration,
 }
 
 impl Liveness {
@@ -63,6 +68,7 @@ impl Liveness {
     pub const SATELLITE: Liveness = Liveness {
         silence: Duration::from_secs(35),
         ping_every: None,
+        write_stall: WRITE_STALL,
     };
     /// Players that connect to us: a browser tab in the background may send
     /// nothing for a minute (throttled timers) but its network stack still
@@ -70,8 +76,13 @@ impl Liveness {
     pub const INBOUND: Liveness = Liveness {
         silence: Duration::from_secs(35),
         ping_every: Some(Duration::from_secs(10)),
+        write_stall: WRITE_STALL,
     };
 }
+
+/// We only send what fits in the player's announced buffer, so a reading
+/// player takes each frame at once; a few seconds is a stuck one.
+const WRITE_STALL: Duration = Duration::from_secs(10);
 /// How often queued audio is re-checked against the player's buffer.
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -200,6 +211,7 @@ async fn session(
         reassembler: Reassembler::default(),
         clock,
         last_rx: Instant::now(),
+        write_stall: liveness.write_stall,
     };
     conn.send(&ServerMsg::Hello(ServerHello {
         name: SERVER_NAME.into(),
@@ -251,7 +263,7 @@ async fn session(
             }
             _ = tokio::time::sleep(PUMP_INTERVAL), if pumping => {}
             _ = tokio::time::sleep_until(next_ping), if liveness.ping_every.is_some() => {
-                conn.ws.send(Message::Ping(Vec::new().into())).await?;
+                conn.write(Message::Ping(Vec::new().into())).await?;
                 next_ping = Instant::now() + ping_every;
             }
             // Pongs are read inside `recv`, so look again before giving up.
@@ -263,7 +275,7 @@ async fn session(
         }
         s.pump(&mut conn).await?;
     }
-    let _ = conn.ws.close(None).await;
+    let _ = timeout(conn.write_stall, conn.ws.close(None)).await;
     Ok(())
 }
 
@@ -351,6 +363,8 @@ struct Conn {
     clock: Arc<dyn Clock>,
     /// When the player last sent any frame (a pong included).
     last_rx: Instant,
+    /// See [`Liveness::write_stall`].
+    write_stall: Duration,
 }
 
 impl Conn {
@@ -363,7 +377,14 @@ impl Conn {
 
     async fn send_plain(&mut self, plain: &[u8]) -> anyhow::Result<()> {
         let cipher = self.noise.encrypt(plain)?;
-        self.ws.send(Message::Binary(cipher.into())).await?;
+        self.write(Message::Binary(cipher.into())).await
+    }
+
+    /// Sends one frame, giving up on a player that does not take it.
+    async fn write(&mut self, msg: Message) -> anyhow::Result<()> {
+        timeout(self.write_stall, self.ws.send(msg))
+            .await
+            .map_err(|_| anyhow::anyhow!("the player took nothing for {:?}", self.write_stall))??;
         Ok(())
     }
 

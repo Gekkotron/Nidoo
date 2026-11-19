@@ -740,6 +740,7 @@ async fn pongs_keep_a_quiet_client_initiated_player() {
     let mut l = listen_with(Liveness {
         silence: Duration::from_millis(400),
         ping_every: Some(Duration::from_millis(100)),
+        write_stall: Duration::from_secs(5),
     })
     .await;
     let (mut p, cmds) = joined(&mut l).await;
@@ -757,6 +758,7 @@ async fn a_silent_player_without_pings_is_dropped() {
     let mut l = listen_with(Liveness {
         silence: Duration::from_millis(400),
         ping_every: None,
+        write_stall: Duration::from_secs(5),
     })
     .await;
     let (mut p, _cmds) = joined(&mut l).await;
@@ -768,4 +770,63 @@ async fn a_silent_player_without_pings_is_dropped() {
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn a_player_that_stops_reading_is_dropped() {
+    // Long silence: only the stalled write may end this connection.
+    let mut l = listen_with(Liveness {
+        silence: Duration::from_secs(60),
+        ping_every: None,
+        write_stall: Duration::from_millis(300),
+    })
+    .await;
+    let mut p = player_handshake(l.open("/sendspin").await.unwrap(), false).await;
+    // A buffer that never limits sending: the socket is what fills up.
+    p.send_json(FakePlayer::hello(u32::MAX)).await;
+    let FromPlayer::Accepted { cmds, .. } = l.next().await else {
+        panic!("expected Accepted")
+    };
+    assert!(matches!(
+        l.next().await,
+        FromPlayer::Event {
+            event: PlayerEvent::Connected(_),
+            ..
+        }
+    ));
+    p.send_json(FakePlayer::state(&[])).await;
+    assert!(matches!(
+        l.next().await,
+        FromPlayer::Event {
+            event: PlayerEvent::State { .. },
+            ..
+        }
+    ));
+    cmds.send(PlayerCmd::StreamStart(PCM_48K_STEREO_16))
+        .await
+        .unwrap();
+    // From here the player reads nothing; the audio piles up in the sockets.
+    let feed = tokio::spawn(async move {
+        for i in 0..20_000i64 {
+            let audio = PlayerCmd::Audio {
+                timestamp_us: 1_000_000 + i * 20_000,
+                data: bytes::Bytes::from(vec![0; 3840]),
+            };
+            if cmds.send(audio).await.is_err() {
+                return;
+            }
+        }
+    });
+    loop {
+        match l.next().await {
+            FromPlayer::Event {
+                event: PlayerEvent::Gone { .. },
+                ..
+            } => break,
+            FromPlayer::Event { .. } => continue,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    feed.abort();
+    drop(p);
 }
