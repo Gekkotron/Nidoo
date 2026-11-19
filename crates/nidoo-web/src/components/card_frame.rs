@@ -8,6 +8,7 @@ use crate::components::card_place::{CardPlace, use_card_place};
 use crate::format::room_name;
 use crate::house::House;
 use crate::icons::entity_icon;
+use crate::live_icon::view::{LiveIcon, has_live_icon};
 
 /// The prefix of the id of a hand-made group's entity.
 pub const GROUP_PREFIX: &str = "group_";
@@ -79,6 +80,8 @@ pub fn CardFrame(
     #[prop(optional)]
     children: Option<Children>,
 ) -> impl IntoView {
+    // A climate or vacuum tile draws its live icon, unless the card chose its own glyph.
+    let live_icon = (icon.is_none() && has_live_icon(entity.kind)).then(|| entity.clone());
     let icon = icon.unwrap_or_else(|| entity_icon(&entity));
     let availability = entity.state.availability;
     let is_on = crate::format::is_on(&entity.state);
@@ -138,7 +141,13 @@ pub fn CardFrame(
             <div class="card__top">
                 <button type="button" class="card__header" on:click=move |_| on_click.run(())>
                     <span class="card__tile">
-                        <span class="card__icon" inner_html=icon></span>
+                        {match live_icon {
+                            Some(entity) => {
+                                view! { <span class="card__icon"><LiveIcon entity=entity /></span> }
+                                    .into_any()
+                            }
+                            None => view! { <span class="card__icon" inner_html=icon></span> }.into_any(),
+                        }}
                         <span class="card__dots">
                             <span class="dot dot--pending" class:dot--active=move || pending.get()></span>
                             <span class=availability_class(availability)></span>

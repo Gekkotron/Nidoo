@@ -4,3 +4,4 @@
 pub mod ac;
 pub mod clock;
 pub mod robot;
+pub mod view;

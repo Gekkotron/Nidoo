@@ -828,3 +828,44 @@
     height: 76px;
   }
 }
+
+/* Live AC and robot icons on card tiles (live_icon/view.rs): the moving parts take the tone of
+   the mode or activity; the rest is drawn in the tile's own colour. */
+.live-icon {
+  --live-tone: currentColor;
+}
+
+.live-icon--cool {
+  --live-tone: var(--ring-cool);
+}
+
+.live-icon--heat {
+  --live-tone: var(--ring-heat);
+}
+
+.live-icon--auto {
+  --live-tone: var(--ring-other);
+}
+
+.live-icon--moving {
+  --live-tone: var(--warning);
+}
+
+.live-icon--docked {
+  --live-tone: var(--connected);
+}
+
+.live-icon__tint {
+  stroke: var(--live-tone);
+}
+
+.live-icon__led,
+.live-icon__drop,
+.live-icon__bolt {
+  fill: var(--live-tone);
+  stroke: none;
+}
+
+.live-icon__glyph {
+  display: contents;
+}
