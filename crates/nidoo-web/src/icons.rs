@@ -24,9 +24,10 @@ const SWITCH: &str = svg!(
 const COVER: &str = svg!(
     r#"<path d="M4 4h16"/><path d="M5 4v6h14V4"/><path d="M5 10v2h14v-2"/><path d="M12 14v6"/><path d="M9.5 17.5 12 20l2.5-2.5"/>"#
 );
-/// A wall air conditioner blowing air, so a climate entity never reads as a thermometer.
+/// A wall air conditioner with its vane closed: the still pose of the live tile icon
+/// (`live_icon::view`), so a climate entity never reads as a thermometer.
 const CLIMATE: &str = svg!(
-    r#"<rect x="3" y="4" width="18" height="9" rx="2"/><path d="M6.5 10h11"/><path d="m8 16-1 3.5"/><path d="M12 16v4"/><path d="m16 16 1 3.5"/>"#
+    r#"<rect x="2.5" y="4" width="19" height="8.4" rx="2.6"/><path d="M5.5 7.3h9"/><path d="M6 14.4h12"/>"#
 );
 const SENSOR: &str = svg!(r#"<path d="M3 12h4l3-7 4 14 3-7h4"/>"#);
 const BINARY_SENSOR: &str = svg!(
@@ -39,8 +40,10 @@ const NUMBER: &str =
 const SELECT: &str =
     svg!(r#"<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m9 11 3 3 3-3"/>"#);
 const BUTTON: &str = svg!(r#"<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/>"#);
+/// A robot vacuum still at the start of its room: the still pose of the live tile icon
+/// (`live_icon::view`).
 const VACUUM: &str = svg!(
-    r#"<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M6 17.5l2-2"/>"#
+    r#"<rect x="1.5" y="2" width="21" height="20.5" rx="3" stroke-width="1" opacity=".28"/><circle cx="5" cy="5.5" r="3.1" stroke-width="1.3"/><path d="M7.05 3.45A2.9 2.9 0 0 1 7.05 7.55" stroke-width="1.3"/><circle cx="5" cy="5.5" r="1.05" fill="currentColor" stroke="none"/>"#
 );
 const WATER_HEATER: &str = svg!(
     r#"<path d="M12 3s6 6.2 6 11a6 6 0 0 1-12 0c0-4.8 6-11 6-11z"/><path d="M9.5 14.5a2.5 2.5 0 0 0 2.5 2.5"/>"#
