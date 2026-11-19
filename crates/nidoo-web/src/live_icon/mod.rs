@@ -2,3 +2,4 @@
 //! tested), the drawing follows the entity's state, and one shared frame loop moves them.
 
 pub mod ac;
+pub mod robot;
