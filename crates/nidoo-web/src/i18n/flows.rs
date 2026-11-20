@@ -191,6 +191,12 @@ pub enum FlowText {
     IsOffPeakSub,
     OpIsOffPeak,
     OffPeakEdge,
+    NodeAlarm,
+    AlarmSub,
+    AlarmFiresWhen,
+    AlarmOnlyAfter,
+    AlarmAnyMode,
+    AlarmArmedAny,
     NodeManual,
     ManualSub,
     ManualValue,
@@ -521,6 +527,12 @@ impl FlowText {
         FlowText::IsOffPeakSub,
         FlowText::OpIsOffPeak,
         FlowText::OffPeakEdge,
+        FlowText::NodeAlarm,
+        FlowText::AlarmSub,
+        FlowText::AlarmFiresWhen,
+        FlowText::AlarmOnlyAfter,
+        FlowText::AlarmAnyMode,
+        FlowText::AlarmArmedAny,
         FlowText::NodeManual,
         FlowText::ManualSub,
         FlowText::ManualValue,
@@ -737,6 +749,15 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::IsOffPeakSub => ("Off-peak hours right now", "Heures creuses en ce moment"),
         T::OpIsOffPeak => ("is off-peak", "heures creuses"),
         T::OffPeakEdge => ("Fires when", "Se déclenche quand"),
+        T::NodeAlarm => ("Alarm", "Alarme"),
+        T::AlarmSub => (
+            "When the alarm changes mode",
+            "Quand l'alarme change de mode",
+        ),
+        T::AlarmFiresWhen => ("Fires when it becomes", "Se déclenche quand elle passe en"),
+        T::AlarmOnlyAfter => ("Only after", "Seulement après"),
+        T::AlarmAnyMode => ("Any mode", "N'importe quel mode"),
+        T::AlarmArmedAny => ("Armed (any mode)", "Activée (tous modes)"),
         T::WhenDarkSub => ("Between dusk and dawn", "Entre le crépuscule et l'aube"),
         T::SwitchCard => ("Switch", "Commuter"),
         T::SwitchSub => (
@@ -1404,6 +1425,38 @@ pub fn when_becomes(lang: Lang, e: &str, v: &str) -> String {
         lang,
         format!("When {e} becomes {v}"),
         format!("Quand {e} devient {v}"),
+    )
+}
+
+/// "When the alarm changes mode" / "Quand l'alarme change de mode".
+pub fn alarm_changes(lang: Lang) -> String {
+    flow_text(lang, FlowText::AlarmSub).to_owned()
+}
+
+/// "When the alarm becomes Triggered" / "Quand l'alarme passe en Déclenchée".
+pub fn alarm_becomes(lang: Lang, to: &str) -> String {
+    pick(
+        lang,
+        format!("When the alarm becomes {to}"),
+        format!("Quand l'alarme passe en {to}"),
+    )
+}
+
+/// "When the alarm leaves Disarmed" / "Quand l'alarme quitte Désactivée".
+pub fn alarm_leaves(lang: Lang, from: &str) -> String {
+    pick(
+        lang,
+        format!("When the alarm leaves {from}"),
+        format!("Quand l'alarme quitte {from}"),
+    )
+}
+
+/// "When the alarm goes from Disarmed to Armed" / "Quand l'alarme passe de Désactivée à Activée".
+pub fn alarm_goes(lang: Lang, from: &str, to: &str) -> String {
+    pick(
+        lang,
+        format!("When the alarm goes from {from} to {to}"),
+        format!("Quand l'alarme passe de {from} à {to}"),
     )
 }
 

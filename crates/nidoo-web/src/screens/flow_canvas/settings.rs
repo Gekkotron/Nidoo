@@ -4,9 +4,9 @@
 
 use leptos::prelude::*;
 use nidoo_core::flow::{
-    ASK_MAX_ANSWERS, AskAnswer, Flow, IfParams, MAX_SWITCH_RULES, Missing, Node, NodeKind,
-    OffPeakEdge, Op, RuleOp, Scalar, SwitchParams, SwitchRule, TimeBetweenParams,
-    command_with_number, is_valid_name, math_names,
+    ASK_MAX_ANSWERS, AlarmModeFilter, AskAnswer, Flow, IfParams, MAX_SWITCH_RULES, Missing, Node,
+    NodeKind, OffPeakEdge, Op, RuleOp, Scalar, SwitchParams, SwitchRule, TimeBetweenParams,
+    TriggerAlarmParams, command_with_number, is_valid_name, math_names,
 };
 use nidoo_core::model::{Command, Kind};
 
@@ -32,8 +32,8 @@ use crate::i18n::picker::PickerText;
 use crate::i18n::states::{kind_word, on_off};
 use crate::i18n::{Lang, use_lang};
 use crate::if_value::{
-    ValueInput, ValueOf, after_entity_change, average_allowed, compared_input, manual_value_input,
-    upstream_manual_value, upstream_trigger_entity, upstream_trigger_field, value_input_of,
+    ValueInput, ValueOf, after_entity_change, average_allowed, compared_input,
+    upstream_trigger_entity, upstream_trigger_field, upstream_value_input, value_input_of,
     value_of_choices,
 };
 use crate::screens::flow_schedule::ScheduleField;
@@ -346,6 +346,7 @@ fn node_editor_body(
         NodeKind::TriggerSchedule(_) => FlowText::Schedule,
         NodeKind::TriggerSun(_) => FlowText::NodeSun,
         NodeKind::TriggerOffPeak(_) => FlowText::NodeOffPeak,
+        NodeKind::TriggerAlarm(_) => FlowText::NodeAlarm,
         NodeKind::TriggerSilent(_) => FlowText::NodeSilent,
         NodeKind::Limit(_) => FlowText::NodeLimit,
         NodeKind::TriggerManual(_) => FlowText::NodeManual,
@@ -1751,9 +1752,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                     compared_input(
                         lang(),
                         next.as_ref(),
-                        draft
-                            .with(|f| upstream_manual_value(f, &entity_id))
-                            .as_ref(),
+                        draft.with(|f| upstream_value_input(lang(), f, &entity_id)),
                     )
                 });
                 form.update(&entity_id, |n| {
@@ -1956,6 +1955,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
             sun_sheet(node, cfg).into_any()
         }
         NodeKind::TriggerOffPeak(p) => off_peak_fields(form, id, p.edge).into_any(),
+        NodeKind::TriggerAlarm(p) => alarm_fields(form, id, p).into_any(),
         NodeKind::TriggerManual(p) => manual_fields(form, id, p.value).into_any(),
         NodeKind::FlowEnable(p) => flow_enable_fields(form, id, p).into_any(),
         NodeKind::FlowLabel(p) => flow_label_fields(form, id, p).into_any(),
@@ -2370,14 +2370,10 @@ fn rule_row(
     }
 }
 
-/// The input a Manual card upstream of `id` calls for, read from the draft as it changes.
+/// The input a Manual or Alarm card upstream of `id` calls for, read from the draft as it changes.
 fn manual_input(draft: RwSignal<nidoo_core::flow::Flow>, id: String) -> Signal<Option<ValueInput>> {
     let lang = use_lang();
-    Signal::derive(move || {
-        draft
-            .with(|f| upstream_manual_value(f, &id))
-            .map(|v| manual_value_input(lang(), &v))
-    })
+    Signal::derive(move || draft.with(|f| upstream_value_input(lang(), f, &id)))
 }
 
 /// The `switch` editor: what it compares, then one row per rule, then the exits.
@@ -2479,9 +2475,7 @@ fn switch_fields(form: Form, id: String, p: SwitchParams) -> impl IntoView {
             compared_input(
                 lang(),
                 next.as_ref(),
-                draft
-                    .with(|f| upstream_manual_value(f, &entity_id))
-                    .as_ref(),
+                draft.with(|f| upstream_value_input(lang(), f, &entity_id)),
             )
         });
         form.update(&entity_id, |n| {
@@ -2756,6 +2750,50 @@ fn off_peak_fields(form: Form, id: String, initial: OffPeakEdge) -> impl IntoVie
                 {chip(OffPeakEdge::End)}
             </div>
         </div>
+    }
+}
+
+/// The alarm trigger's two mode filters: the mode it fires on and the mode it must leave.
+fn alarm_fields(form: Form, id: String, p: TriggerAlarmParams) -> impl IntoView {
+    let lang = use_lang();
+    let field = move |label: FlowText,
+                      current: Option<AlarmModeFilter>,
+                      write: fn(&mut TriggerAlarmParams, Option<AlarmModeFilter>)| {
+        let id = id.clone();
+        let on_change = move |ev: web_sys::Event| {
+            let chosen = AlarmModeFilter::ALL
+                .into_iter()
+                .find(|m| m.as_str() == event_target_value(&ev));
+            form.update(&id, |n| {
+                if let NodeKind::TriggerAlarm(ref mut p) = n.kind {
+                    write(p, chosen);
+                }
+            });
+        };
+        view! {
+            <label class="node-editor__field">
+                <span class="node-editor__label">{move || flow_text(lang(), label)}</span>
+                <select class="field" on:change=on_change>
+                    <option value="" selected=current.is_none()>
+                        {move || flow_text(lang(), FlowText::AlarmAnyMode)}
+                    </option>
+                    {AlarmModeFilter::ALL
+                        .into_iter()
+                        .map(|mode| {
+                            view! {
+                                <option value=mode.as_str() selected=current == Some(mode)>
+                                    {move || crate::flow_text::alarm_mode_label(lang(), mode)}
+                                </option>
+                            }
+                        })
+                        .collect_view()}
+                </select>
+            </label>
+        }
+    };
+    view! {
+        {field(FlowText::AlarmFiresWhen, p.to, |p, v| p.to = v)}
+        {field(FlowText::AlarmOnlyAfter, p.from, |p, v| p.from = v)}
     }
 }
 

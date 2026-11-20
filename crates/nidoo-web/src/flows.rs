@@ -65,6 +65,7 @@ fn summary_label(lang: Lang, node: &Node) -> String {
         NodeKind::TriggerSchedule(p) => describe(lang, &p.cron),
         NodeKind::TriggerSun(_) => flow_text(lang, FlowText::NodeSun).into(),
         NodeKind::TriggerOffPeak(_) => flow_text(lang, FlowText::NodeOffPeak).into(),
+        NodeKind::TriggerAlarm(_) => flow_text(lang, FlowText::NodeAlarm).into(),
         NodeKind::TriggerSilent(_) => flow_text(lang, FlowText::NodeSilent).into(),
         NodeKind::Limit(_) => flow_text(lang, FlowText::NodeLimit).into(),
         NodeKind::TriggerManual(_) => flow_text(lang, FlowText::NodeManual).into(),
