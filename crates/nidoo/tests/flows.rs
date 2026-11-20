@@ -932,6 +932,44 @@ async fn command_failure_ends_the_run_failed() {
 }
 
 #[tokio::test]
+async fn a_failed_step_ends_its_branch_but_not_its_siblings() {
+    let (hub, _publisher, _engine) = engine_hub();
+    // The trigger fans out to `on` (no echo: it fails, and `after` must not follow it) and
+    // to `moving`, a sibling branch that still runs.
+    let flow = serde_json::json!({
+        "id": "living", "name": "Fan out", "enabled": true, "mode": "single",
+        "nodes": [
+            { "id": "motion", "type": "trigger.state", "params": { "entity": MOTION_ID } },
+            { "id": "on", "type": "command",
+              "params": { "entity": LED_ID, "command": { "type": "turn_on" } } },
+            { "id": "after", "type": "command",
+              "params": { "entity": LED_ID, "command": { "type": "turn_off" } } },
+            { "id": "moving", "type": "if", "params": { "op": "eq", "value": true } }
+        ],
+        "edges": [
+            { "from": "motion", "to": "on" },
+            { "from": "on", "to": "after" },
+            { "from": "motion", "to": "moving" }
+        ]
+    });
+    hub.ingest(FLOW_TOPIC, flow.to_string().as_bytes());
+    settle().await;
+    let mut events = hub.subscribe();
+
+    motion(&hub, false);
+    motion(&hub, true);
+    let run = next_run_event(&mut events, RunStatus::Failed).await;
+    assert_eq!(
+        step_nodes(&run),
+        ["motion", "on", "moving"],
+        "{:?}",
+        run.steps
+    );
+    assert_eq!(run.steps[1].outcome, StepOutcome::Failed);
+    assert_eq!(run.steps[2].outcome, StepOutcome::Ok);
+}
+
+#[tokio::test]
 async fn run_flow_executes_without_trigger_data() {
     let (hub, publisher, _engine) = engine_hub();
     let _log = echo(publisher, Arc::clone(&hub));

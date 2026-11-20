@@ -1162,7 +1162,10 @@ pub(crate) fn manual_trigger(flow: &Flow, node: &str) -> Option<TriggerInfo> {
 }
 
 /// Walks the flow depth-first from `start`, recording a step per node before following its
-/// successors in edge order. The first failed step ends the run.
+/// successors in edge order. A failed step ends its own branch (its successors never run) but
+/// not its siblings: the branches still waiting on the stack go on, and the run then ends
+/// `Failed`. Fan-out branches are independent, so one device that does not answer must not
+/// leave the others untouched (a TV in standby inside a light group kept three other lights on).
 ///
 /// A cancelled run must not act: `abort()` only lands at the task's next `.await`, so a run can
 /// wake from its delay after the flow was deleted, disabled or the run ended. `record_step`
@@ -1179,6 +1182,7 @@ pub(super) async fn execute(
     trigger: Option<TriggerInfo>,
 ) -> RunStatus {
     let mut stack = vec![start];
+    let mut failed = false;
     // The results of the run's math cards, by name; every branch reads and writes this one map.
     let mut results: BTreeMap<String, f64> = BTreeMap::new();
     while let Some(id) = stack.pop() {
@@ -1187,7 +1191,8 @@ pub(super) async fn execute(
             if !hub.record_step(&flow.id, &run_id, step) {
                 return RunStatus::Cancelled;
             }
-            return RunStatus::Failed;
+            failed = true;
+            continue;
         };
         let (outcome, detail, mut ports) = run_node(
             &hub,
@@ -1215,7 +1220,8 @@ pub(super) async fn execute(
             return RunStatus::Cancelled;
         }
         if outcome == StepOutcome::Failed {
-            return RunStatus::Failed;
+            failed = true;
+            continue;
         }
         // A limit that held the run back ends it here, successfully.
         if matches!(node.kind, NodeKind::Limit(_)) && ports == [LIMITED] {
@@ -1233,7 +1239,11 @@ pub(super) async fn execute(
         };
         stack.extend(next.into_iter().rev().map(|next| next.id.clone()));
     }
-    RunStatus::Done
+    if failed {
+        RunStatus::Failed
+    } else {
+        RunStatus::Done
+    }
 }
 
 /// The detail of a finished `backup.run` step; a warning says what the backup lacks.
