@@ -30,6 +30,7 @@ use crate::screens::network_settings::{NetworkSettingsPage, watched_label};
 use crate::screens::sound_settings::{self, SoundSettingsPage};
 use crate::screens::speech_input::AssistListeningPage;
 use crate::screens::system_settings::{self, SystemSettingsPage};
+use crate::screens::wake_up_settings::WakeUpSettingsPage;
 use crate::setup::connection::{DatabaseForm, MqttForm};
 use crate::setup::services::basic::WeatherForm;
 use crate::setup::services::keys::{FrigateForm, PushForm, SolcastForm};
@@ -296,6 +297,7 @@ pub enum SettingsPage {
     Push,
     MobileApp,
     Alarm,
+    WakeUp,
     NetworkPresence,
     AssistantVoice,
     AssistantListening,
@@ -312,7 +314,7 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// In the order the Settings list shows them.
-    pub const ALL: [SettingsPage; 20] = [
+    pub const ALL: [SettingsPage; 21] = [
         SettingsPage::Home,
         SettingsPage::Location,
         SettingsPage::Weather,
@@ -321,6 +323,7 @@ impl SettingsPage {
         SettingsPage::Push,
         SettingsPage::MobileApp,
         SettingsPage::Alarm,
+        SettingsPage::WakeUp,
         SettingsPage::NetworkPresence,
         SettingsPage::AssistantVoice,
         SettingsPage::AssistantListening,
@@ -345,6 +348,7 @@ impl SettingsPage {
             SettingsPage::Push => "push-notifications",
             SettingsPage::MobileApp => "mobile-app",
             SettingsPage::Alarm => "alarm",
+            SettingsPage::WakeUp => "wake-up",
             SettingsPage::NetworkPresence => "network-presence",
             SettingsPage::AssistantVoice => "assistant-voice",
             SettingsPage::AssistantListening => "assistant-listening",
@@ -375,6 +379,7 @@ impl SettingsPage {
             SettingsPage::Push => Key::PushNotifications,
             SettingsPage::MobileApp => Key::MobileApp,
             SettingsPage::Alarm => Key::Alarm,
+            SettingsPage::WakeUp => Key::WakeUp,
             SettingsPage::NetworkPresence => Key::NetworkPresence,
             SettingsPage::AssistantVoice => Key::AssistantVoice,
             SettingsPage::AssistantListening => Key::AssistantListening,
@@ -406,6 +411,7 @@ impl SettingsPage {
                 SettingsPage::Push => T::HintPush,
                 SettingsPage::MobileApp => T::HintMobileApp,
                 SettingsPage::Alarm => T::HintAlarm,
+                SettingsPage::WakeUp => T::HintWakeUp,
                 SettingsPage::NetworkPresence => T::HintNetworkPresence,
                 SettingsPage::AssistantVoice => T::HintAssistantVoice,
                 SettingsPage::AssistantListening => T::HintAssistantListening,
@@ -438,6 +444,7 @@ impl SettingsPage {
             SettingsPage::Push => (icons::BELL, "rose"),
             SettingsPage::MobileApp => (icons::PHONE, "blue"),
             SettingsPage::Alarm => (icons::SHIELD, "mint"),
+            SettingsPage::WakeUp => (icons::ALARM_CLOCK, "amber"),
             SettingsPage::NetworkPresence => (icons::WIFI, "cyan"),
             SettingsPage::AssistantVoice => (icons::SPEECH, "cyan"),
             SettingsPage::AssistantListening => (icons::MIC, "violet"),
@@ -465,6 +472,7 @@ impl SettingsPage {
             | SettingsPage::Push
             | SettingsPage::MobileApp
             | SettingsPage::Alarm
+            | SettingsPage::WakeUp
             | SettingsPage::NetworkPresence => T::GroupHouse,
             SettingsPage::AssistantVoice
             | SettingsPage::AssistantListening
@@ -590,7 +598,8 @@ pub fn SettingsScreen() -> impl IntoView {
         | SettingsPage::Weather
         | SettingsPage::SolarForecast
         | SettingsPage::Cameras
-        | SettingsPage::Push => String::new(),
+        | SettingsPage::Push
+        | SettingsPage::WakeUp => String::new(),
         SettingsPage::MobileApp => mobile
             .with(|m| {
                 m.as_ref().map(|m| {
@@ -775,6 +784,7 @@ pub fn SettingsPageScreen() -> impl IntoView {
                 Some(SettingsPage::Push) => view! { <PushPage /> }.into_any(),
                 Some(SettingsPage::MobileApp) => view! { <MobileAppPage /> }.into_any(),
                 Some(SettingsPage::Alarm) => view! { <AlarmSettingsPage /> }.into_any(),
+                Some(SettingsPage::WakeUp) => view! { <WakeUpSettingsPage /> }.into_any(),
                 Some(SettingsPage::NetworkPresence) => {
                     view! { <NetworkSettingsPage /> }.into_any()
                 }

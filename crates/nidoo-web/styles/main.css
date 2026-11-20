@@ -10232,3 +10232,157 @@ dialog.popup::backdrop {
 .backup__last-warning {
   margin: 4px 0 0;
 }
+
+/* Wake-up: the Settings page, the "managed" marker on flows, the canvas warning and the
+   playlist inputs of the Command card. */
+.wake-settings {
+  display: grid;
+  gap: 16px;
+  max-width: 640px;
+}
+
+.wake-settings__lede {
+  margin: 0;
+  color: var(--muted);
+}
+
+.wake-settings__card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+}
+
+.wake-settings__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.wake-settings__titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.wake-settings__title {
+  font-weight: 600;
+}
+
+.wake-settings__hint {
+  color: var(--muted);
+  font: var(--type-label);
+}
+
+.wake-settings__banner {
+  padding: 14px 16px;
+  border-radius: var(--radius-card);
+  background: var(--warning-bg);
+}
+
+.wake-settings__banner p {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
+.wake-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.wake-settings__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--card-border);
+}
+
+.wake-settings__label {
+  min-width: 80px;
+  color: var(--muted);
+  font: var(--type-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.wake-settings__link,
+.managed-note__link {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.managed-note {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-amber);
+  font: var(--type-label);
+  font-weight: 400;
+}
+
+.managed-note__glyph svg {
+  width: 14px;
+  height: 14px;
+}
+
+.flow-tile__managed {
+  margin: 0;
+}
+
+.managed-banner {
+  position: absolute;
+  top: 72px;
+  left: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: 640px;
+  padding: 14px 16px;
+  border-radius: var(--radius-card);
+  background: var(--warning-bg);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+.managed-banner__glyph {
+  color: var(--warning);
+}
+
+.managed-banner__glyph svg {
+  width: 18px;
+  height: 18px;
+}
+
+.managed-banner p {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
+.flow-toolbar__confirm {
+  padding: 0 6px;
+  color: var(--warning);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+
+.playlist-fields__shuffle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.playlist-fields__hint {
+  color: var(--warning);
+  font: var(--type-label);
+}

@@ -14,6 +14,7 @@ use crate::i18n::flows::{FlowText, flow_text};
 use crate::i18n::format::{ago, date_time, local_date_time};
 use crate::i18n::{Lang, use_lang};
 use crate::icons::trigger_icon;
+use crate::screens::wake_up_settings::ManagedNote;
 
 /// The tooltip of a run time: the exact date and time, in the language and the local zone.
 pub(super) fn run_title(lang: Lang, secs: u64) -> String {
@@ -96,6 +97,7 @@ pub fn FlowRow(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl In
     let badge = invalid_badge(&flow);
     let icon = icon_view(&row);
     let trigger = row.trigger_text.clone();
+    let managed = nidoo_core::flow::wake_up::is_managed(&flow.definition).then(|| id.clone());
     let name_for_switch = name.clone();
     let run_flow = flow.clone();
     view! {
@@ -113,6 +115,7 @@ pub fn FlowRow(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl In
                     })}
                 {badge}
                 {label_chips(&row)}
+                {managed.map(|id| view! { <ManagedNote id=id /> })}
             </span>
             <span class="flow-row__sub">
                 <span class="flow-row__trigger">{trigger}</span>

@@ -14,7 +14,8 @@ use crate::dashboards::create_dashboard;
 use crate::house::House;
 use crate::i18n::{AssistantText, Key, Lang, assistant_text, unseen_alerts, use_text};
 use crate::icons::{
-    BELL, BOLT, FLOW_NODES, GEAR, HOUSE, LAYERS, PLUS, SHIELD, SPARKLE, SPEECH, THERMOMETER,
+    ALARM_CLOCK, BELL, BOLT, FLOW_NODES, GEAR, HOUSE, LAYERS, PLUS, SHIELD, SPARKLE, SPEECH,
+    THERMOMETER,
 };
 use crate::nav::BackStack;
 use crate::rooms::{sidebar_rooms, use_room_chips};
@@ -264,6 +265,14 @@ pub fn Sidebar(
                             <span class="nav__label">{move || t(Key::Security)}</span>
                         </a>
                     </li>
+                    <Show when=move || house.home_settings.with(|s| s.wake_up)>
+                        <li>
+                            <a class="sidebar__link" href="/wake-up" aria-current=current(Section::WakeUp)>
+                                <span class="nav__glyph" inner_html=ALARM_CLOCK></span>
+                                <span class="nav__label">{move || t(Key::WakeUp)}</span>
+                            </a>
+                        </li>
+                    </Show>
                     <Show when=move || climate_on.get()>
                         <li>
                             <a class="sidebar__link" href="/climate" aria-current=current(Section::Climate)>

@@ -25,6 +25,7 @@ use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_params_map;
 use nidoo_api::{FlowView, RunView};
+use nidoo_core::flow::wake_up::is_managed;
 use nidoo_core::flow::{Flow, FlowMode, NodeKind};
 use wasm_bindgen::JsCast;
 
@@ -43,6 +44,7 @@ use crate::i18n::flows::{FlowText, flow_text};
 use crate::i18n::{Key, current_lang, text, use_lang};
 use crate::layout::canvas_inset_style;
 use crate::screens::flow_schedule::SaveBlocked;
+use crate::screens::wake_up_settings::ManagedBanner;
 use crate::shell::typing;
 use library::Library;
 pub use library::{Dragging, Fresh};
@@ -391,6 +393,10 @@ fn FlowBody(
             on:drop=on_drop
         >
             {canvas}
+            {move || {
+                flow.with(|f| is_managed(f).then(|| f.id.clone()))
+                    .map(|id| view! { <ManagedBanner id=id /> })
+            }}
             <Toolbar view=view editing=editing editor=editor saving=saving runs_open=runs_open panel=side.into() selection=selection />
             <Drawer
                 panel=side.into()
