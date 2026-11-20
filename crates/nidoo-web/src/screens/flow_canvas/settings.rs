@@ -21,7 +21,7 @@ use crate::entity_picker::needs::{is_commandable, is_signal, keep};
 use crate::entity_picker::{EntityPickField, Suggest};
 use crate::flow_edit::{
     add_answer, add_rule, delete_answer, delete_rule, move_answer, move_rule, remove_node,
-    set_otherwise,
+    retarget_trigger, set_otherwise,
 };
 use crate::house::House;
 use crate::i18n::flows::{
@@ -263,10 +263,18 @@ pub fn NodeEditor(editor: Editor, selected: RwSignal<Option<Selection>>) -> impl
         Some(Selection::Node(id)) => Some(id),
         _ => None,
     };
+    // A device card that turns from a state into a signal trigger shows the other fields.
+    let node_type = Memo::new(move |_| {
+        let id = node_id()?;
+        editor
+            .draft
+            .with(|f| f.node(&id).map(|n| n.kind.type_name()))
+    });
     view! {
         <Show when=move || node_id().is_some()>
             {move || {
                 editor.restored.track();
+                node_type.track();
                 let Some(id) = node_id() else { return ().into_any(); };
                 let Some(node) = editor.draft.with_untracked(|f| f.node(&id).cloned()) else {
                     return ().into_any();
@@ -1321,6 +1329,19 @@ fn ValueOfField(
     }
 }
 
+/// Writes the entity of a device trigger card: a remote, an `event` or a tag makes it a signal
+/// trigger, anything else a state trigger (see [`retarget_trigger`]).
+fn trigger_entity_write(form: Form, id: String) -> Callback<Option<String>> {
+    let house = expect_context::<House>();
+    Callback::new(move |value: Option<String>| {
+        let entity = value.unwrap_or_default();
+        let signal = house
+            .entities
+            .with_untracked(|m| m.get(&entity).is_some_and(is_signal));
+        form.update(&id, |n| n.kind = retarget_trigger(&n.kind, entity, signal));
+    })
+}
+
 fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
     let t = use_flow_text();
     let lang = use_lang();
@@ -1331,21 +1352,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                 NodeKind::TriggerState(t) => Some(t.entity.clone()),
                 _ => None,
             });
-            let entity_id = id.clone();
-            let entity_write = Callback::new(move |value: Option<String>| {
-                form.update(&entity_id, |n| {
-                    if let NodeKind::TriggerState(ref mut t) = n.kind {
-                        let next = value.unwrap_or_default();
-                        // What the card compares changed: the old value filters no longer fit.
-                        if t.entity != next {
-                            t.entity = next;
-                            t.field = None;
-                            t.to = None;
-                            t.from = None;
-                        }
-                    }
-                });
-            });
+            let entity_write = trigger_entity_write(form, id.clone());
             let field_value = Signal::derive({
                 let id = id.clone();
                 move || {
@@ -1421,7 +1428,6 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                     label=word(FlowText::Entity)
                     value=entity_value
                     on_change=entity_write
-                    pool=Some(keep(|e| !is_signal(e)))
                     compact=true
                     class=Some("node-editor__field".to_owned())
                 />
@@ -1522,14 +1528,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                 NodeKind::TriggerSignal(t) => Some(t.entity.clone()),
                 _ => None,
             });
-            let entity_id = id.clone();
-            let entity_write = Callback::new(move |value: Option<String>| {
-                form.update(&entity_id, |n| {
-                    if let NodeKind::TriggerSignal(ref mut t) = n.kind {
-                        t.entity = value.unwrap_or_default();
-                    }
-                });
-            });
+            let entity_write = trigger_entity_write(form, id.clone());
             let house = expect_context::<House>();
             let signals_of = move |entity: &str| -> Vec<String> {
                 house.entities.with(|m| {
@@ -1592,7 +1591,6 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                     label=word(FlowText::Entity)
                     value=entity_value
                     on_change=entity_write
-                    pool=Some(keep(is_signal))
                     compact=true
                     class=Some("node-editor__field".to_owned())
                 />

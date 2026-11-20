@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use nidoo_core::flow::{
     ASK_MAX_ANSWERS, AskAnswer, AskParams, Edge, Flow, Lang, MathParams, Node, NodeKind, Position,
-    SwitchParams, SwitchRule, math_names,
+    SwitchParams, SwitchRule, TriggerSignalParams, TriggerStateParams, math_names,
 };
 
 use crate::flow_layout::Pt;
@@ -540,6 +540,36 @@ fn push_capped(stack: &mut Vec<Flow>, flow: Flow) {
     stack.push(flow);
 }
 
+/// A device trigger pointed at `entity`: a signal trigger when the entity sends signals (a
+/// remote, an `event`, a tag), else a state trigger. Another entity resets the filters, which
+/// belonged to the old one; an empty `entity` keeps the card's type. Other cards are unchanged.
+pub fn retarget_trigger(kind: &NodeKind, entity: String, signal: bool) -> NodeKind {
+    let (current, extra) = match kind {
+        NodeKind::TriggerState(p) => (&p.entity, &p.extra),
+        NodeKind::TriggerSignal(p) => (&p.entity, &p.extra),
+        _ => return kind.clone(),
+    };
+    let was_signal = matches!(kind, NodeKind::TriggerSignal(_));
+    let signal = if entity.is_empty() { was_signal } else { signal };
+    if *current == entity && signal == was_signal {
+        return kind.clone();
+    }
+    let extra = extra.clone();
+    if signal {
+        NodeKind::TriggerSignal(TriggerSignalParams {
+            entity,
+            signal: None,
+            extra,
+        })
+    } else {
+        NodeKind::TriggerState(TriggerStateParams {
+            entity,
+            extra,
+            ..Default::default()
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use nidoo_core::flow::{
@@ -550,6 +580,97 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn state(entity: &str, to: Option<serde_json::Value>) -> NodeKind {
+        NodeKind::TriggerState(TriggerStateParams {
+            entity: entity.into(),
+            to,
+            ..Default::default()
+        })
+    }
+    fn signal(entity: &str, signal: Option<&str>) -> NodeKind {
+        NodeKind::TriggerSignal(nidoo_core::flow::TriggerSignalParams {
+            entity: entity.into(),
+            signal: signal.map(str::to_owned),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn picking_a_remote_turns_a_state_trigger_into_a_signal_trigger() {
+        let got = retarget_trigger(&state("door", Some(json!(true))), "remote".into(), true);
+        assert_eq!(got, signal("remote", None));
+    }
+
+    #[test]
+    fn picking_a_sensor_turns_a_signal_trigger_back_into_a_state_trigger() {
+        let got = retarget_trigger(&signal("remote", Some("on")), "door".into(), false);
+        assert_eq!(got, state("door", None));
+    }
+
+    #[test]
+    fn another_entity_of_the_same_kind_resets_the_filters() {
+        let with_field = NodeKind::TriggerState(TriggerStateParams {
+            entity: "door".into(),
+            field: Some("battery".into()),
+            to: Some(json!(true)),
+            from: Some(json!(false)),
+            ..Default::default()
+        });
+        assert_eq!(
+            retarget_trigger(&with_field, "window".into(), false),
+            state("window", None)
+        );
+        assert_eq!(
+            retarget_trigger(&signal("r1", Some("on")), "r2".into(), true),
+            signal("r2", None)
+        );
+    }
+
+    #[test]
+    fn the_same_entity_keeps_the_filters() {
+        let k = state("door", Some(json!(true)));
+        assert_eq!(retarget_trigger(&k, "door".into(), false), k);
+        let s = signal("r1", Some("on"));
+        assert_eq!(retarget_trigger(&s, "r1".into(), true), s);
+    }
+
+    #[test]
+    fn clearing_the_entity_keeps_the_card_type() {
+        assert_eq!(
+            retarget_trigger(&signal("r1", Some("on")), String::new(), false),
+            signal("", None)
+        );
+        assert_eq!(
+            retarget_trigger(&state("door", Some(json!(true))), String::new(), true),
+            state("", None)
+        );
+    }
+
+    #[test]
+    fn retargeting_keeps_id_position_and_edges() {
+        let mut t = node("trigger_1", state("door", None));
+        t.position = Some(Position { x: 10.0, y: 20.0 });
+        let mut f = flow(vec![t, node("delay_1", NodeKind::Delay(DelayParams::default()))]);
+        f.edges.push(Edge {
+            from: "trigger_1".into(),
+            to: "delay_1".into(),
+            port: None,
+        });
+        let before = f.clone();
+        let n = f.nodes.iter_mut().find(|n| n.id == "trigger_1").unwrap();
+        n.kind = retarget_trigger(&n.kind, "remote".into(), true);
+        assert_eq!(f.edges, before.edges);
+        assert_eq!(f.nodes[0].id, "trigger_1");
+        assert_eq!(f.nodes[0].position, before.nodes[0].position);
+        assert!(matches!(f.nodes[0].kind, NodeKind::TriggerSignal(_)));
+    }
+
+    #[test]
+    fn other_cards_are_not_retargeted() {
+        let d = NodeKind::Delay(DelayParams::default());
+        assert_eq!(retarget_trigger(&d, "door".into(), false), d);
+    }
 
     fn node(id: &str, kind: NodeKind) -> Node {
         Node {
