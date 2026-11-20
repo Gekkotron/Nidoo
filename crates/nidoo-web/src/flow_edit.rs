@@ -550,7 +550,11 @@ pub fn retarget_trigger(kind: &NodeKind, entity: String, signal: bool) -> NodeKi
         _ => return kind.clone(),
     };
     let was_signal = matches!(kind, NodeKind::TriggerSignal(_));
-    let signal = if entity.is_empty() { was_signal } else { signal };
+    let signal = if entity.is_empty() {
+        was_signal
+    } else {
+        signal
+    };
     if *current == entity && signal == was_signal {
         return kind.clone();
     }
@@ -651,7 +655,10 @@ mod tests {
     fn retargeting_keeps_id_position_and_edges() {
         let mut t = node("trigger_1", state("door", None));
         t.position = Some(Position { x: 10.0, y: 20.0 });
-        let mut f = flow(vec![t, node("delay_1", NodeKind::Delay(DelayParams::default()))]);
+        let mut f = flow(vec![
+            t,
+            node("delay_1", NodeKind::Delay(DelayParams::default())),
+        ]);
         f.edges.push(Edge {
             from: "trigger_1".into(),
             to: "delay_1".into(),

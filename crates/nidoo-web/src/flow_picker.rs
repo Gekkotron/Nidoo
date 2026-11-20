@@ -15,9 +15,9 @@ use crate::command_form::entity_actions;
 use crate::flow_edit::fold_accents;
 use crate::flow_text::{Ctx, sentence, subline};
 use crate::format::{entity_title, kind_search_words, room_name};
-use crate::if_value::{ValueInput, value_input};
 use crate::i18n::Lang;
 use crate::i18n::flows::{FlowText, flow_text};
+use crate::if_value::{ValueInput, value_input};
 use crate::screens::flow_canvas::sun::sun_params_from_preset;
 
 /// The section of the picker an entry sits in, in display order.
@@ -629,9 +629,9 @@ mod tests {
         );
         for q in ["device", "appareil", "event", "evenement"] {
             assert!(
-                run(q, &entities).iter().any(
-                    |e| matches!(&e.kind, NodeKind::TriggerState(p) if p.entity.is_empty())
-                ),
+                run(q, &entities)
+                    .iter()
+                    .any(|e| matches!(&e.kind, NodeKind::TriggerState(p) if p.entity.is_empty())),
                 "{q}"
             );
         }

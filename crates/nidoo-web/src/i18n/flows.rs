@@ -993,10 +993,7 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::Preview => ("Preview", "Aperçu"),
         T::Silent => ("Silent", "Silencieuse"),
         T::Entity => ("Entity", "Entité"),
-        T::FiresWhen => (
-            "Fires when it becomes",
-            "Se déclenche quand elle devient",
-        ),
+        T::FiresWhen => ("Fires when it becomes", "Se déclenche quand elle devient"),
         T::OnlyAfter => (
             "Only after (previous value)",
             "Seulement après (valeur précédente)",
