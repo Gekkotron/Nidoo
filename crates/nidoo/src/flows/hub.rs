@@ -151,6 +151,28 @@ impl Hub {
         self.write_flow(&flow)
     }
 
+    /// Changes a wake-up alarm's time and weekdays and rebuilds its flow with the alarm
+    /// generator, keeping every other setting. The save goes through [`Self::set_flow`], so the
+    /// house checks still run. A flow that is not a readable alarm, or a time or day set that is
+    /// not valid, is refused as an invalid flow.
+    pub async fn set_wake_up_time(
+        &self,
+        id: &str,
+        hour: u8,
+        minute: u8,
+        days: &[u8],
+    ) -> Result<FlowView, HubError> {
+        let view = self
+            .flow(id)
+            .ok_or_else(|| HubError::UnknownFlow(id.to_owned()))?;
+        if let Some(reason) = view.invalid {
+            return Err(HubError::InvalidFlow(reason));
+        }
+        let flow = nidoo_core::flow::wake_up::retime(&view.definition, hour, minute, days)
+            .map_err(|err| HubError::InvalidFlow(err.to_string()))?;
+        Ok(self.set_flow(flow).await?.flow)
+    }
+
     /// Moves a flow to another room (or to none with `None`) without touching the rest. Like
     /// [`Self::set_flow_enabled`] it skips the entity checks, so a flow whose entity vanished
     /// can still be filed.
