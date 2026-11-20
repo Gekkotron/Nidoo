@@ -37,6 +37,7 @@ The parameters of each node are in [Flow nodes](../reference/flow-nodes.md).
   - `trigger.schedule`: a five-field cron expression in the house time zone (the time zone of your home location, set in the setup wizard or **Settings → Location**; the hub's system zone when none is set).
   - `trigger.sun`: sunrise, sunset, dusk or dawn, with an optional `offset_minutes`.
   - `trigger.off_peak`: off-peak starts or ends (`edge`), following the off-peak device or the off-peak hours in **Settings → Home**.
+  - `trigger.alarm`: the built-in alarm changes mode, optionally only `to` or `from` a mode (see [`trigger.alarm`](../reference/flow-nodes.md#triggeralarm)).
   - `trigger.silent`: an entity has sent no report for a duration (see [Alive checks](#alive-checks)).
   - `trigger.manual`: a button you press on the card (see [Manual trigger](#manual-trigger)). It has an optional `value`: an on/off bool, a number or text.
 - **Checks** branch:
@@ -333,7 +334,7 @@ The Flows page (`/flows`) has a **New flow** button and a bar to find flows:
 - A search box over name, description, trigger summary (which names the trigger devices), room and label names, ignoring case and accents.
 - **Sort** by Name or Last run, **Group** by Room, Label or None, and a List / Cards toggle.
 - Status chips, each with a count: All, On (enabled and valid), Off, and ⚠ Needs attention (invalid, or the latest finished run failed).
-- A **Trigger ▾** menu on the same row, where you can tick any mix of trigger kinds: Device state, Schedule, Sun, Off-peak, Silent for, Button / event, Manual. The button shows how many are ticked.
+- A **Trigger ▾** menu on the same row, where you can tick any mix of trigger kinds: Device state, Schedule, Sun, Off-peak, Alarm, Silent for, Button / event, Manual. The button shows how many are ticked.
 
 Each row shows an icon for the trigger, the name, a "restart" tag for flows in `restart` mode, a red "Invalid" tag (the reason is its tooltip) for a flow that does not validate, its labels as coloured chips, a trigger summary, the last run ("Done · 2 min ago", or "No runs yet"; failed runs show red), the enable switch and a **⋯** menu. Rooms are sections, with a "No room" section last; a section folds, and a folded section that hides a flow needing attention shows ⚠. Grouped by label, each choice is a section (its header picks the current label), then each standalone label (its header has **Turn all on** and **Turn all off**), then "No label"; a flow with several labels shows in each of their sections. The **⋯** menu opens the flow, moves it to another room (the flow editor has the same room picker; an invalid flow cannot be moved), ticks its labels (**＋ New label…** makes one and tags the flow) or deletes it: **Delete flow…** asks first, and a deleted flow cannot be brought back. The view, grouping, sort, filters and folded sections are remembered per browser; the search is not.
 

@@ -63,7 +63,7 @@ See [Flow nodes](flow-nodes.md) for the document format.
 | `switch_flow_label` | Switches a label. Args: `label`, `action` (`pick` for a label in a choice of at least two labels: its flows on, the choice's other labels' flows off, and it becomes the current label; `on` / `off`: every flow carrying it). Returns `{label, action, enabled, disabled, skipped}`: the flows turned on and off and the ones it could not switch. |
 
 :::note
-The argument schema of `set_flow` that the server advertises describes the node types `trigger.state`, `if`, `switch`, `time.between`, `delay`, `command`, `math` and `flow.label`. The server accepts all of them; the server instructions it sends name the others (`trigger.schedule`, `trigger.sun`, `trigger.off_peak`, `trigger.signal`, `trigger.manual`, `trigger.silent`, `limit`, `flow.enable`, `notify`).
+The argument schema of `set_flow` that the server advertises describes the node types `trigger.state`, `if`, `switch`, `time.between`, `delay`, `command`, `math` and `flow.label`. The server accepts all of them; the server instructions it sends name the others (`trigger.schedule`, `trigger.sun`, `trigger.off_peak`, `trigger.alarm`, `trigger.signal`, `trigger.manual`, `trigger.silent`, `limit`, `flow.enable`, `notify`).
 :::
 
 ## Groups

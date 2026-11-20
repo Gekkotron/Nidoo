@@ -146,6 +146,26 @@ Off-peak comes from the home settings (**Settings → Home**, `off_peak_device` 
 - A device going offline while its windows disagree is a change, and fires.
 - While the broker link is offline at a window boundary, the run is recorded as skipped.
 
+## `trigger.alarm`
+
+Starts a run when the built-in alarm changes mode.
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `to` | `disarmed`, `arming`, `armed`, `armed_away`, `armed_home`, `armed_night`, `pending` or `triggered`, optional | Fire only when the alarm enters this mode. `armed` is any of the three armed modes. Absent: any change. |
+| `from` | same values, optional | Fire only when the alarm was in this mode before. |
+
+Outputs: one. The trigger value is the new mode (`"armed_away"`); the trigger entity is the alarm panel `nidoo_alarm_house`.
+
+- `from` alone means leaving that mode. `from` equal to `to` is refused, except `armed` (armed away to armed home).
+- Like `trigger.state`, it never fires on the first mode seen after boot or on the retained replay after a broker reconnect.
+- Only the built-in alarm. An external alarm panel (such as Jeedom) still uses `trigger.state`.
+- An `if` after it with no `entity` compares the trigger value.
+
+```json
+{ "id": "away", "type": "trigger.alarm", "params": { "to": "armed_away" } }
+```
+
 ## `trigger.silent`
 
 Starts a run when an entity has sent no report for a while: a sensor whose battery died, one out of range, one unpaired.

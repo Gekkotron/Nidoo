@@ -133,7 +133,7 @@ The hub reads the trackers' state at start-up too. A phone that came home while 
 
 ## From a flow
 
-A [flow](flows.md) can arm or disarm the alarm. In the editor's card library, search for the alarm: the THEN group offers **Disarm** and one **Arm** card per mode the panel offers (**Arm Alarm (away)**, and so on). As JSON, the `command` is `{"type": "disarm"}` or `{"type": "arm", "mode": "away"}` (`home`, `away` or `night`). A flow arm counts as a manual arm, so it waits out the exit delay.
+A [flow](flows.md) can arm or disarm the alarm. In the editor's card library, search for the alarm: the THEN group offers **Disarm** and one **Arm** card per mode the panel offers (**Arm Alarm (away)**, and so on). As JSON, the `command` is `{"type": "disarm"}` or `{"type": "arm", "mode": "away"}` (`home`, `away` or `night`). A flow arm counts as a manual arm, so it waits out the exit delay. A flow can also start on a mode change: the **Alarm** card in the When group, or [`trigger.alarm`](../reference/flow-nodes.md#triggeralarm).
 
 ## Phone push
 
