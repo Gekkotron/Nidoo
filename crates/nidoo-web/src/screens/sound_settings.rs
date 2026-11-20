@@ -148,6 +148,18 @@ fn gather<'a>(entities: impl Iterator<Item = &'a EntityView>) -> Vec<Satellite> 
         }
     }
     let mut list: Vec<Satellite> = found.into_values().collect();
+    // A rename made on the page the name opens is that entity's override, not the device's.
+    for sat in &mut list {
+        let renamed = sat
+            .page_entity()
+            .and_then(|e| e.ui.name.as_deref())
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned);
+        if let Some(name) = renamed {
+            sat.name = name;
+        }
+    }
     list.sort_by_cached_key(|s| (s.name.to_lowercase(), s.device_id.clone()));
     list
 }
@@ -875,6 +887,25 @@ mod tests {
             found[0].page_entity().map(|e| e.id.as_str()),
             Some("nidoo_sound_aaa_volume")
         );
+    }
+
+    #[test]
+    fn a_rename_on_the_volume_page_names_the_satellite() {
+        // Renaming from the page the name opens sets the Volume's override, not the device.
+        let mut all = full("nidoo_sound_aaa", "Pinson – Chrome on Android", true);
+        all.extend(full("nidoo_sound_bbb", "Kitchen", true));
+        let volume = all.iter_mut().find(|e| e.id == "nidoo_sound_aaa_volume");
+        volume.expect("volume").ui.name = Some("Salon".into());
+        let found = satellites(&map(all));
+        let names: Vec<_> = found.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Kitchen", "Salon"]);
+    }
+
+    #[test]
+    fn a_blank_rename_keeps_the_device_name() {
+        let mut all = full("nidoo_sound_aaa", "Desk", true);
+        all[0].ui.name = Some("  ".into());
+        assert_eq!(satellites(&map(all))[0].name, "Desk");
     }
 
     #[test]
