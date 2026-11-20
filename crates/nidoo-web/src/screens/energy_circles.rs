@@ -14,14 +14,14 @@ use nidoo_core::energy::{EnergyNode, EnergyUi, IDLE_W, NodeKind, NodeStatus};
 
 use crate::energy::{aria_sentence, circle_texts, node_label, node_value_text, power_text};
 use crate::energy_circles::{
-    Mix, Placed, Wire, consumer_slot, for_width, halo, house_mix, place, ring_dashes, sanitise,
-    tone, wires,
+    Mix, Placed, SIDE_LABEL_GAP, Wire, consumer_slot, fit_label, for_width, halo, house_mix,
+    label_room, place, ring_dashes, sanitise, tone, wires,
 };
 use crate::energy_sankey::{FOLD_WIDE, build};
 use crate::i18n::Lang;
 use crate::i18n::energy::solar_share_line;
 use crate::i18n::use_lang;
-use crate::screens::energy::{glyph, kind_class, short};
+use crate::screens::energy::{glyph, kind_class};
 
 /// Every tone a node or a wire end can take; each gets its disc and halo gradients.
 const TONES: [&str; 10] = [
@@ -261,11 +261,22 @@ fn CircleNode(
             _ => (0.0, 0.0),
         })
     };
-    let label = move || node.with(|n| n.as_ref().map(|n| short(node_label(lang(), n))));
     let glyph_html = move || node.with(|n| n.as_ref().map(glyph).unwrap_or_default());
 
     let big = matches!(kind, NodeKind::Solar | NodeKind::Grid | NodeKind::Battery);
     let house = kind == NodeKind::House;
+    // A consumer's name goes beside its circle on a wide screen, every other name under it.
+    let beside = !narrow && !(big || house);
+    // The label's font size in `main.css`: `.energy-node__label`, smaller on a phone.
+    let label_px = if narrow { 12.0 } else { 13.0 };
+    let label = move || {
+        let room = spot.with(|p| p.map(|p| label_room(for_width(narrow), beside, p.at, p.r)));
+        node.with(|n| {
+            n.as_ref()
+                .zip(room)
+                .map(|(n, room)| fit_label(node_label(lang(), n), room, label_px))
+        })
+    };
     // The mockups' type grid: wide, then phone.
     let (icon, icon_top, value_y, unit_y, name_y) = if narrow {
         (20.0, -r + 8.0, 8.0, 22.0, r + 25.0)
@@ -333,7 +344,7 @@ fn CircleNode(
         let (x, anchor, value_at, name_at) = if narrow {
             (0.0, "middle", r + 21.0, r + 35.0)
         } else {
-            (r + 20.0, "start", -1.0, 16.0)
+            (r + SIDE_LABEL_GAP, "start", -1.0, 16.0)
         };
         view! {
             <text class="energy-node__value" x=x y=value_at text-anchor=anchor>

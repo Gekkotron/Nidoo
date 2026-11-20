@@ -47,9 +47,10 @@ impl CirclesLayout {
         solar_side: (260.0, 74.0),
         grid_side: (96.0, 214.0),
         side: (190.0, 330.0),
-        one: [(650.0, 214.0)],
-        two: [(640.0, 140.0), (640.0, 288.0)],
-        three: [(630.0, 80.0), (655.0, 214.0), (630.0, 348.0)],
+        // Far enough from the right edge for a name such as "Pompe à chaleur" beside the circle.
+        one: [(630.0, 214.0)],
+        two: [(620.0, 140.0), (620.0, 288.0)],
+        three: [(610.0, 80.0), (635.0, 214.0), (610.0, 348.0)],
         bend_solar: 26.0,
         bend_grid: -22.0,
         bend_battery: 0.0,
@@ -84,6 +85,61 @@ pub fn for_width(narrow: bool) -> &'static CirclesLayout {
     } else {
         &CirclesLayout::WIDE
     }
+}
+
+/// The gap between a consumer's circle and its name beside it, on a wide screen.
+pub const SIDE_LABEL_GAP: f64 = 20.0;
+/// What a name keeps clear of the diagram's edge.
+const LABEL_EDGE: f64 = 4.0;
+/// The widest a name centred under its circle may be: the phone's three consumers stand 124
+/// apart, so two neighbouring names never meet.
+const CENTRED_LABEL_MAX: f64 = 120.0;
+
+/// The room, in diagram px, for the name of a circle centred at `at` with radius `r`: beside it
+/// up to the right edge when `beside`, else centred under it and clear of both edges.
+pub fn label_room(layout: &CirclesLayout, beside: bool, at: (f64, f64), r: f64) -> f64 {
+    if beside {
+        layout.view_w - (at.0 + r + SIDE_LABEL_GAP) - LABEL_EDGE
+    } else {
+        (2.0 * (at.0.min(layout.view_w - at.0) - LABEL_EDGE)).min(CENTRED_LABEL_MAX)
+    }
+}
+
+/// A character's rough advance in Inter SemiBold, in em: a hair wider than the real glyph, so a
+/// name judged to fit does fit.
+fn advance_em(c: char) -> f64 {
+    match c {
+        'i' | 'l' | 'j' | 'I' | '.' | ',' | '\'' | '’' | '|' | '!' | ':' | ';' | ' ' => 0.28,
+        'f' | 't' | 'r' | '-' | '(' | ')' => 0.38,
+        'W' => 1.05,
+        'm' | 'M' => 0.9,
+        'w' => 0.8,
+        '…' => 0.85,
+        c if c.is_uppercase() => 0.68,
+        _ => 0.6,
+    }
+}
+
+fn width_em(s: &str) -> f64 {
+    s.chars().map(advance_em).sum()
+}
+
+/// `name` as drawn in `room_px` at `font_px`: whole when it fits, else cut with an ellipsis.
+pub fn fit_label(name: String, room_px: f64, font_px: f64) -> String {
+    let room = room_px / font_px;
+    if width_em(&name) <= room {
+        return name;
+    }
+    let budget = room - advance_em('…');
+    let mut used = 0.0;
+    let cut: String = name
+        .chars()
+        .take_while(|c| {
+            used += advance_em(*c);
+            used <= budget
+        })
+        .collect();
+    format!("{}…", cut.trim_end())
 }
 
 /// A placed circle: its centre and radius.
@@ -474,6 +530,49 @@ mod tests {
     }
 
     #[test]
+    fn consumer_names_fit_beside_or_under_their_circle() {
+        let wide = &CirclesLayout::WIDE;
+        for at in wide.three.iter().chain(&wide.two).chain(&wide.one) {
+            let room = label_room(wide, true, *at, wide.r_small);
+            // Measured in Inter SemiBold 13 px: Climatisation 82, Pompe à chaleur 104.9.
+            assert_eq!(
+                fit_label("Climatisation".into(), room, 13.0),
+                "Climatisation"
+            );
+            assert_eq!(
+                fit_label("Pompe à chaleur".into(), room, 13.0),
+                "Pompe à chaleur"
+            );
+        }
+        let narrow = &CirclesLayout::NARROW;
+        for at in &narrow.three {
+            let room = label_room(narrow, false, *at, narrow.r_small);
+            assert!(room <= 120.0, "{room}");
+            // Measured at 12 px: Climatisation 75.7, Lave-vaisselle 83.6.
+            assert_eq!(
+                fit_label("Climatisation".into(), room, 12.0),
+                "Climatisation"
+            );
+            assert_eq!(
+                fit_label("Lave-vaisselle".into(), room, 12.0),
+                "Lave-vaisselle"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_too_wide_is_ellipsised_within_its_room() {
+        let cut = fit_label("Climatisation du salon".into(), 92.0, 13.0);
+        assert!(
+            cut.ends_with('…') && cut.starts_with("Climatisati"),
+            "{cut}"
+        );
+        assert!(width_em(&cut) * 13.0 <= 92.0);
+        assert_eq!(fit_label("WWWWWWWWWWWWW".into(), 60.0, 13.0), "WWW…");
+        assert_eq!(fit_label("Four".into(), 60.0, 13.0), "Four");
+    }
+
+    #[test]
     fn wide_places_the_triangle_and_the_arc() {
         let ui = EnergyFlow::build(&full(), 0, None);
         let p = place(&ui.diagram, &CirclesLayout::WIDE);
@@ -486,7 +585,7 @@ mod tests {
         assert_eq!(p["water"].r, 30.0);
         assert_eq!(
             arc_of(&ui.diagram, &p),
-            vec![(630.0, 80.0), (655.0, 214.0), (630.0, 348.0)]
+            vec![(610.0, 80.0), (635.0, 214.0), (610.0, 348.0)]
         );
     }
 
