@@ -39,6 +39,7 @@ use crate::screens::search::SearchScreen;
 use crate::screens::security::SecurityScreen;
 use crate::screens::settings::{SettingsPageScreen, SettingsScreen};
 use crate::screens::solar::SolarScreen;
+use crate::screens::wake_up::{WakeUpEditorScreen, WakeUpScreen};
 use crate::screens::weather::WeatherScreen;
 use crate::setup::wizard::SetupScreen;
 use crate::setup::{
@@ -221,6 +222,8 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/energy") view=EnergyScreen />
                     <Route path=path!("/security") view=SecurityScreen />
                     <Route path=path!("/climate") view=ClimateScreen />
+                    <Route path=path!("/wake-up") view=WakeUpScreen />
+                    <Route path=path!("/wake-up/:id") view=WakeUpEditorScreen />
                     <Route path=path!("/weather") view=WeatherScreen />
                     <Route path=path!("/solar") view=SolarScreen />
                     <Route path=path!("/search") view=SearchScreen />

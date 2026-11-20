@@ -83,7 +83,7 @@ fn time_text(hour: u8, minute: u8) -> String {
 /// A tick as `Oct 21 2026, 07:30` / `21 oct. 2026, 07:30` read off the RFC 3339 text the hub
 /// sends (already in the house zone, so no conversion): the date and time are cut from the
 /// string. Text that does not read as a date stays as received.
-fn tick_text(lang: Lang, rfc3339: &str) -> String {
+pub(crate) fn tick_text(lang: Lang, rfc3339: &str) -> String {
     rfc3339
         .get(..16)
         .and_then(|head| chrono::NaiveDateTime::parse_from_str(head, "%Y-%m-%dT%H:%M").ok())

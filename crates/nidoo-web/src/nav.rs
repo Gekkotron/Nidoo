@@ -56,6 +56,7 @@ fn is_form(path: &str) -> bool {
     path == "/groups/new"
         || path == "/flows/new"
         || path == "/ambiances/new"
+        || path == "/wake-up/new"
         || (path.starts_with("/groups/") && path.ends_with("/edit"))
 }
 
@@ -125,6 +126,8 @@ fn parent_of(entry: &str) -> String {
         "/groups".to_owned()
     } else if child("/ambiances/").is_some() {
         "/ambiances".to_owned()
+    } else if child("/wake-up/").is_some() {
+        "/wake-up".to_owned()
     } else if child("/settings/").is_some() {
         "/settings".to_owned()
     } else {
@@ -264,6 +267,8 @@ mod tests {
             assert_eq!(back_target(&walk(&[page])), "/ambiances", "{page}");
         }
         assert_eq!(back_target(&walk(&["/settings/zigbee2mqtt"])), "/settings");
+        assert_eq!(back_target(&walk(&["/wake-up/wake-up-1"])), "/wake-up");
+        assert_eq!(back_target(&walk(&["/wake-up/new"])), "/wake-up");
         assert_eq!(back_target(&walk(&["/group/salon"])), "/");
         assert_eq!(back_target(&walk(&["/entity/lamp"])), "/");
         assert_eq!(back_target(&[]), "/");
@@ -292,6 +297,15 @@ mod tests {
             "/settings/system?show=ram",
         ]);
         assert_eq!(stack, ["/settings/system", "/settings/system?show=ram"]);
+    }
+
+    #[test]
+    fn the_new_alarm_form_is_left_behind_once_saved() {
+        // Saving a new alarm returns to the list; Back from there skips the form.
+        let stack = walk(&["/wake-up", "/wake-up/new", "/wake-up"]);
+        assert_eq!(stack, ["/wake-up"]);
+        let stack = walk(&["/", "/wake-up/new", "/wake-up/wake-up-1"]);
+        assert_eq!(stack, ["/wake-up/wake-up-1"]);
     }
 
     #[test]
