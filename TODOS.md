@@ -100,7 +100,8 @@ What a Home Assistant user misses in the first week. Each is its own brainstorm.
 
 - [ ] **P1** Prebuilt images: CI only tests and builds the docs, so every install and update compiles the workspace on the home server. Publish multi-arch images to `ghcr.io` on release, let `compose.yml` pull them, and show "update available" in the web UI.
 - [ ] **P1** A Home Assistant bridge: read entities and send commands over HA's WebSocket API, so Z-Wave JS, Matter, Hue, Shelly, Sonos and cloud integrations show up. Lets HA users run Nidoo beside HA instead of migrating.
-- [ ] **P2** Flow triggers: a `for` duration on `trigger.state` ("no motion for 5 min"), numeric above/below crossings, a webhook trigger, a raw MQTT topic trigger.
+- [x] **P2** Flow triggers: a `for` duration on `trigger.state` ("no motion for 5 min") and numeric above/below crossings. Spec: `docs/superpowers/specs/2026-11-20-state-trigger-hold-crossing-design.md`. Done on branch feat/state-trigger-hold-crossing (2026-11-20).
+- [ ] **P2** Flow triggers: a webhook trigger, a raw MQTT topic trigger.
 - [ ] **P2** Flow actions: an HTTP request, an MQTT publish, reusable scripts (a flow called from flows, with parameters).
 - [ ] **P2** Notification channels beyond Android/FCM: ntfy, Telegram, email (SMTP). Also an iOS answer (ntfy covers it).
 - [ ] **P2** Users and login, with long-lived tokens for MCP and scripts (the fix behind most of the security list).

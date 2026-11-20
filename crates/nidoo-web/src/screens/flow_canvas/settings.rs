@@ -255,6 +255,37 @@ fn TextField(
     }
 }
 
+/// An optional number bound of a state trigger ("Above", "Below"); a blank box clears it and a
+/// typo keeps the saved value.
+#[component]
+fn BoundField(
+    label: FlowText,
+    value: Signal<Option<f64>>,
+    write: Callback<Option<f64>>,
+) -> impl IntoView {
+    let lang = use_lang();
+    view! {
+        <label class="node-editor__field">
+            <span class="node-editor__label">{move || flow_text(lang(), label)}</span>
+            <input
+                type="number"
+                class="field"
+                step="any"
+                prop:value=move || value.get().map(|n| n.to_string()).unwrap_or_default()
+                on:change=move |ev| {
+                    let input = event_target::<web_sys::HtmlInputElement>(&ev);
+                    let bad_input = !input.check_validity();
+                    match crate::if_value::number_pick(&input.value(), bad_input) {
+                        Some(Some(v)) => write.run(v.as_f64()),
+                        Some(None) => write.run(None),
+                        None => {}
+                    }
+                }
+            />
+        </label>
+    }
+}
+
 /// The settings of the selected card, or nothing when no card is selected. The form is built
 /// from the draft when the selection changes or undo/redo replace the draft.
 #[component]
@@ -1381,6 +1412,8 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                         }
                         t.to = None;
                         t.from = None;
+                        t.above = None;
+                        t.below = None;
                     }
                 });
             });
@@ -1388,6 +1421,10 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
             let to_write = Callback::new(move |value: Option<serde_json::Value>| {
                 form.update(&to_id, |n| {
                     if let NodeKind::TriggerState(ref mut t) = n.kind {
+                        if value.is_some() {
+                            t.above = None;
+                            t.below = None;
+                        }
                         t.to = value;
                     }
                 });
@@ -1396,6 +1433,10 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
             let from_write = Callback::new(move |value: Option<serde_json::Value>| {
                 form.update(&from_id, |n| {
                     if let NodeKind::TriggerState(ref mut t) = n.kind {
+                        if value.is_some() {
+                            t.above = None;
+                            t.below = None;
+                        }
                         t.from = value;
                     }
                 });
@@ -1408,6 +1449,85 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                 house.entities.with(|m| m.get(&id).cloned())
             });
             let draft = form.editor.draft;
+            let bounds_id = id.clone();
+            let bounds_set = Signal::derive(move || {
+                draft.with(|f| match f.node(&bounds_id).map(|n| &n.kind) {
+                    Some(NodeKind::TriggerState(t)) => t.above.is_some() || t.below.is_some(),
+                    _ => false,
+                })
+            });
+            let numeric = Memo::new(move |_| {
+                let field = field_value.get();
+                entity_view.with(|e| {
+                    matches!(
+                        value_input_of(lang(), e.as_ref(), field.as_deref()),
+                        ValueInput::Number { .. }
+                    )
+                })
+            });
+            let above_id = id.clone();
+            let above_write = Callback::new(move |value: Option<f64>| {
+                form.update(&above_id, |n| {
+                    if let NodeKind::TriggerState(ref mut t) = n.kind {
+                        if value.is_some() {
+                            t.to = None;
+                            t.from = None;
+                        }
+                        t.above = value;
+                    }
+                });
+            });
+            let below_id = id.clone();
+            let below_write = Callback::new(move |value: Option<f64>| {
+                form.update(&below_id, |n| {
+                    if let NodeKind::TriggerState(ref mut t) = n.kind {
+                        if value.is_some() {
+                            t.to = None;
+                            t.from = None;
+                        }
+                        t.below = value;
+                    }
+                });
+            });
+            let above_value = Signal::derive({
+                let id = id.clone();
+                move || {
+                    draft.with(|f| match f.node(&id).map(|n| &n.kind) {
+                        Some(NodeKind::TriggerState(t)) => t.above,
+                        _ => None,
+                    })
+                }
+            });
+            let below_value = Signal::derive({
+                let id = id.clone();
+                move || {
+                    draft.with(|f| match f.node(&id).map(|n| &n.kind) {
+                        Some(NodeKind::TriggerState(t)) => t.below,
+                        _ => None,
+                    })
+                }
+            });
+            let hold_initial = draft.with_untracked(|f| match f.node(&id).map(|n| &n.kind) {
+                Some(NodeKind::TriggerState(t)) => t.for_.clone().unwrap_or_default(),
+                _ => String::new(),
+            });
+            let hold_id = id.clone();
+            let hold_write = Callback::new(move |value: Option<String>| {
+                form.update(&hold_id, |n| {
+                    if let NodeKind::TriggerState(ref mut t) = n.kind {
+                        t.for_ = value;
+                    }
+                });
+            });
+            let bounds = move || {
+                reads.track();
+                numeric.get().then(|| {
+                    view! {
+                        <BoundField label=FlowText::CrossAbove value=above_value write=above_write />
+                        <BoundField label=FlowText::CrossBelow value=below_value write=below_write />
+                    }
+                })
+            };
             let filters_id = id;
             let to_value = Signal::derive({
                 let id = filters_id.clone();
@@ -1426,6 +1546,9 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
             });
             let filters = move || {
                 reads.track();
+                if bounds_set.get() {
+                    return ().into_any();
+                }
                 view! {
                     <IfValueField
                         value=to_value
@@ -1446,6 +1569,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                         clear=Callback::new(move |()| from_write.run(None))
                     />
                 }
+                .into_any()
             };
             view! {
                 <EntityPickField
@@ -1456,7 +1580,15 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                     class=Some("node-editor__field".to_owned())
                 />
                 <ValueOfField entity=entity_value field=field_value on_pick=pick />
+                {bounds}
                 {filters}
+                <TextField
+                    label=word(FlowText::HoldFor)
+                    initial=hold_initial
+                    placeholder=plain("30s, 5m")
+                    optional=true
+                    write=hold_write
+                />
             }
             .into_any()
         }

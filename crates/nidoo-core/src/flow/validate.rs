@@ -32,6 +32,8 @@ pub enum FlowError {
     BadLimit { node: String, reason: String },
     #[error("node `{node}`: from and to are the same alarm mode, so it could never fire")]
     BadAlarmTrigger { node: String },
+    #[error("node `{node}`: {reason}")]
+    BadThreshold { node: String, reason: String },
     #[error("node `{node}`: value must be a boolean, a number or a string")]
     BadValue { node: String },
     #[error("node `{node}`: {reason}")]
@@ -118,7 +120,7 @@ pub fn is_valid_node_id(id: &str) -> bool {
 pub fn validate(flow: &Flow) -> Result<(), FlowError> {
     use super::{
         MAX_AVERAGE_SECS, MAX_LIMIT, MAX_SWITCH_RULES, NodeKind, Op, RuleOp, Scalar, Schedule,
-        parse_clock, parse_duration, window,
+        hold, parse_clock, parse_duration, window,
     };
 
     if !is_valid_flow_id(&flow.id) {
@@ -151,6 +153,37 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                         node: node.id.clone(),
                         reason,
                     });
+                }
+            }
+            NodeKind::TriggerState(p) => {
+                if let Some(text) = &p.for_
+                    && let Err(reason) = hold(text)
+                {
+                    return Err(FlowError::BadDuration {
+                        node: node.id.clone(),
+                        reason: format!("for: {reason}"),
+                    });
+                }
+                let bad = |reason: &str| {
+                    Err(FlowError::BadThreshold {
+                        node: node.id.clone(),
+                        reason: reason.to_owned(),
+                    })
+                };
+                if p.above.is_some() || p.below.is_some() {
+                    if p.to.is_some() || p.from.is_some() {
+                        return bad("above and below cannot be combined with to or from");
+                    }
+                    if p.above.is_some_and(|a| !a.is_finite())
+                        || p.below.is_some_and(|b| !b.is_finite())
+                    {
+                        return bad("above and below must be finite numbers");
+                    }
+                    if let (Some(a), Some(b)) = (p.above, p.below)
+                        && a >= b
+                    {
+                        return bad("above must be lower than below, or no value could match");
+                    }
                 }
             }
             NodeKind::TriggerSilent(p) => {
@@ -1576,6 +1609,52 @@ mod tests {
                 matches!(err, FlowError::BadOperand { ref reason, .. }
                     if *reason == format!("{field} is not allowed with op: is_off_peak")),
                 "{field}: {err:?}"
+            );
+        }
+    }
+
+    fn state_flow(params: serde_json::Value) -> Flow {
+        decode_flow(
+            serde_json::json!([
+                { "id": "t", "type": "trigger.state", "params": params },
+                { "id": "wait", "type": "delay", "params": { "for": "1s" } },
+            ]),
+            serde_json::json!([{ "from": "t", "to": "wait" }]),
+        )
+    }
+
+    #[test]
+    fn state_for_and_crossings_validate() {
+        use serde_json::json;
+        for ok in [
+            json!({ "entity": "m", "to": false, "for": "5m" }),
+            json!({ "entity": "m", "for": "30s" }),
+            json!({ "entity": "t", "above": 25 }),
+            json!({ "entity": "t", "below": 18.5, "for": "10m" }),
+            json!({ "entity": "t", "above": 18, "below": 22 }),
+        ] {
+            assert_eq!(validate(&state_flow(ok.clone())), Ok(()), "{ok}");
+        }
+        assert!(matches!(
+            validate(&state_flow(json!({ "entity": "m", "for": "0s" }))),
+            Err(FlowError::BadDuration { reason, .. }) if reason.starts_with("for:")
+        ));
+        assert!(matches!(
+            validate(&state_flow(json!({ "entity": "m", "for": "200h" }))),
+            Err(FlowError::BadDuration { .. })
+        ));
+        for bad in [
+            json!({ "entity": "t", "above": 25, "to": 30 }),
+            json!({ "entity": "t", "below": 25, "from": 20 }),
+            json!({ "entity": "t", "above": 22, "below": 18 }),
+            json!({ "entity": "t", "above": 20, "below": 20 }),
+        ] {
+            assert!(
+                matches!(
+                    validate(&state_flow(bad.clone())),
+                    Err(FlowError::BadThreshold { .. })
+                ),
+                "{bad}"
             );
         }
     }

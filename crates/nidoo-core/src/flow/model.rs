@@ -297,8 +297,36 @@ pub struct TriggerStateParams {
     /// Only trigger when the previous value equalled this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<Value>,
+    /// Only trigger when a number crosses above this: the previous value was not above it and the
+    /// new one is (`25` fires once on 24.8 → 25.3, not on 25.3 → 25.6). With `below` too, fires
+    /// when the value enters the range between them. Not with `to` or `from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub above: Option<f64>,
+    /// Only trigger when a number crosses below this (see `above`). Not with `to` or `from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub below: Option<f64>,
+    /// Fire only once the condition has held this long: a duration such as `30s`, `5m` or
+    /// `1h30m`, from `1s` to `168h` ("no motion for 5 min": `to: false`, `for: "5m"`). A report
+    /// that breaks the condition cancels the wait; without `to`, `above` or `below` the value
+    /// must stay unchanged. A wait in progress is lost when the hub restarts.
+    #[serde(rename = "for", default, skip_serializing_if = "Option::is_none")]
+    pub for_: Option<String>,
     #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
+}
+
+impl TriggerStateParams {
+    /// Whether `value` satisfies the `above` / `below` bounds; `None` when the trigger has neither.
+    /// A value that is not a number never satisfies them.
+    pub fn in_bounds(&self, value: &Scalar) -> Option<bool> {
+        if self.above.is_none() && self.below.is_none() {
+            return None;
+        }
+        let Scalar::Number(n) = value else {
+            return Some(false);
+        };
+        Some(self.above.is_none_or(|a| *n > a) && self.below.is_none_or(|b| *n < b))
+    }
 }
 
 /// Params of `trigger.signal`.
@@ -983,6 +1011,49 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn state_bounds_read_numbers_only() {
+        let p = |above, below| TriggerStateParams {
+            above,
+            below,
+            ..Default::default()
+        };
+        assert_eq!(p(None, None).in_bounds(&Scalar::Number(3.0)), None);
+        assert_eq!(
+            p(Some(25.0), None).in_bounds(&Scalar::Number(25.0)),
+            Some(false)
+        );
+        assert_eq!(
+            p(Some(25.0), None).in_bounds(&Scalar::Number(25.1)),
+            Some(true)
+        );
+        assert_eq!(
+            p(None, Some(18.0)).in_bounds(&Scalar::Number(17.9)),
+            Some(true)
+        );
+        assert_eq!(
+            p(Some(18.0), Some(22.0)).in_bounds(&Scalar::Number(20.0)),
+            Some(true)
+        );
+        assert_eq!(
+            p(Some(18.0), Some(22.0)).in_bounds(&Scalar::Number(22.0)),
+            Some(false)
+        );
+        assert_eq!(
+            p(Some(1.0), None).in_bounds(&Scalar::Text("on".into())),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn state_for_round_trips_as_for() {
+        let text = r#"{"entity":"m","to":false,"for":"5m"}"#;
+        let p: TriggerStateParams = serde_json::from_str(text).unwrap();
+        assert_eq!(p.for_.as_deref(), Some("5m"));
+        assert!(p.extra.is_empty());
+        assert_eq!(serde_json::to_string(&p).unwrap(), text);
+    }
 
     #[test]
     fn labels_default_empty_and_are_omitted() {

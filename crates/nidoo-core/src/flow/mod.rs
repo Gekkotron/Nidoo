@@ -18,7 +18,8 @@ mod validate;
 
 pub use clock::{in_time_range, parse_clock};
 pub use duration::{
-    DurationError, MAX_WINDOW, MIN_WINDOW, format_duration, parse_duration, pick_duration, window,
+    DurationError, MAX_WINDOW, MIN_HOLD, MIN_WINDOW, format_duration, hold, parse_duration,
+    pick_duration, window,
 };
 pub use field::{FieldInfo, brightness_percent, field_scalar, fields, headline_scalar};
 pub use labels::{

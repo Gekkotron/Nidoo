@@ -1,5 +1,5 @@
 # Ratchet for tests/bare_text.rs: delete a file line once that file is translated.
-text: trigger declencheur event evenement sensor capteur  # search keywords for the Device card, matched not shown
+text: trigger declencheur event evenement sensor capteur seuil threshold above below depasse pendant for duree  # search keywords for the Device card, matched not shown
 text: inject injecter button bouton  # search keywords for the Manual card, matched not shown
 text: choice choix season saison tag  # search keywords for the Pick a label card, matched not shown
 text: backup sauvegarde ftp  # search keywords for the Back up card, matched not shown

@@ -24,8 +24,9 @@ use nidoo_core::flow::template::{Lang, render};
 use nidoo_core::flow::{
     ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, BACKUP_PARTIAL_PORT, Flow,
     FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule,
-    command_with_number, compare, field_scalar, format_duration, headline_scalar, in_time_range,
-    parse_clock, parse_duration, pick_duration, switch_exits, window,
+    TriggerStateParams, command_with_number, compare, field_scalar, format_duration,
+    headline_scalar, hold, in_time_range, parse_clock, parse_duration, pick_duration, switch_exits,
+    window,
 };
 use nidoo_core::history::buckets::{Sample, readings_mean};
 use nidoo_core::model::{Command, StateValue};
@@ -92,6 +93,7 @@ pub(super) async fn run_with(
         schedules: BTreeMap::new(),
         silents: BTreeMap::new(),
         silent_epoch: hub.link_epoch(),
+        holds: BTreeMap::new(),
         sun_timers: BTreeMap::new(),
         off_peak_base: None,
         off_peak_timer: None,
@@ -127,6 +129,7 @@ pub(super) async fn run_with(
             () = sleep_until_deadline(deadline), if deadline.is_some() => {
                 engine.tick();
                 engine.tick_silents();
+                engine.tick_holds();
                 engine.tick_suns();
                 engine.tick_off_peak();
             }
@@ -173,6 +176,19 @@ struct Silent {
     fired: bool,
 }
 
+/// A `trigger.state` edge waiting out its `for`: it fires at `at` if the value still holds.
+struct Hold {
+    flow: String,
+    node: String,
+    /// The node's kind when armed, to tell an edited node from an unchanged one.
+    kind: NodeKind,
+    params: TriggerStateParams,
+    /// The value the edge brought, which a trigger with no `to`, `above` or `below` must keep.
+    edge: Scalar,
+    info: TriggerInfo,
+    at: chrono::DateTime<chrono::Utc>,
+}
+
 struct Engine {
     hub: Arc<Hub>,
     /// The house time zone schedules run in.
@@ -185,6 +201,8 @@ struct Engine {
     /// The hub's [`Hub::link_epoch`] the silent clocks were last restarted in. A different one
     /// while online means the link bounced and the clocks are from before it.
     silent_epoch: u64,
+    /// `trigger.state` holds in progress, keyed `"{flow}/{node}"`.
+    holds: BTreeMap<String, Hold>,
     /// Armed sun nodes, keyed `"{flow}/{node}"`.
     sun_timers: BTreeMap<String, ArmedSun>,
     /// The off-peak answer `trigger.off_peak` compares against; `None` until seeded. Seeding
@@ -296,6 +314,7 @@ impl Engine {
         }
         self.arm_schedules();
         self.arm_silents();
+        self.keep_holds();
         self.arm_suns();
         self.off_peak_reload();
         // Disabled flows keep their counts: only a removed or edited node forgets them.
@@ -482,6 +501,59 @@ impl Engine {
         }
     }
 
+    /// Drops the holds whose flow is gone, disabled or whose node was edited.
+    fn keep_holds(&mut self) {
+        let flows = &self.flows;
+        self.holds.retain(|_, hold| {
+            flows.iter().any(|flow| {
+                flow.id == hold.flow
+                    && flow
+                        .triggers()
+                        .iter()
+                        .any(|node| node.id == hold.node && node.kind == hold.kind)
+            })
+        });
+    }
+
+    /// Drops the holds of `key` that the reported value `value` no longer satisfies.
+    fn release_holds(&mut self, id: &str, key: &Watched, value: &Scalar) {
+        self.holds.retain(|_, hold| {
+            hold.params.entity != id
+                || hold.params.field != key.1
+                || still_holds(&hold.params, &hold.edge, value)
+        });
+    }
+
+    /// Fires every hold whose wait is over and whose value is still the one it waited on, and
+    /// drops them all. Nothing fires while the broker link is not online.
+    fn tick_holds(&mut self) {
+        let now = (self.now)();
+        let due: Vec<String> = self
+            .holds
+            .iter()
+            .filter(|(_, hold)| hold.at <= now)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in due {
+            let Some(hold) = self.holds.remove(&key) else {
+                continue;
+            };
+            if !self.online() {
+                continue;
+            }
+            let current = self
+                .hub
+                .entity_value(&hold.params.entity, hold.params.field.as_deref());
+            if !current.is_some_and(|v| still_holds(&hold.params, &hold.edge, &v)) {
+                continue;
+            }
+            let Some(flow) = self.flows.iter().find(|f| f.id == hold.flow).cloned() else {
+                continue;
+            };
+            self.fire(flow, hold.node, Some(hold.info));
+        }
+    }
+
     /// The `StateTouched` receiver lagged: reports of any entity may be missing.
     fn seen_lagged(&mut self) {
         self.restart_silents();
@@ -567,6 +639,7 @@ impl Engine {
             .chain(self.off_peak_timer.map(|at| at.to_utc()))
             .chain(self.off_peak_settle.map(|at| at.to_utc()))
             .chain(silent)
+            .chain(self.holds.values().map(|hold| hold.at))
             .min()?;
         let wait = (at - (self.now)())
             .to_std()
@@ -950,8 +1023,12 @@ impl Engine {
             .map(|e| e.component.clone())
             .unwrap_or_default();
         let mut fires: Vec<(Flow, String, TriggerInfo)> = Vec::new();
+        let mut arms: Vec<(String, Hold)> = Vec::new();
         for key in keys {
             let next = watched_value(&component, state, key.1.as_deref());
+            if let Some(value) = &next {
+                self.release_holds(id, &key, value);
+            }
             // Never seen since the last reset: recorded, not acted on.
             let Some(previous) = self.known.insert(key.clone(), next.clone()) else {
                 continue;
@@ -980,12 +1057,19 @@ impl Engine {
                         NodeKind::TriggerState(params) => {
                             params.entity == id
                                 && params.field == key.1
-                                && filter_matches(params.to.as_ref(), &next)
-                                && match &previous {
-                                    Some(previous) => {
-                                        filter_matches(params.from.as_ref(), previous)
-                                    }
-                                    None => params.from.is_none() && params.to.is_some(),
+                                && if params.above.is_some() || params.below.is_some() {
+                                    params.in_bounds(&next) == Some(true)
+                                        && previous
+                                            .as_ref()
+                                            .is_none_or(|p| params.in_bounds(p) != Some(true))
+                                } else {
+                                    filter_matches(params.to.as_ref(), &next)
+                                        && match &previous {
+                                            Some(previous) => {
+                                                filter_matches(params.from.as_ref(), previous)
+                                            }
+                                            None => params.from.is_none() && params.to.is_some(),
+                                        }
                                 }
                         }
                         NodeKind::TriggerAlarm(params) => {
@@ -1005,12 +1089,41 @@ impl Engine {
                         }
                         _ => false,
                     };
-                    if satisfied {
-                        fires.push((flow.clone(), node.id.clone(), trigger.clone()));
+                    if !satisfied {
+                        continue;
+                    }
+                    let wait = match &node.kind {
+                        NodeKind::TriggerState(params) => params.for_.as_deref().map(|text| {
+                            // The definition was validated when the flow was stored.
+                            (
+                                params,
+                                hold(text)
+                                    .ok()
+                                    .and_then(|d| chrono::Duration::from_std(d).ok()),
+                            )
+                        }),
+                        _ => None,
+                    };
+                    match wait {
+                        None => fires.push((flow.clone(), node.id.clone(), trigger.clone())),
+                        Some((_, None)) => {}
+                        Some((params, Some(period))) => arms.push((
+                            format!("{}/{}", flow.id, node.id),
+                            Hold {
+                                flow: flow.id.clone(),
+                                node: node.id.clone(),
+                                kind: node.kind.clone(),
+                                params: params.clone(),
+                                edge: next.clone(),
+                                info: trigger.clone(),
+                                at: (self.now)() + period,
+                            },
+                        )),
                     }
                 }
             }
         }
+        self.holds.extend(arms);
         for (flow, node, trigger) in fires {
             self.fire(flow, node, Some(trigger));
         }
@@ -1142,6 +1255,18 @@ impl Engine {
 }
 
 /// `eq` semantics of `compare`: the filter must be a scalar equal to the value, type included.
+/// Whether the reported `value` still satisfies a state trigger that waits on it: its `to`, its
+/// bounds, or, with neither, the value the edge brought.
+fn still_holds(params: &TriggerStateParams, edge: &Scalar, value: &Scalar) -> bool {
+    if params.to.is_some() {
+        filter_matches(params.to.as_ref(), value)
+    } else if let Some(inside) = params.in_bounds(value) {
+        inside
+    } else {
+        value == edge
+    }
+}
+
 fn filter_matches(filter: Option<&Value>, actual: &Scalar) -> bool {
     filter.is_none_or(|value| Scalar::from_json(value).as_ref() == Some(actual))
 }
@@ -2061,6 +2186,7 @@ mod tests {
             schedules: BTreeMap::new(),
             silents: BTreeMap::new(),
             silent_epoch: 0,
+            holds: BTreeMap::new(),
             sun_timers: BTreeMap::new(),
             off_peak_base: None,
             off_peak_timer: None,
@@ -3795,5 +3921,162 @@ mod tests {
             backup_detail("1.2 MB", "nas", "b.nidoo", Some("Zigbee2MQTT is offline")),
             "Backed up 1.2 MB to nas as b.nidoo, without Zigbee2MQTT data: Zigbee2MQTT is offline"
         );
+    }
+
+    /// A vacuum engine whose clock the test moves; its `battery` field is the number watched.
+    fn battery_engine() -> (Engine, String, TestClock) {
+        let (mut engine, id) = vacuum_engine();
+        let clock = Arc::new(std::sync::Mutex::new(
+            chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        ));
+        let read = Arc::clone(&clock);
+        engine.now = Arc::new(move || *read.lock().unwrap());
+        (engine, id, clock)
+    }
+
+    #[tokio::test]
+    async fn above_fires_once_per_crossing() {
+        let (mut engine, id, _) = battery_engine();
+        state_flow(
+            &engine,
+            "a",
+            serde_json::json!({ "entity": id, "field": "battery", "above": 25 }),
+        );
+        engine.reload();
+        vacuum_report(&mut engine, &id, "cleaning", 24);
+        vacuum_report(&mut engine, &id, "cleaning", 26);
+        assert_eq!(run_count(&engine, "a"), 1);
+        finish_runs(&mut engine).await;
+        vacuum_report(&mut engine, &id, "cleaning", 27);
+        assert_eq!(run_count(&engine, "a"), 1);
+        vacuum_report(&mut engine, &id, "cleaning", 24);
+        vacuum_report(&mut engine, &id, "cleaning", 26);
+        assert_eq!(run_count(&engine, "a"), 2);
+    }
+
+    #[tokio::test]
+    async fn above_and_below_fire_on_entering_the_range() {
+        let (mut engine, id, _) = battery_engine();
+        state_flow(
+            &engine,
+            "a",
+            serde_json::json!({ "entity": id, "field": "battery", "above": 18, "below": 22 }),
+        );
+        engine.reload();
+        vacuum_report(&mut engine, &id, "cleaning", 15);
+        vacuum_report(&mut engine, &id, "cleaning", 20);
+        assert_eq!(run_count(&engine, "a"), 1);
+        finish_runs(&mut engine).await;
+        vacuum_report(&mut engine, &id, "cleaning", 21);
+        assert_eq!(run_count(&engine, "a"), 1);
+        vacuum_report(&mut engine, &id, "cleaning", 23);
+        vacuum_report(&mut engine, &id, "cleaning", 20);
+        assert_eq!(run_count(&engine, "a"), 2);
+    }
+
+    fn held_off_flow(engine: &Engine, id: &str) {
+        state_flow(
+            engine,
+            "a",
+            serde_json::json!({ "entity": id, "to": false, "for": "5m" }),
+        );
+    }
+
+    #[tokio::test]
+    async fn to_with_for_fires_after_the_wait() {
+        let (mut engine, id, clock) = clocked_engine();
+        held_off_flow(&engine, &id);
+        engine.reload();
+        alarm_report(&mut engine, &id, r#"{"alarm":"yes"}"#);
+        alarm_report(&mut engine, &id, r#"{"alarm":"no"}"#);
+        assert_eq!(run_count(&engine, "a"), 0);
+        assert!(engine.next_deadline().is_some());
+        at(&clock, 4);
+        engine.tick_holds();
+        assert_eq!(run_count(&engine, "a"), 0);
+        at(&clock, 5);
+        engine.tick_holds();
+        assert_eq!(run_count(&engine, "a"), 1);
+        assert!(engine.holds.is_empty());
+        let trigger = engine.hub.flow("a").unwrap().runs[0]
+            .trigger
+            .clone()
+            .unwrap();
+        assert_eq!(trigger.value, serde_json::json!(false));
+    }
+
+    #[tokio::test]
+    async fn a_report_that_breaks_the_condition_cancels_the_wait() {
+        let (mut engine, id, clock) = clocked_engine();
+        held_off_flow(&engine, &id);
+        engine.reload();
+        alarm_report(&mut engine, &id, r#"{"alarm":"yes"}"#);
+        alarm_report(&mut engine, &id, r#"{"alarm":"no"}"#);
+        at(&clock, 2);
+        alarm_report(&mut engine, &id, r#"{"alarm":"yes"}"#);
+        assert!(engine.holds.is_empty());
+        at(&clock, 6);
+        engine.tick_holds();
+        assert_eq!(run_count(&engine, "a"), 0);
+    }
+
+    #[tokio::test]
+    async fn for_without_a_filter_restarts_on_a_new_change() {
+        let (mut engine, id, clock) = battery_engine();
+        state_flow(
+            &engine,
+            "a",
+            serde_json::json!({ "entity": id, "field": "battery", "for": "5m" }),
+        );
+        engine.reload();
+        vacuum_report(&mut engine, &id, "cleaning", 10);
+        vacuum_report(&mut engine, &id, "cleaning", 11);
+        at(&clock, 3);
+        vacuum_report(&mut engine, &id, "cleaning", 12);
+        at(&clock, 5);
+        engine.tick_holds();
+        assert_eq!(run_count(&engine, "a"), 0);
+        at(&clock, 8);
+        engine.tick_holds();
+        assert_eq!(run_count(&engine, "a"), 1);
+        let trigger = engine.hub.flow("a").unwrap().runs[0]
+            .trigger
+            .clone()
+            .unwrap();
+        assert_eq!(trigger.value, serde_json::json!(12.0));
+    }
+
+    #[tokio::test]
+    async fn the_deadline_rechecks_the_registry() {
+        let (mut engine, id, clock) = clocked_engine();
+        held_off_flow(&engine, &id);
+        engine.reload();
+        alarm_report(&mut engine, &id, r#"{"alarm":"yes"}"#);
+        alarm_report(&mut engine, &id, r#"{"alarm":"no"}"#);
+        // The registry moves without the engine hearing about it.
+        engine.hub.ingest("test/det", br#"{"alarm":"yes"}"#);
+        at(&clock, 5);
+        engine.tick_holds();
+        assert_eq!(run_count(&engine, "a"), 0);
+        assert!(engine.holds.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reload_keeps_an_unchanged_hold_and_drops_an_edited_one() {
+        let (mut engine, id, _) = clocked_engine();
+        held_off_flow(&engine, &id);
+        engine.reload();
+        alarm_report(&mut engine, &id, r#"{"alarm":"yes"}"#);
+        alarm_report(&mut engine, &id, r#"{"alarm":"no"}"#);
+        assert_eq!(engine.holds.len(), 1);
+        engine.reload();
+        assert_eq!(engine.holds.len(), 1);
+        state_flow(
+            &engine,
+            "a",
+            serde_json::json!({ "entity": id, "to": false, "for": "10m" }),
+        );
+        engine.reload();
+        assert!(engine.holds.is_empty());
     }
 }

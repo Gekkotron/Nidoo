@@ -323,18 +323,40 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
         NodeKind::TriggerState(p) => {
             let (e, unit) = read_text(&p.entity, p.field.as_deref(), ctx);
             let entity = ctx.entities.get(&p.entity);
-            match &p.to {
-                None => t::when_changes(lang, &e),
-                Some(Value::Bool(b)) => t::when_turns(
+            let base = if p.above.is_some() || p.below.is_some() {
+                let range = p.above.is_some() && p.below.is_some();
+                let with = |v: f64, last: bool| {
+                    let text = number(lang, v);
+                    if !range || last {
+                        with_unit(text, unit.as_deref())
+                    } else {
+                        text
+                    }
+                };
+                t::when_crosses(
                     lang,
                     &e,
-                    *b,
-                    entity.is_some_and(|x| x.kind == Kind::Light),
-                    &bool_word(lang, entity, *b),
-                ),
-                Some(v) => {
-                    t::when_becomes(lang, &e, &value_words(lang, v, unit.as_deref(), entity))
+                    p.above.map(|v| with(v, false)).as_deref(),
+                    p.below.map(|v| with(v, true)).as_deref(),
+                )
+            } else {
+                match &p.to {
+                    None => t::when_changes(lang, &e),
+                    Some(Value::Bool(b)) => t::when_turns(
+                        lang,
+                        &e,
+                        *b,
+                        entity.is_some_and(|x| x.kind == Kind::Light),
+                        &bool_word(lang, entity, *b),
+                    ),
+                    Some(v) => {
+                        t::when_becomes(lang, &e, &value_words(lang, v, unit.as_deref(), entity))
+                    }
                 }
+            };
+            match &p.for_ {
+                Some(hold) => t::held_for(lang, &base, &duration_words(hold)),
+                None => base,
             }
         }
         NodeKind::TriggerSignal(p) => {
@@ -359,7 +381,7 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             } else {
                 entity_text(&p.entity, ctx)
             };
-            t::silent_for(lang, &e, &p.for_)
+            t::silent_for(lang, &e, &duration_words(&p.for_))
         }
         NodeKind::Limit(p) => t::at_most(lang, p.max, &p.per),
         NodeKind::TriggerManual(p) => {
@@ -815,6 +837,43 @@ mod tests {
     }
 
     #[test]
+    fn state_trigger_crossings_and_holds() {
+        let at = |extra: &str| {
+            format!(r#"{{"id":"a","type":"trigger.state","params":{{"entity":"lux"{extra}}}}}"#)
+        };
+        let above = at(r#","above":25"#);
+        assert_eq!(text(&above), "When Entrée goes above 25\u{a0}lx");
+        assert_eq!(text_in(Lang::Fr, &above), "Quand Entrée dépasse 25\u{a0}lx");
+        let below = at(r#","below":18"#);
+        assert_eq!(text(&below), "When Entrée goes below 18\u{a0}lx");
+        assert_eq!(
+            text_in(Lang::Fr, &below),
+            "Quand Entrée descend sous 18\u{a0}lx"
+        );
+        let both = at(r#","above":18,"below":22"#);
+        assert_eq!(text(&both), "When Entrée goes between 18 and 22\u{a0}lx");
+        assert_eq!(
+            text_in(Lang::Fr, &both),
+            "Quand Entrée passe entre 18 et 22\u{a0}lx"
+        );
+        let held = at(r#","above":25,"for":"5m""#);
+        assert_eq!(
+            text(&held),
+            "When Entrée goes above 25\u{a0}lx for 5\u{a0}min"
+        );
+        assert_eq!(
+            text_in(Lang::Fr, &held),
+            "Quand Entrée dépasse 25\u{a0}lx pendant 5\u{a0}min"
+        );
+        let still = at(r#","to":true,"for":"5m""#);
+        assert!(
+            text(&still).ends_with(" for 5\u{a0}min"),
+            "{}",
+            text(&still)
+        );
+    }
+
+    #[test]
     fn switch_and_time_sentences_en_fr() {
         let switch = r#"{"id":"s","type":"switch","params":{"entity":"lux","rules":[{"op":"lt","value":18}]}}"#;
         assert_eq!(text(switch), "Switch on Entrée");
@@ -982,13 +1041,13 @@ mod tests {
     #[test]
     fn silent_and_limit_cards_read_as_sentences() {
         let silent = r#"{"id":"s","type":"trigger.silent","params":{"entity":"l1","for":"50m"}}"#;
-        assert_eq!(text(silent), "Lumière TV silent for 50m");
+        assert_eq!(text(silent), "Lumière TV silent for 50\u{a0}min");
         assert_eq!(
             text_in(Lang::Fr, silent),
-            "Lumière TV silencieux depuis 50m"
+            "Lumière TV silencieux depuis 50\u{a0}min"
         );
         let unset = r#"{"id":"s","type":"trigger.silent","params":{"entity":"","for":"50m"}}"#;
-        assert_eq!(text(unset), "Silent for 50m");
+        assert_eq!(text(unset), "Silent for 50\u{a0}min");
         let limit = r#"{"id":"l","type":"limit","params":{"max":4,"per":"24h"}}"#;
         assert_eq!(text(limit), "At most 4 every 24h");
         assert_eq!(text_in(Lang::Fr, limit), "Au plus 4 fois par 24h");
