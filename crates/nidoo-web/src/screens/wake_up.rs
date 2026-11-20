@@ -11,9 +11,12 @@ use nidoo_core::flow::wake_up::{FADE_CHOICES, LABEL, next_id, read, to_flow, val
 use nidoo_core::model::{MediaPlayerState, StateValue};
 
 use crate::api;
+use crate::components::confirm::ConfirmBar;
 use crate::components::toast::Toasts;
 use crate::house::House;
-use crate::i18n::wake_up::{WakeText, next_alarm, percent, unreadable_body, wake_text};
+use crate::i18n::wake_up::{
+    WakeText, delete_question, next_alarm, percent, unreadable_body, wake_text,
+};
 use crate::i18n::{Lang, use_lang};
 use crate::nav::BackLink;
 use crate::playlist_fields::{fade_label, output_options, playlist_options};
@@ -288,6 +291,12 @@ fn AlarmRow(id: String) -> impl IntoView {
             // The settings do not parse (edited by hand): it can only be deleted.
             _ => {
                 let delete_id = delete_id.clone();
+                let asked_id = delete_id.clone();
+                let confirming = RwSignal::new(false);
+                let on_yes = {
+                    let id = id.clone();
+                    Callback::new(move |()| delete_alarm(house, toasts, id.clone(), None))
+                };
                 view! {
                     <div class="wake-alarm wake-alarm--bad">
                         <span
@@ -302,16 +311,29 @@ fn AlarmRow(id: String) -> impl IntoView {
                                 {move || unreadable_body(lang(), &delete_id)}
                             </span>
                         </span>
-                        <button
-                            type="button"
-                            class="btn btn--danger wake-alarm__delete"
-                            on:click={
-                                let id = id.clone();
-                                move |_| delete_alarm(house, toasts, id.clone(), None)
+                        {move || if confirming.get() {
+                            let asked_id = asked_id.clone();
+                            view! {
+                                <ConfirmBar
+                                    question=Signal::derive(move || delete_question(lang(), &asked_id))
+                                    yes=Signal::derive(move || wake_text(lang(), WakeText::Delete).to_owned())
+                                    on_yes=on_yes
+                                    on_cancel=Callback::new(move |()| confirming.set(false))
+                                />
                             }
-                        >
-                            {move || wake_text(lang(), WakeText::Delete)}
-                        </button>
+                                .into_any()
+                        } else {
+                            view! {
+                                <button
+                                    type="button"
+                                    class="btn btn--danger wake-alarm__delete"
+                                    on:click=move |_| confirming.set(true)
+                                >
+                                    {move || wake_text(lang(), WakeText::Delete)}
+                                </button>
+                            }
+                                .into_any()
+                        }}
                     </div>
                 }
                 .into_any()
@@ -526,12 +548,14 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
     let delete_nav = navigate.clone();
     let delete = {
         let id = id.clone();
-        move |_| {
+        Callback::new(move |()| {
             let navigate = delete_nav.clone();
             let then = Callback::new(move |()| navigate("/wake-up", NavigateOptions::default()));
             delete_alarm(house, toasts, id.clone(), Some(then));
-        }
+        })
     };
+    // Delete asks first, like the other editors.
+    let confirming = RwSignal::new(false);
     let cancel_nav = navigate;
 
     let chips = move || {
@@ -813,13 +837,33 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
                 {(!is_new)
                     .then(|| {
                         view! {
-                            <button
-                                type="button"
-                                class="btn btn--danger wake-delete"
-                                on:click=delete.clone()
-                            >
-                                {move || wake_text(lang(), WakeText::Delete)}
-                            </button>
+                            {move || if confirming.get() {
+                                view! {
+                                    <ConfirmBar
+                                        question=Signal::derive(move || {
+                                            delete_question(
+                                                lang(),
+                                                &draft.with(|d| d.display_name(lang())),
+                                            )
+                                        })
+                                        yes=Signal::derive(move || wake_text(lang(), WakeText::Delete).to_owned())
+                                        on_yes=delete
+                                        on_cancel=Callback::new(move |()| confirming.set(false))
+                                    />
+                                }
+                                    .into_any()
+                            } else {
+                                view! {
+                                    <button
+                                        type="button"
+                                        class="btn btn--danger wake-delete"
+                                        on:click=move |_| confirming.set(true)
+                                    >
+                                        {move || wake_text(lang(), WakeText::Delete)}
+                                    </button>
+                                }
+                                    .into_any()
+                            }}
                         }
                     })} <span class="wake-actions__spacer"></span>
                 <button

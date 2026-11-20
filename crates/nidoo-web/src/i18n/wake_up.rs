@@ -208,6 +208,14 @@ pub fn next_alarm(lang: Lang, when: &str) -> String {
     }
 }
 
+/// "Delete Wake-up 07:00?" / « Supprimer Réveil 07:00 ? »: asked before an alarm is deleted.
+pub fn delete_question(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::En => format!("Delete {name}?"),
+        Lang::Fr => format!("Supprimer {name}{NBSP}?"),
+    }
+}
+
 /// The note under an unreadable alarm: its flow id and what can still be done.
 pub fn unreadable_body(lang: Lang, id: &str) -> String {
     match lang {
@@ -339,6 +347,18 @@ mod tests {
         assert_eq!(
             disable_title(Lang::En, 3),
             "3 active alarms will be turned off."
+        );
+    }
+
+    #[test]
+    fn delete_question_reads_both_ways() {
+        assert_eq!(
+            delete_question(Lang::En, "Wake-up 07:00"),
+            "Delete Wake-up 07:00?"
+        );
+        assert_eq!(
+            delete_question(Lang::Fr, "Réveil 07:00"),
+            format!("Supprimer Réveil 07:00{NBSP}?")
         );
     }
 

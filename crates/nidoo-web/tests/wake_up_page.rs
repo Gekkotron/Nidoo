@@ -367,6 +367,11 @@ async fn unreadable_alarm_has_only_delete() {
     assert!(find(&m.host, ".wake-alarm__switch").is_none());
     assert!(find(&m.host, ".wake-alarm__body").is_none());
     one(&m.host, ".wake-alarm__delete").click();
+    settle().await;
+    // Delete asks first: the question names the alarm, and nothing is sent until "Delete".
+    assert_eq!(text(&m.host, ".confirm__question"), "Delete wake-up-3?");
+    assert!(find(&m.host, ".wake-alarm__delete").is_none());
+    one(&m.host, ".confirm__buttons .btn:first-child").click();
     let del = stub.wait_for("DELETE").await.expect("a DELETE");
     assert_eq!(del.url, "/api/v1/flows/wake-up-3");
     settle().await;
