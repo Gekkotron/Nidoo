@@ -274,7 +274,9 @@ pub fn NodeEditor(editor: Editor, selected: RwSignal<Option<Selection>>) -> impl
         <Show when=move || node_id().is_some()>
             {move || {
                 editor.restored.track();
-                node_type.track();
+                // Read, not `track()`: a memo that was never read never runs, so it would
+                // never learn that the draft changed.
+                let _ = node_type.get();
                 let Some(id) = node_id() else { return ().into_any(); };
                 let Some(node) = editor.draft.with_untracked(|f| f.node(&id).cloned()) else {
                     return ().into_any();
