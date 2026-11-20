@@ -77,7 +77,7 @@ impl NidooMcp {
         Parameters(params): Parameters<SetHomeSettingsParams>,
     ) -> ToolResult<HomeSettings> {
         log_write("set_home_settings", &params);
-        Ok(Json(self.hub.set_home_settings(params.settings)?))
+        Ok(Json(self.hub.apply_home_settings(params.settings).await?))
     }
 
     /// One section of the hub's service settings (`weather`, `solcast`, `frigate`, `push`,

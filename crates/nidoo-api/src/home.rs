@@ -36,6 +36,9 @@ pub struct HomeSettings {
     /// °C, the highest setpoint the assistant applies without asking (5 to 35); unset = 23.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assist_max_c: Option<f64>,
+    /// Shows the Wake-up page; turning it off turns off every flow labelled `wake-up`.
+    #[serde(default)]
+    pub wake_up: bool,
 }
 
 /// The assistant's range when the home settings leave it unset, in °C.
@@ -93,9 +96,18 @@ mod tests {
                 "hot_above": null,
                 "off_peak": [],
                 "off_peak_history": [],
-                "energy_view": "classic"
+                "energy_view": "classic",
+                "wake_up": false
             })
         );
+    }
+
+    #[test]
+    fn home_settings_wake_up_defaults_false() {
+        let s: HomeSettings = serde_json::from_value(json!({})).unwrap();
+        assert!(!s.wake_up);
+        let s: HomeSettings = serde_json::from_value(json!({"wake_up": true})).unwrap();
+        assert!(s.wake_up);
     }
 
     #[test]

@@ -30,6 +30,11 @@ const THRESHOLD_MAX: f64 = 35.0;
 const ASSIST_MIN: f64 = 5.0;
 const ASSIST_MAX: f64 = 35.0;
 
+/// Whether Wake-up went from on to off between two documents.
+fn wake_up_turned_off(before: &HomeSettings, after: &HomeSettings) -> bool {
+    before.wake_up && !after.wake_up
+}
+
 /// The topic the document is retained on.
 pub fn topic(ui_prefix: &str) -> String {
     format!("{ui_prefix}/_home")
@@ -239,6 +244,33 @@ impl Hub {
         Ok(self.home_settings())
     }
 
+    /// Saves the settings like [`Hub::set_home_settings`], then, when Wake-up went from on to
+    /// off and the `wake-up` label exists, turns off every flow carrying it. A failure of that
+    /// switch is logged: the settings are saved either way.
+    pub async fn apply_home_settings(
+        &self,
+        settings: HomeSettings,
+    ) -> Result<HomeSettings, HubError> {
+        let before = self.home_settings();
+        let stored = self.set_home_settings(settings)?;
+        if wake_up_turned_off(&before, &stored)
+            && self
+                .flow_label_catalog()
+                .label(nidoo_core::flow::wake_up::LABEL)
+                .is_some()
+            && let Err(err) = self
+                .switch_flow_label(
+                    nidoo_core::flow::wake_up::LABEL,
+                    nidoo_core::flow::LabelAction::Off,
+                    None,
+                )
+                .await
+        {
+            tracing::warn!(%err, "could not turn off the wake-up flows");
+        }
+        Ok(stored)
+    }
+
     /// Applies the retained document: empty means defaults, an undecodable payload keeps the
     /// previous document. A change is broadcast.
     pub(crate) fn ingest_home(&self, payload: &[u8]) {
@@ -270,6 +302,18 @@ mod tests {
     use chrono::NaiveDate;
     use nidoo_core::energy::{OffPeakDevice, OffPeakWindow};
     use nidoo_core::registry::RegistryConfig;
+
+    #[test]
+    fn wake_up_off_only_on_the_on_to_off_edge() {
+        let with = |wake_up| HomeSettings {
+            wake_up,
+            ..HomeSettings::default()
+        };
+        assert!(wake_up_turned_off(&with(true), &with(false)));
+        assert!(!wake_up_turned_off(&with(false), &with(false)));
+        assert!(!wake_up_turned_off(&with(false), &with(true)));
+        assert!(!wake_up_turned_off(&with(true), &with(true)));
+    }
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../nidoo-core/tests/fixtures/");
 
