@@ -64,7 +64,7 @@ On save the hub also checks the house: every entity a node names must exist, a `
 
 ### How a run goes
 
-A run follows the graph from the trigger that fired, depth first. A failing node ends the run as `failed` at that step. A branching step (`if`, `switch`, `time.between`) that succeeds records the `ports` it followed, which can be none (a `switch` whose rules all missed); the web UI uses them to light the right wires. Other steps carry no `ports`. A non-trigger node with no incoming edge never runs. A run that is skipped (because of `single` mode, or because the broker link is offline when a schedule or sun trigger fires) is recorded as a skipped run.
+A run follows the graph from the trigger that fired, depth first. A failing node ends its own branch (its successors never run) but not its siblings: the branches still pending go on, and the run then ends as `failed`. A branching step (`if`, `switch`, `time.between`) that succeeds records the `ports` it followed, which can be none (a `switch` whose rules all missed); the web UI uses them to light the right wires. Other steps carry no `ports`. A non-trigger node with no incoming edge never runs. A run that is skipped (because of `single` mode, or because the broker link is offline when a schedule or sun trigger fires) is recorded as a skipped run.
 
 The **scalar** is the one value of a state that triggers and `if` compare: the on/off bool, the number, the text, a light's `on`, a cover's `state`.
 

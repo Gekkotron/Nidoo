@@ -137,7 +137,7 @@ A `notify` card's title and body can show live values. In the editor, **＋ Valu
 
 ## How a run goes
 
-A run follows the graph from the trigger that fired, depth first. A branching step records the output ports it followed, and the canvas lights those wires. A failing node ends the run as `failed` at that step. A schedule tick that comes while the broker link is down is recorded as a skipped run, since its commands could not go out. A non-trigger node with no incoming edge never runs. A manual run (the Run button, `run_flow`) starts from the flow's first trigger node and is refused when the flow is disabled, invalid, or already running. A run can also start from a chosen Manual card (see [Manual trigger](#manual-trigger)).
+A run follows the graph from the trigger that fired, depth first. A branching step records the output ports it followed, and the canvas lights those wires. A failing node ends its own branch: the cards after it do not run, but the other branches of the run still do (a trigger wired to five commands still sends the other four when one device does not answer), and the run ends as `failed`. A schedule tick that comes while the broker link is down is recorded as a skipped run, since its commands could not go out. A non-trigger node with no incoming edge never runs. A manual run (the Run button, `run_flow`) starts from the flow's first trigger node and is refused when the flow is disabled, invalid, or already running. A run can also start from a chosen Manual card (see [Manual trigger](#manual-trigger)).
 
 The scalar is the one value of a state that triggers and `if` compare: the on/off bool, the number, the text, a light's `on`, a cover's `state`.
 
