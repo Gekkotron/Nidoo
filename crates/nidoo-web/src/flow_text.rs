@@ -355,7 +355,7 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
                 }
             };
             match &p.for_ {
-                Some(hold) => t::held_for(lang, &base, hold),
+                Some(hold) => t::held_for(lang, &base, &duration_words(hold)),
                 None => base,
             }
         }
@@ -381,7 +381,7 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             } else {
                 entity_text(&p.entity, ctx)
             };
-            t::silent_for(lang, &e, &p.for_)
+            t::silent_for(lang, &e, &duration_words(&p.for_))
         }
         NodeKind::Limit(p) => t::at_most(lang, p.max, &p.per),
         NodeKind::TriggerManual(p) => {
@@ -857,13 +857,20 @@ mod tests {
             "Quand Entrée passe entre 18 et 22\u{a0}lx"
         );
         let held = at(r#","above":25,"for":"5m""#);
-        assert_eq!(text(&held), "When Entrée goes above 25\u{a0}lx for 5m");
+        assert_eq!(
+            text(&held),
+            "When Entrée goes above 25\u{a0}lx for 5\u{a0}min"
+        );
         assert_eq!(
             text_in(Lang::Fr, &held),
-            "Quand Entrée dépasse 25\u{a0}lx pendant 5m"
+            "Quand Entrée dépasse 25\u{a0}lx pendant 5\u{a0}min"
         );
         let still = at(r#","to":true,"for":"5m""#);
-        assert!(text(&still).ends_with(" for 5m"), "{}", text(&still));
+        assert!(
+            text(&still).ends_with(" for 5\u{a0}min"),
+            "{}",
+            text(&still)
+        );
     }
 
     #[test]
@@ -1034,13 +1041,13 @@ mod tests {
     #[test]
     fn silent_and_limit_cards_read_as_sentences() {
         let silent = r#"{"id":"s","type":"trigger.silent","params":{"entity":"l1","for":"50m"}}"#;
-        assert_eq!(text(silent), "Lumière TV silent for 50m");
+        assert_eq!(text(silent), "Lumière TV silent for 50\u{a0}min");
         assert_eq!(
             text_in(Lang::Fr, silent),
-            "Lumière TV silencieux depuis 50m"
+            "Lumière TV silencieux depuis 50\u{a0}min"
         );
         let unset = r#"{"id":"s","type":"trigger.silent","params":{"entity":"","for":"50m"}}"#;
-        assert_eq!(text(unset), "Silent for 50m");
+        assert_eq!(text(unset), "Silent for 50\u{a0}min");
         let limit = r#"{"id":"l","type":"limit","params":{"max":4,"per":"24h"}}"#;
         assert_eq!(text(limit), "At most 4 every 24h");
         assert_eq!(text_in(Lang::Fr, limit), "Au plus 4 fois par 24h");

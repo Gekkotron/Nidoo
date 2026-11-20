@@ -1470,7 +1470,7 @@ pub fn when_crosses(lang: Lang, e: &str, above: Option<&str>, below: Option<&str
     }
 }
 
-/// The hold appended to a state trigger's sentence: "… for 5m" / "… pendant 5m".
+/// The hold appended to a state trigger's sentence: "… for 5 min" / "… pendant 5 min".
 pub fn held_for(lang: Lang, sentence: &str, for_: &str) -> String {
     pick(
         lang,
@@ -1612,7 +1612,8 @@ pub fn wait(lang: Lang, for_: &str, up_to: Option<&str>) -> String {
     }
 }
 
-/// "Door silent for 50m" / "Door silencieux depuis 50m"; with no entity yet, "Silent for 50m".
+/// "Door silent for 50 min" / "Door silencieux depuis 50 min"; with no entity yet, "Silent for
+/// 50 min". `for_` is already worded (`duration_words`).
 pub fn silent_for(lang: Lang, e: &str, for_: &str) -> String {
     let head = flow_text(lang, FlowText::NodeSilent);
     if e.is_empty() {
