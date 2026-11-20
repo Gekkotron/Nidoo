@@ -3,15 +3,13 @@
 
 use leptos::prelude::*;
 use nidoo_api::EntityView;
-use nidoo_core::flow::Scalar;
 use serde_json::Value;
 
 use crate::i18n::flows::{FlowText, flow_text};
-use crate::i18n::format::parse_decimal;
 use crate::i18n::use_lang;
 use crate::if_value::{
-    ListPick, OTHER_OPTION, ValueInput, list_pick, parse_other, value_input, value_input_of,
-    with_current,
+    ListPick, OTHER_OPTION, ValueInput, fits_number, list_pick, number_pick, parse_other,
+    value_input, value_input_of, with_current,
 };
 
 /// Which input is on screen; the field re-mounts only when this changes.
@@ -73,6 +71,10 @@ pub fn IfValueField(
     let mode = Memo::new(move |_| match input.get() {
         ValueInput::List(_) if other.get() => Mode::Typed { back: true },
         ValueInput::List(_) => Mode::List,
+        // A saved value a number box cannot show stays visible in a text box.
+        ValueInput::Number { .. } if !value.with(|v| fits_number(v.as_ref())) => {
+            Mode::Typed { back: false }
+        }
         ValueInput::Number { unit } => Mode::Number { unit },
         ValueInput::Text => Mode::Typed { back: false },
     });
@@ -169,10 +171,12 @@ pub fn IfValueField(
                             .unwrap_or_default()
                     }
                     on:change=move |ev| {
-                        let text = event_target_value(&ev);
-                        match parse_decimal(text.trim()) {
-                            Some(n) => write.run(Scalar::Number(n).to_json()),
-                            None if text.trim().is_empty() => cleared(),
+                        let input = event_target::<web_sys::HtmlInputElement>(&ev);
+                        // With no min, max or `required`, only a typo makes the box invalid.
+                        let bad_input = !input.check_validity();
+                        match number_pick(&input.value(), bad_input) {
+                            Some(Some(v)) => write.run(v),
+                            Some(None) => cleared(),
                             None => {}
                         }
                     }
