@@ -1259,6 +1259,95 @@ fn play_media_publishes_the_query_as_heard() {
 }
 
 #[test]
+fn play_playlist_maps_to_contract_json() {
+    let player = player(Some(&["play", "play_playlist"]));
+    let publishes = ok(
+        &player,
+        &Command::PlayPlaylist {
+            playlist: " mix1 ".to_owned(),
+            shuffle: false,
+            source: Some("nidoo".to_owned()),
+            fade_in_s: 900,
+        },
+    );
+    assert_eq!(publishes.len(), 1);
+    assert_eq!(publishes[0].topic, "music/player/set");
+    assert_eq!(
+        json_payload(&publishes[0]),
+        json!({
+            "command": "play_playlist", "playlist": "mix1", "shuffle": false,
+            "source": "nidoo", "fade_in_s": 600
+        })
+    );
+}
+
+#[test]
+fn play_playlist_without_source_sends_null() {
+    let player = player(Some(&["play_playlist"]));
+    let publishes = ok(
+        &player,
+        &Command::PlayPlaylist {
+            playlist: "favorites".to_owned(),
+            shuffle: true,
+            source: None,
+            fade_in_s: 0,
+        },
+    );
+    assert_eq!(
+        json_payload(&publishes[0]),
+        json!({
+            "command": "play_playlist", "playlist": "favorites", "shuffle": true,
+            "source": null, "fade_in_s": 0
+        })
+    );
+}
+
+#[test]
+fn blank_playlist_is_out_of_range() {
+    let player = player(Some(&["play_playlist"]));
+    let command = Command::PlayPlaylist {
+        playlist: "  ".to_owned(),
+        shuffle: true,
+        source: None,
+        fade_in_s: 0,
+    };
+    assert!(matches!(
+        err(&player, &EntityState::default(), &command),
+        CommandError::OutOfRange(_)
+    ));
+}
+
+#[test]
+fn play_playlist_needs_the_feature() {
+    let player = player(Some(&["play", "play_media"]));
+    let command = Command::PlayPlaylist {
+        playlist: "favorites".to_owned(),
+        shuffle: true,
+        source: None,
+        fade_in_s: 0,
+    };
+    assert!(matches!(
+        err(&player, &EntityState::default(), &command),
+        CommandError::Unsupported { .. }
+    ));
+}
+
+#[test]
+fn play_playlist_defaults_when_deserialised() {
+    let command: Command =
+        serde_json::from_str(r#"{"type":"play_playlist","playlist":"favorites"}"#).expect("parse");
+    assert_eq!(
+        command,
+        Command::PlayPlaylist {
+            playlist: "favorites".to_owned(),
+            shuffle: true,
+            source: None,
+            fade_in_s: 0,
+        }
+    );
+}
+
+#[test]
 fn media_command_outside_supported_features_is_unsupported() {
     let player = player(Some(&["play", "pause"]));
     let state = EntityState::default();

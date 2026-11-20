@@ -22,6 +22,7 @@ pub enum DeviceText {
     MediaNext,
     MediaPrevious,
     PlayByName,
+    PlayPlaylist,
     NothingPlaying,
     PlaySomeMusic,
     /// Button card.
@@ -264,6 +265,7 @@ pub fn device_text(lang: Lang, k: DeviceText) -> &'static str {
         T::MediaNext => ("Next", "Suivant"),
         T::MediaPrevious => ("Previous", "Précédent"),
         T::PlayByName => ("Play by name", "Jouer un titre"),
+        T::PlayPlaylist => ("Play a playlist", "Lancer une playlist"),
         T::NothingPlaying => ("Nothing playing", "Rien ne joue"),
         T::PlaySomeMusic => ("Play some music", "Lancer de la musique"),
         T::Press => ("Press", "Appuyer"),

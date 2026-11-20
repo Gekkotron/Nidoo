@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use nidoo_core::model::{
     Availability, ClimateState, CoverState, Entity, EntityState, GenericValue, Hs, LightState,
-    MediaPlayerState, StateValue, VacuumState, WaterHeaterState,
+    MediaChoice, MediaPlayerState, StateValue, VacuumState, WaterHeaterState,
 };
 use nidoo_core::state::color::{rgb_to_hs, xy_to_hs};
 use nidoo_core::state::{Applied, StateError, apply_message};
@@ -1331,6 +1331,81 @@ fn media_player_full_state() {
             duration_s: Some(431.0),
             position_s: Some(42.5),
             position_at_ms: Some(1_793_960_400_000),
+            ..Default::default()
+        }
+    );
+}
+
+const LISTS: &str = r#""source":"nidoo","source_list":[{"id":"nidoo","name":"Enceintes Nidoo"},{"id":1,"name":"x"},{"id":"y"}],"playlists":[{"id":"favorites","name":"Favorites"}]"#;
+
+fn lists() -> (Option<String>, Vec<MediaChoice>, Vec<MediaChoice>) {
+    (
+        Some("nidoo".into()),
+        vec![MediaChoice {
+            id: "nidoo".into(),
+            name: "Enceintes Nidoo".into(),
+        }],
+        vec![MediaChoice {
+            id: "favorites".into(),
+            name: "Favorites".into(),
+        }],
+    )
+}
+
+#[test]
+fn media_player_idle_keeps_lists() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    let payload = format!(r#"{{"state":"idle","title":"x",{LISTS}}}"#);
+    apply(&player, &mut state, "music/player/state", &payload);
+    let (source, source_list, playlists) = lists();
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("idle".into()),
+            source,
+            source_list,
+            playlists,
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn media_player_playing_reads_lists() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    let payload = format!(r#"{{"state":"playing","title":"x",{LISTS}}}"#);
+    apply(&player, &mut state, "music/player/state", &payload);
+    let (source, source_list, playlists) = lists();
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("playing".into()),
+            title: Some("x".into()),
+            source,
+            source_list,
+            playlists,
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn media_player_non_array_lists_read_as_empty() {
+    let player = media_player();
+    let mut state = EntityState::default();
+    apply(
+        &player,
+        &mut state,
+        "music/player/state",
+        r#"{"state":"idle","source_list":"nope","playlists":{"id":"a"}}"#,
+    );
+    assert_eq!(
+        media(&state),
+        MediaPlayerState {
+            state: Some("idle".into()),
+            ..Default::default()
         }
     );
 }

@@ -1,11 +1,11 @@
 //! Media player: `state_topic` carries the whole state as JSON on every change (the media
 //! player contract). A message replaces the state: a missing field is null, and an idle player
-//! has nothing but its `state`.
+//! has nothing but its `state` and the `source`, `source_list` and `playlists` menus.
 
 use serde_json::{Map, Value};
 
 use super::set_value;
-use crate::model::{Entity, EntityState, MediaPlayerState, StateValue};
+use crate::model::{Entity, EntityState, MediaChoice, MediaPlayerState, StateValue};
 use crate::state::util::{self, Message};
 use crate::state::{Applied, StateError};
 use crate::template::Templates;
@@ -42,6 +42,12 @@ pub(super) fn apply(
     let player = if *word == "idle" {
         MediaPlayerState {
             state: Some((*word).to_owned()),
+            source: object
+                .get("source")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            source_list: choices(&object, "source_list"),
+            playlists: choices(&object, "playlists"),
             ..MediaPlayerState::default()
         }
     } else {
@@ -73,7 +79,27 @@ fn read(object: &Map<String, Value>, word: &str) -> MediaPlayerState {
         position_at_ms: text("position_at")
             .and_then(|at| chrono::DateTime::parse_from_rfc3339(&at).ok())
             .map(|at| at.timestamp_millis()),
+        source: text("source"),
+        source_list: choices(object, "source_list"),
+        playlists: choices(object, "playlists"),
     }
+}
+
+/// A list of `{id, name}` objects; entries without a text `id` and `name` are dropped, and
+/// anything but an array reads as empty.
+fn choices(object: &Map<String, Value>, key: &str) -> Vec<MediaChoice> {
+    let Some(Value::Array(items)) = object.get(key) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            Some(MediaChoice {
+                id: item.get("id")?.as_str()?.to_owned(),
+                name: item.get("name")?.as_str()?.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// `#rrggbb` in lowercase, or `None` for anything else (the web puts it in a style).

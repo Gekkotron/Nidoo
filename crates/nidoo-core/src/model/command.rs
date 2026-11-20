@@ -86,6 +86,17 @@ pub enum Command {
     PlayMedia {
         query: String,
     },
+    /// Plays a playlist (`favorites` or a player playlist id), optionally on another output
+    /// (an id from the player's `source_list`), fading in over `fade_in_s` seconds.
+    PlayPlaylist {
+        playlist: String,
+        #[serde(default = "default_true")]
+        shuffle: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default)]
+        fade_in_s: u32,
+    },
     /// A control a generic entity announces (`capabilities.generic.controls`); `value` follows
     /// the control's shape: absent for a press, a bool, a number or a string.
     Control {
@@ -93,4 +104,8 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value: Option<serde_json::Value>,
     },
+}
+
+fn default_true() -> bool {
+    true
 }

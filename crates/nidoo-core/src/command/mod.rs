@@ -93,6 +93,7 @@ pub fn command_name(command: &Command) -> &'static str {
         Command::SetFanSpeed { .. } => "set_fan_speed",
         Command::MediaAction { .. } => "media_action",
         Command::PlayMedia { .. } => "play_media",
+        Command::PlayPlaylist { .. } => "play_playlist",
         Command::Control { .. } => "control",
     }
 }

@@ -96,6 +96,7 @@ pub fn command_label(lang: Lang, c: &Command) -> String {
             device_text(lang, key).to_owned()
         }
         Command::PlayMedia { .. } => device_text(lang, DeviceText::PlayByName).to_owned(),
+        Command::PlayPlaylist { .. } => device_text(lang, DeviceText::PlayPlaylist).to_owned(),
         Command::Arm { mode, .. } => arm_action(lang, *mode),
         Command::Control { control, value } => match (control.as_str(), value) {
             ("locked", Some(Value::Bool(true))) => flow(FlowText::Lock),
