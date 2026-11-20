@@ -36,6 +36,7 @@ pub enum TriggerKind {
     Signal,
     Manual,
     OffPeak,
+    Alarm,
     Silent,
 }
 
@@ -182,6 +183,7 @@ pub fn trigger_kinds(view: &FlowView) -> BTreeSet<TriggerKind> {
             NodeKind::TriggerSilent(_) => Some(TriggerKind::Silent),
             NodeKind::TriggerSignal(_) => Some(TriggerKind::Signal),
             NodeKind::TriggerManual(_) => Some(TriggerKind::Manual),
+            NodeKind::TriggerAlarm(_) => Some(TriggerKind::Alarm),
             _ => None,
         })
         .collect()

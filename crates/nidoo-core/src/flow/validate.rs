@@ -30,6 +30,8 @@ pub enum FlowError {
     BadDuration { node: String, reason: String },
     #[error("node `{node}`: {reason}")]
     BadLimit { node: String, reason: String },
+    #[error("node `{node}`: from and to are the same alarm mode, so it could never fire")]
+    BadAlarmTrigger { node: String },
     #[error("node `{node}`: value must be a boolean, a number or a string")]
     BadValue { node: String },
     #[error("node `{node}`: {reason}")]
@@ -156,6 +158,16 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                     return Err(FlowError::BadDuration {
                         node: node.id.clone(),
                         reason: format!("for: {reason}"),
+                    });
+                }
+            }
+            NodeKind::TriggerAlarm(p) => {
+                if let (Some(from), Some(to)) = (p.from, p.to)
+                    && from == to
+                    && from != super::AlarmModeFilter::Armed
+                {
+                    return Err(FlowError::BadAlarmTrigger {
+                        node: node.id.clone(),
                     });
                 }
             }
@@ -1614,6 +1626,49 @@ mod tests {
         for good in ["1m", "168h"] {
             assert_eq!(validate(&silent_flow(good)), Ok(()), "silent {good}");
             assert_eq!(validate(&limit_flow(1, good, None)), Ok(()), "limit {good}");
+        }
+    }
+
+    fn alarm_flow(params: serde_json::Value) -> Flow {
+        decode_flow(
+            serde_json::json!([
+                { "id": "al", "type": "trigger.alarm", "params": params },
+                { "id": "act", "type": "command",
+                  "params": { "entity": "l", "command": { "type": "turn_on" } } },
+            ]),
+            serde_json::json!([{ "from": "al", "to": "act" }]),
+        )
+    }
+
+    #[test]
+    fn trigger_alarm_rejects_same_from_and_to() {
+        for mode in [
+            "disarmed",
+            "arming",
+            "armed_away",
+            "armed_home",
+            "armed_night",
+            "pending",
+            "triggered",
+        ] {
+            assert_eq!(
+                validate(&alarm_flow(serde_json::json!({ "from": mode, "to": mode }))),
+                Err(FlowError::BadAlarmTrigger { node: "al".into() }),
+                "{mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn trigger_alarm_accepts_distinct_or_armed_pairs() {
+        for params in [
+            serde_json::json!({}),
+            serde_json::json!({ "to": "armed" }),
+            serde_json::json!({ "from": "disarmed", "to": "armed" }),
+            serde_json::json!({ "from": "armed", "to": "armed" }),
+            serde_json::json!({ "from": "armed_home", "to": "armed_away" }),
+        ] {
+            assert_eq!(validate(&alarm_flow(params.clone())), Ok(()), "{params}");
         }
     }
 

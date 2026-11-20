@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use nidoo_api::{AreaView, EntityView};
 use nidoo_core::command::command_name;
 use nidoo_core::flow::{
-    FlowLabelCatalog, Node, NodeKind, OffPeakEdge, Op, RuleOp, SunWhich, command_with_number,
-    fields, parse_duration, template,
+    AlarmModeFilter, FlowLabelCatalog, Node, NodeKind, OffPeakEdge, Op, RuleOp, SunWhich,
+    command_with_number, fields, parse_duration, template,
 };
 use nidoo_core::model::{Command, Hs, Kind};
 use nidoo_core::vocabulary::Reports;
@@ -43,6 +43,7 @@ pub fn role(kind: &NodeKind) -> Role {
         | NodeKind::TriggerManual(_)
         | NodeKind::TriggerSignal(_)
         | NodeKind::TriggerOffPeak(_)
+        | NodeKind::TriggerAlarm(_)
         | NodeKind::TriggerSilent(_) => Role::Trigger,
         NodeKind::If(_) | NodeKind::Switch(_) | NodeKind::TimeBetween(_) => Role::Check,
         NodeKind::Command(_)
@@ -300,6 +301,15 @@ pub fn off_peak_edge_text(edge: OffPeakEdge) -> FlowText {
     }
 }
 
+/// A mode of the alarm as the user reads it: the alarm's state word, or "Armed (any mode)" for
+/// the `Armed` filter.
+pub fn alarm_mode_label(lang: Lang, mode: AlarmModeFilter) -> String {
+    match mode {
+        AlarmModeFilter::Armed => flow_text(lang, FlowText::AlarmArmedAny).to_owned(),
+        other => state_word(lang, StateCtx::Alarm, other.as_str()),
+    }
+}
+
 /// The card's sentence, generated from its parameters; ignores the node's name.
 pub fn sentence(node: &Node, ctx: &Ctx) -> String {
     let lang = ctx.lang;
@@ -327,6 +337,16 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
         NodeKind::TriggerSchedule(p) => describe(lang, &p.cron),
         NodeKind::TriggerSun(p) => sun_summary(lang, p.which, p.offset()),
         NodeKind::TriggerOffPeak(p) => flow_text(lang, off_peak_edge_text(p.edge)).to_owned(),
+        NodeKind::TriggerAlarm(p) => match (p.from, p.to) {
+            (None, None) => t::alarm_changes(lang),
+            (None, Some(to)) => t::alarm_becomes(lang, &alarm_mode_label(lang, to)),
+            (Some(from), None) => t::alarm_leaves(lang, &alarm_mode_label(lang, from)),
+            (Some(from), Some(to)) => t::alarm_goes(
+                lang,
+                &alarm_mode_label(lang, from),
+                &alarm_mode_label(lang, to),
+            ),
+        },
         NodeKind::TriggerSilent(p) => {
             let e = if p.entity.is_empty() {
                 String::new()
@@ -924,6 +944,33 @@ mod tests {
         let check = r#"{"id":"c","type":"if","params":{"op":"is_off_peak"}}"#;
         assert_eq!(text(check), "Is it off-peak?");
         assert_eq!(text_in(Lang::Fr, check), "Est-ce les heures creuses\u{a0}?");
+    }
+
+    #[test]
+    fn alarm_cards_read_as_sentences() {
+        let card =
+            |params: &str| format!(r#"{{"id":"a","type":"trigger.alarm","params":{params}}}"#);
+        let any = card("{}");
+        assert_eq!(text(&any), "When the alarm changes mode");
+        assert_eq!(text_in(Lang::Fr, &any), "Quand l'alarme change de mode");
+        let to = card(r#"{"to":"armed_away"}"#);
+        assert_eq!(text(&to), "When the alarm becomes Armed away");
+        assert_eq!(
+            text_in(Lang::Fr, &to),
+            "Quand l'alarme passe en Activée (absent)"
+        );
+        let from = card(r#"{"from":"disarmed"}"#);
+        assert_eq!(text(&from), "When the alarm leaves Disarmed");
+        assert_eq!(text_in(Lang::Fr, &from), "Quand l'alarme quitte Désactivée");
+        let both = card(r#"{"from":"disarmed","to":"armed"}"#);
+        assert_eq!(
+            text(&both),
+            "When the alarm goes from Disarmed to Armed (any mode)"
+        );
+        assert_eq!(
+            text_in(Lang::Fr, &both),
+            "Quand l'alarme passe de Désactivée à Activée (tous modes)"
+        );
     }
 
     #[test]

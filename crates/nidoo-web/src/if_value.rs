@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nidoo_api::EntityView;
-use nidoo_core::flow::{Flow, NodeKind, Scalar, field_scalar, fields};
+use nidoo_core::flow::{AlarmModeFilter, Flow, NodeKind, Scalar, field_scalar, fields};
 use nidoo_core::model::{Kind, StateValue};
 use nidoo_core::types::{Placement, type_def};
 use nidoo_core::vocabulary::{Reports, reports};
@@ -272,7 +272,8 @@ fn upstream_triggers<'a>(flow: &'a Flow, node_id: &str) -> Vec<&'a NodeKind> {
                     | NodeKind::TriggerSchedule(_)
                     | NodeKind::TriggerSun(_)
                     | NodeKind::TriggerManual(_)
-                    | NodeKind::TriggerSignal(_)),
+                    | NodeKind::TriggerSignal(_)
+                    | NodeKind::TriggerAlarm(_)),
                 ) => triggers.push(kind),
                 _ => queue.push(edge.from.clone()),
             }
@@ -335,12 +336,45 @@ pub fn upstream_manual_value(flow: &Flow, node_id: &str) -> Option<Scalar> {
         .then_some(first)
 }
 
-/// The input for comparing `e`, or for the value a Manual card carries when there is no entity.
-pub fn compared_input(lang: Lang, e: Option<&EntityView>, manual: Option<&Scalar>) -> ValueInput {
-    match (e, manual) {
-        (None, Some(m)) => manual_value_input(lang, m),
+/// The input for comparing `e`, or `upstream` (what a Manual or Alarm card upstream carries)
+/// when there is no entity.
+pub fn compared_input(
+    lang: Lang,
+    e: Option<&EntityView>,
+    upstream: Option<ValueInput>,
+) -> ValueInput {
+    match (e, upstream) {
+        (None, Some(input)) => input,
         _ => value_input(lang, e),
     }
+}
+
+/// The states the alarm reports, as a list to pick from.
+fn alarm_value_input(lang: Lang) -> ValueInput {
+    ValueInput::List(
+        AlarmModeFilter::ALL
+            .into_iter()
+            .filter(|m| *m != AlarmModeFilter::Armed)
+            .map(|m| Choice {
+                value: Value::String(m.as_str().to_owned()),
+                label: state_word(lang, StateCtx::Alarm, m.as_str()),
+            })
+            .collect(),
+    )
+}
+
+/// The input for the value a run carries to `node_id`: the Manual card's kind of value, or the
+/// alarm states when every path back from it starts at an Alarm card.
+pub fn upstream_value_input(lang: Lang, flow: &Flow, node_id: &str) -> Option<ValueInput> {
+    if let Some(value) = upstream_manual_value(flow, node_id) {
+        return Some(manual_value_input(lang, &value));
+    }
+    let triggers = upstream_triggers(flow, node_id);
+    (!triggers.is_empty()
+        && triggers
+            .iter()
+            .all(|k| matches!(k, NodeKind::TriggerAlarm(_))))
+    .then(|| alarm_value_input(lang))
 }
 
 /// The input for a value that comes from a Manual card: on/off as for a binary sensor, a number
@@ -797,6 +831,25 @@ mod tests {
             vec![edge("a", "i"), edge("b", "i")],
         );
         assert!(upstream_manual_value(&same, "i").is_some());
+    }
+
+    #[test]
+    fn alarm_trigger_offers_the_alarm_states() {
+        use nidoo_core::flow::TriggerAlarmParams;
+        let alarm = flow(
+            vec![
+                node("t", NodeKind::TriggerAlarm(TriggerAlarmParams::default())),
+                plain("i"),
+            ],
+            vec![edge("t", "i")],
+        );
+        let l = list(upstream_value_input(Lang::Fr, &alarm, "i").unwrap());
+        assert_eq!(l.len(), 7);
+        assert_eq!(l[0].value, json!("disarmed"));
+        assert_eq!(l[0].label, "Désactivée");
+        assert!(l.iter().all(|c| c.value != json!("armed")));
+        let other = flow(vec![schedule("t"), plain("i")], vec![edge("t", "i")]);
+        assert_eq!(upstream_value_input(Lang::En, &other, "i"), None);
     }
 
     #[test]

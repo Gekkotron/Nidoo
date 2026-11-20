@@ -332,4 +332,4 @@ Alerts (`/alerts`): the push alerts the hub keeps in `nidoo/push/history`, with 
 
 ## Flows
 
-Flows (`/flows`, `/flows/<id>`, `/flows/new`): the flows list, grouped by room (or ungrouped), with search; status chips (All, On, Off, Needs attention) with their counts; a trigger filter (device state, schedule, sun, button or event, manual); sorting by name or last run; a List/Cards view; an enable switch per flow; a ⋯ menu per flow (open it, move it to a room, delete it after a confirmation); and a **New flow** button. Each flow opens on a full-bleed canvas. See [Flows](flows.md) for what the canvas shows and how to edit it.
+Flows (`/flows`, `/flows/<id>`, `/flows/new`): the flows list, grouped by room (or ungrouped), with search; status chips (All, On, Off, Needs attention) with their counts; a trigger filter (device state, schedule, sun, alarm, button or event, manual); sorting by name or last run; a List/Cards view; an enable switch per flow; a ⋯ menu per flow (open it, move it to a room, delete it after a confirmation); and a **New flow** button. Each flow opens on a full-bleed canvas. See [Flows](flows.md) for what the canvas shows and how to edit it.

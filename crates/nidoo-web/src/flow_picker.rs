@@ -2,11 +2,11 @@
 
 use nidoo_core::flow::TriggerSignalParams;
 use nidoo_core::flow::{
-    AskAnswer, AskParams, BackupRunParams, CommandParams, DelayParams, FlowEnableParams,
-    FlowLabelParams, IfParams, LabelAction, LimitParams, MathParams, Node, NodeKind, NotifyParams,
-    OffPeakEdge, Op, RuleOp, Scalar, SpeakParams, SunWhich, SwitchParams, SwitchRule,
-    TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
-    TriggerSilentParams, TriggerStateParams,
+    AlarmModeFilter, AskAnswer, AskParams, BackupRunParams, CommandParams, DelayParams,
+    FlowEnableParams, FlowLabelParams, IfParams, LabelAction, LimitParams, MathParams, Node,
+    NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SpeakParams, SunWhich, SwitchParams,
+    SwitchRule, TimeBetweenParams, TriggerAlarmParams, TriggerManualParams, TriggerOffPeakParams,
+    TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
 };
 use nidoo_core::model::Command;
 use serde_json::Value;
@@ -78,6 +78,7 @@ fn command(entity: &str, command: Command) -> NodeKind {
 fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::TriggerManual(_) => "inject injecter button bouton",
+        NodeKind::TriggerAlarm(_) => "alarm alarme armed armee security securite intrusion",
         NodeKind::FlowLabel(_) => "choice choix season saison tag",
         NodeKind::BackupRun(_) => "backup sauvegarde ftp",
         _ => "",
@@ -114,6 +115,15 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             }),
             Some(FlowText::NodeOffPeak),
             FlowText::OffPeakSub,
+        ),
+        (
+            Group::When,
+            NodeKind::TriggerAlarm(TriggerAlarmParams {
+                to: Some(AlarmModeFilter::Armed),
+                ..Default::default()
+            }),
+            Some(FlowText::NodeAlarm),
+            FlowText::AlarmSub,
         ),
         (
             Group::When,
@@ -511,7 +521,7 @@ mod tests {
         assert_eq!(labels[0], "Programmation");
         assert!(labels.contains(&"Quand il fait nuit"));
         assert!(
-            matches!(&fr[10].kind, NodeKind::Notify(p) if p.title == "Notification"),
+            matches!(&fr[11].kind, NodeKind::Notify(p) if p.title == "Notification"),
             "the stored default follows the language at creation"
         );
         // The English word finds the card on the French UI, and the French word on the English UI.
@@ -600,6 +610,7 @@ mod tests {
                 (Group::When, "Schedule"),
                 (Group::When, "Sun event"),
                 (Group::When, "Off-peak"),
+                (Group::When, "Alarm"),
                 (Group::When, "Silent for"),
                 (Group::When, "Manual"),
                 (Group::And, "When it's dark"),
@@ -625,6 +636,7 @@ mod tests {
                 Some("At a set time, or on a repeat"),
                 Some("Sunrise, sunset, dusk or dawn"),
                 Some("When off-peak starts or ends"),
+                Some("When the alarm changes mode"),
                 Some("When an entity stops reporting"),
                 Some("Start by hand from the ▶ button"),
                 Some("Between dusk and dawn"),
@@ -647,26 +659,26 @@ mod tests {
             &got[0].kind,
             NodeKind::TriggerSchedule(p) if p.cron == "0 * * * *"
         ));
-        assert!(matches!(&got[8].kind, NodeKind::Math(p) if p.name.is_empty()));
-        assert!(matches!(&got[10].kind, NodeKind::Notify(p) if p.title == "Notification"));
+        assert!(matches!(&got[9].kind, NodeKind::Math(p) if p.name.is_empty()));
+        assert!(matches!(&got[11].kind, NodeKind::Notify(p) if p.title == "Notification"));
         assert!(matches!(
-            &got[11].kind,
+            &got[12].kind,
             NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
         ));
         assert!(matches!(
-            &got[12].kind,
+            &got[13].kind,
             NodeKind::Ask(p) if p.answers.len() == 2 && p.room.is_none()
                 && p.answers[0].label == "Yes" && p.answers[1].label == "No"
         ));
-        assert!(matches!(&got[13].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+        assert!(matches!(&got[14].kind, NodeKind::Delay(p) if p.for_ == "5m"));
         assert!(matches!(
-            &got[7].kind,
+            &got[8].kind,
             NodeKind::Switch(p) if p.otherwise && p.entity.is_none()
                 && p.rules.len() == 1 && p.rules[0].op == RuleOp::Eq
                 && p.rules[0].value == Value::Bool(true)
         ));
         assert!(matches!(
-            &got[9].kind,
+            &got[10].kind,
             NodeKind::TimeBetween(p) if p.from == "07:00" && p.to == "22:00"
         ));
     }
@@ -875,6 +887,31 @@ mod tests {
                 .map(|e| e.label)
                 .collect();
             assert_eq!(labels, want);
+        }
+    }
+
+    #[test]
+    fn library_lists_the_alarm_card_in_both_languages() {
+        let areas: Vec<AreaView> = Vec::new();
+        let entities = BTreeMap::new();
+        for (lang, query, label) in [
+            (crate::i18n::Lang::En, "alarm", "Alarm"),
+            (crate::i18n::Lang::Fr, "alarme", "Alarme"),
+            (crate::i18n::Lang::En, "alarme", "Alarm"),
+        ] {
+            let ctx = Ctx {
+                entities: &entities,
+                areas: &areas,
+                flows: &[],
+                labels: &crate::flow_text::NO_LABELS,
+                lang,
+            };
+            let found = entries(query, &ctx)
+                .into_iter()
+                .find(|e| matches!(e.kind, NodeKind::TriggerAlarm(_)))
+                .expect("alarm card");
+            assert_eq!(found.group, Group::When);
+            assert_eq!(found.label, label);
         }
     }
 

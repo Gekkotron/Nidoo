@@ -48,11 +48,12 @@ where
     }
 }
 
-const TRIGGER_CHIPS: [(TriggerKind, FlowText); 7] = [
+const TRIGGER_CHIPS: [(TriggerKind, FlowText); 8] = [
     (TriggerKind::State, FlowText::FilterDeviceState),
     (TriggerKind::Schedule, FlowText::Schedule),
     (TriggerKind::Sun, FlowText::NodeSun),
     (TriggerKind::OffPeak, FlowText::NodeOffPeak),
+    (TriggerKind::Alarm, FlowText::NodeAlarm),
     (TriggerKind::Silent, FlowText::NodeSilent),
     (TriggerKind::Signal, FlowText::FilterButtonEvent),
     (TriggerKind::Manual, FlowText::FilterManual),

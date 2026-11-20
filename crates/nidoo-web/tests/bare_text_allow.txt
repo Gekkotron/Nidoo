@@ -2,6 +2,7 @@
 text: inject injecter button bouton  # search keywords for the Manual card, matched not shown
 text: choice choix season saison tag  # search keywords for the Pick a label card, matched not shown
 text: backup sauvegarde ftp  # search keywords for the Back up card, matched not shown
+text: alarm alarme armed armee security securite intrusion  # search keywords for the Alarm card, matched not shown
 text: FR  # language code on the toggle, the same in both languages
 text: EN  # language code on the toggle, the same in both languages
 text: Enter  # KeyboardEvent.key value, not shown
