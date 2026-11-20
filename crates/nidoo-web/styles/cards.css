@@ -841,6 +841,23 @@
   color: var(--ink);
 }
 
+/* The large picture on a card: the same drawing at 150 px, so its own line widths are thinned. */
+.live-icon--picture {
+  display: block;
+  color: var(--ink);
+  height: auto;
+  stroke-width: 1.2;
+}
+
+.live-icon--picture .live-icon__robot,
+.live-icon--picture .live-icon__vane {
+  stroke-width: 1;
+}
+
+.live-icon--picture .live-icon__flow {
+  stroke-width: 1.1;
+}
+
 .live-icon--cool {
   --live-tone: var(--ring-cool);
 }

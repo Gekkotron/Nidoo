@@ -33,6 +33,17 @@ pub fn LiveIcon(entity: EntityView) -> impl IntoView {
     }
 }
 
+/// The large picture for `entity` on a card: the AC or the robot vacuum drawn without the tile's
+/// margins, or nothing for a kind without a live icon.
+#[component]
+pub fn LivePicture(entity: EntityView) -> impl IntoView {
+    match entity.kind {
+        Kind::Climate => view! { <AcIcon entity=entity picture=true /> }.into_any(),
+        Kind::Vacuum => view! { <VacuumIcon entity=entity picture=true /> }.into_any(),
+        _ => ().into_any(),
+    }
+}
+
 /// Whether the entity can be reached; a stale state on an offline device must not move.
 fn available(entity: &EntityView) -> bool {
     entity.state.availability != Availability::Offline
@@ -65,7 +76,7 @@ const COLUMNS: [f64; 3] = [7.0, 12.0, 17.0];
 
 /// A wall AC: the unit, its light and LED, the vane below, and air or drops in the mode's tone.
 #[component]
-fn AcIcon(entity: EntityView) -> impl IntoView {
+fn AcIcon(entity: EntityView, #[prop(optional)] picture: bool) -> impl IntoView {
     let (mode, fan) = match &entity.state.value {
         StateValue::Climate(c) => (c.mode.clone(), c.fan_mode.clone()),
         _ => (None, None),
@@ -83,13 +94,23 @@ fn AcIcon(entity: EntityView) -> impl IntoView {
         0.0,
     );
     let drops = phase(id, "drops", DROPS_PERIOD_MS, dry, 0.5);
-    let class = ["live-icon", tone.map_or("live-icon--off", AcTone::class)].join(" ");
+    let mut classes = vec!["live-icon", tone.map_or("live-icon--off", AcTone::class)];
+    if picture {
+        classes.push("live-icon--picture");
+    }
+    let class = classes.join(" ");
     let vane_class = if on {
         "live-icon__vane live-icon__tint"
     } else {
         "live-icon__vane"
     };
-    let (mask, fade) = (svg_id("live-air", id), svg_id("live-fade", id));
+    let (air_prefix, fade_prefix) = if picture {
+        ("live-air-picture", "live-fade-picture")
+    } else {
+        ("live-air", "live-fade")
+    };
+    let (mask, fade) = (svg_id(air_prefix, id), svg_id(fade_prefix, id));
+    let view_box = if picture { "1 2.5 22 22" } else { "0 0 24 24" };
     let air = (on && !dry).then(|| {
         let lines = COLUMNS
             .iter()
@@ -141,7 +162,7 @@ fn AcIcon(entity: EntityView) -> impl IntoView {
     view! {
         <svg
             class=class
-            viewBox="0 0 24 24"
+            viewBox=view_box
             fill="none"
             stroke="currentColor"
             stroke-width="1.75"
@@ -207,22 +228,25 @@ fn dock(tinted: bool) -> impl IntoView {
 /// A robot vacuum in its room: cleaning the rows with a trail, gliding into its dock, charging
 /// there, or still at the start.
 #[component]
-fn VacuumIcon(entity: EntityView) -> impl IntoView {
+fn VacuumIcon(entity: EntityView, #[prop(optional)] picture: bool) -> impl IntoView {
     let (state, fan) = match &entity.state.value {
         StateValue::Vacuum(v) => (v.state.clone(), v.fan_speed.clone()),
         _ => (None, None),
     };
     let scene = vacuum_scene(state.as_deref(), available(&entity));
     let id = &entity.id;
-    let class = [
+    let mut classes = vec![
         "live-icon",
         match scene {
             VacuumScene::Cleaning | VacuumScene::Returning => "live-icon--moving",
             VacuumScene::Docked => "live-icon--docked",
             VacuumScene::Idle => "live-icon--plain",
         },
-    ]
-    .join(" ");
+    ];
+    if picture {
+        classes.push("live-icon--picture");
+    }
+    let class = classes.join(" ");
     let parts = match scene {
         VacuumScene::Cleaning => {
             let rows = phase(id, "rows", row_period_ms(fan.as_deref()), true, 0.5);

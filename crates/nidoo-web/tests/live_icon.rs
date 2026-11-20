@@ -12,6 +12,7 @@ use nidoo_core::model::{
 use nidoo_web::commands::Pending;
 use nidoo_web::components::toast::Toasts;
 use nidoo_web::house::House;
+use nidoo_web::live_icon::view::LivePicture;
 use nidoo_web::screens::home::card_for;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
@@ -54,6 +55,22 @@ fn mount(entity: EntityView) -> web_sys::Element {
             provide_context(Toasts::new());
             provide_context(Pending::new());
             view! { <Router>{card_for(entity)}</Router> }
+        },
+    ));
+    host
+}
+
+fn mount_picture(entity: EntityView) -> web_sys::Element {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let host = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&host).unwrap();
+    std::mem::forget(leptos::mount::mount_to(
+        host.clone().unchecked_into(),
+        move || {
+            provide_context(House::new());
+            provide_context(Toasts::new());
+            provide_context(Pending::new());
+            view! { <LivePicture entity=entity /> }
         },
     ));
     host
@@ -284,4 +301,58 @@ async fn a_cleaning_robot_stands_out_from_the_room() {
         .unwrap()
         .unwrap();
     assert_ne!(computed(&svg, "color"), computed(&robot, "color"));
+}
+
+#[wasm_bindgen_test]
+async fn picture_draws_the_cool_unit() {
+    let host = mount_picture(climate("cool"));
+    tick().await;
+    assert!(has(
+        &host,
+        "svg.live-icon.live-icon--picture.live-icon--cool"
+    ));
+    assert_eq!(count(&host, ".live-icon__flow"), 3);
+    let svg = host.query_selector("svg").unwrap().unwrap();
+    assert_eq!(svg.get_attribute("viewBox").as_deref(), Some("1 2.5 22 22"));
+}
+
+#[wasm_bindgen_test]
+async fn picture_draws_the_cleaning_room() {
+    let host = mount_picture(vacuum("cleaning"));
+    tick().await;
+    assert!(has(
+        &host,
+        "svg.live-icon--picture.live-icon--moving .live-icon__trail"
+    ));
+}
+
+#[wasm_bindgen_test]
+async fn picture_ids_differ_from_the_tile() {
+    let host = mount(climate("cool"));
+    let document = web_sys::window().unwrap().document().unwrap();
+    let extra = document.create_element("div").unwrap();
+    host.append_child(&extra).unwrap();
+    let entity = climate("cool");
+    std::mem::forget(leptos::mount::mount_to(
+        extra.clone().unchecked_into(),
+        move || view! { <LivePicture entity=entity /> },
+    ));
+    tick().await;
+    let nodes = host
+        .query_selector_all("mask[id], linearGradient[id]")
+        .unwrap();
+    let mut ids: Vec<String> = (0..nodes.length())
+        .map(|i| {
+            nodes
+                .item(i)
+                .unwrap()
+                .unchecked_into::<web_sys::Element>()
+                .id()
+        })
+        .collect();
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), total, "duplicate ids");
+    assert!(count(&host, "mask") >= 2);
 }
