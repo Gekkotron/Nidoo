@@ -98,9 +98,30 @@ pub fn window(text: &str) -> Result<Duration, String> {
     Ok(d)
 }
 
+/// The shortest `for` of `trigger.state`.
+pub const MIN_HOLD: Duration = Duration::from_secs(1);
+
+/// Parses a `trigger.state` `for`: a duration from `1s` to `168h`.
+pub fn hold(text: &str) -> Result<Duration, String> {
+    let d = parse_duration(text).map_err(|e| e.to_string())?;
+    if !(MIN_HOLD..=MAX_WINDOW).contains(&d) {
+        return Err(format!("`{text}` is outside 1s to 168h"));
+    }
+    Ok(d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hold_takes_seconds_up_to_a_week() {
+        assert_eq!(hold("30s"), Ok(Duration::from_secs(30)));
+        assert_eq!(hold("168h"), Ok(MAX_WINDOW));
+        assert!(hold("169h").is_err());
+        assert!(hold("0s").is_err());
+        assert!(hold("5").is_err());
+    }
 
     #[test]
     fn parses_units_and_combinations() {
