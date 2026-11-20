@@ -21,7 +21,7 @@ remote presses, `event` entities and tag scans). The problem is the editor:
 - Its entity picker offers every entity, whether it reports values or sends signals.
 - After picking, a **Quand** list of what that entity can report (s'ouvre / se ferme, détecte /
   ne détecte plus, the signals of a remote…), plus "any change"; no JSON typing.
-- Search results offer ready-made value entries: "Quand Porte entrée passe à Ouvert".
+- Search results offer ready-made value entries for sensors: "Quand Porte entrée devient ouvert".
 
 ## Non-goals
 
@@ -77,13 +77,15 @@ node id, position and edges are kept.
 The `IfValueField` component gains an optional "none" first option (or a thin wrapper does), so
 the If card's behaviour stays unchanged.
 
-**Search entries.** For each matching primary entity whose `value_input` is a `List`, add one
-When entry per listed value after the existing "changes" entry: label "Quand <entité> passe à
-<valeur>" / "When <entity> becomes <value>", inserting `trigger.state { entity, to: value }`.
-Numbers and text get no extra entries. Signal entries stay as they are.
+**Search entries.** For each matching primary **binary sensor** (door, window, motion, leak,
+smoke…) whose `value_input` is a `List`, add one When entry per listed value after the existing
+"changes" entry, inserting `trigger.state { entity, to: value }`. Its label is the card's existing
+sentence ("Quand Porte entrée devient ouvert"). Other kinds get no extra entries: their values are
+in the card's list, and a room search ("salon") would otherwise list every value of every light,
+shutter and climate in the room. Signal entries stay as they are.
 
-**Card summary on the canvas** (`flows.rs` node subtitle): with a `to`, show
-"<entité> → <valeur>" using the same value label; without, the entity name as today.
+**Card summary on the canvas.** Already done by `flow_text::sentence`: a `to` reads "Quand
+<entité> devient <valeur>". A card with no entity yet reads the Device sub-line.
 
 ## Testing
 
@@ -98,4 +100,3 @@ Numbers and text get no extra entries. Signal entries stay as they are.
 ## Left to the builder
 
 - Exact placement of the "none" option inside `IfValueField` vs a wrapper component.
-- Gender agreement of value words in French labels ("passe à Ouvert" uses the value word as-is).

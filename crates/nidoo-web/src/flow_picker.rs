@@ -8,13 +8,14 @@ use nidoo_core::flow::{
     TimeBetweenParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
     TriggerSilentParams, TriggerStateParams,
 };
-use nidoo_core::model::Command;
+use nidoo_core::model::{Command, Kind};
 use serde_json::Value;
 
 use crate::command_form::entity_actions;
 use crate::flow_edit::fold_accents;
 use crate::flow_text::{Ctx, sentence, subline};
 use crate::format::{entity_title, kind_search_words, room_name};
+use crate::if_value::{ValueInput, value_input};
 use crate::i18n::Lang;
 use crate::i18n::flows::{FlowText, flow_text};
 use crate::screens::flow_canvas::sun::sun_params_from_preset;
@@ -360,6 +361,22 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
                 }),
                 ctx,
             ));
+            // A sensor's values are its events: "door opens", "motion detected".
+            if e.kind == Kind::BinarySensor
+                && let ValueInput::List(values) = value_input(ctx.lang, Some(e))
+            {
+                for choice in values {
+                    out.push(entry(
+                        Group::When,
+                        NodeKind::TriggerState(TriggerStateParams {
+                            entity: e.id.clone(),
+                            to: Some(choice.value),
+                            ..Default::default()
+                        }),
+                        ctx,
+                    ));
+                }
+            }
             out.push(entry(
                 Group::And,
                 NodeKind::If(IfParams {
@@ -928,6 +945,25 @@ mod tests {
             })
             .collect();
         assert_eq!(signals, [Some("on".into()), Some("off".into()), None]);
+    }
+
+    #[test]
+    fn door_search_offers_one_when_entry_per_value() {
+        let mut door = ent("d1", "Front door", Kind::BinarySensor);
+        door.device_class = Some("door".into());
+        let got = run("front", &house(vec![door]));
+        let when: Vec<(String, Option<Value>)> = got
+            .iter()
+            .filter(|e| e.group == Group::When)
+            .filter_map(|e| match &e.kind {
+                NodeKind::TriggerState(p) => Some((e.label.clone(), p.to.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(when[0], ("When Front door changes".into(), None));
+        assert_eq!(when[1].1, Some(json!(true)));
+        assert_eq!(when[2].1, Some(json!(false)));
+        assert_eq!(when.len(), 3);
     }
 
     #[test]
