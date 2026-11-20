@@ -578,8 +578,18 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
             .collect_view()
     };
 
+    // Each field keeps the digits as typed: padding them on every keystroke turned "1" into
+    // "01", which filled the two-character field and blocked the next digit. The draft value is
+    // padded back in when the field is left, or when the draft changes from elsewhere.
     let number_input = move |label: WakeText, max: u8, minute: bool| {
         let current = move || draft.with(|d| if minute { d.minute } else { d.hour });
+        let text = RwSignal::new(format!("{:02}", untrack(current)));
+        Effect::new(move |_| {
+            let v = current();
+            if text.with_untracked(|t| t.trim().parse::<u8>().ok()) != Some(v) {
+                text.set(format!("{v:02}"));
+            }
+        });
         view! {
             <input
                 type="text"
@@ -587,9 +597,18 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
                 maxlength="2"
                 class=if minute { "wake-time__input wake-minute" } else { "wake-time__input wake-hour" }
                 aria-label=move || wake_text(lang(), label)
-                prop:value=move || format!("{:02}", current())
+                prop:value=move || text.get()
+                on:focus=move |ev| {
+                    event_target::<web_sys::HtmlInputElement>(&ev).select();
+                }
                 on:input=move |ev| {
-                    if let Ok(v) = event_target_value(&ev).trim().parse::<u8>() {
+                    let typed: String = event_target_value(&ev)
+                        .chars()
+                        .filter(char::is_ascii_digit)
+                        .take(2)
+                        .collect();
+                    text.set(typed.clone());
+                    if let Ok(v) = typed.parse::<u8>() {
                         let v = v.min(max);
                         draft
                             .update(|d| {
@@ -601,9 +620,8 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
                             });
                     }
                 }
-                on:change=move |ev| {
-                    event_target::<web_sys::HtmlInputElement>(&ev)
-                        .set_value(&format!("{:02}", current()));
+                on:change=move |_| {
+                    text.set(format!("{:02}", current()));
                 }
             />
         }

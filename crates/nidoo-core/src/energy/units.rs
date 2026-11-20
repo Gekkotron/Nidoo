@@ -55,6 +55,7 @@ impl EnergyRole {
 pub enum ConsumerIcon {
     WaterHeater,
     HeatPump,
+    AirConditioner,
     Oven,
     Fridge,
     Washer,
@@ -67,6 +68,7 @@ impl ConsumerIcon {
         match s {
             "water_heater" => Some(ConsumerIcon::WaterHeater),
             "heat_pump" => Some(ConsumerIcon::HeatPump),
+            "air_conditioner" => Some(ConsumerIcon::AirConditioner),
             "oven" => Some(ConsumerIcon::Oven),
             "fridge" => Some(ConsumerIcon::Fridge),
             "washer" => Some(ConsumerIcon::Washer),
@@ -80,6 +82,7 @@ impl ConsumerIcon {
         match self {
             ConsumerIcon::WaterHeater => "water_heater",
             ConsumerIcon::HeatPump => "heat_pump",
+            ConsumerIcon::AirConditioner => "air_conditioner",
             ConsumerIcon::Oven => "oven",
             ConsumerIcon::Fridge => "fridge",
             ConsumerIcon::Washer => "washer",
