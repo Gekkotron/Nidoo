@@ -150,7 +150,7 @@ pub(crate) fn typing(event: &web_sys::KeyboardEvent) -> bool {
 }
 
 /// Whether a modal dialog (a popup, the camera viewer) is open over the page.
-fn dialog_open() -> bool {
+pub(crate) fn dialog_open() -> bool {
     document()
         .query_selector("dialog[open]")
         .ok()

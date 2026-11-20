@@ -4,7 +4,7 @@ sidebar_position: 19
 description: Short French or English sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, control the music and the speakers' volume, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
 ---
 
-The **Assistant** understands short French or English sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page.
+The **Assistant** understands short French or English sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page, which opens the conversation as a small chat panel over the page you are on.
 
 It runs in the hub with fixed rules, no language model: the same sentence always gives the same result, instantly, and nothing leaves the house. It is deliberately limited. When it is not sure, it asks or does nothing; it never guesses.
 

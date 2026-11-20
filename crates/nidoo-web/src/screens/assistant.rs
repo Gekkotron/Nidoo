@@ -2,6 +2,9 @@
 //! how the sentence was understood. Sentences are read, and replies written by the hub, in the
 //! page's language (French or English). When the hub has a speech model for that language, each
 //! new reply is read aloud (a header switch turns that off, per browser) and ▶ reads one again.
+//!
+//! The same conversation opens from the floating button on every other page, as a small panel
+//! ([`AssistChat`] with `compact`): the turns and the field, without the trace or Simulation.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -16,7 +19,7 @@ use crate::components::toast::Toasts;
 use crate::i18n::{
     AssistSettingsText, AssistantText, Lang, assist_settings_text, assistant_text, use_lang,
 };
-use crate::icons::{GEAR, PLAY, SPEAKER, SPEAKER_OFF};
+use crate::icons::{EXPAND, GEAR, PLAY, SPEAKER, SPEAKER_OFF};
 
 /// The language code a reply in `lang` is spoken in.
 fn speech_code(lang: Lang) -> &'static str {
@@ -318,6 +321,14 @@ pub fn trace_rows(lang: Lang, trace: &Trace) -> Vec<(&'static str, String)> {
 /// The conversation, the field and the trace of the selected turn.
 #[component]
 pub fn AssistantScreen() -> impl IntoView {
+    view! { <AssistChat /> }
+}
+
+/// The conversation and its field. The page adds the trace of the selected turn, Clear, the
+/// settings gear and Simulation; `compact` (the floating button's panel) leaves them out, always
+/// acts for real, and links to the page instead.
+#[component]
+pub fn AssistChat(#[prop(optional)] compact: bool) -> impl IntoView {
     let lang = use_lang();
     let lang_untracked = move || untrack(lang);
     let t = move |k| assistant_text(lang(), k);
@@ -468,6 +479,8 @@ pub fn AssistantScreen() -> impl IntoView {
         }
     });
 
+    // The panel has no Simulation switch to show the page's one is on, so it never simulates.
+    let simulating = move || !compact && simulate.get_untracked();
     let submit = move |req: AssistRequest| {
         busy.set(true);
         let tapped = req.reply.as_ref().map(|reply| match reply {
@@ -518,7 +531,7 @@ pub fn AssistantScreen() -> impl IntoView {
             client: client.get_value(),
             text: Some(sentence),
             reply: None,
-            simulate: simulate.get_untracked(),
+            simulate: simulating(),
             lang: Some(lang_untracked().core()),
         });
     };
@@ -531,7 +544,7 @@ pub fn AssistantScreen() -> impl IntoView {
             client: client.get_value(),
             text: None,
             reply: Some(reply),
-            simulate: simulate.get_untracked(),
+            simulate: simulating(),
             lang: Some(lang_untracked().core()),
         });
     };
@@ -600,10 +613,16 @@ pub fn AssistantScreen() -> impl IntoView {
     };
 
     view! {
-        <div class="assist">
+        <div class="assist" class:assist--panel=compact>
             <section class="assist__talk">
                 <div class="assist__head">
-                    <p class="assist__hint">{move || t(AssistantText::Hint)}</p>
+                    {if compact {
+                        view! { <h2 class="assist__title">{move || t(AssistantText::Title)}</h2> }
+                            .into_any()
+                    } else {
+                        view! { <p class="assist__hint">{move || t(AssistantText::Hint)}</p> }
+                            .into_any()
+                    }}
                     <div class="assist__tools">
                         <Show when=move || can_speak.get()>
                             <button
@@ -630,27 +649,47 @@ pub fn AssistantScreen() -> impl IntoView {
                                 }
                             ></button>
                         </Show>
-                        <a
-                            class="assist__settings"
-                            href="/settings#assistant"
-                            aria-label=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
-                            title=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
-                            inner_html=GEAR
-                        ></a>
-                        <button
-                            type="button"
-                            class="assist__clear"
-                            title=move || t(AssistantText::ClearHint)
-                            disabled=move || turns.with(Vec::is_empty)
-                            on:click=move |_| clear()
-                        >
-                            {move || t(AssistantText::Clear)}
-                        </button>
+                        {if compact {
+                            view! {
+                                <a
+                                    class="assist__settings assist__full"
+                                    href="/assistant"
+                                    aria-label=move || t(AssistantText::FullPage)
+                                    title=move || t(AssistantText::FullPage)
+                                    inner_html=EXPAND
+                                ></a>
+                            }
+                                .into_any()
+                        } else {
+                            view! {
+                                <a
+                                    class="assist__settings"
+                                    href="/settings#assistant"
+                                    aria-label=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
+                                    title=move || assist_settings_text(lang(), AssistSettingsText::OpenSettings)
+                                    inner_html=GEAR
+                                ></a>
+                                <button
+                                    type="button"
+                                    class="assist__clear"
+                                    title=move || t(AssistantText::ClearHint)
+                                    disabled=move || turns.with(Vec::is_empty)
+                                    on:click=move |_| clear()
+                                >
+                                    {move || t(AssistantText::Clear)}
+                                </button>
+                            }
+                                .into_any()
+                        }}
                     </div>
                 </div>
                 <audio node_ref=audio class="assist__audio" preload="none"></audio>
                 <Show when=move || kept.get() == Some(false)>
                     <p class="assist__note">{move || t(AssistantText::NotKept)}</p>
+                </Show>
+                // The panel's empty conversation says what can be asked, where the page's header does.
+                <Show when=move || compact && turns.with(Vec::is_empty)>
+                    <p class="assist__hint assist__empty">{move || t(AssistantText::Hint)}</p>
                 </Show>
                 <ol class="assist__turns">
                     <For
@@ -665,7 +704,7 @@ pub fn AssistantScreen() -> impl IntoView {
                             view! {
                                 <li
                                     class="assist__turn"
-                                    class:assist__turn--selected=is_selected
+                                    class:assist__turn--selected=move || !compact && is_selected()
                                     class:assist__turn--wrong=turn.wrong
                                     on:click=move |_| selected.set(Some(id.clone()))
                                 >
@@ -746,15 +785,18 @@ pub fn AssistantScreen() -> impl IntoView {
                         {move || t(AssistantText::Send)}
                     </button>
                 </div>
-                <label class="assist__simulate" title=move || t(AssistantText::SimulationHint)>
-                    <input
-                        type="checkbox"
-                        prop:checked=move || simulate.get()
-                        on:change=move |ev| simulate.set(event_target_checked(&ev))
-                    />
-                    <span>{move || t(AssistantText::Simulation)}</span>
-                </label>
+                {(!compact).then(|| view! {
+                    <label class="assist__simulate" title=move || t(AssistantText::SimulationHint)>
+                        <input
+                            type="checkbox"
+                            prop:checked=move || simulate.get()
+                            on:change=move |ev| simulate.set(event_target_checked(&ev))
+                        />
+                        <span>{move || t(AssistantText::Simulation)}</span>
+                    </label>
+                })}
             </section>
+            {(!compact).then(|| view! {
             <aside class="assist__trace">
                 <h2 class="assist__trace-title">{move || t(AssistantText::HowUnderstood)}</h2>
                 {move || match shown.get() {
@@ -789,6 +831,7 @@ pub fn AssistantScreen() -> impl IntoView {
                     }
                 }}
             </aside>
+            })}
         </div>
     }
 }

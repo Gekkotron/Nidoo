@@ -8,8 +8,11 @@ use super::*;
 pub enum AssistantText {
     /// The page title, the sidebar entry and the breadcrumb.
     Title,
-    /// The floating button's label.
+    /// The floating button's label, and its label while its panel is open.
     Open,
+    Close,
+    /// The panel's link to the Assistant page.
+    FullPage,
     Placeholder,
     Send,
     Simulation,
@@ -50,6 +53,8 @@ pub fn assistant_text(lang: Lang, k: AssistantText) -> &'static str {
     let (en, fr) = match k {
         Title => ("Assistant", "Assistant"),
         Open => ("Open the assistant", "Ouvrir l'assistant"),
+        Close => ("Close the assistant", "Fermer l'assistant"),
+        FullPage => ("Open the full page", "Ouvrir la page complète"),
         Placeholder => (
             "Type a sentence, e.g. \"turn on the living room lights\"",
             "Écrivez une phrase, par exemple « allume la lumière du salon »",
@@ -123,6 +128,8 @@ mod tests {
             &[
                 Title,
                 Open,
+                Close,
+                FullPage,
                 Placeholder,
                 Send,
                 Simulation,

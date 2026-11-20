@@ -529,6 +529,11 @@ pub const MIC: &str = svg!(
     r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/>"#
 );
 
+/// Two arrows pulling apart: open the full view.
+pub const EXPAND: &str = svg!(
+    r#"<path d="M14.5 3.5h6v6"/><path d="M20.5 3.5 14 10"/><path d="M9.5 20.5h-6v-6"/><path d="M3.5 20.5 10 14"/>"#
+);
+
 /// A speech bubble: the assistant.
 pub const SPEECH: &str = svg!(
     r#"<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z"/><path d="M8.5 9.5h.01"/><path d="M12 9.5h.01"/><path d="M15.5 9.5h.01"/>"#
