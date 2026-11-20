@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn a_rename_on_the_volume_page_names_the_satellite() {
         // Renaming from the page the name opens sets the Volume's override, not the device.
-        let mut all = full("nidoo_sound_aaa", "Pinson – Chrome on Android", true);
+        let mut all = full("nidoo_sound_aaa", "Media player – Chrome on Android", true);
         all.extend(full("nidoo_sound_bbb", "Kitchen", true));
         let volume = all.iter_mut().find(|e| e.id == "nidoo_sound_aaa_volume");
         volume.expect("volume").ui.name = Some("Salon".into());
