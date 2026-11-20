@@ -312,6 +312,7 @@ pub fn consumer_glyph(key: Option<&str>) -> &'static str {
     match key {
         Some("water_heater") => WATER_HEATER_GLYPH,
         Some("heat_pump") => HEAT_PUMP,
+        Some("air_conditioner") => CLIMATE,
         Some("oven") => OVEN,
         Some("fridge") => FRIDGE,
         Some("washer") => WASHER,
@@ -685,6 +686,7 @@ mod tests {
         let keys = [
             "water_heater",
             "heat_pump",
+            "air_conditioner",
             "oven",
             "fridge",
             "washer",

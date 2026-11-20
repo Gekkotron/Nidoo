@@ -482,9 +482,10 @@ fn light_on_label(preset: &str) -> DeviceText {
 }
 
 /// The consumer icons, in the app's order, with their labels.
-const CONSUMER_ICONS: [(&str, DeviceText); 7] = [
+const CONSUMER_ICONS: [(&str, DeviceText); 8] = [
     ("water_heater", DeviceText::WaterHeater),
     ("heat_pump", DeviceText::HeatPump),
+    ("air_conditioner", DeviceText::AirConditioner),
     ("oven", DeviceText::Oven),
     ("fridge", DeviceText::Fridge),
     ("washer", DeviceText::Washer),

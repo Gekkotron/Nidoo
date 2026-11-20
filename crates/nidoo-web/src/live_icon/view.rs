@@ -140,7 +140,7 @@ fn AcIcon(entity: EntityView, #[prop(optional)] picture: bool) -> impl IntoView 
                     <stop offset="1" stop-color="#000"></stop>
                 </linearGradient>
                 <mask id=mask.clone() maskUnits="userSpaceOnUse" x="0" y="13" width="24" height="11">
-                    <rect x="0" y="13" width="24" height="11" fill=format!("url(#{fade})")></rect>
+                    <rect x="0" y="13" width="24" height="11" fill=format!("url(#{fade})") stroke="none"></rect>
                 </mask>
             </defs>
             <g mask=format!("url(#{mask})")>{lines}</g>
