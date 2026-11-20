@@ -12,6 +12,7 @@ use crate::components::card_place::{CardPlace, use_card_place};
 use crate::components::dial::Dial;
 use crate::format::entity_title;
 use crate::i18n::{Key, use_lang, use_text};
+use crate::live_icon::view::LivePicture;
 
 const DEFAULT_STEP: f64 = 0.5;
 
@@ -154,6 +155,7 @@ pub fn ClimateCard(entity: EntityView) -> impl IntoView {
     let pending = sender.pending(&entity.id);
     let on_click = open_entity(&entity.id);
     let id = entity.id.clone();
+    let picture_entity = entity.clone();
     view! {
         <CardFrame
             entity=entity
@@ -164,6 +166,9 @@ pub fn ClimateCard(entity: EntityView) -> impl IntoView {
             row_header=true
         >
             <div class="climate">
+                <div class="climate__picture">
+                    <LivePicture entity=picture_entity />
+                </div>
                 <Dial
                     draft_key=id
                     value=target

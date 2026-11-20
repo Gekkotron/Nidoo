@@ -272,6 +272,17 @@
   container: climate / inline-size;
 }
 
+/* The AC above the dial, smaller in a narrow tile so the dial and the − / + buttons still fit. */
+.climate__picture .live-icon--picture {
+  width: 110px;
+}
+
+@container climate (max-width: 180px) {
+  .climate__picture .live-icon--picture {
+    width: 72px;
+  }
+}
+
 .dial {
   width: min(100%, 170px);
   height: auto;
@@ -438,135 +449,15 @@
   width: 170px;
 }
 
+.vacuum__picture .live-icon--picture {
+  width: 150px;
+  max-width: 100%;
+}
+
 .vacuum__caption {
   font: 400 10.5px/14px var(--font-body);
   color: var(--muted);
   text-align: center;
-}
-
-.robot {
-  width: 150px;
-  max-width: 100%;
-  height: auto;
-}
-
-.robot__ring {
-  fill: none;
-  stroke: var(--card-border);
-}
-
-.robot__body {
-  fill: var(--tile-bg);
-  stroke: var(--card-border);
-  stroke-width: 2;
-}
-
-.robot__top {
-  fill: var(--card-bg);
-  stroke: var(--card-border);
-  stroke-width: 2;
-}
-
-.robot__sensor {
-  fill: var(--muted);
-}
-
-.robot--error .robot__body {
-  stroke: var(--danger);
-}
-
-.robot--cleaning .robot__ring {
-  transform-origin: 75px 75px;
-  animation: robot-pulse 2.4s var(--ease) infinite;
-}
-
-.robot--cleaning .robot__ring--outer {
-  animation-delay: 0.6s;
-}
-
-@keyframes robot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  50% {
-    opacity: 0.35;
-    transform: scale(1.04);
-  }
-}
-
-/* One side brush at the front right: still unless cleaning, then it spins inward. */
-.robot__brush-reach {
-  fill: none;
-  stroke: none;
-}
-
-.robot__brush-arms {
-  fill: none;
-  stroke: var(--accent-cyan);
-  stroke-width: 1.6;
-  stroke-linecap: round;
-}
-
-.robot__brush-hub {
-  fill: var(--accent-cyan);
-}
-
-.robot__brush-spin {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-.robot--cleaning .robot__brush-spin {
-  animation: robot-brush 0.7s linear infinite reverse;
-}
-
-@keyframes robot-brush {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Dust drawn in under the robot: each speck fades in, heads for the centre, fades out. */
-.robot__dust {
-  fill: var(--robot-dust);
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: robot-dust 1.8s ease-in infinite;
-}
-
-@keyframes robot-dust {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(1);
-  }
-
-  20% {
-    opacity: 0.95;
-  }
-
-  75% {
-    opacity: 0.8;
-  }
-
-  100% {
-    opacity: 0;
-    transform: translate(var(--dx), var(--dy)) scale(0.6);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .robot--cleaning .robot__ring,
-  .robot--cleaning .robot__brush-spin {
-    animation: none;
-  }
-
-  .robot__dust {
-    display: none;
-  }
 }
 
 /* A phone gives the drawing less room. */
@@ -839,6 +730,23 @@
    in ink instead, so its tinted parts stand out. */
 .card__icon .live-icon {
   color: var(--ink);
+}
+
+/* The large picture on a card: the same drawing at 150 px, so its own line widths are thinned. */
+.live-icon--picture {
+  display: block;
+  color: var(--ink);
+  height: auto;
+  stroke-width: 1.2;
+}
+
+.live-icon--picture .live-icon__robot,
+.live-icon--picture .live-icon__vane {
+  stroke-width: 1;
+}
+
+.live-icon--picture .live-icon__flow {
+  stroke-width: 1.1;
 }
 
 .live-icon--cool {

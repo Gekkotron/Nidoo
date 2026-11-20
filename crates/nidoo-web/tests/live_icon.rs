@@ -12,6 +12,7 @@ use nidoo_core::model::{
 use nidoo_web::commands::Pending;
 use nidoo_web::components::toast::Toasts;
 use nidoo_web::house::House;
+use nidoo_web::live_icon::view::LivePicture;
 use nidoo_web::screens::home::card_for;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_test::*;
@@ -54,6 +55,22 @@ fn mount(entity: EntityView) -> web_sys::Element {
             provide_context(Toasts::new());
             provide_context(Pending::new());
             view! { <Router>{card_for(entity)}</Router> }
+        },
+    ));
+    host
+}
+
+fn mount_picture(entity: EntityView) -> web_sys::Element {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let host = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&host).unwrap();
+    std::mem::forget(leptos::mount::mount_to(
+        host.clone().unchecked_into(),
+        move || {
+            provide_context(House::new());
+            provide_context(Toasts::new());
+            provide_context(Pending::new());
+            view! { <LivePicture entity=entity /> }
         },
     ));
     host
@@ -219,10 +236,14 @@ async fn error_tile_is_still() {
 }
 
 #[wasm_bindgen_test]
-async fn the_big_robot_picture_stays() {
+async fn the_big_picture_is_the_room() {
     let host = mount(vacuum("cleaning"));
     tick().await;
-    assert!(has(&host, "svg.robot--cleaning"));
+    assert!(has(
+        &host,
+        ".vacuum__picture svg.live-icon--picture.live-icon--moving"
+    ));
+    assert!(!has(&host, "svg.robot"));
 }
 
 /// Loads the real stylesheets once, so computed colours are the ones a user sees.
@@ -284,4 +305,124 @@ async fn a_cleaning_robot_stands_out_from_the_room() {
         .unwrap()
         .unwrap();
     assert_ne!(computed(&svg, "color"), computed(&robot, "color"));
+}
+
+#[wasm_bindgen_test]
+async fn picture_draws_the_cool_unit() {
+    let host = mount_picture(climate("cool"));
+    tick().await;
+    assert!(has(
+        &host,
+        "svg.live-icon.live-icon--picture.live-icon--cool"
+    ));
+    assert_eq!(count(&host, ".live-icon__flow"), 3);
+    let svg = host.query_selector("svg").unwrap().unwrap();
+    assert_eq!(svg.get_attribute("viewBox").as_deref(), Some("1 2.5 22 22"));
+}
+
+#[wasm_bindgen_test]
+async fn picture_draws_the_cleaning_room() {
+    let host = mount_picture(vacuum("cleaning"));
+    tick().await;
+    assert!(has(
+        &host,
+        "svg.live-icon--picture.live-icon--moving .live-icon__trail"
+    ));
+}
+
+#[wasm_bindgen_test]
+async fn picture_ids_differ_from_the_tile() {
+    let host = mount(climate("cool"));
+    let document = web_sys::window().unwrap().document().unwrap();
+    let extra = document.create_element("div").unwrap();
+    host.append_child(&extra).unwrap();
+    let entity = climate("cool");
+    std::mem::forget(leptos::mount::mount_to(
+        extra.clone().unchecked_into(),
+        move || view! { <LivePicture entity=entity /> },
+    ));
+    tick().await;
+    let nodes = host
+        .query_selector_all("mask[id], linearGradient[id]")
+        .unwrap();
+    let mut ids: Vec<String> = (0..nodes.length())
+        .map(|i| {
+            nodes
+                .item(i)
+                .unwrap()
+                .unchecked_into::<web_sys::Element>()
+                .id()
+        })
+        .collect();
+    let total = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), total, "duplicate ids");
+    assert!(count(&host, "mask") >= 2);
+}
+
+#[wasm_bindgen_test]
+async fn climate_card_shows_the_unit_above_the_dial() {
+    let host = mount(climate("cool"));
+    tick().await;
+    assert!(has(
+        &host,
+        ".climate > .climate__picture svg.live-icon--picture.live-icon--cool"
+    ));
+    let climate = host.query_selector(".climate").unwrap().unwrap();
+    let first = climate.first_element_child().unwrap();
+    assert_eq!(first.class_name(), "climate__picture");
+    let dial = host.query_selector(".climate .dial").unwrap().unwrap();
+    let after = first.compare_document_position(&dial);
+    assert_ne!(after & web_sys::Node::DOCUMENT_POSITION_FOLLOWING, 0);
+}
+
+#[wasm_bindgen_test]
+async fn offline_picture_is_off() {
+    let mut e = climate("cool");
+    e.state.availability = Availability::Offline;
+    let host = mount(e);
+    tick().await;
+    assert!(has(&host, ".climate__picture svg.live-icon--off"));
+    assert_eq!(count(&host, ".climate__picture .live-icon__flow"), 0);
+}
+
+#[wasm_bindgen_test]
+async fn tile_and_picture_move_together() {
+    let host = mount(climate("cool"));
+    tick().await;
+    sleep_ms(250).await;
+    // Both reads happen in one task, so no frame can run between them.
+    let tile = host
+        .query_selector(".card__tile .live-icon__flow")
+        .unwrap()
+        .unwrap()
+        .get_attribute("stroke-dashoffset");
+    let picture = host
+        .query_selector(".climate__picture .live-icon__flow")
+        .unwrap()
+        .unwrap()
+        .get_attribute("stroke-dashoffset");
+    assert!(tile.is_some());
+    assert_eq!(tile, picture);
+}
+
+#[wasm_bindgen_test]
+async fn narrow_card_shrinks_the_picture() {
+    with_styles();
+    let host = mount(climate("cool"));
+    host.set_attribute("style", "width: 160px").unwrap();
+    tick().await;
+    let picture = host
+        .query_selector(".climate__picture svg")
+        .unwrap()
+        .unwrap();
+    assert!(picture.get_bounding_client_rect().width() <= 72.0);
+    let right = host.get_bounding_client_rect().right();
+    let buttons = host.query_selector_all(".climate__foot button").unwrap();
+    assert_eq!(buttons.length(), 2);
+    for i in 0..buttons.length() {
+        let button: web_sys::Element = buttons.item(i).unwrap().unchecked_into();
+        assert!(button.get_bounding_client_rect().right() <= right + 0.5);
+    }
 }
