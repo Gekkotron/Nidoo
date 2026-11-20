@@ -64,11 +64,17 @@ Pinson plays its Favorites instead.
 ## A spoken backup
 
 Pinson may be offline when the alarm rings. The page does not add a backup,
-but because the alarm is an ordinary flow you can open it from the flows list
-(**open** on the « Managed by Wake-up » line takes you back to the page) and
-add a `speak` card on a satellite in a copy of the flow. Do not edit the
-managed flow itself: the page rewrites it on the next save, and Nidoo asks
-before saving a managed flow from the canvas.
+but you can build one as a separate flow:
+
+1. A **schedule** trigger at the alarm's time and days.
+2. A **delay** of 1 minute, so Pinson has time to start.
+3. An **if** on the Pinson player: its state is not `playing`.
+4. On `true`, a **speak** card on the bedroom satellite ("It's seven, time to
+   get up").
+
+It stays silent on the mornings the music plays. Keep it as its own flow: do
+not add it to the alarm's flow, which the page rewrites on every save (Nidoo
+asks before saving a managed flow from the canvas).
 
 ## A broken alarm
 
