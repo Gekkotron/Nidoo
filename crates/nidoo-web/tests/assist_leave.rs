@@ -28,7 +28,7 @@ async fn leaving_mid_request_does_not_break_the_page() {
     find(&m.host, ".breadcrumb a[href=\"/\"]").unwrap().click();
     wait_for(&m.host, "#home").await;
     gloo_timers::future::TimeoutFuture::new(300).await;
-    // The app still runs: the button opens the Assistant again.
+    // The app still runs: the button opens the Assistant's panel.
     find(&m.host, ".assist-fab").unwrap().click();
     wait_for(&m.host, ".assist__input").await;
 }
