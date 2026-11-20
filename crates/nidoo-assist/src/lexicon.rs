@@ -26,6 +26,10 @@ pub enum Class {
     Question,
     /// "il fait combien".
     Fait,
+    /// "froid" of "j'ai froid", "il fait froid": the room is too cold.
+    Cold,
+    /// "chaud" of "j'ai chaud", "il fait chaud": the room is too warm.
+    Hot,
     /// "un peu", "légèrement".
     Little,
     /// A word for shutters ("volet", "store"; "roulant" of "volet roulant").
@@ -243,6 +247,13 @@ const TABLE: &[(Class, &[&str])] = &[
     (Class::Back, &["reviens", "revenir", "revient", "retourne"]),
     (Class::Listen, &["ecoute", "ecoutes", "ecouter", "ecoutez"]),
     (Class::Fait, &["fait"]),
+    (
+        Class::Cold,
+        &[
+            "froid", "froide", "froids", "froides", "caille", "gele", "gelee", "geles", "gelees",
+        ],
+    ),
+    (Class::Hot, &["chaud", "chaude", "chauds", "chaudes"]),
     (Class::Little, &["legerement"]),
     (
         Class::OtherDevice,
@@ -291,6 +302,7 @@ const TABLE: &[(Class, &[&str])] = &[
             "l",
             "et",
             "ou",
+            "mais",
             "il",
             "elle",
             "on",
@@ -854,6 +866,8 @@ mod tests {
         assert_eq!(class("salon"), None);
         // Exact entries beat typos: "montre" is not "monte".
         assert_eq!(class("montre"), Some(Class::Noise));
+        // "mais" is filler, never a room word.
+        assert_eq!(class("mais"), Some(Class::Noise));
     }
 
     #[test]

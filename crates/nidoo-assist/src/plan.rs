@@ -9,7 +9,7 @@ use nidoo_core::flow::Lang;
 use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue, SwitchType};
 
 use crate::house::House;
-use crate::intent::{Change, Intent, MediaIntent, parse_in, play_by_name_in};
+use crate::intent::{Change, Intent, LITTLE, MediaIntent, parse_in, play_by_name_in};
 use crate::lexicon::Colour;
 use crate::reply::{
     Lack, cannot_in, dans, de, lack, le, number, number_in, place, room_in, temp, temp_in, the,
@@ -203,7 +203,11 @@ pub fn plan(sentence: &str, house: &House) -> Plan {
 /// Plans a sentence heard by a satellite in `speaker_room` (`None`: typed on the web): the
 /// music and volume intents use that room.
 pub fn plan_heard(sentence: &str, house: &House, speaker_room: Option<&str>) -> Plan {
-    let ws = words(sentence);
+    let mut ws = words(sentence);
+    // Speech-to-text often hears the opening "mets" as "mais", which never starts an order.
+    if house.lang == Lang::Fr && ws.first().is_some_and(|w| w.is("mais")) {
+        ws[0] = Word::Text("mets".into());
+    }
     let mut plan = match play_by_name_in(sentence, house.lang).or_else(|| parse_in(&ws, house.lang))
     {
         Some(intent) => {
@@ -230,6 +234,7 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
         } => lights(req, *on, *colour, *brightness, names, room, house),
         Intent::ReadTemp { room, outdoor } => read_temp(req, room, *outdoor, house),
         Intent::SetTemp { change, room } => set_temp(req, *change, room, house),
+        Intent::Feel { warmer, room } => feel(req, *warmer, room, house),
         Intent::HeatingNoValue { room } => heating_no_value(req, room, house),
         Intent::Covers {
             open,
@@ -1743,6 +1748,34 @@ fn real_setpoint(zone: &ZoneView) -> RealSetpoint {
     }
 }
 
+/// "j'ai froid": a small step for the named room, else for the satellite's room when it has
+/// active heating; a satellite in a room without asks which room. Typed with no room: as
+/// "monte un peu le chauffage" (the only heated room, else a question).
+fn feel(req: &Request, warmer: bool, room: &[String], house: &House) -> Plan {
+    let change = Change::Relative(if warmer { LITTLE } else { -LITTLE });
+    let mut next = req.clone();
+    next.intent = Intent::SetTemp {
+        change,
+        room: room.to_vec(),
+    };
+    if next.area.is_none()
+        && room.is_empty()
+        && let Some(heard) = &req.speaker_room
+    {
+        let zones = active_zones(house);
+        if zones.contains(heard) {
+            next.area = Some(heard.clone());
+        } else if !zones.is_empty() {
+            let trace = Trace {
+                intent: Some("set_temp".into()),
+                ..Default::default()
+            };
+            return ask_room(&next, &zones, house, trace);
+        }
+    }
+    set_temp(&next, change, room, house)
+}
+
 fn set_temp(req: &Request, change: Change, room: &[String], house: &House) -> Plan {
     let mut trace = Trace {
         intent: Some("set_temp".into()),
@@ -2533,6 +2566,63 @@ mod tests {
                 to: 20.0
             }
         );
+    }
+
+    #[test]
+    fn misheard_mets_is_not_a_room_word() {
+        // Speech-to-text often hears "mets" as "mais".
+        assert_eq!(
+            setpoint_of(&p("mais le chauffage au salon à 18 degrés")),
+            ("salon".into(), 18.0)
+        );
+    }
+
+    #[test]
+    fn feeling_steps_the_named_room() {
+        assert_eq!(
+            setpoint_of(&p("j'ai froid au salon")),
+            ("salon".into(), 19.5)
+        );
+        // The step starts from the reading when it is already past the setpoint.
+        assert_eq!(
+            setpoint_of(&p("il fait froid dans la chambre de Léa")),
+            ("chambre_lea".into(), 17.0)
+        );
+        assert_eq!(
+            setpoint_of(&p("j'ai chaud au salon")),
+            ("salon".into(), 17.5)
+        );
+    }
+
+    #[test]
+    fn feeling_uses_the_satellite_room() {
+        let f = fixture::house();
+        assert_eq!(
+            setpoint_of(&heard(&f, "j'ai froid", Some("salon"))),
+            ("salon".into(), 19.5)
+        );
+        // A named room beats the satellite's.
+        assert_eq!(
+            setpoint_of(&heard(&f, "j'ai froid au salon", Some("garage"))),
+            ("salon".into(), 19.5)
+        );
+    }
+
+    #[test]
+    fn feeling_from_a_room_without_heating_asks_which() {
+        let f = fixture::house();
+        for room in [Some("garage"), Some("chambre_tom"), None] {
+            let asked = heard(&f, "il fait trop froid", room);
+            assert_eq!(labels(&asked), ["Salon", "Chambre Léa"], "{room:?}");
+            let pending = crate::Pending::of(&asked).expect("a question");
+            let request = pending
+                .resolve(crate::PendingAnswer::Choice(0))
+                .expect("choice 1");
+            assert_eq!(
+                setpoint_of(&plan_request(&request, &f.house())),
+                ("salon".into(), 19.5)
+            );
+        }
     }
 
     #[test]

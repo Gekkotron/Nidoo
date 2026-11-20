@@ -71,6 +71,11 @@ pub enum Intent {
     VolumeRange,
     /// A light brightness outside 1–100 %.
     BrightnessRange,
+    /// "j'ai froid au salon", "il fait chaud": a small heating step, up (`warmer`) or down.
+    Feel {
+        warmer: bool,
+        room: Vec<String>,
+    },
 }
 
 /// What is asked of the music player.
@@ -473,6 +478,9 @@ fn parse_toks(mut toks: Vec<Tok>, coloured: bool) -> Option<Intent> {
             *t = Tok::Free(std::mem::take(w));
         }
     }
+    if let Some(intent) = feeling(&mut toks) {
+        return Some(intent);
+    }
     let has = |c: Class| {
         toks.iter()
             .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
@@ -618,6 +626,79 @@ fn parse_toks(mut toks: Vec<Tok>, coloured: bool) -> Option<Intent> {
             return None;
         }
         return Some(lights(&toks, &roles, on, has(Class::All)));
+    }
+    None
+}
+
+/// Words that make a feeling stronger, never part of a room's name: "il fait trop chaud".
+const INTENSIFIERS: &[&str] = &[
+    "trop",
+    "tres",
+    "vraiment",
+    "super",
+    "hyper",
+    "assez",
+    "grave",
+    "bien",
+    "si",
+    "tellement",
+];
+
+/// "j'ai froid au salon", "il fait chaud", "ça caille": a feeling about the room's warmth,
+/// when nothing else is asked (no verb, no device word, no value, no negation). A question or
+/// "dehors" reads the temperature instead. Otherwise the cold and hot words are plain words
+/// again ("la lumière chaude"), as before they were known.
+fn feeling(toks: &mut [Tok]) -> Option<Intent> {
+    let has = |c: Class| {
+        toks.iter()
+            .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
+    };
+    let (cold, hot) = (has(Class::Cold), has(Class::Hot));
+    if !cold && !hot {
+        return None;
+    }
+    let other = [
+        Class::On,
+        Class::Off,
+        Class::Set,
+        Class::Raise,
+        Class::Lower,
+        Class::Light,
+        Class::LightNamed,
+        Class::Cover,
+        Class::Open,
+        Class::Close,
+        Class::Tv,
+        Class::Plug,
+        Class::OtherDevice,
+        Class::Percent,
+        Class::Negation,
+        Class::Degree,
+    ];
+    let roles = roles(toks);
+    let valued = toks.iter().zip(&roles).any(|(t, r)| {
+        matches!(t, Tok::Signed(_)) || (matches!(t, Tok::Number(_)) && *r != Some(Role::Name))
+    });
+    if cold != hot && !valued && !other.iter().any(|c| has(*c)) {
+        let room: Vec<String> = toks
+            .iter()
+            .zip(&roles)
+            .filter_map(|(t, r)| match (t, r) {
+                (Tok::Free(w), _) if !INTENSIFIERS.contains(&w.as_str()) => Some(w.clone()),
+                (Tok::Number(n), Some(Role::Name)) => Some(number_text(*n)),
+                _ => None,
+            })
+            .collect();
+        let outdoor = has(Class::Outdoor);
+        if has(Class::Question) || outdoor {
+            return Some(Intent::ReadTemp { room, outdoor });
+        }
+        return Some(Intent::Feel { warmer: cold, room });
+    }
+    for t in toks.iter_mut() {
+        if let Tok::Known(Class::Cold | Class::Hot, w) = t {
+            *t = Tok::Free(std::mem::take(w));
+        }
     }
     None
 }
@@ -1420,6 +1501,53 @@ mod tests {
             Some(Intent::HeatingNoValue {
                 room: v(&["salon"])
             })
+        );
+    }
+
+    #[test]
+    fn feelings_step_the_heating() {
+        let feel = |warmer: bool, room: &[&str]| {
+            Some(Intent::Feel {
+                warmer,
+                room: v(room),
+            })
+        };
+        assert_eq!(p("j'ai froid au salon"), feel(true, &["salon"]));
+        assert_eq!(p("il fait froid"), feel(true, &[]));
+        assert_eq!(
+            p("il fait trop chaud dans la chambre de Tom"),
+            feel(false, &["chambre", "tom"])
+        );
+        assert_eq!(
+            p("ça caille dans la chambre 2"),
+            feel(true, &["chambre", "2"])
+        );
+        assert_eq!(p("j'ai un peu chaud"), feel(false, &[]));
+    }
+
+    #[test]
+    fn feelings_never_guessed() {
+        assert_eq!(p("je n'ai pas froid"), None);
+        assert_eq!(p("j'ai froid et chaud"), None);
+        assert_eq!(p("il fait froid à 18"), None);
+        assert_eq!(
+            p("il fait froid au salon ?"),
+            Some(Intent::ReadTemp {
+                room: v(&["salon"]),
+                outdoor: false
+            })
+        );
+        assert_eq!(
+            p("il fait froid dehors"),
+            Some(Intent::ReadTemp {
+                room: vec![],
+                outdoor: true
+            })
+        );
+        // With a device word, "chaude" is a plain word as before.
+        assert_eq!(
+            p("allume la lumière chaude du salon"),
+            lights(true, false, &["chaude"], &["salon"])
         );
     }
 
