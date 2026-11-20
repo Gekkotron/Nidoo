@@ -77,6 +77,7 @@ fn command(entity: &str, command: Command) -> NodeKind {
 /// Extra words that find a generic card, in both languages: what other tools call a Manual card.
 fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
+        NodeKind::TriggerState(_) => "trigger declencheur event evenement sensor capteur",
         NodeKind::TriggerManual(_) => "inject injecter button bouton",
         NodeKind::FlowLabel(_) => "choice choix season saison tag",
         NodeKind::BackupRun(_) => "backup sauvegarde ftp",
@@ -91,6 +92,12 @@ fn card_search_words(kind: &NodeKind) -> &'static str {
 pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
     let needle = fold_accents(query.trim());
     let generic = [
+        (
+            Group::When,
+            NodeKind::TriggerState(TriggerStateParams::default()),
+            Some(FlowText::NodeTrigger),
+            FlowText::DeviceSub,
+        ),
         (
             Group::When,
             NodeKind::TriggerSchedule(TriggerScheduleParams {
@@ -508,10 +515,11 @@ mod tests {
         };
         let fr = entries("", &ctx(crate::i18n::Lang::Fr));
         let labels: Vec<_> = fr.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels[0], "Programmation");
+        assert_eq!(labels[0], "Appareil");
+        assert_eq!(labels[1], "Programmation");
         assert!(labels.contains(&"Quand il fait nuit"));
         assert!(
-            matches!(&fr[10].kind, NodeKind::Notify(p) if p.title == "Notification"),
+            matches!(&fr[11].kind, NodeKind::Notify(p) if p.title == "Notification"),
             "the stored default follows the language at creation"
         );
         // The English word finds the card on the French UI, and the French word on the English UI.
@@ -590,6 +598,29 @@ mod tests {
     }
 
     #[test]
+    fn device_card_is_an_empty_state_trigger_found_in_either_language() {
+        let entities = house(vec![]);
+        let got = run("", &entities);
+        let first = &got[0];
+        assert_eq!(first.group, Group::When);
+        assert_eq!(
+            first.sub.as_deref(),
+            Some("When a device changes or sends an event")
+        );
+        assert!(
+            matches!(&first.kind, NodeKind::TriggerState(p) if p.entity.is_empty() && p.to.is_none())
+        );
+        for q in ["device", "appareil", "event", "evenement"] {
+            assert!(
+                run(q, &entities).iter().any(
+                    |e| matches!(&e.kind, NodeKind::TriggerState(p) if p.entity.is_empty())
+                ),
+                "{q}"
+            );
+        }
+    }
+
+    #[test]
     fn empty_query_has_generic_entries() {
         let entities = house(vec![ent("l1", "Lumière table", Kind::Light)]);
         let got = run("", &entities);
@@ -597,6 +628,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                (Group::When, "Device"),
                 (Group::When, "Schedule"),
                 (Group::When, "Sun event"),
                 (Group::When, "Off-peak"),
@@ -622,6 +654,7 @@ mod tests {
         assert_eq!(
             subs,
             [
+                Some("When a device changes or sends an event"),
                 Some("At a set time, or on a repeat"),
                 Some("Sunrise, sunset, dusk or dawn"),
                 Some("When off-peak starts or ends"),
@@ -644,29 +677,29 @@ mod tests {
             ]
         );
         assert!(matches!(
-            &got[0].kind,
+            &got[1].kind,
             NodeKind::TriggerSchedule(p) if p.cron == "0 * * * *"
         ));
-        assert!(matches!(&got[8].kind, NodeKind::Math(p) if p.name.is_empty()));
-        assert!(matches!(&got[10].kind, NodeKind::Notify(p) if p.title == "Notification"));
+        assert!(matches!(&got[9].kind, NodeKind::Math(p) if p.name.is_empty()));
+        assert!(matches!(&got[11].kind, NodeKind::Notify(p) if p.title == "Notification"));
         assert!(matches!(
-            &got[11].kind,
+            &got[12].kind,
             NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
         ));
         assert!(matches!(
-            &got[12].kind,
+            &got[13].kind,
             NodeKind::Ask(p) if p.answers.len() == 2 && p.room.is_none()
                 && p.answers[0].label == "Yes" && p.answers[1].label == "No"
         ));
-        assert!(matches!(&got[13].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+        assert!(matches!(&got[14].kind, NodeKind::Delay(p) if p.for_ == "5m"));
         assert!(matches!(
-            &got[7].kind,
+            &got[8].kind,
             NodeKind::Switch(p) if p.otherwise && p.entity.is_none()
                 && p.rules.len() == 1 && p.rules[0].op == RuleOp::Eq
                 && p.rules[0].value == Value::Bool(true)
         ));
         assert!(matches!(
-            &got[9].kind,
+            &got[10].kind,
             NodeKind::TimeBetween(p) if p.from == "07:00" && p.to == "22:00"
         ));
     }
