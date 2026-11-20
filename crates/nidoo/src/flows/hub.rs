@@ -594,6 +594,7 @@ impl Hub {
                 | NodeKind::TriggerSchedule(_)
                 | NodeKind::TriggerSun(_)
                 | NodeKind::TriggerOffPeak(_)
+                | NodeKind::TriggerAlarm(_)
                 | NodeKind::TriggerManual(_)
                 | NodeKind::Math(_) => None,
             };

@@ -797,6 +797,7 @@ impl Engine {
                 NodeKind::TriggerState(params) => {
                     Some((params.entity.clone(), params.field.clone()))
                 }
+                NodeKind::TriggerAlarm(_) => Some((crate::alarm::ALARM_ENTITY_ID.to_owned(), None)),
                 _ => None,
             })
             .collect()
@@ -972,18 +973,39 @@ impl Engine {
             };
             for flow in &self.flows {
                 for node in flow.triggers() {
-                    let NodeKind::TriggerState(params) = &node.kind else {
+                    if fires.iter().any(|(f, _, _)| f.id == flow.id) {
                         continue;
-                    };
-                    if params.entity == id
-                        && params.field == key.1
-                        && !fires.iter().any(|(f, _, _)| f.id == flow.id)
-                        && filter_matches(params.to.as_ref(), &next)
-                        && match &previous {
-                            Some(previous) => filter_matches(params.from.as_ref(), previous),
-                            None => params.from.is_none() && params.to.is_some(),
+                    }
+                    let satisfied = match &node.kind {
+                        NodeKind::TriggerState(params) => {
+                            params.entity == id
+                                && params.field == key.1
+                                && filter_matches(params.to.as_ref(), &next)
+                                && match &previous {
+                                    Some(previous) => {
+                                        filter_matches(params.from.as_ref(), previous)
+                                    }
+                                    None => params.from.is_none() && params.to.is_some(),
+                                }
                         }
-                    {
+                        NodeKind::TriggerAlarm(params) => {
+                            let Scalar::Text(next) = &next else {
+                                continue;
+                            };
+                            id == crate::alarm::ALARM_ENTITY_ID
+                                && key.1.is_none()
+                                && params.to.is_none_or(|to| to.matches(next))
+                                && match &previous {
+                                    Some(Scalar::Text(previous)) => {
+                                        params.from.is_none_or(|from| from.matches(previous))
+                                    }
+                                    Some(_) => false,
+                                    None => params.from.is_none() && params.to.is_some(),
+                                }
+                        }
+                        _ => false,
+                    };
+                    if satisfied {
                         fires.push((flow.clone(), node.id.clone(), trigger.clone()));
                     }
                 }
@@ -1367,6 +1389,13 @@ async fn run_node(
             format!("off-peak {}", params.edge.wire_name()),
             Vec::new(),
         ),
+        NodeKind::TriggerAlarm(_) => {
+            let detail = match trigger {
+                Some(trigger) => format!("alarm {}", trigger.value),
+                None => "manual".to_owned(),
+            };
+            (StepOutcome::Ok, detail, Vec::new())
+        }
         NodeKind::TriggerSun(params) => (
             StepOutcome::Ok,
             format!(
@@ -2123,6 +2152,166 @@ mod tests {
 
     fn run_count(engine: &Engine, flow: &str) -> usize {
         engine.hub.flow(flow).map_or(0, |f| f.runs.len())
+    }
+
+    const ALARM_STATE_TOPIC: &str = "test/alarm/panel";
+
+    /// An online Paris engine that has the alarm panel entity (as the hub publishes it) and a
+    /// text sensor `tariff` on `test/tariff`.
+    fn alarm_panel_engine() -> (Engine, String) {
+        let engine = engine_at(48.8566, 2.3522, "Europe/Paris");
+        engine.hub.ingest(
+            &crate::alarm::entity::config_topic("nidoo"),
+            crate::alarm::entity::build_config("test/alarm")
+                .to_string()
+                .as_bytes(),
+        );
+        engine.hub.ingest(
+            "nidoo/sensor/meter/tariff/config",
+            br#"{"unique_id":"tariff","state_topic":"test/tariff"}"#,
+        );
+        engine.hub.set_connection(ConnectionStatus::Online);
+        let ids: Vec<String> = engine
+            .hub
+            .snapshot()
+            .entities
+            .iter()
+            .map(|e| e.id.clone())
+            .collect();
+        assert!(ids.iter().any(|id| id == crate::alarm::ALARM_ENTITY_ID));
+        let tariff = ids
+            .into_iter()
+            .find(|id| id != crate::alarm::ALARM_ENTITY_ID)
+            .expect("tariff");
+        (engine, tariff)
+    }
+
+    fn alarm_trigger_flow(engine: &Engine, id: &str, params: serde_json::Value) {
+        let flow = serde_json::json!({
+            "id": id, "name": id, "enabled": true, "mode": "single",
+            "nodes": [{ "id": "t", "type": "trigger.alarm", "params": params }],
+            "edges": []
+        });
+        engine.hub.ingest(
+            &format!("nidoo/automation/{id}"),
+            flow.to_string().as_bytes(),
+        );
+    }
+
+    /// Publishes `payload` on `topic` and hands the engine the change event for `id`.
+    fn report_on(engine: &mut Engine, id: &str, topic: &str, payload: &str) {
+        engine.hub.ingest(topic, payload.as_bytes());
+        let state = engine.hub.read().state(id).cloned().expect("state");
+        engine.handle_event(WsEvent::StateChanged {
+            id: id.to_owned(),
+            state,
+        });
+    }
+
+    fn alarm_mode(engine: &mut Engine, mode: &str) {
+        report_on(
+            engine,
+            crate::alarm::ALARM_ENTITY_ID,
+            ALARM_STATE_TOPIC,
+            mode,
+        );
+    }
+
+    #[tokio::test]
+    async fn alarm_trigger_fires_on_to_mode() {
+        let (mut engine, _) = alarm_panel_engine();
+        alarm_trigger_flow(&engine, "a", serde_json::json!({ "to": "armed_away" }));
+        engine.reload();
+        assert!(
+            engine
+                .watched
+                .contains(&(crate::alarm::ALARM_ENTITY_ID.to_owned(), None))
+        );
+        alarm_mode(&mut engine, "disarmed");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "armed_home");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "disarmed");
+        alarm_mode(&mut engine, "armed_away");
+        assert_eq!(run_count(&engine, "a"), 1);
+        let trigger = engine.hub.flow("a").unwrap().runs[0]
+            .trigger
+            .clone()
+            .unwrap();
+        assert_eq!(
+            trigger.entity.as_deref(),
+            Some(crate::alarm::ALARM_ENTITY_ID)
+        );
+        assert_eq!(trigger.field, None);
+        assert_eq!(trigger.value, serde_json::json!("armed_away"));
+        assert_eq!(trigger.previous, serde_json::json!("disarmed"));
+    }
+
+    #[tokio::test]
+    async fn alarm_trigger_armed_matches_every_armed_mode() {
+        let (mut engine, _) = alarm_panel_engine();
+        alarm_trigger_flow(&engine, "a", serde_json::json!({ "to": "armed" }));
+        engine.reload();
+        alarm_mode(&mut engine, "disarmed");
+        alarm_mode(&mut engine, "arming");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "armed_home");
+        assert_eq!(run_count(&engine, "a"), 1);
+        alarm_mode(&mut engine, "pending");
+        assert_eq!(run_count(&engine, "a"), 1);
+    }
+
+    #[tokio::test]
+    async fn alarm_trigger_from_only_fires_on_leaving_that_mode() {
+        let (mut engine, _) = alarm_panel_engine();
+        alarm_trigger_flow(&engine, "a", serde_json::json!({ "from": "disarmed" }));
+        engine.reload();
+        alarm_mode(&mut engine, "armed_away");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "disarmed");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "arming");
+        assert_eq!(run_count(&engine, "a"), 1);
+        alarm_mode(&mut engine, "armed_away");
+        assert_eq!(run_count(&engine, "a"), 1);
+    }
+
+    #[tokio::test]
+    async fn alarm_trigger_without_filters_fires_on_every_change() {
+        let (mut engine, _) = alarm_panel_engine();
+        alarm_trigger_flow(&engine, "a", serde_json::json!({}));
+        engine.reload();
+        alarm_mode(&mut engine, "disarmed");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "arming");
+        alarm_mode(&mut engine, "armed_night");
+        assert_eq!(run_count(&engine, "a"), 2);
+    }
+
+    #[tokio::test]
+    async fn alarm_trigger_first_sighting_and_replay_stay_silent() {
+        let (mut engine, _) = alarm_panel_engine();
+        alarm_trigger_flow(&engine, "a", serde_json::json!({ "to": "armed_away" }));
+        engine.reload();
+        alarm_mode(&mut engine, "armed_away");
+        assert_eq!(run_count(&engine, "a"), 0);
+        alarm_mode(&mut engine, "disarmed");
+        engine.handle_event(WsEvent::ConnectionChanged(ConnectionStatus::Offline {
+            reason: "test".to_owned(),
+        }));
+        engine.handle_event(WsEvent::ConnectionChanged(ConnectionStatus::Online));
+        alarm_mode(&mut engine, "armed_away");
+        assert_eq!(run_count(&engine, "a"), 0);
+    }
+
+    #[tokio::test]
+    async fn alarm_trigger_ignores_other_entities() {
+        let (mut engine, tariff) = alarm_panel_engine();
+        alarm_trigger_flow(&engine, "a", serde_json::json!({ "to": "armed_away" }));
+        engine.reload();
+        report_on(&mut engine, &tariff, "test/tariff", "disarmed");
+        report_on(&mut engine, &tariff, "test/tariff", "armed_away");
+        assert_eq!(run_count(&engine, "a"), 0);
     }
 
     #[tokio::test]

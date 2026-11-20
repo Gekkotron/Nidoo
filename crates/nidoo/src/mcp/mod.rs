@@ -203,6 +203,10 @@ fn instructions() -> String {
          `off_peak_device` (`{{entity, values}}`: the entity whose state, matched as `on`/`off`, \
          a plain number or its text, is one of `values`) when that entity has a usable \
          reading, else from the `off_peak` windows; with neither it is never off-peak. \
+         `trigger.alarm` (optional `to` and `from`: `disarmed`, `arming`, `armed`, `armed_away`, \
+         `armed_home`, `armed_night`, `pending` or `triggered`; `armed` is any of the three \
+         armed modes) fires when the built-in alarm changes mode; the trigger value is the new \
+         mode. \
          `trigger.silent` (`entity`, `for` from `1m` to `168h`) fires once when the entity has \
          sent no report for `for`; it fires again only after the entity reports and goes silent \
          again. A report is any state message on the entity's state topic, changed or not, even \

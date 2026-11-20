@@ -161,6 +161,9 @@ pub enum NodeKind {
     /// Starts a run when off-peak starts or ends (from the off-peak device, else the windows).
     #[serde(rename = "trigger.off_peak")]
     TriggerOffPeak(TriggerOffPeakParams),
+    /// Starts a run when the built-in alarm changes mode.
+    #[serde(rename = "trigger.alarm")]
+    TriggerAlarm(TriggerAlarmParams),
     /// Starts a run when an entity has sent no report for a duration.
     #[serde(rename = "trigger.silent")]
     TriggerSilent(TriggerSilentParams),
@@ -217,6 +220,7 @@ impl NodeKind {
             NodeKind::TriggerManual(_) => "trigger.manual",
             NodeKind::TriggerSignal(_) => "trigger.signal",
             NodeKind::TriggerOffPeak(_) => "trigger.off_peak",
+            NodeKind::TriggerAlarm(_) => "trigger.alarm",
             NodeKind::TriggerSilent(_) => "trigger.silent",
             NodeKind::If(_) => "if",
             NodeKind::Delay(_) => "delay",
@@ -244,6 +248,7 @@ impl NodeKind {
                 | NodeKind::TriggerManual(_)
                 | NodeKind::TriggerSignal(_)
                 | NodeKind::TriggerOffPeak(_)
+                | NodeKind::TriggerAlarm(_)
                 | NodeKind::TriggerSilent(_)
         )
     }
@@ -389,6 +394,74 @@ impl OffPeakEdge {
 pub struct TriggerOffPeakParams {
     /// Fire when off-peak starts or when it ends.
     pub edge: OffPeakEdge,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// A mode of the built-in alarm a `trigger.alarm` filters on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AlarmModeFilter {
+    Disarmed,
+    Arming,
+    /// Any of `armed_away`, `armed_home` and `armed_night`.
+    Armed,
+    ArmedAway,
+    ArmedHome,
+    ArmedNight,
+    Pending,
+    Triggered,
+}
+
+impl AlarmModeFilter {
+    /// Every filter, in the order an editor lists them.
+    pub const ALL: [AlarmModeFilter; 8] = [
+        AlarmModeFilter::Disarmed,
+        AlarmModeFilter::Armed,
+        AlarmModeFilter::ArmedAway,
+        AlarmModeFilter::ArmedHome,
+        AlarmModeFilter::ArmedNight,
+        AlarmModeFilter::Arming,
+        AlarmModeFilter::Pending,
+        AlarmModeFilter::Triggered,
+    ];
+
+    /// The name this filter carries in the flow JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AlarmModeFilter::Disarmed => "disarmed",
+            AlarmModeFilter::Arming => "arming",
+            AlarmModeFilter::Armed => "armed",
+            AlarmModeFilter::ArmedAway => "armed_away",
+            AlarmModeFilter::ArmedHome => "armed_home",
+            AlarmModeFilter::ArmedNight => "armed_night",
+            AlarmModeFilter::Pending => "pending",
+            AlarmModeFilter::Triggered => "triggered",
+        }
+    }
+
+    /// Whether the alarm state name `state` (such as `armed_away`) is covered by this filter.
+    pub fn matches(self, state: &str) -> bool {
+        match self {
+            AlarmModeFilter::Armed => {
+                matches!(state, "armed_away" | "armed_home" | "armed_night")
+            }
+            other => other.as_str() == state,
+        }
+    }
+}
+
+/// Params of `trigger.alarm`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct TriggerAlarmParams {
+    /// Only trigger when the alarm enters this mode; absent means any change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<AlarmModeFilter>,
+    /// Only trigger when the alarm was in this mode before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<AlarmModeFilter>,
     #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
 }
@@ -1155,6 +1228,56 @@ mod tests {
         );
         let bad = r#"{"id":"t","type":"trigger.off_peak","params":{"edge":"middle"}}"#;
         assert!(serde_json::from_str::<Node>(bad).is_err());
+    }
+
+    #[test]
+    fn trigger_alarm_round_trips_and_defaults() {
+        let raw = r#"{"id":"a","type":"trigger.alarm","params":{"to":"armed_away"}}"#;
+        let node: Node = serde_json::from_str(raw).unwrap();
+        match &node.kind {
+            NodeKind::TriggerAlarm(p) => {
+                assert_eq!(p.to, Some(AlarmModeFilter::ArmedAway));
+                assert_eq!(p.from, None);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(node.kind.is_trigger());
+        assert_eq!(node.kind.type_name(), "trigger.alarm");
+        assert_eq!(
+            serde_json::to_value(&node).unwrap(),
+            serde_json::from_str::<Value>(raw).unwrap()
+        );
+        let empty: Node =
+            serde_json::from_str(r#"{"id":"a","type":"trigger.alarm","params":{}}"#).unwrap();
+        match &empty.kind {
+            NodeKind::TriggerAlarm(p) => assert!(p.to.is_none() && p.from.is_none()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn alarm_mode_filter_matches() {
+        let states = [
+            "disarmed",
+            "arming",
+            "armed_away",
+            "armed_home",
+            "armed_night",
+            "pending",
+            "triggered",
+        ];
+        for filter in AlarmModeFilter::ALL {
+            for state in states {
+                let want = match filter {
+                    AlarmModeFilter::Armed => state.starts_with("armed_"),
+                    other => other.as_str() == state,
+                };
+                assert_eq!(filter.matches(state), want, "{filter:?} vs {state}");
+            }
+            assert!(!filter.matches("unknown"));
+        }
+        assert!(!AlarmModeFilter::Armed.matches("arming"));
+        assert!(!AlarmModeFilter::Armed.matches("pending"));
     }
 
     #[test]
