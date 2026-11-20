@@ -994,12 +994,12 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::Silent => ("Silent", "Silencieuse"),
         T::Entity => ("Entity", "Entité"),
         T::FiresWhen => (
-            "Fires when it becomes (JSON, optional)",
-            "Se déclenche quand elle devient (JSON, facultatif)",
+            "Fires when it becomes",
+            "Se déclenche quand elle devient",
         ),
         T::OnlyAfter => (
-            "Only after (previous, JSON, optional)",
-            "Seulement après (valeur précédente, JSON, facultatif)",
+            "Only after (previous value)",
+            "Seulement après (valeur précédente)",
         ),
         T::AnySignal => ("any", "n'importe lequel"),
         T::EntityDefaults => (

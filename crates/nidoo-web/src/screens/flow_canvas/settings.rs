@@ -1399,27 +1399,48 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
             });
             // The filters re-mount when what the card reads changes, showing the cleared values.
             let reads = Memo::new(move |_| (entity_value.get(), field_value.get()));
+            let house = expect_context::<House>();
+            let entity_view = Signal::derive(move || {
+                let id = entity_value.get()?;
+                house.entities.with(|m| m.get(&id).cloned())
+            });
+            let draft = form.editor.draft;
             let filters_id = id;
+            let to_value = Signal::derive({
+                let id = filters_id.clone();
+                move || {
+                    draft.with(|f| match f.node(&id).map(|n| &n.kind) {
+                        Some(NodeKind::TriggerState(t)) => t.to.clone(),
+                        _ => None,
+                    })
+                }
+            });
+            let from_value = Signal::derive(move || {
+                draft.with(|f| match f.node(&filters_id).map(|n| &n.kind) {
+                    Some(NodeKind::TriggerState(t)) => t.from.clone(),
+                    _ => None,
+                })
+            });
             let filters = move || {
                 reads.track();
-                let (to, from) = form.editor.draft.with_untracked(|f| {
-                    match f.node(&filters_id).map(|n| &n.kind) {
-                        Some(NodeKind::TriggerState(t)) => (t.to.clone(), t.from.clone()),
-                        _ => (None, None),
-                    }
-                });
                 view! {
-                    <JsonField
-                        label=word(FlowText::FiresWhen)
-                        initial=to.unwrap_or(serde_json::Value::Null)
-                        optional=true
-                        write=to_write
+                    <IfValueField
+                        value=to_value
+                        entity=entity_view
+                        field=field_value
+                        write=Callback::new(move |v| to_write.run(Some(v)))
+                        label=FlowText::FiresWhen
+                        any=FlowText::AnyChange
+                        clear=Callback::new(move |()| to_write.run(None))
                     />
-                    <JsonField
-                        label=word(FlowText::OnlyAfter)
-                        initial=from.unwrap_or(serde_json::Value::Null)
-                        optional=true
-                        write=from_write
+                    <IfValueField
+                        value=from_value
+                        entity=entity_view
+                        field=field_value
+                        write=Callback::new(move |v| from_write.run(Some(v)))
+                        label=FlowText::OnlyAfter
+                        any=FlowText::AnyValue
+                        clear=Callback::new(move |()| from_write.run(None))
                     />
                 }
             };

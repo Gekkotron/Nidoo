@@ -24,6 +24,33 @@ pub struct Choice {
     pub label: String,
 }
 
+/// The `<option>` value of "Other value…" in a value list.
+pub const OTHER_OPTION: &str = "other";
+
+/// What a pick in the value list means.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ListPick {
+    /// The "no filter" first option ("Any change").
+    Any,
+    /// "Other value…": switch to a typed box.
+    Other,
+    Value(Value),
+}
+
+/// The meaning of the `<option>` value `picked`: "" is [`ListPick::Any`] when `any` is offered,
+/// [`OTHER_OPTION`] is [`ListPick::Other`], an index is that choice's value; else `None`.
+pub fn list_pick(picked: &str, choices: &[Choice], any: bool) -> Option<ListPick> {
+    match picked {
+        "" if any => Some(ListPick::Any),
+        OTHER_OPTION => Some(ListPick::Other),
+        _ => picked
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| choices.get(i))
+            .map(|c| ListPick::Value(c.value.clone())),
+    }
+}
+
 /// How the value is picked.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValueInput {
@@ -617,6 +644,41 @@ mod tests {
         let l = list(value_input(Lang::Fr, Some(&ent(Kind::Cover))));
         assert_eq!(l[1].value, json!("closed"));
         assert_eq!(l[1].label, "Fermé");
+    }
+
+    #[test]
+    fn list_pick_reads_any_other_and_indexes() {
+        let choices = vec![
+            Choice {
+                value: json!(true),
+                label: "Open".into(),
+            },
+            Choice {
+                value: json!(false),
+                label: "Closed".into(),
+            },
+        ];
+        assert_eq!(list_pick("", &choices, true), Some(ListPick::Any));
+        assert_eq!(list_pick("", &choices, false), None);
+        assert_eq!(list_pick("other", &choices, true), Some(ListPick::Other));
+        assert_eq!(
+            list_pick("1", &choices, true),
+            Some(ListPick::Value(json!(false)))
+        );
+        assert_eq!(list_pick("9", &choices, true), None);
+    }
+
+    #[test]
+    fn a_saved_unlisted_trigger_value_stays_in_the_list() {
+        let mut door = ent(Kind::BinarySensor);
+        door.device_class = Some("door".into());
+        let l = list(with_current(
+            value_input(Lang::En, Some(&door)),
+            Some(&json!("ON")),
+            Lang::En,
+            Some(&door),
+        ));
+        assert_eq!(l[0].value, json!("ON"));
     }
 
     #[test]

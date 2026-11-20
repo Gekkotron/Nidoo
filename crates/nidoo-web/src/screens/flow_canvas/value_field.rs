@@ -9,10 +9,10 @@ use serde_json::Value;
 use crate::i18n::flows::{FlowText, flow_text};
 use crate::i18n::format::parse_decimal;
 use crate::i18n::use_lang;
-use crate::if_value::{ValueInput, parse_other, value_input, value_input_of, with_current};
-
-/// The option value of "Other value…" in the list.
-const OTHER: &str = "other";
+use crate::if_value::{
+    ListPick, OTHER_OPTION, ValueInput, list_pick, parse_other, value_input, value_input_of,
+    with_current,
+};
 
 /// Which input is on screen; the field re-mounts only when this changes.
 #[derive(Clone, Debug, PartialEq)]
@@ -42,8 +42,24 @@ pub fn IfValueField(
     /// The value of `entity` compared: a field of its state, its headline value when absent.
     #[prop(optional, into)]
     field: Option<Signal<Option<String>>>,
+    /// The field's label; "Value" when absent.
+    #[prop(optional)]
+    label: Option<FlowText>,
+    /// The text of a first "no filter" option ("Any change"); with it, `clear` is called for
+    /// that option and for a blank number or typed box.
+    #[prop(optional)]
+    any: Option<FlowText>,
+    #[prop(optional)] clear: Option<Callback<()>>,
 ) -> impl IntoView {
     let lang = use_lang();
+    let label = label.unwrap_or(FlowText::ParamValue);
+    let cleared = move || {
+        if any.is_some()
+            && let Some(clear) = clear
+        {
+            clear.run(());
+        }
+    };
     let other = RwSignal::new(false);
     let input = Memo::new(move |_| {
         let field = field.and_then(|f| f.get());
@@ -75,24 +91,26 @@ pub fn IfValueField(
                 class="field"
                 on:change=move |ev| {
                     let picked = event_target_value(&ev);
-                    if picked == OTHER {
-                        other.set(true);
-                        return;
-                    }
-                    let chosen = picked
-                        .parse::<usize>()
-                        .ok()
-                        .and_then(|i| choices.with(|l| l.get(i).map(|c| c.value.clone())));
-                    if let Some(v) = chosen {
-                        write.run(v);
+                    match choices.with(|l| list_pick(&picked, l, any.is_some())) {
+                        Some(ListPick::Any) => cleared(),
+                        Some(ListPick::Other) => other.set(true),
+                        Some(ListPick::Value(v)) => write.run(v),
+                        None => {}
                     }
                 }
             >
-                {move || value.with(Option::is_none).then(|| view! {
-                    <option value="" disabled=true selected=true>
-                        {move || flow_text(lang(), FlowText::ChooseValue)}
-                    </option>
-                })}
+                {move || match any {
+                    Some(text) => Some(view! {
+                        <option value="" selected=value.with(Option::is_none)>
+                            {move || flow_text(lang(), text)}
+                        </option>
+                    }.into_any()),
+                    None => value.with(Option::is_none).then(|| view! {
+                        <option value="" disabled=true selected=true>
+                            {move || flow_text(lang(), FlowText::ChooseValue)}
+                        </option>
+                    }.into_any()),
+                }}
                 {move || {
                     let current = value.get();
                     choices
@@ -105,7 +123,7 @@ pub fn IfValueField(
                         })
                         .collect_view()
                 }}
-                <option value=OTHER>{move || flow_text(lang(), FlowText::OtherValue)}</option>
+                <option value=OTHER_OPTION>{move || flow_text(lang(), FlowText::OtherValue)}</option>
             </select>
         }
         .into_any(),
@@ -121,8 +139,10 @@ pub fn IfValueField(
                     on:input=move |ev| {
                         let text = event_target_value(&ev);
                         raw.set(text.clone());
-                        if let Some(v) = parse_other(&text) {
-                            write.run(v);
+                        match parse_other(&text) {
+                            Some(v) => write.run(v),
+                            None if text.trim().is_empty() => cleared(),
+                            None => {}
                         }
                     }
                 />
@@ -149,8 +169,11 @@ pub fn IfValueField(
                             .unwrap_or_default()
                     }
                     on:change=move |ev| {
-                        if let Some(n) = parse_decimal(event_target_value(&ev).trim()) {
-                            write.run(Scalar::Number(n).to_json());
+                        let text = event_target_value(&ev);
+                        match parse_decimal(text.trim()) {
+                            Some(n) => write.run(Scalar::Number(n).to_json()),
+                            None if text.trim().is_empty() => cleared(),
+                            None => {}
                         }
                     }
                 />
@@ -162,7 +185,7 @@ pub fn IfValueField(
     };
     view! {
         <label class="node-editor__field">
-            <span class="node-editor__label">{move || flow_text(lang(), FlowText::ParamValue)}</span>
+            <span class="node-editor__label">{move || flow_text(lang(), label)}</span>
             {field}
         </label>
     }
