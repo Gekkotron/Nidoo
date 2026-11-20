@@ -1566,7 +1566,7 @@ async fn command_entity_picked_from_picker() {
 }
 
 #[wasm_bindgen_test]
-async fn signal_picker_lists_only_signals() {
+async fn device_picker_lists_every_entity_and_a_sensor_makes_a_state_trigger() {
     use nidoo_core::model::Kind;
     const SIGNAL_FLOW: &str = r#"{
       "id": "remote_flow", "name": "Remote", "enabled": true, "mode": "single",
@@ -1603,11 +1603,16 @@ async fn signal_picker_lists_only_signals() {
     select_card(&host, "press").await;
     open_entity_picker(&host).await;
     let html = host.inner_html();
+    // The Device card's picker offers remotes and sensors alike.
     assert_eq!(count(&host, "[id$='-opt-remote_1']"), 1, "{html}");
-    assert_eq!(count(&host, "[id$='-opt-sensor.temp']"), 0, "{html}");
-    click(&host, "[id$='-opt-remote_1']");
-    tick().await;
+    assert_eq!(count(&host, "[id$='-opt-sensor.temp']"), 1, "{html}");
+    assert_eq!(count(&host, ".signal-chips"), 1, "{html}");
+    // A sensor turns the card into a state trigger: the signal chips give way to the value list.
+    click(&host, "[id$='-opt-sensor.temp']");
     settle_history().await;
+    let html = host.inner_html();
+    assert_eq!(count(&host, ".signal-chips"), 0, "{html}");
+    assert!(html.contains("Fires when it becomes"), "{html}");
 }
 
 /// Stands in for the shell chrome the canvas sits beside.

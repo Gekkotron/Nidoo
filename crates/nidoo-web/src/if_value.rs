@@ -24,6 +24,50 @@ pub struct Choice {
     pub label: String,
 }
 
+/// The `<option>` value of "Other value…" in a value list.
+pub const OTHER_OPTION: &str = "other";
+
+/// What a pick in the value list means.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ListPick {
+    /// The "no filter" first option ("Any change").
+    Any,
+    /// "Other value…": switch to a typed box.
+    Other,
+    Value(Value),
+}
+
+/// The meaning of the `<option>` value `picked`: "" is [`ListPick::Any`] when `any` is offered,
+/// [`OTHER_OPTION`] is [`ListPick::Other`], an index is that choice's value; else `None`.
+pub fn list_pick(picked: &str, choices: &[Choice], any: bool) -> Option<ListPick> {
+    match picked {
+        "" if any => Some(ListPick::Any),
+        OTHER_OPTION => Some(ListPick::Other),
+        _ => picked
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| choices.get(i))
+            .map(|c| ListPick::Value(c.value.clone())),
+    }
+}
+
+/// What leaving a number box means: `Some(Some(n))` writes the number, `Some(None)` clears
+/// the filter (a truly empty box), `None` keeps the saved value (a typo, which a browser
+/// reports as "" with `bad_input`).
+pub fn number_pick(text: &str, bad_input: bool) -> Option<Option<Value>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return (!bad_input).then_some(None);
+    }
+    parse_decimal(text).map(|n| Some(Scalar::Number(n).to_json()))
+}
+
+/// Whether a number box can show `value`: nothing, or a number. Anything else (an old
+/// `"unavailable"`) needs a text box, so it stays visible.
+pub fn fits_number(value: Option<&Value>) -> bool {
+    value.is_none_or(Value::is_number)
+}
+
 /// How the value is picked.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValueInput {
@@ -651,6 +695,59 @@ mod tests {
         let l = list(value_input(Lang::Fr, Some(&ent(Kind::Cover))));
         assert_eq!(l[1].value, json!("closed"));
         assert_eq!(l[1].label, "Fermé");
+    }
+
+    #[test]
+    fn number_pick_clears_only_a_truly_empty_box() {
+        assert_eq!(number_pick("21.5", false), Some(Some(json!(21.5))));
+        assert_eq!(number_pick("", false), Some(None));
+        assert_eq!(number_pick("  ", false), Some(None));
+        // A typo the browser cannot parse reads "" with bad input: keep the saved value.
+        assert_eq!(number_pick("", true), None);
+        assert_eq!(number_pick("abc", false), None);
+    }
+
+    #[test]
+    fn a_saved_value_that_is_not_a_number_is_not_shown_in_a_number_box() {
+        assert!(fits_number(None));
+        assert!(fits_number(Some(&json!(21.5))));
+        assert!(!fits_number(Some(&json!("unavailable"))));
+        assert!(!fits_number(Some(&json!("21"))));
+    }
+
+    #[test]
+    fn list_pick_reads_any_other_and_indexes() {
+        let choices = vec![
+            Choice {
+                value: json!(true),
+                label: "Open".into(),
+            },
+            Choice {
+                value: json!(false),
+                label: "Closed".into(),
+            },
+        ];
+        assert_eq!(list_pick("", &choices, true), Some(ListPick::Any));
+        assert_eq!(list_pick("", &choices, false), None);
+        assert_eq!(list_pick("other", &choices, true), Some(ListPick::Other));
+        assert_eq!(
+            list_pick("1", &choices, true),
+            Some(ListPick::Value(json!(false)))
+        );
+        assert_eq!(list_pick("9", &choices, true), None);
+    }
+
+    #[test]
+    fn a_saved_unlisted_trigger_value_stays_in_the_list() {
+        let mut door = ent(Kind::BinarySensor);
+        door.device_class = Some("door".into());
+        let l = list(with_current(
+            value_input(Lang::En, Some(&door)),
+            Some(&json!("ON")),
+            Lang::En,
+            Some(&door),
+        ));
+        assert_eq!(l[0].value, json!("ON"));
     }
 
     #[test]

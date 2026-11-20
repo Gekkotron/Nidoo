@@ -314,6 +314,12 @@ pub fn alarm_mode_label(lang: Lang, mode: AlarmModeFilter) -> String {
 pub fn sentence(node: &Node, ctx: &Ctx) -> String {
     let lang = ctx.lang;
     match &node.kind {
+        NodeKind::TriggerState(p) if p.entity.is_empty() => {
+            flow_text(lang, FlowText::DeviceSub).to_owned()
+        }
+        NodeKind::TriggerSignal(p) if p.entity.is_empty() => {
+            flow_text(lang, FlowText::DeviceSub).to_owned()
+        }
         NodeKind::TriggerState(p) => {
             let (e, unit) = read_text(&p.entity, p.field.as_deref(), ctx);
             let entity = ctx.entities.get(&p.entity);
@@ -1191,6 +1197,38 @@ mod generic_tests {
             labels: &crate::flow_text::NO_LABELS,
             lang: crate::i18n::Lang::En,
         }
+    }
+
+    #[test]
+    fn state_trigger_without_entity_reads_the_device_sentence() {
+        let entities = BTreeMap::new();
+        let node = Node {
+            id: "t".into(),
+            name: None,
+            position: None,
+            kind: NodeKind::TriggerState(Default::default()),
+            extra: Default::default(),
+        };
+        assert_eq!(
+            sentence(&node, &ctx_of(&entities)),
+            "When a device changes or sends an event"
+        );
+    }
+
+    #[test]
+    fn signal_trigger_without_entity_reads_the_device_sentence() {
+        let entities = BTreeMap::new();
+        let node = Node {
+            id: "t".into(),
+            name: None,
+            position: None,
+            kind: NodeKind::TriggerSignal(TriggerSignalParams::default()),
+            extra: Default::default(),
+        };
+        assert_eq!(
+            sentence(&node, &ctx_of(&entities)),
+            "When a device changes or sends an event"
+        );
     }
 
     #[test]

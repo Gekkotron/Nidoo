@@ -59,6 +59,12 @@ The parameters of each node are in [Flow nodes](../reference/flow-nodes.md).
 
 The sun nodes and `is_dark` read the house location. Set your home location in the setup wizard or **Settings → Location**; without one the hub uses Paris, and the web UI shows a "Paris fallback" badge on sun cards. See the [Settings reference](../reference/configuration.md#home-location).
 
+### Device trigger: any event of any device
+
+In the editor, **Device** (**Appareil**) is the first card under the triggers. Pick any entity: a door or motion sensor, a plug, a remote, a tag reader. Then choose in **Fires when it becomes** what starts the run: **Any change**, or one of the values the entity reports (Open, Closed, Detected…). **Only after** filters on the previous value the same way. The card reads "Quand Porte entrée devient ouvert" and is saved as `trigger.state` with a `to`.
+
+Picking a remote, an `event` entity or a tag turns the card into a `trigger.signal`: its buttons show as chips, with **any** for every signal. Searching the library for a sensor ("porte") also offers ready-made cards, one per value: "When Front door changes", then one per state.
+
 ### Value of: every value a device reports
 
 The When, If and Switch cards read their entity's headline value: on or off, a measurement, a state such as Cleaning. Under the entity, the **Value of** menu lists everything else the device reports, each with its current value:

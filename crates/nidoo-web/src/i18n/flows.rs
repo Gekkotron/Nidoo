@@ -209,6 +209,9 @@ pub enum FlowText {
     NodeDelay,
     NodeSilent,
     SilentSub,
+    DeviceSub,
+    AnyChange,
+    AnyValue,
     NodeLimit,
     LimitSub,
     LimitMax,
@@ -545,6 +548,9 @@ impl FlowText {
         FlowText::NodeDelay,
         FlowText::NodeSilent,
         FlowText::SilentSub,
+        FlowText::DeviceSub,
+        FlowText::AnyChange,
+        FlowText::AnyValue,
         FlowText::NodeLimit,
         FlowText::LimitSub,
         FlowText::LimitMax,
@@ -936,7 +942,7 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::HintDelete => ("delete", "supprimer"),
         T::HintDuplicate => ("duplicate", "dupliquer"),
         T::Required => ("required", "obligatoire"),
-        T::NodeTrigger => ("Trigger", "Déclencheur"),
+        T::NodeTrigger => ("Device", "Appareil"),
         T::NodeSun => ("Sun", "Soleil"),
         T::NodeManual => ("Manual", "Manuel"),
         T::ManualSub => (
@@ -952,6 +958,12 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::NodeIf => ("If", "Si"),
         T::NodeDelay => ("Delay", "Attente"),
         T::NodeSilent => ("Silent for", "Silencieux depuis"),
+        T::DeviceSub => (
+            "When a device changes or sends an event",
+            "Quand un appareil change ou envoie un événement",
+        ),
+        T::AnyChange => ("Any change", "N'importe quel changement"),
+        T::AnyValue => ("Any value", "N'importe quelle valeur"),
         T::SilentSub => (
             "When an entity stops reporting",
             "Quand une entité n'envoie plus rien",
@@ -1002,13 +1014,10 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::Preview => ("Preview", "Aperçu"),
         T::Silent => ("Silent", "Silencieuse"),
         T::Entity => ("Entity", "Entité"),
-        T::FiresWhen => (
-            "Fires when it becomes (JSON, optional)",
-            "Se déclenche quand elle devient (JSON, facultatif)",
-        ),
+        T::FiresWhen => ("Fires when it becomes", "Se déclenche quand elle devient"),
         T::OnlyAfter => (
-            "Only after (previous, JSON, optional)",
-            "Seulement après (valeur précédente, JSON, facultatif)",
+            "Only after (previous value)",
+            "Seulement après (valeur précédente)",
         ),
         T::AnySignal => ("any", "n'importe lequel"),
         T::EntityDefaults => (

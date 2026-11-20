@@ -8,7 +8,7 @@ use nidoo_core::flow::{
     SwitchRule, TimeBetweenParams, TriggerAlarmParams, TriggerManualParams, TriggerOffPeakParams,
     TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
 };
-use nidoo_core::model::Command;
+use nidoo_core::model::{Command, Kind};
 use serde_json::Value;
 
 use crate::command_form::entity_actions;
@@ -17,6 +17,7 @@ use crate::flow_text::{Ctx, sentence, subline};
 use crate::format::{entity_title, kind_search_words, room_name};
 use crate::i18n::Lang;
 use crate::i18n::flows::{FlowText, flow_text};
+use crate::if_value::{ValueInput, value_input};
 use crate::screens::flow_canvas::sun::sun_params_from_preset;
 
 /// The section of the picker an entry sits in, in display order.
@@ -77,6 +78,7 @@ fn command(entity: &str, command: Command) -> NodeKind {
 /// Extra words that find a generic card, in both languages: what other tools call a Manual card.
 fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
+        NodeKind::TriggerState(_) => "trigger declencheur event evenement sensor capteur",
         NodeKind::TriggerManual(_) => "inject injecter button bouton",
         NodeKind::TriggerAlarm(_) => "alarm alarme armed armee security securite intrusion",
         NodeKind::FlowLabel(_) => "choice choix season saison tag",
@@ -92,6 +94,12 @@ fn card_search_words(kind: &NodeKind) -> &'static str {
 pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
     let needle = fold_accents(query.trim());
     let generic = [
+        (
+            Group::When,
+            NodeKind::TriggerState(TriggerStateParams::default()),
+            Some(FlowText::NodeTrigger),
+            FlowText::DeviceSub,
+        ),
         (
             Group::When,
             NodeKind::TriggerSchedule(TriggerScheduleParams {
@@ -363,6 +371,22 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
                 }),
                 ctx,
             ));
+            // A sensor's values are its events: "door opens", "motion detected".
+            if e.kind == Kind::BinarySensor
+                && let ValueInput::List(values) = value_input(ctx.lang, Some(e))
+            {
+                for choice in values {
+                    out.push(entry(
+                        Group::When,
+                        NodeKind::TriggerState(TriggerStateParams {
+                            entity: e.id.clone(),
+                            to: Some(choice.value),
+                            ..Default::default()
+                        }),
+                        ctx,
+                    ));
+                }
+            }
             out.push(entry(
                 Group::And,
                 NodeKind::If(IfParams {
@@ -518,7 +542,8 @@ mod tests {
         };
         let fr = entries("", &ctx(crate::i18n::Lang::Fr));
         let labels: Vec<_> = fr.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels[0], "Programmation");
+        assert_eq!(labels[0], "Appareil");
+        assert_eq!(labels[1], "Programmation");
         assert!(labels.contains(&"Quand il fait nuit"));
         assert!(
             matches!(&fr[11].kind, NodeKind::Notify(p) if p.title == "Notification"),
@@ -600,6 +625,29 @@ mod tests {
     }
 
     #[test]
+    fn device_card_is_an_empty_state_trigger_found_in_either_language() {
+        let entities = house(vec![]);
+        let got = run("", &entities);
+        let first = &got[0];
+        assert_eq!(first.group, Group::When);
+        assert_eq!(
+            first.sub.as_deref(),
+            Some("When a device changes or sends an event")
+        );
+        assert!(
+            matches!(&first.kind, NodeKind::TriggerState(p) if p.entity.is_empty() && p.to.is_none())
+        );
+        for q in ["device", "appareil", "event", "evenement"] {
+            assert!(
+                run(q, &entities)
+                    .iter()
+                    .any(|e| matches!(&e.kind, NodeKind::TriggerState(p) if p.entity.is_empty())),
+                "{q}"
+            );
+        }
+    }
+
+    #[test]
     fn empty_query_has_generic_entries() {
         let entities = house(vec![ent("l1", "Lumière table", Kind::Light)]);
         let got = run("", &entities);
@@ -607,6 +655,7 @@ mod tests {
         assert_eq!(
             labels,
             [
+                (Group::When, "Device"),
                 (Group::When, "Schedule"),
                 (Group::When, "Sun event"),
                 (Group::When, "Off-peak"),
@@ -633,6 +682,7 @@ mod tests {
         assert_eq!(
             subs,
             [
+                Some("When a device changes or sends an event"),
                 Some("At a set time, or on a repeat"),
                 Some("Sunrise, sunset, dusk or dawn"),
                 Some("When off-peak starts or ends"),
@@ -656,7 +706,7 @@ mod tests {
             ]
         );
         assert!(matches!(
-            &got[0].kind,
+            &got[1].kind,
             NodeKind::TriggerSchedule(p) if p.cron == "0 * * * *"
         ));
         assert!(matches!(&got[9].kind, NodeKind::Math(p) if p.name.is_empty()));
@@ -932,6 +982,25 @@ mod tests {
             })
             .collect();
         assert_eq!(signals, [Some("on".into()), Some("off".into()), None]);
+    }
+
+    #[test]
+    fn door_search_offers_one_when_entry_per_value() {
+        let mut door = ent("d1", "Front door", Kind::BinarySensor);
+        door.device_class = Some("door".into());
+        let got = run("front", &house(vec![door]));
+        let when: Vec<(String, Option<Value>)> = got
+            .iter()
+            .filter(|e| e.group == Group::When)
+            .filter_map(|e| match &e.kind {
+                NodeKind::TriggerState(p) => Some((e.label.clone(), p.to.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(when[0], ("When Front door changes".into(), None));
+        assert_eq!(when[1].1, Some(json!(true)));
+        assert_eq!(when[2].1, Some(json!(false)));
+        assert_eq!(when.len(), 3);
     }
 
     #[test]
