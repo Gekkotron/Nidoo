@@ -69,9 +69,9 @@ fn choice(id: &str, name: &str) -> MediaChoice {
     }
 }
 
-fn pinson() -> EntityView {
+fn player() -> EntityView {
     let mut e = entity(
-        "pinson_player",
+        "music_player",
         None,
         Kind::MediaPlayer,
         StateValue::MediaPlayer(MediaPlayerState {
@@ -106,7 +106,7 @@ fn speaker(slug: &str, name: &str) -> [EntityView; 2] {
 fn entities(with_pinson: bool) -> BTreeMap<String, EntityView> {
     let mut all = Vec::new();
     if with_pinson {
-        all.push(pinson());
+        all.push(player());
     }
     all.extend(speaker("bedroom", "Bedroom"));
     all.extend(speaker("living", "Living"));
@@ -117,7 +117,7 @@ fn alarm() -> WakeUp {
     WakeUp {
         hour: 7,
         minute: 0,
-        player: "pinson_player".into(),
+        player: "music_player".into(),
         source: Some("nidoo".into()),
         speakers: vec![WakeSpeaker {
             volume_entity: "bedroom_volume".into(),
@@ -284,7 +284,7 @@ async fn new_alarm_saves_a_managed_flow() {
         })
         .collect();
     assert!(commands.iter().any(|(entity, command)| {
-        entity == "pinson_player"
+        entity == "music_player"
             && matches!(
                 command,
                 Command::PlayPlaylist { playlist, fade_in_s: 60, .. } if playlist == "favorites"
@@ -343,13 +343,19 @@ async fn without_pinson_shows_empty_state() {
     let _stub = FetchStub::install();
     let m = mount("/wake-up", true, false, Vec::new());
     settle().await;
-    assert_eq!(text(&m.host, ".wake-empty__title"), "Music needs Pinson");
+    assert_eq!(
+        text(&m.host, ".wake-empty__title"),
+        "Music needs a media player"
+    );
     assert!(find(&m.host, ".wake-add").is_none());
     assert!(find(&m.host, ".wake-alarm").is_none());
     // The editor shows the same, not a form.
     let m = mount("/wake-up/new", true, false, Vec::new());
     settle().await;
-    assert_eq!(text(&m.host, ".wake-empty__title"), "Music needs Pinson");
+    assert_eq!(
+        text(&m.host, ".wake-empty__title"),
+        "Music needs a media player"
+    );
     assert!(find(&m.host, ".wake-save").is_none());
 }
 

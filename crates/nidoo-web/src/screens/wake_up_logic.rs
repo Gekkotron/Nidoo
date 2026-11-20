@@ -347,8 +347,8 @@ mod tests {
         let mut d = Draft::new_alarm(&state(), &[sat("Bedroom"), sat("Living")]);
         d.speakers[1].on = false;
         d.speakers[0].volume = 25.0;
-        let w = d.to_wake_up("pinson");
-        assert_eq!(w.player, "pinson");
+        let w = d.to_wake_up("music-player");
+        assert_eq!(w.player, "music-player");
         assert_eq!(
             w.speakers,
             vec![WakeSpeaker {
@@ -365,11 +365,11 @@ mod tests {
     fn speakers_count_only_on_the_nidoo_output() {
         let mut d = Draft::new_alarm(&state(), &[sat("Bedroom"), sat("Living")]);
         d.source = Some("cast".into());
-        let w = d.to_wake_up("pinson");
+        let w = d.to_wake_up("music-player");
         assert!(w.speakers.is_empty() && w.muted.is_empty());
         assert_eq!(w.source.as_deref(), Some("cast"));
         d.source = None;
-        let w = d.to_wake_up("pinson");
+        let w = d.to_wake_up("music-player");
         assert!(w.speakers.is_empty() && w.muted.is_empty());
     }
 
@@ -390,7 +390,7 @@ mod tests {
     fn saved_speaker_choices_are_read_back() {
         let sats = [sat("Bedroom"), sat("Living"), sat("Kitchen")];
         let saved = WakeUp {
-            player: "pinson".into(),
+            player: "music-player".into(),
             source: Some("nidoo".into()),
             speakers: vec![WakeSpeaker {
                 volume_entity: "bedroom_volume".into(),
@@ -423,7 +423,7 @@ mod tests {
     fn vanished_speakers_are_dropped_on_save() {
         // The alarm still names a speaker whose entities are gone, and a muted one.
         let saved = WakeUp {
-            player: "pinson".into(),
+            player: "music-player".into(),
             source: Some("nidoo".into()),
             speakers: vec![
                 WakeSpeaker {
@@ -441,7 +441,7 @@ mod tests {
             ..WakeUp::default()
         };
         let d = Draft::from_saved("A", true, &saved, &[sat("Bedroom")]);
-        let w = d.to_wake_up("pinson");
+        let w = d.to_wake_up("music-player");
         assert_eq!(w.speakers.len(), 1);
         assert_eq!(w.speakers[0].volume_entity, "bedroom_volume");
         assert!(w.muted.is_empty());
@@ -453,7 +453,7 @@ mod tests {
         let w = WakeUp {
             hour: 7,
             minute: 5,
-            player: "pinson".into(),
+            player: "music-player".into(),
             playlist: "calm".into(),
             source: Some("nidoo".into()),
             fade_in_s: 120,

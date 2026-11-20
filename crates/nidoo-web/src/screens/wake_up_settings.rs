@@ -1,5 +1,5 @@
 //! Settings → Wake-up: the switch that shows the Wake-up page, the confirm that turning it off
-//! switches the alarms off, and what Pinson reports.
+//! switches the alarms off, and what the media player reports.
 
 use std::collections::BTreeMap;
 
@@ -12,11 +12,11 @@ use nidoo_core::model::{Kind, StateValue};
 
 use crate::components::toast::Toasts;
 use crate::house::House;
-use crate::i18n::wake_up::{WakeText, disable_body, disable_title, pinson_status, wake_text};
+use crate::i18n::wake_up::{WakeText, disable_body, disable_title, player_status, wake_text};
 use crate::i18n::{HomeText, Lang, home_text, use_lang};
 
-/// The media player that can play a playlist (Pinson), if one is connected.
-pub fn pinson_player(entities: &BTreeMap<String, EntityView>) -> Option<EntityView> {
+/// The media player that can play a playlist, if one is connected.
+pub fn playlist_player(entities: &BTreeMap<String, EntityView>) -> Option<EntityView> {
     entities
         .values()
         .find(|e| {
@@ -85,7 +85,7 @@ pub fn WakeUpSettingsPage() -> impl IntoView {
     let asking = RwSignal::new(false);
     let on = Memo::new(move |_| house.home_settings.with(|s| s.wake_up));
     let active = Memo::new(move |_| house.flows.with(|f| active_alarms(f)));
-    let player = Memo::new(move |_| house.entities.with(pinson_player));
+    let player = Memo::new(move |_| house.entities.with(playlist_player));
     let toggle = move |_| {
         if !on.get_untracked() {
             set_wake_up(house, true);
@@ -155,11 +155,17 @@ pub fn WakeUpSettingsPage() -> impl IntoView {
                 </Show>
                 <div class="wake-settings__row">
                     <span class="wake-settings__label">
-                        {move || wake_text(lang(), WakeText::Pinson)}
+                        {move || wake_text(lang(), WakeText::Player)}
                     </span>
                     <span class="wake-settings__status">
                         {move || {
-                            pinson_status(lang(), player.with(|p| p.as_ref().map(list_counts)))
+                            player.with(|p| {
+                                let shown = p.as_ref().map(|p| {
+                                    let (playlists, outputs) = list_counts(p);
+                                    (p.name.as_str(), playlists, outputs)
+                                });
+                                player_status(lang(), shown)
+                            })
                         }}
                     </span>
                 </div>

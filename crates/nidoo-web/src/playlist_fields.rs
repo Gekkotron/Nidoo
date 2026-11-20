@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn unknown_saved_playlist_is_kept() {
-        // Pinson offline, or still on a version that sends no lists.
+        // The player offline, or still on a version that sends no lists.
         let state = MediaPlayerState::default();
         let list = playlist_options(Lang::Fr, &state, "x7f");
         assert_eq!(list.len(), 1);

@@ -1,12 +1,12 @@
 ---
 title: Wake up to music
 sidebar_position: 20.6
-description: Set a music alarm in the Wake-up page. Pinson plays a playlist on the Nidoo speakers at a fixed time on chosen weekdays, with a fade-in.
+description: Set a music alarm in the Wake-up page. Your media player plays a playlist on the Nidoo speakers at a fixed time on chosen weekdays, with a fade-in.
 ---
 
 The **Wake-up** page sets music alarms. At the time you choose, on the weekdays
-you pick, Pinson (a [media player](media-players.md)) starts a playlist and
-raises the volume slowly, on the speakers you tick.
+you pick, your [media player](media-players.md) starts a playlist and raises
+the volume slowly, on the speakers you tick.
 
 Each alarm is a normal [flow](flows.md) that the page writes for you. It runs
 like any other flow, shows up in the flows list with a « Wake-up » label, and
@@ -16,11 +16,12 @@ is rewritten every time you save it from the page.
 
 Wake-up is off by default. Open **Settings → Home → Wake-up** and turn on
 **Turn on Wake-up**. A **Wake-up** entry then appears in the Home menu. The
-same page shows whether a Pinson player is connected and how many playlists and
+same page shows whether a media player is connected and how many playlists and
 outputs it lists.
 
-The page needs a media player that can play a playlist (Pinson). Without one it
-says so and offers nothing to set.
+The page needs a media player that can play a playlist (one that lists
+`play_playlist` in its features). Without one it says so and offers nothing
+to set.
 
 ## Set an alarm
 
@@ -31,8 +32,8 @@ Open **Wake-up** and choose **Add an alarm**.
 2. Set the hour and the minute, and pick the weekdays. Monday to Friday is
    ticked at first. With no day picked, the alarm cannot be saved.
 3. Pick the **playlist** (Favorites first) and whether to shuffle it.
-4. Pick the **output**: the Nidoo speakers, or any output Pinson lists. The
-   Nidoo speakers are chosen first when Pinson lists them.
+4. Pick the **output**: the Nidoo speakers, or any output the player lists. The
+   Nidoo speakers are chosen first when the player lists them.
 5. Pick the **fade-in**: Off, 30 s, 1 min, 2 min or 5 min. The sound rises from
    silence to the set volume over that time.
 6. Check the **next alarm** line, then **Save**.
@@ -57,18 +58,18 @@ you save.
 
 ## If the playlist is gone
 
-If a saved playlist is no longer listed by Pinson, the editor shows it as
+If a saved playlist is no longer listed by the player, the editor shows it as
 « unknown playlist » and keeps it when you save. At the time of the alarm,
-Pinson plays its Favorites instead.
+the player plays its Favorites instead.
 
 ## A spoken backup
 
-Pinson may be offline when the alarm rings. The page does not add a backup,
+The media player may be offline when the alarm rings. The page does not add a backup,
 but you can build one as a separate flow:
 
 1. A **schedule** trigger at the alarm's time and days.
-2. A **delay** of 1 minute, so Pinson has time to start.
-3. An **if** on the Pinson player: its state is not `playing`.
+2. A **delay** of 1 minute, so the player has time to start.
+3. An **if** on the media player: its state is not `playing`.
 4. On `true`, a **speak** card on the bedroom satellite ("It's seven, time to
    get up").
 

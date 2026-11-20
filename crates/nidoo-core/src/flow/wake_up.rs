@@ -277,7 +277,7 @@ mod tests {
         WakeUp {
             hour: 7,
             minute: 5,
-            player: "pinson-player".to_owned(),
+            player: "music-player".to_owned(),
             ..WakeUp::default()
         }
     }
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(
             command_of(5),
             (
-                "pinson-player".into(),
+                "music-player".into(),
                 Command::PlayPlaylist {
                     playlist: "favorites".into(),
                     shuffle: true,
@@ -423,7 +423,7 @@ mod tests {
                 "number.gone_music",
                 "switch.gone_mute",
                 "switch.deleted",
-                "pinson-player"
+                "music-player"
             ]
         );
     }

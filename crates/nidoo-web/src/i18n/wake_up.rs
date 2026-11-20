@@ -13,8 +13,8 @@ pub enum WakeText {
     EnableHint,
     Cancel,
     TurnOff,
-    Pinson,
-    NoPinson,
+    Player,
+    NoPlayer,
     OpenPage,
     ManagedBy,
     OpenManaged,
@@ -35,7 +35,7 @@ pub enum WakeText {
     Disabled,
     DisabledBody,
     OpenSettings,
-    NoPinsonBody,
+    NoPlayerBody,
     Unreadable,
     Delete,
     NotFound,
@@ -64,8 +64,8 @@ impl WakeText {
         WakeText::EnableHint,
         WakeText::Cancel,
         WakeText::TurnOff,
-        WakeText::Pinson,
-        WakeText::NoPinson,
+        WakeText::Player,
+        WakeText::NoPlayer,
         WakeText::OpenPage,
         WakeText::ManagedBy,
         WakeText::OpenManaged,
@@ -86,7 +86,7 @@ impl WakeText {
         WakeText::Disabled,
         WakeText::DisabledBody,
         WakeText::OpenSettings,
-        WakeText::NoPinsonBody,
+        WakeText::NoPlayerBody,
         WakeText::Unreadable,
         WakeText::Delete,
         WakeText::NotFound,
@@ -114,8 +114,8 @@ pub fn wake_text(lang: Lang, k: WakeText) -> &'static str {
     use WakeText as T;
     let (en, fr) = match k {
         T::Lede => (
-            "Wake up to music with Pinson, at a fixed time, on the speakers of the house.",
-            "Se réveiller en musique avec Pinson, à heure fixe, sur les enceintes de la maison.",
+            "Wake up to music from your media player, at a fixed time, on the speakers of the house.",
+            "Se réveiller en musique avec votre lecteur multimédia, à heure fixe, sur les enceintes de la maison.",
         ),
         T::Enable => ("Turn on Wake-up", "Activer le réveil"),
         T::EnableHint => (
@@ -124,8 +124,11 @@ pub fn wake_text(lang: Lang, k: WakeText) -> &'static str {
         ),
         T::Cancel => ("Cancel", "Annuler"),
         T::TurnOff => ("Turn off", "Désactiver"),
-        T::Pinson => ("Pinson", "Pinson"),
-        T::NoPinson => ("Music needs Pinson", "La musique a besoin de Pinson"),
+        T::Player => ("Player", "Lecteur"),
+        T::NoPlayer => (
+            "Music needs a media player",
+            "La musique a besoin d\u{2019}un lecteur multimédia",
+        ),
         T::OpenPage => ("Open the Wake-up page", "Ouvrir la page Réveil"),
         T::ManagedBy => ("Managed by Wake-up", "Géré par Réveil"),
         T::OpenManaged => ("open", "ouvrir"),
@@ -142,14 +145,14 @@ pub fn wake_text(lang: Lang, k: WakeText) -> &'static str {
         T::FadeIn => ("Fade-in", "Montée du son"),
         T::CurrentOutput => ("Current output", "Sortie actuelle"),
         T::UnknownPlaylistHint => (
-            "This playlist no longer exists in Pinson: when it rings, Pinson will play Favorites.",
-            "Cette playlist n'existe plus dans Pinson\u{a0}: au moment voulu, Pinson jouera les Favoris.",
+            "This playlist no longer exists in the player: when it rings, the player will play Favorites.",
+            "Cette playlist n'existe plus dans le lecteur\u{a0}: au moment voulu, le lecteur jouera les Favoris.",
         ),
         T::FadeOff => ("Off", "Sans"),
         T::PageTitle => ("Wake-up", "Réveil"),
         T::PageLede => (
-            "Wake up to music: Pinson plays a playlist on the speakers, raising the volume slowly.",
-            "Se réveiller en musique\u{a0}: Pinson lance une playlist sur les enceintes, en montant doucement le son.",
+            "Wake up to music: the media player plays a playlist on the speakers, raising the volume slowly.",
+            "Se réveiller en musique\u{a0}: le lecteur multimédia lance une playlist sur les enceintes, en montant doucement le son.",
         ),
         T::AddAlarm => ("Add an alarm", "Ajouter un réveil"),
         T::Disabled => ("Wake-up is off", "Le réveil est désactivé"),
@@ -158,9 +161,9 @@ pub fn wake_text(lang: Lang, k: WakeText) -> &'static str {
             "Activez-le dans Réglages \u{2192} Maison \u{2192} Réveil pour régler une heure de réveil en musique.",
         ),
         T::OpenSettings => ("Open settings", "Ouvrir les réglages"),
-        T::NoPinsonBody => (
-            "No Pinson player is connected. Connect Pinson to the home MQTT broker (Settings \u{2192} Media players), then come back to set an alarm.",
-            "Aucun lecteur Pinson n\u{2019}est connecté. Branchez Pinson au broker MQTT de la maison (Réglages \u{2192} Lecteurs multimédias), puis revenez ici pour régler un réveil.",
+        T::NoPlayerBody => (
+            "No media player that can play a playlist is connected. Connect one to the home MQTT broker (Settings \u{2192} Media players), then come back to set an alarm.",
+            "Aucun lecteur multimédia capable de lancer une playlist n\u{2019}est connecté. Branchez-en un au broker MQTT de la maison (Réglages \u{2192} Lecteurs multimédias), puis revenez ici pour régler un réveil.",
         ),
         T::Unreadable => ("Unreadable alarm", "Réveil illisible"),
         T::Delete => ("Delete", "Supprimer"),
@@ -290,17 +293,17 @@ pub fn disable_body(lang: Lang, n: usize) -> &'static str {
     }
 }
 
-/// The Pinson status line: the player's name and what it lists, or that none is connected.
-pub fn pinson_status(lang: Lang, lists: Option<(usize, usize)>) -> String {
-    let Some((playlists, outputs)) = lists else {
+/// The player status line: the player's name and what it lists, or that none is connected.
+pub fn player_status(lang: Lang, player: Option<(&str, usize, usize)>) -> String {
+    let Some((name, playlists, outputs)) = player else {
         return match lang {
-            Lang::En => "No Pinson player connected".to_owned(),
-            Lang::Fr => "Aucun lecteur Pinson connecté".to_owned(),
+            Lang::En => "No media player connected".to_owned(),
+            Lang::Fr => "Aucun lecteur multimédia connecté".to_owned(),
         };
     };
     match lang {
         Lang::En => format!(
-            "Player \u{201c}Pinson\u{201d} connected \u{b7} {playlists} {} \u{b7} {outputs} {}",
+            "Player \u{201c}{name}\u{201d} connected \u{b7} {playlists} {} \u{b7} {outputs} {}",
             if playlists == 1 {
                 "playlist"
             } else {
@@ -309,7 +312,7 @@ pub fn pinson_status(lang: Lang, lists: Option<(usize, usize)>) -> String {
             if outputs == 1 { "output" } else { "outputs" },
         ),
         Lang::Fr => format!(
-            "Lecteur \u{ab}{NBSP}Pinson{NBSP}\u{bb} connecté \u{b7} {playlists} playlist{} \u{b7} {outputs} sortie{}",
+            "Lecteur \u{ab}{NBSP}{name}{NBSP}\u{bb} connecté \u{b7} {playlists} playlist{} \u{b7} {outputs} sortie{}",
             if playlists > 1 { "s" } else { "" },
             if outputs > 1 { "s" } else { "" },
         ),
@@ -322,7 +325,7 @@ mod tests {
 
     /// Words spelled the same in both languages.
     const SAME: &[WakeText] = &[
-        WakeText::Pinson,
+        WakeText::Player,
         WakeText::Playlist,
         WakeText::Minute,
         WakeText::Volume,
@@ -363,11 +366,11 @@ mod tests {
     }
 
     #[test]
-    fn pinson_status_reads_both_ways() {
+    fn player_status_reads_both_ways() {
         assert_eq!(
-            pinson_status(Lang::Fr, Some((4, 4))),
-            "Lecteur \u{ab}\u{a0}Pinson\u{a0}\u{bb} connecté \u{b7} 4 playlists \u{b7} 4 sorties"
+            player_status(Lang::Fr, Some(("Musique", 4, 4))),
+            "Lecteur \u{ab}\u{a0}Musique\u{a0}\u{bb} connecté \u{b7} 4 playlists \u{b7} 4 sorties"
         );
-        assert_eq!(pinson_status(Lang::En, None), "No Pinson player connected");
+        assert_eq!(player_status(Lang::En, None), "No media player connected");
     }
 }

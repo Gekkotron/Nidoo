@@ -24,15 +24,15 @@ use crate::schedule::week_chips;
 use crate::screens::flow_schedule::tick_text;
 use crate::screens::sound_settings::satellites;
 use crate::screens::wake_up_logic::{Draft, NIDOO_SOURCE, summary, time_text};
-use crate::screens::wake_up_settings::pinson_player;
+use crate::screens::wake_up_settings::playlist_player;
 
 /// How long the editor waits after the last change before asking the hub for the next ring.
 const PREVIEW_PAUSE_MS: u32 = 300;
 
-/// The state the Pinson media player reports, empty while none is connected.
+/// The state the media player reports, empty while none is connected.
 fn player_state(house: House) -> Memo<MediaPlayerState> {
     Memo::new(move |_| {
-        house.entities.with(|e| match pinson_player(e) {
+        house.entities.with(|e| match playlist_player(e) {
             Some(p) => match p.state.value {
                 StateValue::MediaPlayer(s) => s,
                 _ => MediaPlayerState::default(),
@@ -80,12 +80,12 @@ fn Empty(
     }
 }
 
-/// Shows `children` while Wake-up is on and a Pinson player is connected, else says why not.
+/// Shows `children` while Wake-up is on and a media player that plays playlists is connected, else says why not.
 #[component]
 fn Gate(children: ChildrenFn) -> impl IntoView {
     let house = expect_context::<House>();
     let on = Memo::new(move |_| house.home_settings.with(|s| s.wake_up));
-    let has_player = Memo::new(move |_| house.entities.with(|e| pinson_player(e).is_some()));
+    let has_player = Memo::new(move |_| house.entities.with(|e| playlist_player(e).is_some()));
     move || {
         if !on.get() {
             view! {
@@ -97,7 +97,7 @@ fn Gate(children: ChildrenFn) -> impl IntoView {
             }
             .into_any()
         } else if !has_player.get() {
-            view! { <Empty title=WakeText::NoPinson body=WakeText::NoPinsonBody /> }.into_any()
+            view! { <Empty title=WakeText::NoPlayer body=WakeText::NoPlayerBody /> }.into_any()
         } else {
             children().into_any()
         }
@@ -498,7 +498,7 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
     let save_id = id.clone();
     let save_nav = navigate.clone();
     let save = move |_| {
-        let Some(player) = house.entities.with_untracked(pinson_player) else {
+        let Some(player) = house.entities.with_untracked(playlist_player) else {
             return;
         };
         let l = lang();

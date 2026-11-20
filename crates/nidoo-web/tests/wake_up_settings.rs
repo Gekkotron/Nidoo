@@ -254,7 +254,7 @@ async fn page_says_when_no_pinson_is_connected() {
     settle().await;
     assert_eq!(
         text(&m.host, ".wake-settings__status"),
-        "No Pinson player connected"
+        "No media player connected"
     );
     assert_eq!(
         text(&m.host, ".wake-settings__link"),
