@@ -19,6 +19,8 @@ pub const FADE_CHOICES: [u32; 5] = [0, 30, 60, 120, 300];
 
 /// Horizontal gap between two nodes on the canvas.
 const NODE_STEP_X: f64 = 280.0;
+/// The vertical gap between the speaker steps on the canvas.
+const NODE_STEP_Y: f64 = 120.0;
 
 /// One alarm's settings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -135,19 +137,18 @@ pub fn validate(w: &WakeUp) -> Result<(), WakeUpError> {
     Ok(())
 }
 
-/// The flow for an alarm: schedule, then volume of each checked speaker, their unmute, the mute
-/// of the unchecked ones, and the playlist, as one chain. Entity ids are used as stored; none is
-/// checked against the registry.
+/// The flow for an alarm: the schedule fans out to the volume of each checked speaker, their
+/// unmute, the mute of the unchecked ones, and last the playlist. The engine runs the branches
+/// in edge order, so the speakers are set before the music starts, and a speaker that does not
+/// answer ends only its own branch: the alarm still rings. Entity ids are used as stored; none
+/// is checked against the registry.
 pub fn to_flow(id: &str, name: &str, enabled: bool, w: &WakeUp) -> Flow {
     let mut nodes: Vec<Node> = Vec::new();
     let mut push = |node_id: String, kind: NodeKind| {
         nodes.push(Node {
             id: node_id,
             name: None,
-            position: Some(Position {
-                x: NODE_STEP_X * nodes.len() as f64,
-                y: 0.0,
-            }),
+            position: None,
             kind,
             extra: Default::default(),
         });
@@ -208,11 +209,21 @@ pub fn to_flow(id: &str, name: &str, enabled: bool, w: &WakeUp) -> Flow {
             },
         ),
     );
-    let edges = nodes
-        .windows(2)
-        .map(|pair| Edge {
-            from: pair[0].id.clone(),
-            to: pair[1].id.clone(),
+    // The trigger on the left, the speaker steps in a column, the playlist on the right.
+    let last = nodes.len() - 1;
+    for (i, node) in nodes.iter_mut().enumerate() {
+        let (x, y) = match i {
+            0 => (0.0, 0.0),
+            i if i == last => (2.0 * NODE_STEP_X, 0.0),
+            i => (NODE_STEP_X, NODE_STEP_Y * (i - 1) as f64),
+        };
+        node.position = Some(Position { x, y });
+    }
+    let edges = nodes[1..]
+        .iter()
+        .map(|node| Edge {
+            from: nodes[0].id.clone(),
+            to: node.id.clone(),
             port: None,
         })
         .collect();
@@ -307,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn to_flow_chains_schedule_speakers_mutes_play() {
+    fn to_flow_fans_out_speakers_then_play() {
         let flow = to_flow("wake-up-1", "Wake-up 07:05", true, &full());
         assert!(flow.enabled);
         assert_eq!(flow.labels, [LABEL]);
@@ -356,20 +367,27 @@ mod tests {
             .iter()
             .map(|e| (e.from.as_str(), e.to.as_str()))
             .collect();
+        // One branch per step, the playlist last: the engine runs them in edge order, and a
+        // speaker that does not answer ends only its own branch, never the music.
         assert_eq!(
             chain,
             [
                 ("trigger", "volume-0"),
-                ("volume-0", "volume-1"),
-                ("volume-1", "unmute-0"),
-                ("unmute-0", "mute-0"),
-                ("mute-0", "play"),
+                ("trigger", "volume-1"),
+                ("trigger", "unmute-0"),
+                ("trigger", "mute-0"),
+                ("trigger", "play"),
             ]
         );
-        for (i, node) in flow.nodes.iter().enumerate() {
-            let p = node.position.expect("position");
-            assert_eq!((p.x, p.y), (280.0 * i as f64, 0.0));
+        let at = |i: usize| {
+            let p = flow.nodes[i].position.expect("position");
+            (p.x, p.y)
+        };
+        assert_eq!(at(0), (0.0, 0.0));
+        for i in 1..=4 {
+            assert_eq!(at(i), (280.0, 120.0 * (i - 1) as f64));
         }
+        assert_eq!(at(5), (560.0, 0.0));
         assert_eq!(read(&flow), Some(Ok(full())));
         let off = to_flow("wake-up-1", "x", false, &full());
         assert!(!off.enabled);
