@@ -65,6 +65,15 @@ In the editor, **Device** (**Appareil**) is the first card under the triggers. P
 
 Picking a remote, an `event` entity or a tag turns the card into a `trigger.signal`: its buttons show as chips, with **any** for every signal. Searching the library for a sensor ("porte") also offers ready-made cards, one per value: "When Front door changes", then one per state.
 
+### Hold a value, or cross a threshold
+
+Two optional fields on the Device card (`trigger.state`) turn it into a condition that has to last, or a threshold that is crossed.
+
+- **For** (`for`, a duration such as `30s`, `5m` or `1h30m`, from 1 second to 168 hours): the card fires only once its condition has held that long. "No motion for 5 min" is a motion sensor with **Fires when it becomes** Clear and **For** `5m`. A report that breaks the condition cancels the wait. With no value set, the entity must simply stay unchanged for that long.
+- **Above** and **Below** (`above`, `below`), for an entity that reports a number: the card fires once when the value crosses the threshold, not on every reading beyond it. With **Above** `25`, a reading going from 24.8 to 25.3 fires, and the next ones, 25.6 and 26, do not. The value must go back to or under 25 before it can fire again. Set both to fire when the value enters the range between them ("Quand Température salon passe entre 18 et 22 °C"). The thresholds are exclusive, and they cannot be combined with **Fires when it becomes** or **Only after**: setting one clears the other.
+
+There is no dead band. A reading that hovers around the threshold fires on every crossing, so put a **For** on a noisy sensor ("Above 25 for 10 min") to wait until it has really settled. A wait in progress is lost when the hub restarts; the card then fires only on the next change that satisfies it.
+
 ### Value of: every value a device reports
 
 The When, If and Switch cards read their entity's headline value: on or off, a measurement, a state such as Cleaning. Under the entity, the **Value of** menu lists everything else the device reports, each with its current value:

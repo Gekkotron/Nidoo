@@ -239,6 +239,9 @@ pub enum FlowText {
     Entity,
     FiresWhen,
     OnlyAfter,
+    HoldFor,
+    CrossAbove,
+    CrossBelow,
     AnySignal,
     EntityDefaults,
     ValueOf,
@@ -578,6 +581,9 @@ impl FlowText {
         FlowText::Entity,
         FlowText::FiresWhen,
         FlowText::OnlyAfter,
+        FlowText::HoldFor,
+        FlowText::CrossAbove,
+        FlowText::CrossBelow,
         FlowText::AnySignal,
         FlowText::EntityDefaults,
         FlowText::ValueOf,
@@ -1015,6 +1021,9 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::Silent => ("Silent", "Silencieuse"),
         T::Entity => ("Entity", "Entité"),
         T::FiresWhen => ("Fires when it becomes", "Se déclenche quand elle devient"),
+        T::HoldFor => ("For (stays that way)", "Pendant (reste ainsi)"),
+        T::CrossAbove => ("Goes above", "Dépasse"),
+        T::CrossBelow => ("Goes below", "Descend sous"),
         T::OnlyAfter => (
             "Only after (previous value)",
             "Seulement après (valeur précédente)",
@@ -1434,6 +1443,39 @@ pub fn when_becomes(lang: Lang, e: &str, v: &str) -> String {
         lang,
         format!("When {e} becomes {v}"),
         format!("Quand {e} devient {v}"),
+    )
+}
+
+/// "When Temp goes above 25 °C" / "Quand Temp dépasse 25 °C"; "goes below" / "descend sous"; with
+/// both, "goes between 18 and 22 °C" / "passe entre 18 et 22 °C". `above` and `below` are the
+/// numbers already written with their unit; the range puts the unit on the upper bound only.
+pub fn when_crosses(lang: Lang, e: &str, above: Option<&str>, below: Option<&str>) -> String {
+    match (above, below) {
+        (Some(a), Some(b)) => pick(
+            lang,
+            format!("When {e} goes between {a} and {b}"),
+            format!("Quand {e} passe entre {a} et {b}"),
+        ),
+        (Some(a), None) => pick(
+            lang,
+            format!("When {e} goes above {a}"),
+            format!("Quand {e} dépasse {a}"),
+        ),
+        (None, Some(b)) => pick(
+            lang,
+            format!("When {e} goes below {b}"),
+            format!("Quand {e} descend sous {b}"),
+        ),
+        (None, None) => when_changes(lang, e),
+    }
+}
+
+/// The hold appended to a state trigger's sentence: "… for 5m" / "… pendant 5m".
+pub fn held_for(lang: Lang, sentence: &str, for_: &str) -> String {
+    pick(
+        lang,
+        format!("{sentence} for {for_}"),
+        format!("{sentence} pendant {for_}"),
     )
 }
 

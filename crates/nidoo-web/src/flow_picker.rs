@@ -86,7 +86,9 @@ fn findable(e: &nidoo_api::EntityView) -> bool {
 /// Extra words that find a generic card, in both languages: what other tools call a Manual card.
 fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::TriggerState(_) => "trigger declencheur event evenement sensor capteur",
+        NodeKind::TriggerState(_) => {
+            "trigger declencheur event evenement sensor capteur seuil threshold above below depasse pendant for duree"
+        }
         NodeKind::TriggerManual(_) => "inject injecter button bouton",
         NodeKind::TriggerAlarm(_) => "alarm alarme armed armee security securite intrusion",
         NodeKind::FlowLabel(_) => "choice choix season saison tag",
