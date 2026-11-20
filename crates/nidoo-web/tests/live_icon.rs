@@ -236,10 +236,14 @@ async fn error_tile_is_still() {
 }
 
 #[wasm_bindgen_test]
-async fn the_big_robot_picture_stays() {
+async fn the_big_picture_is_the_room() {
     let host = mount(vacuum("cleaning"));
     tick().await;
-    assert!(has(&host, "svg.robot--cleaning"));
+    assert!(has(
+        &host,
+        ".vacuum__picture svg.live-icon--picture.live-icon--moving"
+    ));
+    assert!(!has(&host, "svg.robot"));
 }
 
 /// Loads the real stylesheets once, so computed colours are the ones a user sees.

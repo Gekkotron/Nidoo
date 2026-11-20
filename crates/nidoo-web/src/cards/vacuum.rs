@@ -9,11 +9,11 @@ use super::text::{vacuum_caption, vacuum_sentence};
 use super::{ModeSelect, Sender};
 use crate::components::card_frame::{CardFrame, open_entity};
 use crate::components::card_place::{CardPlace, use_card_place};
-use crate::components::robot::Robot;
 use crate::format::word;
 use crate::i18n::devices::{DeviceText, device_text};
 use crate::i18n::{Key, Lang, text, use_lang, use_text};
 use crate::icons::vacuum_action_icon;
+use crate::live_icon::view::LivePicture;
 
 /// The short button label for a vacuum action.
 pub(crate) fn action_label(lang: Lang, action: &str) -> String {
@@ -177,6 +177,7 @@ pub fn VacuumCard(entity: EntityView) -> impl IntoView {
 
     let pending = sender.pending(&entity.id);
     let on_click = open_entity(&entity.id);
+    let picture_entity = entity.clone();
     view! {
         <CardFrame
             entity=entity
@@ -194,7 +195,7 @@ pub fn VacuumCard(entity: EntityView) -> impl IntoView {
                     {fan_select}
                 </div>
                 <div class="vacuum__picture">
-                    <Robot activity=activity />
+                    <LivePicture entity=picture_entity />
                     {caption}
                 </div>
             </div>

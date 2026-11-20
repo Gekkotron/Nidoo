@@ -59,8 +59,6 @@
 
   /* Rich cards */
   --tile-bg: rgb(255 255 255 / 8%);
-  /* The dust a cleaning robot vacuum draws in. */
-  --robot-dust: #d9c9a3;
   --tile-on-bg: rgb(255 196 87 / 30%);
   --card-sage-bg: rgb(111 240 191 / 10%);
   --card-cool-bg: rgb(88 225 255 / 10%);
@@ -155,7 +153,6 @@
   --btn-dark-ink: #fffdf8;
   --cool-bg: #eaf0f5;
   --tile-bg: #f3efe6;
-  --robot-dust: #a08452;
   --tile-on-bg: #f1d896;
   --card-sage-bg: #e3eadf;
   --card-cool-bg: #eaf0f5;

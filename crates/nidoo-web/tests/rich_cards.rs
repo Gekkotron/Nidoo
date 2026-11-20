@@ -370,7 +370,7 @@ async fn vacuum_tile_is_wide_with_sentence() {
     assert!(has(&host, ".card--wide"));
     assert!(host.text_content().unwrap().contains("At home."));
     assert!(host.text_content().unwrap().contains("100"));
-    assert!(has(&host, "svg.robot"));
+    assert!(has(&host, ".vacuum__picture svg.live-icon--picture"));
     assert!(!has(&host, "select"));
     // The header, Start and Send home.
     assert_eq!(host.query_selector_all("button").unwrap().length(), 3);
@@ -378,19 +378,26 @@ async fn vacuum_tile_is_wide_with_sentence() {
 }
 
 #[wasm_bindgen_test]
-async fn vacuum_drawing_sweeps_dust_only_while_cleaning() {
-    let count = |host: &web_sys::Element, selector: &str| {
-        host.query_selector_all(selector).unwrap().length()
-    };
+async fn vacuum_picture_follows_the_activity() {
     let host = mount(vacuum("cleaning"), None);
     tick().await;
-    assert_eq!(count(&host, "svg.robot--cleaning .robot__brush"), 1);
-    assert_eq!(count(&host, "svg.robot .robot__dust"), 22);
-    // Docked: the brush is still drawn, the dust is gone.
+    assert!(has(
+        &host,
+        ".vacuum__picture .live-icon--moving .live-icon__trail"
+    ));
+    assert!(!has(&host, "svg.robot"));
     let host = mount(vacuum("docked"), None);
     tick().await;
-    assert_eq!(count(&host, "svg.robot .robot__brush"), 1);
-    assert_eq!(count(&host, "svg.robot .robot__dust"), 0);
+    assert!(has(
+        &host,
+        ".vacuum__picture .live-icon--docked .live-icon__bolt"
+    ));
+    assert!(!has(&host, ".vacuum__picture .live-icon__trail"));
+    assert!(!has(&host, "svg.robot"));
+    let host = mount(vacuum("error"), None);
+    tick().await;
+    assert!(has(&host, ".vacuum__picture .live-icon--plain"));
+    assert!(!has(&host, "svg.robot"));
 }
 
 #[wasm_bindgen_test]
