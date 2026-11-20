@@ -268,6 +268,66 @@ pub fn default_name(lang_is_fr: bool, hour: u8, minute: u8) -> String {
     format!("{word} {hour:02}:{minute:02}")
 }
 
+/// Why an alarm cannot be re-timed.
+#[derive(Debug, PartialEq)]
+pub enum RetimeError {
+    /// The flow has no `wake_up` settings.
+    NotAnAlarm,
+    /// The stored settings do not parse; carries serde's message.
+    Unreadable(String),
+    /// The new time or days are not valid.
+    Invalid(WakeUpError),
+}
+
+impl fmt::Display for RetimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RetimeError::NotAnAlarm => f.write_str("the flow is not a wake-up alarm"),
+            RetimeError::Unreadable(reason) => {
+                write!(f, "the alarm's settings are unreadable: {reason}")
+            }
+            RetimeError::Invalid(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for RetimeError {}
+
+/// The alarm flow with a new time and weekdays. Everything else (id, area, labels, enabled and
+/// the other settings) is kept; the nodes and edges are rebuilt by [`to_flow`]. A name that is
+/// the default one for the old time, in either language, follows the new time.
+pub fn retime(flow: &Flow, hour: u8, minute: u8, days: &[u8]) -> Result<Flow, RetimeError> {
+    let old = read(flow)
+        .ok_or(RetimeError::NotAnAlarm)?
+        .map_err(RetimeError::Unreadable)?;
+    let mut days = days.to_vec();
+    days.sort_unstable();
+    days.dedup();
+    let new = WakeUp {
+        hour,
+        minute,
+        days,
+        ..old.clone()
+    };
+    validate(&new).map_err(RetimeError::Invalid)?;
+    let rebuilt = to_flow(&flow.id, &flow.name, flow.enabled, &new);
+    let name = [false, true]
+        .into_iter()
+        .find(|fr| flow.name == default_name(*fr, old.hour, old.minute))
+        .map_or_else(
+            || flow.name.clone(),
+            |fr| default_name(fr, new.hour, new.minute),
+        );
+    let mut out = flow.clone();
+    out.name = name;
+    out.nodes = rebuilt.nodes;
+    out.edges = rebuilt.edges;
+    if let Some(value) = rebuilt.extra.get(EXTRA_KEY) {
+        out.extra.insert(EXTRA_KEY.to_owned(), value.clone());
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,5 +535,91 @@ mod tests {
     fn default_name_pads_the_time() {
         assert_eq!(default_name(true, 7, 0), "Réveil 07:00");
         assert_eq!(default_name(false, 6, 45), "Wake-up 06:45");
+    }
+
+    #[test]
+    fn retime_sets_time_and_days() {
+        let f = to_flow("wake-up-1", "Morning", true, &full());
+        let r = retime(&f, 6, 15, &[5, 1, 1]).expect("retime");
+        let w = read(&r).expect("alarm").expect("readable");
+        assert_eq!((w.hour, w.minute, w.days.clone()), (6, 15, vec![1, 5]));
+        let NodeKind::TriggerSchedule(t) = &r.nodes[0].kind else {
+            panic!("first node is the schedule");
+        };
+        assert_eq!(t.cron, "15 6 * * 1,5");
+    }
+
+    #[test]
+    fn retime_keeps_everything_else() {
+        let mut f = to_flow("wake-up-1", "Morning", true, &full());
+        f.area = Some("bedroom".to_owned());
+        f.labels.push("mine".to_owned());
+        f.enabled = false;
+        let r = retime(&f, 6, 15, &[1]).expect("retime");
+        assert_eq!(r.id, f.id);
+        assert_eq!(r.area, f.area);
+        assert_eq!(r.labels, f.labels);
+        assert_eq!(r.enabled, f.enabled);
+        let (old, new) = (read(&f).unwrap().unwrap(), read(&r).unwrap().unwrap());
+        assert_eq!(
+            new,
+            WakeUp {
+                hour: 6,
+                minute: 15,
+                days: vec![1],
+                ..old
+            }
+        );
+        let ids = |f: &Flow| f.nodes.iter().map(|n| n.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&r), ids(&f));
+        assert_eq!(r.nodes[1..], f.nodes[1..]);
+    }
+
+    #[test]
+    fn retime_keeps_a_typed_name() {
+        let f = to_flow("wake-up-1", "Morning", true, &full());
+        assert_eq!(retime(&f, 6, 15, &[1]).unwrap().name, "Morning");
+    }
+
+    #[test]
+    fn retime_moves_a_default_name() {
+        for (old, new) in [
+            ("Wake-up 07:05", "Wake-up 06:15"),
+            ("Réveil 07:05", "Réveil 06:15"),
+        ] {
+            let f = to_flow("wake-up-1", old, true, &full());
+            assert_eq!(retime(&f, 6, 15, &[1]).unwrap().name, new);
+        }
+    }
+
+    #[test]
+    fn retime_refuses_bad_input() {
+        let f = to_flow("wake-up-1", "Morning", true, &full());
+        assert_eq!(
+            retime(&f, 6, 15, &[]),
+            Err(RetimeError::Invalid(WakeUpError::NoDay))
+        );
+        assert_eq!(
+            retime(&f, 6, 15, &[7]),
+            Err(RetimeError::Invalid(WakeUpError::NoDay))
+        );
+        assert_eq!(
+            retime(&f, 24, 0, &[1]),
+            Err(RetimeError::Invalid(WakeUpError::BadTime))
+        );
+    }
+
+    #[test]
+    fn retime_refuses_other_flows() {
+        assert_eq!(
+            retime(&Flow::default(), 6, 15, &[1]),
+            Err(RetimeError::NotAnAlarm)
+        );
+        let mut f = Flow::default();
+        f.extra.insert(EXTRA_KEY.to_owned(), json!("x"));
+        assert!(matches!(
+            retime(&f, 6, 15, &[1]),
+            Err(RetimeError::Unreadable(_))
+        ));
     }
 }
