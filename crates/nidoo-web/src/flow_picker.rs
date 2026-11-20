@@ -75,6 +75,14 @@ fn command(entity: &str, command: Command) -> NodeKind {
     })
 }
 
+/// Whether a search lists `e`: a primary entity, hidden from the dashboard or not (hiding is a
+/// display choice), but not one disabled by default or folded into another.
+fn findable(e: &nidoo_api::EntityView) -> bool {
+    e.category == nidoo_core::model::EntityCategory::Primary
+        && e.enabled_by_default
+        && e.part_of.is_none()
+}
+
 /// Extra words that find a generic card, in both languages: what other tools call a Manual card.
 fn card_search_words(kind: &NodeKind) -> &'static str {
     match kind {
@@ -344,23 +352,23 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
 
     if !needle.is_empty() {
         let words: Vec<&str> = needle.split_whitespace().collect();
-        let mut matches: Vec<(String, &_)> = ctx
+        let mut matches: Vec<(String, &_, String)> = ctx
             .entities
             .values()
-            .filter(|e| e.is_primary())
-            .map(|e| (fold_accents(&entity_title(ctx.lang, e)), e))
-            .filter(|(title, e)| {
+            .filter(|e| findable(e))
+            .map(|e| {
+                let title = fold_accents(&entity_title(ctx.lang, e));
                 let [en, fr] = kind_search_words(e);
                 let hay = fold_accents(&format!(
                     "{title} {} {} {en} {fr}",
                     e.device_name.as_deref().unwrap_or_default(),
                     room_name(ctx.areas, &e.area).unwrap_or_default()
                 ));
-                words.iter().all(|w| hay.contains(w))
+                (title, e, hay)
             })
             .collect();
         matches.sort_by(|a, b| a.0.cmp(&b.0));
-        for (_, e) in matches {
+        for (_, e, hay) in matches {
             let first = out.len();
             let current = Scalar::of_state(&e.state.value);
             out.push(entry(
@@ -448,6 +456,15 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
                     entry.label.push_str(&group_suffix(ctx.lang));
                 }
             }
+            // A word the entity lacks may name what a card does ("ferm" for "Fermer"): keep
+            // the cards whose label holds it, drop the entity when none does.
+            if !words.iter().all(|w| hay.contains(w)) {
+                let cards = out.split_off(first);
+                out.extend(cards.into_iter().filter(|c| {
+                    let label = fold_accents(&c.label);
+                    words.iter().all(|w| hay.contains(w) || label.contains(w))
+                }));
+            }
         }
     }
     out.sort_by_key(|e| e.group);
@@ -530,6 +547,40 @@ mod tests {
     }
 
     #[test]
+    fn the_action_word_finds_only_the_cards_that_do_it() {
+        let shutter = |id: &str, name: &str| {
+            let mut c = ent(id, name, Kind::Cover);
+            c.capabilities.open_close = true;
+            c
+        };
+        let entities = house(vec![
+            shutter("c1", "Volet sud"),
+            shutter("c2", "Volet nord"),
+            ent("l1", "Lampe", Kind::Light),
+        ]);
+        let areas: Vec<AreaView> = Vec::new();
+        let ctx = Ctx {
+            entities: &entities,
+            areas: &areas,
+            flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
+            lang: crate::i18n::Lang::Fr,
+        };
+        let labels =
+            |q: &str| -> Vec<String> { entries(q, &ctx).into_iter().map(|e| e.label).collect() };
+        let all = labels("ferm");
+        assert_eq!(all.len(), 2, "{all:?}");
+        assert!(
+            all.iter().all(|l| fold_accents(l).contains("ferm")),
+            "{all:?}"
+        );
+        // The action word narrows an entity word: one card, the closing of the south shutter.
+        let south = labels("ferm sud");
+        assert_eq!(south.len(), 1, "{south:?}");
+        assert!(south[0].contains("Volet sud"), "{south:?}");
+    }
+
+    #[test]
     fn generic_cards_read_and_search_in_both_languages() {
         let entities = BTreeMap::new();
         let areas: Vec<AreaView> = Vec::new();
@@ -546,7 +597,7 @@ mod tests {
         assert_eq!(labels[1], "Programmation");
         assert!(labels.contains(&"Quand il fait nuit"));
         assert!(
-            matches!(&fr[11].kind, NodeKind::Notify(p) if p.title == "Notification"),
+            matches!(&fr[12].kind, NodeKind::Notify(p) if p.title == "Notification"),
             "the stored default follows the language at creation"
         );
         // The English word finds the card on the French UI, and the French word on the English UI.
@@ -709,26 +760,26 @@ mod tests {
             &got[1].kind,
             NodeKind::TriggerSchedule(p) if p.cron == "0 * * * *"
         ));
-        assert!(matches!(&got[9].kind, NodeKind::Math(p) if p.name.is_empty()));
-        assert!(matches!(&got[11].kind, NodeKind::Notify(p) if p.title == "Notification"));
+        assert!(matches!(&got[10].kind, NodeKind::Math(p) if p.name.is_empty()));
+        assert!(matches!(&got[12].kind, NodeKind::Notify(p) if p.title == "Notification"));
         assert!(matches!(
-            &got[12].kind,
+            &got[13].kind,
             NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
         ));
         assert!(matches!(
-            &got[13].kind,
+            &got[14].kind,
             NodeKind::Ask(p) if p.answers.len() == 2 && p.room.is_none()
                 && p.answers[0].label == "Yes" && p.answers[1].label == "No"
         ));
-        assert!(matches!(&got[14].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+        assert!(matches!(&got[15].kind, NodeKind::Delay(p) if p.for_ == "5m"));
         assert!(matches!(
-            &got[8].kind,
+            &got[9].kind,
             NodeKind::Switch(p) if p.otherwise && p.entity.is_none()
                 && p.rules.len() == 1 && p.rules[0].op == RuleOp::Eq
                 && p.rules[0].value == Value::Bool(true)
         ));
         assert!(matches!(
-            &got[10].kind,
+            &got[11].kind,
             NodeKind::TimeBetween(p) if p.from == "07:00" && p.to == "22:00"
         ));
     }
@@ -1145,13 +1196,23 @@ mod tests {
     }
 
     #[test]
-    fn hidden_entities_excluded() {
-        let mut hidden = ent("l1", "Lumière", Kind::Light);
+    fn hidden_entities_found_but_not_diagnostic_disabled_or_folded() {
+        // Hidden is a dashboard choice: a hidden light is still one a flow drives.
+        let mut hidden = ent("l1", "Lumière canapé", Kind::Light);
         hidden.ui.hidden = true;
         let mut diagnostic = ent("l2", "Lumière diag", Kind::Light);
         diagnostic.category = EntityCategory::Diagnostic;
-        let entities = house(vec![hidden, diagnostic]);
-        assert_eq!(run("lumiere", &entities).len(), 0);
+        let mut disabled = ent("l3", "Lumière off", Kind::Light);
+        disabled.enabled_by_default = false;
+        let mut folded = ent("l4", "Lumière part", Kind::Light);
+        folded.part_of = Some("l1".into());
+        let entities = house(vec![hidden, diagnostic, disabled, folded]);
+        let got = run("lumiere", &entities);
+        assert!(!got.is_empty());
+        assert!(
+            got.iter().all(|e| e.label.contains("Lumière canapé")),
+            "{got:?}"
+        );
     }
 
     #[test]
