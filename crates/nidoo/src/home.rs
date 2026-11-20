@@ -32,7 +32,7 @@ const ASSIST_MAX: f64 = 35.0;
 
 /// Whether Wake-up went from on to off between two documents.
 fn wake_up_turned_off(before: &HomeSettings, after: &HomeSettings) -> bool {
-    before.wake_up && !after.wake_up
+    before.wake_up_on() && !after.wake_up_on()
 }
 
 /// The topic the document is retained on.
@@ -41,7 +41,8 @@ pub fn topic(ui_prefix: &str) -> String {
 }
 
 /// The document to store for `incoming`: the client's `off_peak_history` is replaced by the
-/// hub's, with an entry for `today` when the windows in force change.
+/// hub's, with an entry for `today` when the windows in force change; a document without
+/// `wake_up` keeps the stored one (a client that does not know it must not turn it off).
 pub fn next_document(
     current: &HomeSettings,
     incoming: HomeSettings,
@@ -50,6 +51,7 @@ pub fn next_document(
     let off_peak_history = record_change(&current.off_peak_history, &incoming.off_peak, today);
     HomeSettings {
         off_peak_history,
+        wake_up: incoming.wake_up.or(current.wake_up),
         ..incoming
     }
 }
@@ -305,8 +307,8 @@ mod tests {
 
     #[test]
     fn wake_up_off_only_on_the_on_to_off_edge() {
-        let with = |wake_up| HomeSettings {
-            wake_up,
+        let with = |on| HomeSettings {
+            wake_up: Some(on),
             ..HomeSettings::default()
         };
         assert!(wake_up_turned_off(&with(true), &with(false)));
@@ -518,6 +520,25 @@ mod tests {
             next.off_peak_history[0].windows,
             vec![win("01:00", "07:00")]
         );
+    }
+
+    #[test]
+    fn a_document_without_wake_up_keeps_the_stored_value() {
+        let on = HomeSettings {
+            wake_up: Some(true),
+            ..HomeSettings::default()
+        };
+        // A client that does not know the field sends none: Wake-up stays on, no alarm goes off.
+        let next = next_document(&on, HomeSettings::default(), day("2026-11-20"));
+        assert_eq!(next.wake_up, Some(true));
+        assert!(!wake_up_turned_off(&on, &next));
+        // An explicit off still turns it off.
+        let off = HomeSettings {
+            wake_up: Some(false),
+            ..HomeSettings::default()
+        };
+        let next = next_document(&on, off, day("2026-11-20"));
+        assert!(wake_up_turned_off(&on, &next));
     }
 
     #[test]

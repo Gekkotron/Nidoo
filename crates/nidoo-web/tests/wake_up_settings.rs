@@ -55,7 +55,7 @@ fn mount_page(wake_up: bool, flows: Vec<FlowView>) -> Mounted {
         .unwrap();
     let house = House::new();
     house.home_settings.set(HomeSettings {
-        wake_up,
+        wake_up: Some(wake_up),
         ..Default::default()
     });
     house.flows.set(flows);
@@ -135,7 +135,7 @@ async fn settle() {
 
 fn stored(wake_up: bool) -> String {
     serde_json::to_string(&HomeSettings {
-        wake_up,
+        wake_up: Some(wake_up),
         ..Default::default()
     })
     .unwrap()
@@ -171,7 +171,7 @@ async fn switching_on_saves_wake_up() {
         Some("true")
     );
     assert!(find(&m.host, ".wake-settings__banner").is_none());
-    assert!(m.house.home_settings.get_untracked().wake_up);
+    assert!(m.house.home_settings.get_untracked().wake_up_on());
 }
 
 #[wasm_bindgen_test]
@@ -183,7 +183,7 @@ async fn switching_on_rolls_back_when_the_hub_refuses() {
     one(&m.host, ".wake-settings__switch").click();
     stub.wait_for("PUT").await.expect("a PUT");
     settle().await;
-    assert!(!m.house.home_settings.get_untracked().wake_up);
+    assert!(!m.house.home_settings.get_untracked().wake_up_on());
     assert_eq!(
         one(&m.host, ".wake-settings__switch")
             .get_attribute("aria-checked")
@@ -214,7 +214,7 @@ async fn switching_off_asks_before_saving() {
         puts(&stub).is_empty(),
         "nothing is saved before the confirm"
     );
-    assert!(m.house.home_settings.get_untracked().wake_up);
+    assert!(m.house.home_settings.get_untracked().wake_up_on());
 
     // Cancel keeps it on and closes the question.
     one(&m.host, ".wake-settings__cancel").click();
@@ -231,7 +231,7 @@ async fn switching_off_asks_before_saving() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["wake_up"], false);
     assert!(find(&m.host, ".wake-settings__banner").is_none());
-    assert!(!m.house.home_settings.get_untracked().wake_up);
+    assert!(!m.house.home_settings.get_untracked().wake_up_on());
 }
 
 #[wasm_bindgen_test]
@@ -268,10 +268,10 @@ async fn sidebar_shows_wake_up_only_while_it_is_on() {
     let m = mount_shell();
     settle().await;
     assert!(find(&m.host, ".sidebar a[href=\"/wake-up\"]").is_none());
-    m.house.home_settings.update(|s| s.wake_up = true);
+    m.house.home_settings.update(|s| s.wake_up = Some(true));
     settle().await;
     assert_eq!(text(&m.host, ".sidebar a[href=\"/wake-up\"]"), "Wake-up");
-    m.house.home_settings.update(|s| s.wake_up = false);
+    m.house.home_settings.update(|s| s.wake_up = Some(false));
     settle().await;
     assert!(find(&m.host, ".sidebar a[href=\"/wake-up\"]").is_none());
 }

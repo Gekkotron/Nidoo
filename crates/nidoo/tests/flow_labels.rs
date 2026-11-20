@@ -754,7 +754,7 @@ async fn flow_label_unknown_label_fails_the_step() {
 
 fn wake_up_setting(on: bool) -> HomeSettings {
     HomeSettings {
-        wake_up: on,
+        wake_up: Some(on),
         ..HomeSettings::default()
     }
 }
@@ -784,7 +784,7 @@ async fn turning_wake_up_off_disables_labelled_flows() {
         .apply_home_settings(wake_up_setting(false))
         .await
         .expect("off");
-    assert!(!stored.wake_up);
+    assert!(!stored.wake_up_on());
     assert!(!enabled(&hub, "wake-up-1") && !enabled(&hub, "wake-up-2"));
     assert!(enabled(&hub, "other"));
 }
@@ -800,7 +800,7 @@ async fn turning_off_without_label_is_fine() {
         .apply_home_settings(wake_up_setting(false))
         .await
         .expect("off saves with no wake-up label");
-    assert!(!stored.wake_up);
+    assert!(!stored.wake_up_on());
     assert!(enabled(&hub, "other"));
 }
 

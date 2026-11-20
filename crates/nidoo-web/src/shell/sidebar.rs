@@ -265,7 +265,7 @@ pub fn Sidebar(
                             <span class="nav__label">{move || t(Key::Security)}</span>
                         </a>
                     </li>
-                    <Show when=move || house.home_settings.with(|s| s.wake_up)>
+                    <Show when=move || house.home_settings.with(|s| s.wake_up_on())>
                         <li>
                             <a class="sidebar__link" href="/wake-up" aria-current=current(Section::WakeUp)>
                                 <span class="nav__glyph" inner_html=ALARM_CLOCK></span>

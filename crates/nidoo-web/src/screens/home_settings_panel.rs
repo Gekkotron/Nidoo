@@ -246,7 +246,7 @@ pub fn draft_to_settings(draft: &Draft) -> Result<HomeSettings, Field> {
         energy_view: Default::default(),
         assist_min_c: None,
         assist_max_c: None,
-        wake_up: false,
+        wake_up: None,
     })
 }
 

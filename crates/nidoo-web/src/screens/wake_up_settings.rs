@@ -48,11 +48,11 @@ pub fn active_alarms(flows: &[FlowView]) -> usize {
 /// Stores `wake_up`: the switch moves at once, and goes back with a toast when the hub refuses.
 fn set_wake_up(house: House, on: bool) {
     let previous = house.home_settings.get_untracked();
-    if previous.wake_up == on {
+    if previous.wake_up_on() == on {
         return;
     }
     let settings = nidoo_api::HomeSettings {
-        wake_up: on,
+        wake_up: Some(on),
         ..previous.clone()
     };
     house.home_settings.set(settings.clone());
@@ -83,7 +83,7 @@ pub fn WakeUpSettingsPage() -> impl IntoView {
     let house = expect_context::<House>();
     let lang = use_lang();
     let asking = RwSignal::new(false);
-    let on = Memo::new(move |_| house.home_settings.with(|s| s.wake_up));
+    let on = Memo::new(move |_| house.home_settings.with(|s| s.wake_up_on()));
     let active = Memo::new(move |_| house.flows.with(|f| active_alarms(f)));
     let player = Memo::new(move |_| house.entities.with(playlist_player));
     let toggle = move |_| {

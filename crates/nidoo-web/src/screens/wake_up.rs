@@ -84,7 +84,7 @@ fn Empty(
 #[component]
 fn Gate(children: ChildrenFn) -> impl IntoView {
     let house = expect_context::<House>();
-    let on = Memo::new(move |_| house.home_settings.with(|s| s.wake_up));
+    let on = Memo::new(move |_| house.home_settings.with(|s| s.wake_up_on()));
     let has_player = Memo::new(move |_| house.entities.with(|e| playlist_player(e).is_some()));
     move || {
         if !on.get() {
@@ -587,7 +587,7 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
                 maxlength="2"
                 class=if minute { "wake-time__input wake-minute" } else { "wake-time__input wake-hour" }
                 aria-label=move || wake_text(lang(), label)
-                prop:value=format!("{:02}", current())
+                prop:value=move || format!("{:02}", current())
                 on:input=move |ev| {
                     if let Ok(v) = event_target_value(&ev).trim().parse::<u8>() {
                         let v = v.min(max);

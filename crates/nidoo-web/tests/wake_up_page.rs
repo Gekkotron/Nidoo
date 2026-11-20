@@ -155,7 +155,7 @@ fn mount(path: &str, wake_up: bool, with_pinson: bool, flows: Vec<FlowView>) -> 
         .unwrap();
     let house = House::new();
     house.home_settings.set(HomeSettings {
-        wake_up,
+        wake_up: Some(wake_up),
         ..Default::default()
     });
     house.entities.set(entities(with_pinson));
@@ -209,9 +209,10 @@ async fn settle() {
     tick().await;
 }
 
+/// The preview address as the browser sends it: the request builder ends the query with `&`.
 fn schedule_url(cron: &str) -> String {
     format!(
-        "/api/v1/schedule?cron={}&count=3",
+        "/api/v1/schedule?cron={}&count=3&",
         nidoo_web::api::encode_id(cron)
     )
 }
