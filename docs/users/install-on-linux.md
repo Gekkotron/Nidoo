@@ -128,6 +128,8 @@ The script runs `git pull --rebase`, then re-runs itself from the pulled version
 - the whole stack (`docker compose up -d --build`) when `data/bundled.json` or a `compose.override.yml` exists, or on a fresh install;
 - the hub only (`docker compose up -d --build hub`) when you have `data/hub.json` but no bundled stack, which means you run your own broker and database.
 
+Either way it then rebuilds [nidoo-sound](sound.md) if you have started it once: restarted if it is running, image only if it is stopped.
+
 Force one with `tools/update.sh --all` or `tools/update.sh --hub-only`. If you run your own broker and database but have not finished the first start yet, there is no `hub.json` to go by, so the script would pick the full stack: use `tools/update.sh --hub-only`. It ends by printing the last lines of the hub's log.
 
 

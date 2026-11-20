@@ -10,6 +10,10 @@
 # compose.override.yml exists, the hub only when data/hub.json
 # exists (own broker and database), the whole stack otherwise.
 #
+# Either way, nidoo-sound (the `sound` profile) is rebuilt too when this
+# install has its container: restarted if it was running, image only if it
+# was stopped. An install that never started it is left alone.
+#
 # Runs from the repo root whatever the current directory, so compose.yml and
 # ./data are the ones next to this checkout.
 set -euo pipefail
@@ -77,6 +81,8 @@ main() {
   echo "==> docker compose up -d --build${services[*]+ ${services[*]}}"
   docker compose up -d --build ${services[@]+"${services[@]}"}
 
+  update_sound
+
   # init may have added a login or the ACL to the bundled broker's files; a
   # running Mosquitto only reads them again on SIGHUP, which keeps every
   # client connected.
@@ -87,6 +93,20 @@ main() {
 
   echo "==> docker compose logs --tail 20 hub"
   docker compose logs --tail 20 hub
+}
+
+# nidoo-sound sits behind the `sound` profile, so the `up --build` above
+# never touches it: rebuild it here when this install has its container.
+update_sound() {
+  if [ -n "$(docker compose --profile sound ps --quiet sound)" ]; then
+    echo "==> nidoo-sound is running: rebuilding and restarting it"
+    echo "==> docker compose --profile sound up -d --build sound"
+    docker compose --profile sound up -d --build sound
+  elif [ -n "$(docker compose --profile sound ps --all --quiet sound)" ]; then
+    echo "==> nidoo-sound is stopped: rebuilding its image, leaving it stopped"
+    echo "==> docker compose --profile sound build sound"
+    docker compose --profile sound build sound
+  fi
 }
 
 # Runs a command through sudo when data/ is not writable by this user.

@@ -31,9 +31,17 @@ if [ "\${1:-}" = pull ] && [ -n "\${STUB_GIT_NEW_SCRIPT:-}" ]; then
   printf '%s\n' '#!/usr/bin/env bash' 'echo "NEW VERSION \$*"' > "$T/repo/tools/update.sh"
 fi
 STUB
+  # STUB_SOUND: unset (no nidoo-sound container), "running" or "stopped".
   cat > "$T/bin/docker" <<STUB
 #!/usr/bin/env bash
 echo "docker \$*" >> "$LOG"
+case "\$*" in
+  *" ps "*" sound")
+    case "\${STUB_SOUND:-}:\$*" in
+      running:*|stopped:*--all*) echo 0123abcd ;;
+    esac
+    ;;
+esac
 STUB
   chmod +x "$T/bin/git" "$T/bin/docker"
 }
@@ -173,6 +181,36 @@ test_no_reload_without_the_bundled_broker() {
   assert_no_log "$HUP"
 }
 
+SOUND_UP='docker compose --profile sound up -d --build sound'
+SOUND_BUILD='docker compose --profile sound build sound'
+
+test_rebuilds_a_running_sound() {
+  for flag in --all --hub-only; do
+    setup
+    STUB_SOUND=running run_update "$flag"
+    assert_log "$SOUND_UP"
+    assert_no_log "$SOUND_BUILD"
+    assert_out "nidoo-sound is running: rebuilding and restarting it"
+  done
+  [ "$(grep -n -Fx -- "$SOUND_UP" "$LOG" | cut -d: -f1)" -gt "$(grep -n -Fx -- "$HUB" "$LOG" | cut -d: -f1)" ] \
+    || fail "sound must be rebuilt after the hub"
+}
+
+test_rebuilds_a_stopped_sound_without_starting_it() {
+  setup
+  STUB_SOUND=stopped run_update
+  assert_log "$SOUND_BUILD"
+  assert_no_log "$SOUND_UP"
+  assert_out "nidoo-sound is stopped: rebuilding its image, leaving it stopped"
+}
+
+test_leaves_sound_alone_when_not_installed() {
+  setup
+  run_update
+  assert_no_log "$SOUND_UP"
+  assert_no_log "$SOUND_BUILD"
+}
+
 test_rejects_bad_arguments() {
   setup
   if (cd "$T/repo" && PATH="$T/bin:$PATH" bash tools/update.sh --bogus >/dev/null 2>&1); then fail "--bogus accepted"; fi
@@ -183,7 +221,9 @@ test_rejects_bad_arguments() {
 for t in test_moves_legacy_files test_never_overwrites_data test_bundled_runs_everything \
   test_override_runs_everything test_flags_win test_reexecs_after_pull \
   test_uses_sudo_when_data_is_not_writable test_reloads_the_bundled_broker \
-  test_no_reload_without_the_bundled_broker test_rejects_bad_arguments; do
+  test_no_reload_without_the_bundled_broker test_rebuilds_a_running_sound \
+  test_rebuilds_a_stopped_sound_without_starting_it test_leaves_sound_alone_when_not_installed \
+  test_rejects_bad_arguments; do
   echo "==> $t"
   "$t"
 done

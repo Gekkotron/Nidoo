@@ -106,9 +106,12 @@ docker compose up -d --build sound
 
 It uses its own image (`nidoo-sound:local`) and the `sound` profile, so
 neither `docker compose up -d --build hub` nor a whole-stack
-`docker compose up -d --build` (what `tools/update.sh` runs) restarts it.
-Update it yourself with the same command when you update ESPHome on the
-satellites: the two go together.
+`docker compose up -d --build` restarts it.
+
+`tools/update.sh` updates it once you have started it: a running `nidoo-sound`
+is rebuilt and restarted (the music stops for a few seconds), a stopped one
+only gets a fresh image. Update ESPHome on the satellites at the same time:
+the two go together. Without the script, update it with the command above.
 
 With the Compose install there is nothing to set: the service reads the
 hub's broker (host, port, user and password) and the hub's web address from
