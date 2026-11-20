@@ -536,6 +536,7 @@ fn player(state: &str, color: Option<&str>) -> EntityView {
             duration_s: (!idle).then_some(248.0),
             position_s: (!idle).then_some(30.0),
             position_at_ms: None,
+            ..Default::default()
         }),
     );
     e.capabilities.media_features = ["play", "pause", "next", "previous", "play_media"]

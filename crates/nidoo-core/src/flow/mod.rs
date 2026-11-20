@@ -15,6 +15,7 @@ pub mod sun;
 mod switch;
 pub mod template;
 mod validate;
+pub mod wake_up;
 
 pub use clock::{in_time_range, parse_clock};
 pub use duration::{

@@ -8,6 +8,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::components::A;
 use leptos_router::hooks::use_navigate;
 use nidoo_api::FlowView;
+use nidoo_core::flow::wake_up::is_managed;
 use nidoo_core::flow::{Flow, FlowMode};
 use nidoo_core::model::UNASSIGNED_AREA;
 
@@ -22,6 +23,7 @@ use crate::flow_list::{clear_stale_area, clear_stale_labels};
 use crate::house::House;
 use crate::i18n::flows::{FlowText, save_failed, use_flow_text};
 use crate::i18n::use_lang;
+use crate::i18n::wake_up::{WakeText, wake_text};
 use crate::icons::{CHECK, PENCIL, PLAY, X_MARK};
 use crate::nav::use_back;
 use crate::screens::flow_schedule::SaveBlocked;
@@ -52,8 +54,11 @@ fn EditControls(
     let house = expect_context::<House>();
     let navigate = use_navigate();
     let go_back = navigate.clone();
+    // A flow the Wake-up page writes asks once before it is saved from here.
+    let asking = RwSignal::new(false);
     // An empty id marks a flow that was never saved: there is nothing to go back to.
     let cancel = move |_| {
+        asking.set(false);
         if let Some(b) = blocked {
             b.0.set(false);
         }
@@ -69,6 +74,11 @@ fn EditControls(
         if saving.get_untracked() || blocked.is_some_and(|b| b.0.get_untracked()) {
             return;
         }
+        if !asking.get_untracked() && original.with_untracked(is_managed) {
+            asking.set(true);
+            return;
+        }
+        asking.set(false);
         saving.set(true);
         let mut snapshot = editor.draft.get_untracked();
         house
@@ -150,11 +160,22 @@ fn EditControls(
             on:click=cancel
             inner_html=X_MARK
         ></button>
+        <Show when=move || asking.get()>
+            <span class="flow-toolbar__confirm" role="status">
+                {move || wake_text(lang(), WakeText::SaveAnyway)}
+            </span>
+        </Show>
         <button
             type="button"
             class="btn btn--icon"
             aria-label=move || {
-                if saving.get() { t(FlowText::Saving) } else { t(FlowText::Save) }
+                if asking.get() {
+                    wake_text(lang(), WakeText::SaveAnyway)
+                } else if saving.get() {
+                    t(FlowText::Saving)
+                } else {
+                    t(FlowText::Save)
+                }
             }
             title=move || {
                 if saving.get() { t(FlowText::SavingEllipsis) } else { t(FlowText::Save) }

@@ -437,6 +437,24 @@ fn media_player(m: &Mapper<'_>) -> Result<Vec<Publish>, CommandError> {
             }
             json!({ "command": "play_media", "query": query })
         }
+        Command::PlayPlaylist {
+            playlist,
+            shuffle,
+            source,
+            fade_in_s,
+        } if supported("play_playlist") => {
+            let playlist = playlist.trim();
+            if playlist.is_empty() {
+                return Err(CommandError::OutOfRange("the playlist is empty".to_owned()));
+            }
+            json!({
+                "command": "play_playlist",
+                "playlist": playlist,
+                "shuffle": shuffle,
+                "source": source,
+                "fade_in_s": (*fade_in_s).min(600),
+            })
+        }
         _ => return Err(m.unsupported()),
     };
     Ok(vec![m.publish(

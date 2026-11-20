@@ -20,6 +20,7 @@ use crate::i18n::flows::{
 use crate::i18n::format::parse_decimal;
 use crate::i18n::settings::{SettingsText, select_option, set_mode, settings_text};
 use crate::i18n::states::{StateCtx, on_off, state_word};
+use crate::playlist_fields::PlaylistFields;
 
 /// The actions of `e`; a number entity's value starts at its current reading when it has one.
 pub fn entity_actions(e: &EntityView) -> Vec<Action> {
@@ -96,6 +97,7 @@ pub fn command_label(lang: Lang, c: &Command) -> String {
             device_text(lang, key).to_owned()
         }
         Command::PlayMedia { .. } => device_text(lang, DeviceText::PlayByName).to_owned(),
+        Command::PlayPlaylist { .. } => device_text(lang, DeviceText::PlayPlaylist).to_owned(),
         Command::Arm { mode, .. } => arm_action(lang, *mode),
         Command::Control { control, value } => match (control.as_str(), value) {
             ("locked", Some(Value::Bool(true))) => flow(FlowText::Lock),
@@ -225,7 +227,7 @@ pub enum FieldStyle {
 
 impl FieldStyle {
     /// `(label wrapper, caption, text input, select)` classes.
-    fn classes(self) -> (&'static str, &'static str, &'static str, &'static str) {
+    pub(crate) fn classes(self) -> (&'static str, &'static str, &'static str, &'static str) {
         match self {
             FieldStyle::Node => ("node-editor__field", "node-editor__label", "field", "field"),
             FieldStyle::Ambiance => (
@@ -518,6 +520,12 @@ pub fn CommandFields(
         {move || {
             if advanced_open.get() {
                 return advanced.as_ref().map(|v| v.run()).into_any();
+            }
+            if command.with(|c| matches!(c, Command::PlayPlaylist { .. })) {
+                return view! {
+                    <PlaylistFields command=command entity=entity write=write style=style />
+                }
+                .into_any();
             }
             let replaced = numbers_replaced.is_some_and(|r| r.get());
             current_params

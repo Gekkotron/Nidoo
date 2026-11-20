@@ -38,7 +38,14 @@ const VACUUM_ACTIONS: &[(&str, &str)] = &[
     ("locate", "locate"),
 ];
 /// The media player commands, in the order the app shows them.
-const MEDIA_FEATURES: &[&str] = &["play", "pause", "next", "previous", "play_media"];
+const MEDIA_FEATURES: &[&str] = &[
+    "play",
+    "pause",
+    "next",
+    "previous",
+    "play_media",
+    "play_playlist",
+];
 /// What a media player accepts when it publishes no `supported_features`.
 const DEFAULT_MEDIA_FEATURES: &[&str] = &["play", "pause", "next", "previous"];
 /// Alarm `supported_features` entry → mode.

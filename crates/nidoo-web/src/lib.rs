@@ -40,6 +40,7 @@ pub mod layout;
 pub mod live_icon;
 pub mod nav;
 pub mod override_editor;
+pub mod playlist_fields;
 pub mod qr;
 pub mod room_order;
 pub mod rooms;

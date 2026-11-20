@@ -56,19 +56,8 @@ pub fn to_cron(pick: &SchedulePick) -> String {
     }
 }
 
-/// `1-5` for three or more consecutive days, else a comma list.
 fn days_field(days: &[u8]) -> String {
-    let mut sorted: Vec<u8> = days.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
-    if sorted.len() >= 3 && sorted.windows(2).all(|w| w[1] == w[0] + 1) {
-        return format!("{}-{}", sorted[0], sorted[sorted.len() - 1]);
-    }
-    sorted
-        .iter()
-        .map(u8::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
+    nidoo_core::flow::wake_up::days_field(days)
 }
 
 fn number(field: &str, max: u8) -> Option<u8> {

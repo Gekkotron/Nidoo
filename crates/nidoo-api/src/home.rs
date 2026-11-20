@@ -36,6 +36,11 @@ pub struct HomeSettings {
     /// °C, the highest setpoint the assistant applies without asking (5 to 35); unset = 23.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assist_max_c: Option<f64>,
+    /// Shows the Wake-up page; turning it off turns off every flow labelled `wake-up`. Unset
+    /// reads as off, and a document without it keeps the hub's stored value, so a client that
+    /// does not know the field cannot turn the alarms off by saving the other settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_up: Option<bool>,
 }
 
 /// The assistant's range when the home settings leave it unset, in °C.
@@ -49,6 +54,11 @@ impl HomeSettings {
             self.assist_min_c.unwrap_or(ASSIST_DEFAULT_MIN_C),
             self.assist_max_c.unwrap_or(ASSIST_DEFAULT_MAX_C),
         )
+    }
+
+    /// Whether the Wake-up page is on (unset is off).
+    pub fn wake_up_on(&self) -> bool {
+        self.wake_up == Some(true)
     }
 }
 
@@ -95,6 +105,22 @@ mod tests {
                 "off_peak_history": [],
                 "energy_view": "classic"
             })
+        );
+    }
+
+    #[test]
+    fn home_settings_wake_up_defaults_off_and_unset() {
+        let s: HomeSettings = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(s.wake_up, None);
+        assert!(!s.wake_up_on());
+        let s: HomeSettings = serde_json::from_value(json!({"wake_up": true})).unwrap();
+        assert!(s.wake_up_on());
+        // Unset is left out of the document, so older clients and fixtures see what they did.
+        assert!(
+            serde_json::to_value(HomeSettings::default())
+                .unwrap()
+                .get("wake_up")
+                .is_none()
         );
     }
 

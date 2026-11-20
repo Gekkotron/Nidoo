@@ -17,7 +17,8 @@ there you get:
   library).
 - **flows**: a trigger or an `if` on the state (`playing`, `paused`, `idle`),
   the `title` or the `artist`; a device action that sends play, pause, next,
-  previous or a search.
+  previous, a search, or a playlist, with its output and fade-in (see
+  [Wake up to music](wake-up.md)).
 - the **assistant**: « mets pause », « chanson suivante », « joue … » and the
   others listed on the [Assistant](assistant.md) page.
 - the **MCP tools**: `send_command` with

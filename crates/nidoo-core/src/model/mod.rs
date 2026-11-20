@@ -20,7 +20,7 @@ pub use kind::{IGNORED_COMPONENTS, Kind};
 pub use placement::{Placement, SensorGroup, SensorSection};
 pub use state::{
     Availability, ClimateState, CoverState, EntityState, GenericState, GenericValue, LightState,
-    MediaPlayerState, StateValue, VacuumState, WaterHeaterState,
+    MediaChoice, MediaPlayerState, StateValue, VacuumState, WaterHeaterState,
 };
 pub use switch_type::SwitchType;
 pub use ui_override::{ENERGY_ROLES, LIGHT_ON_PRESETS, PatchError, SHOW_AS, UiOverride};

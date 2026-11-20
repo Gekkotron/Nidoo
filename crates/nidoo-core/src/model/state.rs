@@ -84,6 +84,23 @@ pub struct MediaPlayerState {
     pub duration_s: Option<f64>,
     pub position_s: Option<f64>,
     pub position_at_ms: Option<i64>,
+    /// The current output's id.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// The outputs a flow may pick.
+    #[serde(default)]
+    pub source_list: Vec<MediaChoice>,
+    /// The playlists a flow may play, Favorites first.
+    #[serde(default)]
+    pub playlists: Vec<MediaChoice>,
+}
+
+/// One entry of a media player's output or playlist menu.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct MediaChoice {
+    pub id: String,
+    pub name: String,
 }
 
 /// One named value of a generic entity.

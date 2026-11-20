@@ -988,7 +988,7 @@ async fn put_home_settings(
     body: Body<HomeSettings>,
 ) -> Result<Json<HomeSettings>, HttpError> {
     let Json(settings) = body?;
-    Ok(Json(hub.set_home_settings(settings)?))
+    Ok(Json(hub.apply_home_settings(settings).await?))
 }
 
 /// The alarm as one document (`200`): settings, state and warnings.

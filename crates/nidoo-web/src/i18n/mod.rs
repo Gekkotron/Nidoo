@@ -30,6 +30,7 @@ mod speech_input;
 mod speech_languages;
 pub mod states;
 mod system;
+pub mod wake_up;
 mod weather;
 
 pub use alarm::*;
@@ -256,6 +257,7 @@ pub enum Key {
     Devices,
     Appearance,
     Alarm,
+    WakeUp,
     NetworkPresence,
     AssistantVoice,
     AssistantListening,
@@ -407,6 +409,7 @@ impl Key {
         Key::Devices,
         Key::Appearance,
         Key::Alarm,
+        Key::WakeUp,
         Key::NetworkPresence,
         Key::AssistantVoice,
         Key::AssistantListening,
@@ -577,6 +580,7 @@ pub fn text(lang: Lang, key: Key) -> &'static str {
         Key::Devices => ("Devices", "Appareils"),
         Key::Appearance => ("Appearance", "Apparence"),
         Key::Alarm => ("Alarm", "Alarme"),
+        Key::WakeUp => ("Wake-up", "Réveil"),
         Key::NetworkPresence => ("Network presence", "Présence réseau"),
         Key::AssistantVoice => ("Voice", "Voix"),
         Key::AssistantListening => ("Listening", "Écoute"),
@@ -843,6 +847,7 @@ mod tests {
             | Key::Devices
             | Key::Appearance
             | Key::Alarm
+            | Key::WakeUp
             | Key::NetworkPresence
             | Key::AssistantVoice
             | Key::AssistantListening
@@ -912,7 +917,7 @@ mod tests {
         for &k in Key::ALL {
             assert!(listed(k));
         }
-        assert_eq!(Key::ALL.len(), 146);
+        assert_eq!(Key::ALL.len(), 147);
     }
     #[test]
     fn every_key_differs_between_languages() {

@@ -22,7 +22,7 @@ pub enum ActionResult {
     Offline,
     Failed(String),
     /// Done, and the media player's state its echo carried.
-    Echo(MediaPlayerState),
+    Echo(Box<MediaPlayerState>),
 }
 
 /// The French reason the hub gives when a device never echoed (see the hub's `reason_fr`).
@@ -1378,12 +1378,12 @@ mod tests {
     }
 
     fn echo(state: &str, title: Option<&str>, artist: Option<&str>) -> ActionResult {
-        ActionResult::Echo(nidoo_core::model::MediaPlayerState {
+        ActionResult::Echo(Box::new(nidoo_core::model::MediaPlayerState {
             state: Some(state.into()),
             title: title.map(Into::into),
             artist: artist.map(Into::into),
             ..Default::default()
-        })
+        }))
     }
 
     #[test]

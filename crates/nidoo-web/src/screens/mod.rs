@@ -38,4 +38,7 @@ pub mod sound_settings;
 pub mod speech_input;
 pub mod system_settings;
 pub mod system_supervisor;
+pub mod wake_up;
+pub mod wake_up_logic;
+pub mod wake_up_settings;
 pub mod weather;

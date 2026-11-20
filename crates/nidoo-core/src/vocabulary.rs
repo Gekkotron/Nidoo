@@ -355,6 +355,12 @@ pub fn actions(kind: Kind, component: &str, caps: &Capabilities) -> Vec<Action> 
                         optional: false,
                     }],
                 },
+                "play_playlist" => bare(Command::PlayPlaylist {
+                    playlist: "favorites".to_owned(),
+                    shuffle: true,
+                    source: None,
+                    fade_in_s: 60,
+                }),
                 action => bare(Command::MediaAction {
                     action: action.to_owned(),
                 }),
@@ -683,5 +689,27 @@ mod tests {
                 optional: false
             }]
         );
+    }
+
+    #[test]
+    fn media_player_play_playlist_action_has_defaults_and_no_params() {
+        let caps = Capabilities {
+            media_features: ["play", "play_playlist"]
+                .iter()
+                .map(|f| (*f).to_owned())
+                .collect(),
+            ..Default::default()
+        };
+        let list = actions(Kind::MediaPlayer, "media_player", &caps);
+        assert_eq!(
+            list[1].command,
+            Command::PlayPlaylist {
+                playlist: "favorites".into(),
+                shuffle: true,
+                source: None,
+                fade_in_s: 60,
+            }
+        );
+        assert!(list[1].params.is_empty());
     }
 }

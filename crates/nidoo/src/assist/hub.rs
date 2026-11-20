@@ -235,6 +235,7 @@ fn what(action: &Action, lang: Lang) -> (String, String) {
         }
         Action::Media { command, .. } => match command {
             Command::PlayMedia { query } => format!("play \"{query}\""),
+            Command::PlayPlaylist { playlist, .. } => format!("play playlist {playlist}"),
             Command::MediaAction { action } => match action.as_str() {
                 "pause" => "pause".into(),
                 "next" => "next".into(),
@@ -293,6 +294,9 @@ fn what_fr(action: &Action) -> (String, String) {
         Action::Media { entity, command } => {
             let what = match command {
                 Command::PlayMedia { query } => format!("jouer « {query} »"),
+                Command::PlayPlaylist { playlist, .. } => {
+                    format!("lancer la playlist {playlist}")
+                }
                 Command::MediaAction { action } => match action.as_str() {
                     "pause" => "pause".into(),
                     "next" => "suivante".into(),
@@ -669,7 +673,7 @@ impl Hub {
                             Some(state) if matches!(action, Action::Media { .. }) => {
                                 match state.value {
                                     StateValue::MediaPlayer(player) => {
-                                        (ActionResult::Echo(player), None)
+                                        (ActionResult::Echo(Box::new(player)), None)
                                     }
                                     _ => (ActionResult::Ok, None),
                                 }

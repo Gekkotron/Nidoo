@@ -29,7 +29,7 @@ pub fn echo_confirms(kind: Kind, cmd: &Command, before: &StateValue, after: &Sta
             "next" | "previous" => news,
             _ => true,
         },
-        Command::PlayMedia { .. } => playing && news,
+        Command::PlayMedia { .. } | Command::PlayPlaylist { .. } => playing && news,
         _ => true,
     }
 }
@@ -121,6 +121,20 @@ mod tests {
         assert!(!confirms(&play, &before, &p("paused", "B", Some(2000))));
         assert!(!confirms(&play, &before, &p("playing", "A", Some(1000))));
         assert!(confirms(&play, &before, &p("playing", "A", Some(2000))));
+        assert!(confirms(&play, &before, &p("playing", "B", None)));
+    }
+
+    #[test]
+    fn play_playlist_confirms_like_play_media() {
+        let before = p("playing", "A", Some(1000));
+        let play = Command::PlayPlaylist {
+            playlist: "favorites".to_owned(),
+            shuffle: true,
+            source: None,
+            fade_in_s: 0,
+        };
+        assert!(!confirms(&play, &before, &p("paused", "B", Some(2000))));
+        assert!(!confirms(&play, &before, &p("playing", "A", Some(1000))));
         assert!(confirms(&play, &before, &p("playing", "B", None)));
     }
 

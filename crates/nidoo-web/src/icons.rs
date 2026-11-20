@@ -230,6 +230,9 @@ const SCENE: &str =
     svg!(r#"<path d="m12 3 2.1 5.4L20 9l-4.5 3.8L17 19l-5-3.2L7 19l1.5-6.2L4 9l5.9-.6z"/>"#);
 const TAG: &str = svg!(r#"<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.2"/>"#);
 const UPDATE: &str = svg!(r#"<path d="M12 4v11m-4-4 4 4 4-4"/><path d="M5 20h14"/>"#);
+pub const ALARM_CLOCK: &str = svg!(
+    r#"<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2"/><path d="M5 3 2 6"/><path d="m19 3 3 3"/>"#
+);
 pub const SHIELD: &str = CHANNEL_SECURITY;
 pub const THERMOMETER: &str = CHANNEL_CLIMATE;
 pub const BOLT: &str = CHANNEL_ENERGY;

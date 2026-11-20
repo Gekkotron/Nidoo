@@ -246,16 +246,18 @@ pub fn draft_to_settings(draft: &Draft) -> Result<HomeSettings, Field> {
         energy_view: Default::default(),
         assist_min_c: None,
         assist_max_c: None,
+        wake_up: None,
     })
 }
 
 /// `edited` with the fields this panel does not edit taken from `stored`: the Energy view and
-/// the assistant's range.
+/// the assistant's range and the Wake-up switch.
 pub fn keep_stored_fields(stored: &HomeSettings, edited: HomeSettings) -> HomeSettings {
     HomeSettings {
         energy_view: stored.energy_view,
         assist_min_c: stored.assist_min_c,
         assist_max_c: stored.assist_max_c,
+        wake_up: stored.wake_up,
         ..edited
     }
 }

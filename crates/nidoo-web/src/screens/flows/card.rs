@@ -12,6 +12,7 @@ use crate::components::now::Now;
 use crate::flow_list::ListRow;
 use crate::i18n::flows::{FlowText, flow_text};
 use crate::i18n::use_lang;
+use crate::screens::wake_up_settings::ManagedNote;
 
 /// A card of the grid view. `menu` is the slot at the bottom end for the ⋯ menu.
 #[component]
@@ -29,6 +30,7 @@ pub fn FlowCard(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl I
     let restart = is_restart(&flow);
     let badge = invalid_badge(&flow);
     let icon = icon_view(&row);
+    let managed = nidoo_core::flow::wake_up::is_managed(&flow.definition).then(|| id.clone());
     let name_for_switch = name.clone();
     let run_flow = flow.clone();
     view! {
@@ -48,6 +50,7 @@ pub fn FlowCard(row: ListRow, #[prop(optional)] menu: Option<AnyView>) -> impl I
                 </span>
             </div>
             <p class="flow-tile__trigger">{row.trigger_text.clone()}</p>
+            {managed.map(|id| view! { <p class="flow-tile__managed"><ManagedNote id=id /></p> })}
             {(!row.labels.is_empty())
                 .then(|| view! { <div class="flow-tile__labels">{label_chips(&row)}</div> })}
             <div class="flow-tile__bottom">

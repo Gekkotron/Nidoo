@@ -12,6 +12,7 @@ pub enum Section {
     Ambiances,
     Energy,
     Security,
+    WakeUp,
     Climate,
     Alerts,
     Assistant,
@@ -93,6 +94,7 @@ pub fn section_for(path: &str, back: &[String]) -> Section {
         ["ambiances", ..] => Section::Ambiances,
         ["energy", ..] => Section::Energy,
         ["security", ..] => Section::Security,
+        ["wake-up", ..] => Section::WakeUp,
         ["climate", ..] => Section::Climate,
         ["weather", ..] | ["solar", ..] => Section::Overview,
         ["alerts", ..] => Section::Alerts,
@@ -163,6 +165,7 @@ pub fn crumbs(path: &str, lang: Lang, name_of: impl Fn(Lookup) -> Option<String>
         }
         ["energy", ..] => push(t(Key::Energy), String::new()),
         ["security", ..] => push(t(Key::Security), String::new()),
+        ["wake-up", ..] => push(t(Key::WakeUp), String::new()),
         ["climate", ..] => push(t(Key::Climate), String::new()),
         ["weather", ..] => push(t(Key::Weather), String::new()),
         ["solar", ..] => push(t(Key::Solar), String::new()),

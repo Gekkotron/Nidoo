@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use nidoo::config::Config;
 use nidoo::hub::{Hub, HubError};
-use nidoo_api::{ConnectionStatus, LabelEdit, RunStatus, RunView, WsEvent};
+use nidoo_api::{ConnectionStatus, HomeSettings, LabelEdit, RunStatus, RunView, WsEvent};
 use nidoo_core::command::Publish;
 use nidoo_core::flow::{Flow, FlowLabelCatalog, LabelAction, LabelColor};
 use serde_json::json;
@@ -750,4 +750,73 @@ async fn flow_label_unknown_label_fails_the_step() {
     let last = run.steps.last().expect("a step");
     assert_eq!(last.node, "go");
     assert_eq!(last.detail, "unknown label `nope`");
+}
+
+fn wake_up_setting(on: bool) -> HomeSettings {
+    HomeSettings {
+        wake_up: Some(on),
+        ..HomeSettings::default()
+    }
+}
+
+/// A hub whose catalog has the `wake-up` label and two enabled flows carrying it.
+fn with_alarms() -> (Arc<Hub>, mpsc::Receiver<Publish>) {
+    let (hub, rx) = hub();
+    hub.ingest(
+        LABELS_TOPIC,
+        json!({"labels": [{"id": "wake-up", "name": "Wake-up", "color": "amber"}], "choices": []})
+            .to_string()
+            .as_bytes(),
+    );
+    ingest_flow(&hub, "wake-up-1", true, &["wake-up"]);
+    ingest_flow(&hub, "wake-up-2", true, &["wake-up"]);
+    ingest_flow(&hub, "other", true, &[]);
+    (hub, rx)
+}
+
+#[tokio::test]
+async fn turning_wake_up_off_disables_labelled_flows() {
+    let (hub, _rx) = with_alarms();
+    hub.apply_home_settings(wake_up_setting(true))
+        .await
+        .expect("on");
+    let stored = hub
+        .apply_home_settings(wake_up_setting(false))
+        .await
+        .expect("off");
+    assert!(!stored.wake_up_on());
+    assert!(!enabled(&hub, "wake-up-1") && !enabled(&hub, "wake-up-2"));
+    assert!(enabled(&hub, "other"));
+}
+
+#[tokio::test]
+async fn turning_off_without_label_is_fine() {
+    let (hub, _rx) = hub();
+    ingest_flow(&hub, "other", true, &[]);
+    hub.apply_home_settings(wake_up_setting(true))
+        .await
+        .expect("on");
+    let stored = hub
+        .apply_home_settings(wake_up_setting(false))
+        .await
+        .expect("off saves with no wake-up label");
+    assert!(!stored.wake_up_on());
+    assert!(enabled(&hub, "other"));
+}
+
+#[tokio::test]
+async fn turning_on_changes_no_flow() {
+    let (hub, mut rx) = with_alarms();
+    ingest_flow(&hub, "wake-up-3", false, &["wake-up"]);
+    drain(&mut rx);
+    hub.apply_home_settings(wake_up_setting(true))
+        .await
+        .expect("on");
+    assert!(enabled(&hub, "wake-up-1") && enabled(&hub, "wake-up-2"));
+    assert!(!enabled(&hub, "wake-up-3"));
+    let topics: Vec<String> = drain(&mut rx).into_iter().map(|p| p.topic).collect();
+    assert!(
+        topics.iter().all(|t| !t.starts_with("nidoo/automation/")),
+        "{topics:?}"
+    );
 }
