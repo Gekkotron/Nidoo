@@ -272,6 +272,17 @@
   container: climate / inline-size;
 }
 
+/* The AC above the dial, smaller in a narrow tile so the dial and the − / + buttons still fit. */
+.climate__picture .live-icon--picture {
+  width: 110px;
+}
+
+@container climate (max-width: 180px) {
+  .climate__picture .live-icon--picture {
+    width: 72px;
+  }
+}
+
 .dial {
   width: min(100%, 170px);
   height: auto;

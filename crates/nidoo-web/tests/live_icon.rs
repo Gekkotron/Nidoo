@@ -360,3 +360,69 @@ async fn picture_ids_differ_from_the_tile() {
     assert_eq!(ids.len(), total, "duplicate ids");
     assert!(count(&host, "mask") >= 2);
 }
+
+#[wasm_bindgen_test]
+async fn climate_card_shows_the_unit_above_the_dial() {
+    let host = mount(climate("cool"));
+    tick().await;
+    assert!(has(
+        &host,
+        ".climate > .climate__picture svg.live-icon--picture.live-icon--cool"
+    ));
+    let climate = host.query_selector(".climate").unwrap().unwrap();
+    let first = climate.first_element_child().unwrap();
+    assert_eq!(first.class_name(), "climate__picture");
+    let dial = host.query_selector(".climate .dial").unwrap().unwrap();
+    let after = first.compare_document_position(&dial);
+    assert_ne!(after & web_sys::Node::DOCUMENT_POSITION_FOLLOWING, 0);
+}
+
+#[wasm_bindgen_test]
+async fn offline_picture_is_off() {
+    let mut e = climate("cool");
+    e.state.availability = Availability::Offline;
+    let host = mount(e);
+    tick().await;
+    assert!(has(&host, ".climate__picture svg.live-icon--off"));
+    assert_eq!(count(&host, ".climate__picture .live-icon__flow"), 0);
+}
+
+#[wasm_bindgen_test]
+async fn tile_and_picture_move_together() {
+    let host = mount(climate("cool"));
+    tick().await;
+    sleep_ms(250).await;
+    // Both reads happen in one task, so no frame can run between them.
+    let tile = host
+        .query_selector(".card__tile .live-icon__flow")
+        .unwrap()
+        .unwrap()
+        .get_attribute("stroke-dashoffset");
+    let picture = host
+        .query_selector(".climate__picture .live-icon__flow")
+        .unwrap()
+        .unwrap()
+        .get_attribute("stroke-dashoffset");
+    assert!(tile.is_some());
+    assert_eq!(tile, picture);
+}
+
+#[wasm_bindgen_test]
+async fn narrow_card_shrinks_the_picture() {
+    with_styles();
+    let host = mount(climate("cool"));
+    host.set_attribute("style", "width: 160px").unwrap();
+    tick().await;
+    let picture = host
+        .query_selector(".climate__picture svg")
+        .unwrap()
+        .unwrap();
+    assert!(picture.get_bounding_client_rect().width() <= 72.0);
+    let right = host.get_bounding_client_rect().right();
+    let buttons = host.query_selector_all(".climate__foot button").unwrap();
+    assert_eq!(buttons.length(), 2);
+    for i in 0..buttons.length() {
+        let button: web_sys::Element = buttons.item(i).unwrap().unchecked_into();
+        assert!(button.get_bounding_client_rect().right() <= right + 0.5);
+    }
+}

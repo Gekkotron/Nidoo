@@ -1,6 +1,8 @@
 //! The live icons themselves: a 24-unit SVG per entity, in the hub's line style, whose moving
 //! parts read their phase from the shared frame loop. Only those attributes change each frame.
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use leptos::prelude::*;
 use nidoo_api::EntityView;
 use nidoo_core::model::{Availability, Kind, StateValue};
@@ -49,8 +51,12 @@ fn available(entity: &EntityView) -> bool {
     entity.state.availability != Availability::Offline
 }
 
-/// An id usable inside `url(#…)`, unique per entity, so two cards on a page do not share a mask.
-fn svg_id(prefix: &str, entity_id: &str) -> String {
+/// Numbers each drawing, so its ids stay unique on the page.
+static NEXT_DRAWING: AtomicU32 = AtomicU32::new(0);
+
+/// An id usable inside `url(#…)`, unique per drawing: a tile, the card's picture and a sheet's
+/// picture of one entity can all be on the page, and a repeated id would point at the first one.
+fn svg_id(prefix: &str, entity_id: &str, drawing: u32) -> String {
     let safe: String = entity_id
         .chars()
         .map(|c| match c {
@@ -59,7 +65,7 @@ fn svg_id(prefix: &str, entity_id: &str) -> String {
             _ => '-',
         })
         .collect();
-    format!("{prefix}-{safe}")
+    format!("{prefix}-{safe}-{drawing}")
 }
 
 /// A phase for `part` of `entity` when it moves, otherwise the still value.
@@ -104,12 +110,11 @@ fn AcIcon(entity: EntityView, #[prop(optional)] picture: bool) -> impl IntoView 
     } else {
         "live-icon__vane"
     };
-    let (air_prefix, fade_prefix) = if picture {
-        ("live-air-picture", "live-fade-picture")
-    } else {
-        ("live-air", "live-fade")
-    };
-    let (mask, fade) = (svg_id(air_prefix, id), svg_id(fade_prefix, id));
+    let drawing = NEXT_DRAWING.fetch_add(1, Ordering::Relaxed);
+    let (mask, fade) = (
+        svg_id("live-air", id, drawing),
+        svg_id("live-fade", id, drawing),
+    );
     let view_box = if picture { "1 2.5 22 22" } else { "0 0 24 24" };
     let air = (on && !dry).then(|| {
         let lines = COLUMNS
