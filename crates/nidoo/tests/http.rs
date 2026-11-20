@@ -1499,6 +1499,131 @@ async fn delete_flow_204_then_404() {
     assert_eq!(del.status(), StatusCode::NOT_FOUND);
 }
 
+/// An enabled alarm flow (`wake-up-1`) on a media player the house knows, saved through the API.
+async fn server_with_alarm() -> Server {
+    let server = Server::start_with_flows().await;
+    server.hub.ingest("nidoo/flow_labels", b"");
+    server.hub.ingest(
+        "nidoo/media_player/music_node/player/config",
+        json!({
+            "name": "Music",
+            "unique_id": "music_node_player",
+            "state_topic": "music/player/state",
+            "command_topic": "music/player/set",
+            "supported_features": ["play", "pause", "next", "previous", "play_media", "play_playlist"],
+            "device": {"identifiers": ["music_node"], "name": "Music server"}
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    server.hub.ingest(
+        "nidoo/flow_labels",
+        json!({"labels": [{"id": "wake-up", "name": "Wake-up", "color": "amber"}], "choices": []})
+            .to_string()
+            .as_bytes(),
+    );
+    let settings = nidoo_core::flow::wake_up::WakeUp {
+        player: "music_node_player".to_owned(),
+        ..Default::default()
+    };
+    let flow = nidoo_core::flow::wake_up::to_flow("wake-up-1", "Morning", true, &settings);
+    let put = server
+        .client
+        .put(server.url("/api/v1/flows/wake-up-1"))
+        .json(&flow)
+        .send()
+        .await
+        .expect("PUT");
+    let status = put.status();
+    assert_eq!(status, StatusCode::OK, "{:?}", put.text().await);
+    server
+}
+
+async fn post_wake_up(server: &Server, id: &str, body: Value) -> reqwest::Response {
+    server
+        .client
+        .post(server.url(&format!("/api/v1/flows/{id}/wake-up")))
+        .json(&body)
+        .send()
+        .await
+        .expect("POST")
+}
+
+#[tokio::test]
+async fn wake_up_time_is_saved() {
+    let server = server_with_alarm().await;
+    let res = post_wake_up(
+        &server,
+        "wake-up-1",
+        json!({"hour": 6, "minute": 15, "days": [6, 0]}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let one: Value = server
+        .get("/api/v1/flows/wake-up-1")
+        .await
+        .json()
+        .await
+        .expect("json");
+    let def = &one["definition"];
+    assert_eq!(def["wake_up"]["hour"], 6);
+    assert_eq!(def["wake_up"]["minute"], 15);
+    assert_eq!(def["wake_up"]["days"], json!([0, 6]));
+    assert_eq!(def["nodes"][0]["params"]["cron"], "15 6 * * 0,6");
+    assert_eq!(def["enabled"], true);
+}
+
+#[tokio::test]
+async fn wake_up_time_unknown_flow_is_404() {
+    let server = server_with_alarm().await;
+    let res = post_wake_up(
+        &server,
+        "nope",
+        json!({"hour": 6, "minute": 15, "days": [1]}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn wake_up_time_on_a_plain_flow_is_422() {
+    let server = Server::start_with_flows().await;
+    server
+        .client
+        .put(server.url("/api/v1/flows/living"))
+        .json(&reference_flow())
+        .send()
+        .await
+        .expect("PUT");
+    let res = post_wake_up(
+        &server,
+        "living",
+        json!({"hour": 6, "minute": 15, "days": [1]}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn wake_up_time_without_days_is_422() {
+    let server = server_with_alarm().await;
+    let res = post_wake_up(
+        &server,
+        "wake-up-1",
+        json!({"hour": 6, "minute": 15, "days": []}),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let one: Value = server
+        .get("/api/v1/flows/wake-up-1")
+        .await
+        .json()
+        .await
+        .expect("json");
+    assert_eq!(one["definition"]["wake_up"]["hour"], 7);
+    assert_eq!(one["definition"]["wake_up"]["days"], json!([1, 2, 3, 4, 5]));
+}
+
 #[tokio::test]
 async fn enabled_and_run_endpoints() {
     let server = Server::start_with_flows().await;

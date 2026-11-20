@@ -88,3 +88,8 @@ Turning Wake-up off in Settings hides the menu entry and switches **every**
 alarm off. If some are on, Nidoo asks first and says how many will be turned
 off. Turning Wake-up on again changes no alarm: they stay off until you switch
 them on one by one.
+
+## From the phone
+
+The Nidoo app lists the alarms under **Routines → Wake-up** and can change the
+time and the days of each one. Everything else is set on this page.

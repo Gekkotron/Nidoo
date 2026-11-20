@@ -66,6 +66,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
             get(get_flow).put(put_flow).delete(delete_flow),
         )
         .route("/flows/{id}/enabled", post(set_flow_enabled))
+        .route("/flows/{id}/wake-up", post(set_wake_up_time))
         .route("/flows/{id}/area", post(set_flow_area))
         .route("/flows/{id}/labels", post(set_flow_labels))
         .route("/flow-labels", get(flow_labels).post(edit_flow_labels))
@@ -725,6 +726,24 @@ async fn set_flow_enabled(
 ) -> Result<Json<FlowView>, HttpError> {
     let Json(EnabledBody { enabled }) = body?;
     Ok(Json(hub.set_flow_enabled(&id, enabled).await?))
+}
+
+/// The `POST /flows/{id}/wake-up` body: weekdays are 0 = Sunday … 6 = Saturday.
+#[derive(serde::Deserialize)]
+struct WakeUpTimeBody {
+    hour: u8,
+    minute: u8,
+    days: Vec<u8>,
+}
+
+/// Changes a wake-up alarm's time and days and returns the flow as it now stands.
+async fn set_wake_up_time(
+    State(hub): HubState,
+    Path(id): Path<String>,
+    body: Body<WakeUpTimeBody>,
+) -> Result<Json<FlowView>, HttpError> {
+    let Json(WakeUpTimeBody { hour, minute, days }) = body?;
+    Ok(Json(hub.set_wake_up_time(&id, hour, minute, &days).await?))
 }
 
 /// The `POST /flows/{id}/area` body; `null` clears the room. The key is required (`{}` or a
