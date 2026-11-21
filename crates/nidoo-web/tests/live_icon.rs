@@ -361,6 +361,17 @@ async fn picture_ids_differ_from_the_tile() {
     assert!(count(&host, "mask") >= 2);
 }
 
+/// A gradient only reads the stops that are its direct children; Leptos wraps a static `<stop>`
+/// built in `view!` in a `<g>`, which leaves the fade with no stops, so the mask hides the air.
+#[wasm_bindgen_test]
+async fn airflow_fade_keeps_its_stops() {
+    let host = mount_picture(climate("heat"));
+    tick().await;
+    assert_eq!(count(&host, "linearGradient"), 1);
+    assert_eq!(count(&host, "linearGradient > stop"), 2);
+    assert_eq!(count(&host, "mask > rect"), 1);
+}
+
 #[wasm_bindgen_test]
 async fn climate_card_shows_the_unit_above_the_dial() {
     let host = mount(climate("cool"));
