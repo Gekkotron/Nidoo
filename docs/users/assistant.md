@@ -51,8 +51,11 @@ The percentage goes from 1 to 100; outside that the assistant answers with the r
 
 - an exact value: « mets le salon à 20 », « règle la chambre de Léa à 19,5 degrés »
 - a change from the current setpoint: « monte le chauffage d'un degré au bureau », « baisse un peu le chauffage du salon » (a bare "monte" or "baisse" is 1 °C, "un peu" is 0,5 °C), « chauffage +2 au bureau »
+- a feeling, in French only: « j'ai froid », « il fait froid », « ça caille » raise the room's setpoint by 0,5 °C; « j'ai chaud », « il fait chaud » lower it by 0,5 °C. A word like « trop » is ignored. The room is the one you name (« j'ai froid au salon »); else the satellite's room when it has active heating; else the assistant asks « Dans quelle pièce ? » among the heated rooms. Typed on the web with no room, it uses the only heated room, else asks. A question (« il fait froid au salon ? ») or « dehors » reads the temperature instead, and a negation (« je n'ai pas froid »), a value, or a device word (« la lumière chaude ») keeps the old behaviour.
 
 A change starts from what the room's devices are really set to, a temperature set by hand included. If they disagree (two units, one changed by hand), the assistant names the values and asks for a temperature. When the room's current reading is fresh and already past the setpoint, a raise starts from the reading if it is higher, and a lower from the reading if it is lower: with a setpoint of 15,5 °C in a room at 18 °C, "monte" gives 19 °C.
+
+In French, a sentence that starts with « mais » (a common mishearing of « mets ») is read as « mets ».
 
 The setpoint holds until the zone's next scheduled change, at most the zone's manual hold (4 h by default): the same hold a change made by hand on the device gets. It replaces a temperature set by hand on a unit of the zone, so every unit follows it. "Allume le chauffage" alone is not a setpoint; the assistant asks for a temperature.
 
