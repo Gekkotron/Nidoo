@@ -1296,6 +1296,11 @@ button.switch:disabled {
       hsl(300 100% 50%),
       hsl(360 100% 50%)
     );
+  /* Lay the gradients out on the border box, the box the pointer maths
+     measures: the default padding-box origin tiles them under the
+     translucent border, leaking the opposite edge's hue around the rim. */
+  background-origin: border-box;
+  background-repeat: no-repeat;
   box-sizing: border-box;
   cursor: crosshair;
   touch-action: none;
