@@ -77,6 +77,15 @@ fn phase(entity_id: &str, part: &str, period_ms: f64, moving: bool, still: f64) 
     }
 }
 
+/// The airflow's fade and the mask it paints, as markup: Leptos wraps a `<stop>` built in
+/// `view!` in a `<g>`, and a gradient ignores stops that are not its direct children, so the
+/// fade would paint nothing and the mask would hide all the air. The ids come from `svg_id`.
+fn air_defs_markup(fade: &str, mask: &str) -> String {
+    format!(
+        r##"<linearGradient id="{fade}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient><mask id="{mask}" maskUnits="userSpaceOnUse" x="0" y="13" width="24" height="11"><rect x="0" y="13" width="24" height="11" fill="url(#{fade})" stroke="none"/></mask>"##
+    )
+}
+
 /// The x of each airflow line and drop, under the unit.
 const COLUMNS: [f64; 3] = [7.0, 12.0, 17.0];
 
@@ -134,15 +143,7 @@ fn AcIcon(entity: EntityView, #[prop(optional)] picture: bool) -> impl IntoView 
             })
             .collect_view();
         view! {
-            <defs>
-                <linearGradient id=fade.clone() x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#fff"></stop>
-                    <stop offset="1" stop-color="#000"></stop>
-                </linearGradient>
-                <mask id=mask.clone() maskUnits="userSpaceOnUse" x="0" y="13" width="24" height="11">
-                    <rect x="0" y="13" width="24" height="11" fill=format!("url(#{fade})") stroke="none"></rect>
-                </mask>
-            </defs>
+            <defs inner_html=air_defs_markup(&fade, &mask)></defs>
             <g mask=format!("url(#{mask})")>{lines}</g>
         }
     });
