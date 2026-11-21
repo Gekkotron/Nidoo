@@ -499,6 +499,8 @@ pub fn AssistChat(#[prop(optional)] compact: bool) -> impl IntoView {
                     received.try_set(Some((id.clone(), js_sys::Date::now())));
                     turns.try_update(|list| add_turns(list, vec![turn]));
                     selected.try_set(Some(id));
+                    // The sentence and its reply, wherever the conversation was scrolled to.
+                    show_newest();
                     if kept.try_get_untracked() == Some(None) {
                         kept.try_set(Some(true));
                     }
