@@ -42,6 +42,18 @@ Open **Wake-up** and choose **Add an alarm**.
 The list shows each alarm with its time, weekdays, playlist, speakers, fade-in
 and next ring. The switch on a row turns that alarm on or off.
 
+## Duplicate an alarm
+
+To make a second alarm close to one you have (the same music at another time,
+or for the weekend), open the saved alarm and press **Duplicate**. A new alarm
+opens with the same time, days, playlist, output, speakers, fade-in and switch.
+A name you typed gets « (copy) » added (« (copie) » in French); a default name
+such as « Wake-up 07:00 » stays a default and follows the copy's time.
+
+Change what differs and press **Save**. Nothing is written until then: the copy
+is saved as a new alarm, and the original stays as it was. A new alarm that is
+not saved yet has no **Duplicate** button.
+
 ## Speakers
 
 When the output is the Nidoo speakers, the editor lists every speaker with a

@@ -168,9 +168,9 @@ the container (the satellites' settings stay in `data/sound/`).
    satellite at once; the satellite then shows in that room and speaks there.
    Setting the room on its own page works too: the satellite's name opens its
    **Music volume** page, and its room is the satellite's room.
-5. To rename it, rename its **Music volume** entity (from the satellite's own
-   page). Its card in **Settings → Assistant → Sound** shows that name, and
-   `nidoo-sound`'s HTTP API gives it to other apps.
+5. To rename it, open its own page (the satellite's name opens it) and change
+   the name there. Its card in **Settings → Assistant → Sound** follows, and
+   `nidoo-sound`'s HTTP API gives that name to other apps.
 
 A Mac can be a satellite too, with no hardware: see
 [A Mac as a satellite](mac-satellite.md).
