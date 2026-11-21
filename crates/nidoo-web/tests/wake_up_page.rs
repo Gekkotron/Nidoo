@@ -320,6 +320,61 @@ async fn new_alarm_saves_a_managed_flow() {
 }
 
 #[wasm_bindgen_test]
+async fn duplicate_saves_a_copy_under_a_new_id() {
+    let stub = FetchStub::install();
+    stub.reply("GET", LABELS_URL, 200, EMPTY_LABELS);
+    stub.reply("POST", LABELS_URL, 200, EMPTY_LABELS);
+    let mut weekend = alarm();
+    weekend.days = vec![0, 6];
+    let original = to_flow("wake-up-1", "Weekend", false, &weekend);
+    let outcome = FlowWriteOutcome {
+        flow: view_of(to_flow("wake-up-2", "Weekend (copy)", false, &weekend)),
+        warning: None,
+    };
+    stub.reply(
+        "PUT",
+        "/api/v1/flows/wake-up-2",
+        200,
+        &serde_json::to_string(&outcome).unwrap(),
+    );
+    let m = mount("/wake-up/wake-up-1", true, true, vec![view_of(original)]);
+    settle().await;
+    // A new alarm has no Duplicate; a saved one does.
+    one(&m.host, ".wake-duplicate").click();
+    settle().await;
+    let location = web_sys::window().unwrap().location();
+    assert_eq!(location.pathname().unwrap(), "/wake-up/new");
+    assert_eq!(location.search().unwrap(), "?from=wake-up-1");
+    let name: web_sys::HtmlInputElement = one(&m.host, ".wake-editor__name").unchecked_into();
+    assert_eq!(name.value(), "Weekend (copy)");
+    assert!(find(&m.host, ".wake-duplicate").is_none());
+    assert!(find(&m.host, ".wake-delete").is_none());
+    let picked: Vec<String> = all(&m.host, ".wake-day.chip--selected")
+        .iter()
+        .map(|c| c.text_content().unwrap_or_default())
+        .collect();
+    assert_eq!(picked.len(), 2, "{picked:?}");
+    one(&m.host, ".wake-save").click();
+    let put = stub.wait_for("PUT").await.expect("a PUT");
+    assert_eq!(put.url, "/api/v1/flows/wake-up-2");
+    let flow: Flow = serde_json::from_str(&put.body).unwrap();
+    assert_eq!(flow.name, "Weekend (copy)");
+    assert!(!flow.enabled);
+    let body: serde_json::Value = serde_json::from_str(&put.body).unwrap();
+    assert_eq!(body["wake_up"]["days"], serde_json::json!([0, 6]));
+    assert_eq!(body["wake_up"]["muted"], serde_json::json!(["living_mute"]));
+    // The original is untouched: only the copy was written.
+    assert!(
+        stub.requests()
+            .iter()
+            .all(|r| r.method != "PUT" || r.url == "/api/v1/flows/wake-up-2")
+    );
+    settle().await;
+    assert_eq!(m.house.flows.get_untracked().len(), 2);
+    drop(m);
+}
+
+#[wasm_bindgen_test]
 async fn no_day_blocks_save() {
     let stub = FetchStub::install();
     let m = mount("/wake-up/new", true, true, Vec::new());

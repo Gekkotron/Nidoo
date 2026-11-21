@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use leptos_router::NavigateOptions;
 use leptos_router::components::A;
-use leptos_router::hooks::{use_navigate, use_params_map};
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 use nidoo_api::{FlowView, LabelEdit};
 use nidoo_core::flow::wake_up::{FADE_CHOICES, LABEL, next_id, read, to_flow, validate};
 use nidoo_core::model::{MediaPlayerState, StateValue};
@@ -367,7 +367,8 @@ async fn ensure_label(house: House, lang: Lang) -> Result<(), String> {
     Ok(())
 }
 
-/// What the editor opens on: a new alarm, or the saved one with its name and switch.
+/// What the editor opens on: a new alarm, the saved one with its name and switch, or a new
+/// alarm copied from a saved one.
 #[derive(Clone)]
 enum Opening {
     New,
@@ -376,56 +377,85 @@ enum Opening {
         enabled: bool,
         settings: nidoo_core::flow::wake_up::WakeUp,
     },
+    Copy {
+        name: String,
+        enabled: bool,
+        settings: nidoo_core::flow::wake_up::WakeUp,
+    },
 }
 
-/// The editor at `/wake-up/:id` (`new` for a new alarm).
+/// The name, switch and settings of saved alarm `id`, when it is in the list and readable.
+fn saved_alarm(
+    list: &[FlowView],
+    id: &str,
+) -> Option<(String, bool, nidoo_core::flow::wake_up::WakeUp)> {
+    let f = list.iter().find(|f| f.definition.id == id)?;
+    match read(&f.definition)? {
+        Ok(settings) => Some((f.definition.name.clone(), f.definition.enabled, settings)),
+        Err(_) => None,
+    }
+}
+
+/// Where Duplicate leads from alarm `id`: a new alarm copied from it.
+pub fn duplicate_href(id: &str) -> String {
+    format!("/wake-up/new?from={}", api::encode_id(id))
+}
+
+/// The editor at `/wake-up/:id` (`new` for a new alarm, `new?from=<id>` for a copy of one).
 #[component]
 pub fn WakeUpEditorScreen() -> impl IntoView {
     let house = expect_context::<House>();
     let lang = use_lang();
     let params = use_params_map();
+    let query = use_query_map();
     let id = Memo::new(move |_| params.with(|p| p.get("id").unwrap_or_default()));
-    // The alarm exists once its flow is in the house list; the editor is built then and kept,
-    // so a push about another flow does not reset what is being typed.
+    let from = Memo::new(move |_| {
+        query
+            .with(|q| q.get("from"))
+            .filter(|f| !f.is_empty() && id.get() == "new")
+    });
+    // The alarm (or the one copied) exists once its flow is in the house list; the editor is
+    // built then and kept, so a push about another flow does not reset what is being typed. The
+    // address is part of the key: Duplicate moves from one editor to another on the same route.
     let found = Memo::new(move |_| {
         let id = id.get();
-        if id == "new" {
-            return Some(true);
-        }
-        house.flows.with(|list| {
+        let source = match from.get() {
+            Some(source) => source,
+            None if id == "new" => return Some((id, None, true)),
+            None => id.clone(),
+        };
+        let readable = house.flows.with(|list| {
             list.iter()
-                .find(|f| f.definition.id == id)
+                .find(|f| f.definition.id == source)
                 .map(|f| matches!(read(&f.definition), Some(Ok(_))))
-        })
+        })?;
+        Some((id, from.get(), readable))
     });
     view! {
         <section class="wake-page">
             <BackLink />
             <Gate>
                 {move || match found.get() {
-                    Some(true) => {
-                        let opening = if id.get_untracked() == "new" {
-                            Opening::New
-                        } else {
-                            house
-                                .flows
-                                .with_untracked(|list| {
-                                    list.iter()
-                                        .find(|f| f.definition.id == id.get_untracked())
-                                        .and_then(|f| match read(&f.definition) {
-                                            Some(Ok(settings)) => {
-                                                Some(Opening::Saved {
-                                                    name: f.definition.name.clone(),
-                                                    enabled: f.definition.enabled,
-                                                    settings,
-                                                })
-                                            }
-                                            _ => None,
-                                        })
-                                })
-                                .unwrap_or(Opening::New)
-                        };
-                        view! { <Editor id=id.get_untracked() opening=opening /> }.into_any()
+                    Some((id, from, true)) => {
+                        let opening = house.flows.with_untracked(|list| {
+                            match (id.as_str(), from) {
+                                ("new", None) => None,
+                                ("new", Some(source)) => saved_alarm(list, &source)
+                                    .map(|(name, enabled, settings)| Opening::Copy {
+                                        name,
+                                        enabled,
+                                        settings,
+                                    }),
+                                (id, _) => saved_alarm(list, id)
+                                    .map(|(name, enabled, settings)| Opening::Saved {
+                                        name,
+                                        enabled,
+                                        settings,
+                                    }),
+                            }
+                            .unwrap_or(Opening::New)
+                        });
+                        view! { <Editor id=id opening=opening /> }.into_any()
                     }
                     _ => {
                         view! {
@@ -448,19 +478,19 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
     let toasts = use_context::<Toasts>();
     let state = player_state(house);
     let is_new = id == "new";
+    let sats = house.entities.with_untracked(satellites);
     let draft = RwSignal::new(match &opening {
-        Opening::New => state
-            .with_untracked(|s| Draft::new_alarm(s, &house.entities.with_untracked(satellites))),
+        Opening::New => state.with_untracked(|s| Draft::new_alarm(s, &sats)),
         Opening::Saved {
             name,
             enabled,
             settings,
-        } => Draft::from_saved(
+        } => Draft::from_saved(name, *enabled, settings, &sats),
+        Opening::Copy {
             name,
-            *enabled,
+            enabled,
             settings,
-            &house.entities.with_untracked(satellites),
-        ),
+        } => Draft::copy_of(untrack(lang), name, *enabled, settings, &sats),
     });
     let saving = RwSignal::new(false);
     let no_day = Memo::new(move |_| draft.with(|d| d.days.is_empty()));
@@ -556,7 +586,13 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
     };
     // Delete asks first, like the other editors.
     let confirming = RwSignal::new(false);
-    let cancel_nav = navigate;
+    let cancel_nav = navigate.clone();
+    // Duplicate opens a new alarm copied from the saved one; nothing is written until Save.
+    let duplicate = {
+        let href = duplicate_href(&id);
+        let navigate = navigate;
+        move |_| navigate(&href, NavigateOptions::default())
+    };
 
     let chips = move || {
         week_chips(lang())
@@ -882,6 +918,14 @@ fn Editor(id: String, opening: Opening) -> impl IntoView {
                                 }
                                     .into_any()
                             }}
+                        }
+                    })}
+                {(!is_new)
+                    .then(|| {
+                        view! {
+                            <button type="button" class="btn wake-duplicate" on:click=duplicate>
+                                {move || wake_text(lang(), WakeText::Duplicate)}
+                            </button>
                         }
                     })} <span class="wake-actions__spacer"></span>
                 <button

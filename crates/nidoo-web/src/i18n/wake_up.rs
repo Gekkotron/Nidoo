@@ -55,6 +55,7 @@ pub enum WakeText {
     OffLabel,
     AlarmOn,
     Volume,
+    Duplicate,
 }
 
 impl WakeText {
@@ -106,6 +107,7 @@ impl WakeText {
         WakeText::OffLabel,
         WakeText::AlarmOn,
         WakeText::Volume,
+        WakeText::Duplicate,
     ];
 }
 
@@ -196,6 +198,7 @@ pub fn wake_text(lang: Lang, k: WakeText) -> &'static str {
         T::OffLabel => ("Off", "Désactivé"),
         T::AlarmOn => ("Alarm on", "Réveil activé"),
         T::Volume => ("Volume", "Volume"),
+        T::Duplicate => ("Duplicate", "Dupliquer"),
     };
     match lang {
         Lang::En => en,
@@ -216,6 +219,14 @@ pub fn delete_question(lang: Lang, name: &str) -> String {
     match lang {
         Lang::En => format!("Delete {name}?"),
         Lang::Fr => format!("Supprimer {name}{NBSP}?"),
+    }
+}
+
+/// The name a duplicated alarm starts with: "Gym (copy)" / « Gym (copie) ».
+pub fn copy_name(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::En => format!("{name} (copy)"),
+        Lang::Fr => format!("{name} (copie)"),
     }
 }
 
@@ -363,6 +374,12 @@ mod tests {
             delete_question(Lang::Fr, "Réveil 07:00"),
             format!("Supprimer Réveil 07:00{NBSP}?")
         );
+    }
+
+    #[test]
+    fn copy_name_reads_both_ways() {
+        assert_eq!(copy_name(Lang::En, "Gym"), "Gym (copy)");
+        assert_eq!(copy_name(Lang::Fr, "Gym"), "Gym (copie)");
     }
 
     #[test]

@@ -5,6 +5,7 @@ use nidoo_core::flow::wake_up::{WakeSpeaker, WakeUp, default_name};
 use nidoo_core::model::MediaPlayerState;
 
 use crate::i18n::Lang;
+use crate::i18n::wake_up::copy_name;
 use crate::playlist_fields::{fade_label, playlist_options};
 use crate::schedule::week_chips;
 use crate::screens::sound_settings::Satellite;
@@ -105,6 +106,19 @@ impl Draft {
             source: w.source.clone(),
             fade_in_s: w.fade_in_s,
             speakers: speaker_rows(sats, Some(w)),
+        }
+    }
+
+    /// The editor of a new alarm copied from saved alarm `name`: same settings and switch. A
+    /// typed name gets " (copy)"; a default name (`Wake-up 07:00`) stays default, so it follows
+    /// the time the copy is moved to.
+    pub fn copy_of(lang: Lang, name: &str, enabled: bool, w: &WakeUp, sats: &[Satellite]) -> Self {
+        let defaulted = [true, false]
+            .iter()
+            .any(|fr| default_name(*fr, w.hour, w.minute) == name.trim());
+        Self {
+            name: (!defaulted).then(|| copy_name(lang, name.trim())),
+            ..Self::from_saved(name, enabled, w, sats)
         }
     }
 
@@ -417,6 +431,56 @@ mod tests {
                 ("Kitchen", false, DEFAULT_VOLUME),
             ]
         );
+    }
+
+    #[test]
+    fn a_copy_keeps_the_settings_and_marks_a_typed_name() {
+        let sats = [sat("Bedroom"), sat("Living")];
+        let saved = WakeUp {
+            hour: 6,
+            minute: 45,
+            days: vec![0, 6],
+            playlist: "calm".into(),
+            player: "music-player".into(),
+            source: Some("nidoo".into()),
+            speakers: vec![WakeSpeaker {
+                volume_entity: "living_volume".into(),
+                mute_entity: Some("living_mute".into()),
+                volume: 40.0,
+            }],
+            muted: vec!["bedroom_mute".into()],
+            ..WakeUp::default()
+        };
+        let copy = Draft::copy_of(Lang::En, "Weekend", false, &saved, &sats);
+        assert_eq!(copy.name.as_deref(), Some("Weekend (copy)"));
+        assert_eq!(
+            Draft {
+                name: None,
+                ..copy.clone()
+            },
+            Draft {
+                name: None,
+                ..Draft::from_saved("Weekend", false, &saved, &sats)
+            }
+        );
+        assert_eq!(copy.to_wake_up("music-player"), saved);
+        assert_eq!(
+            Draft::copy_of(Lang::Fr, "Weekend", true, &saved, &sats)
+                .name
+                .as_deref(),
+            Some("Weekend (copie)")
+        );
+    }
+
+    #[test]
+    fn a_copy_of_a_default_name_follows_its_time() {
+        let saved = WakeUp::default();
+        for name in ["Wake-up 07:00", "Réveil 07:00"] {
+            let mut copy = Draft::copy_of(Lang::En, name, true, &saved, &[]);
+            assert_eq!(copy.name, None, "{name}");
+            copy.hour = 8;
+            assert_eq!(copy.display_name(Lang::En), "Wake-up 08:00");
+        }
     }
 
     #[test]
