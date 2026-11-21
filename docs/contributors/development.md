@@ -84,7 +84,15 @@ The smoke test mounts the app in headless Chrome and checks the shell:
 cd crates/nidoo-web && wasm-pack test --headless --chrome
 ```
 
-The other tests under `crates/nidoo-web/tests` (cards, flow canvas, group wizard and so on) run the same way.
+The other tests under `crates/nidoo-web/tests` (cards, flow canvas, group wizard and so on) run the same way. `wasm-pack test` first builds every browser test file, each a debug wasm of 200 to 360 MB, about 16 GB in all, even with `-- --test <file>`. To run one file, call cargo with wasm-bindgen's test runner and a chromedriver that matches your Chrome (wasm-pack keeps both in its cache after its first run):
+
+```sh
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=/path/to/wasm-bindgen-test-runner \
+CHROMEDRIVER=/path/to/chromedriver \
+cargo test -p nidoo-web --target wasm32-unknown-unknown --test rich_cards
+```
+
+The runner's version must match `wasm-bindgen` in `Cargo.lock`. `cargo test -p nidoo-web` without a target runs the native tests, `tests/bare_text.rs` among them.
 
 The hub's integration tests build as one binary, from `crates/nidoo/tests/integration.rs`, which lists each test file as a module: each test binary costs a link of the whole hub, so a new test file gets a `mod` line there instead of becoming a binary of its own. To run one file, filter by its module:
 

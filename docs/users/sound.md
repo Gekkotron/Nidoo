@@ -144,6 +144,13 @@ Check that it runs and found the satellites:
 docker compose logs -f sound
 ```
 
+A player whose writes stall for 10 seconds is dropped: `nidoo-sound` ends its
+connection, the satellite reconnects and gets its volume, mute and stream back.
+One stuck player does not freeze the others. When a player's queue fills, the
+log shows one warning, `player queue full, dropping audio`, instead of a line per
+chunk; when it takes audio again, one line, `player takes audio again`, with
+`dropped=<count>` for the chunks lost in between.
+
 Stop it with `docker compose stop sound`; `docker compose rm -sf sound` removes
 the container (the satellites' settings stay in `data/sound/`).
 
@@ -161,8 +168,9 @@ the container (the satellites' settings stay in `data/sound/`).
    satellite at once; the satellite then shows in that room and speaks there.
    Setting the room on its own page works too: the satellite's name opens its
    **Music volume** page, and its room is the satellite's room.
-5. A name you give it in Nidoo (the name of its **Music volume** entity) is
-   also the one `nidoo-sound`'s HTTP API gives to other apps.
+5. To rename it, rename its **Music volume** entity (from the satellite's own
+   page). Its card in **Settings → Assistant → Sound** shows that name, and
+   `nidoo-sound`'s HTTP API gives it to other apps.
 
 A Mac can be a satellite too, with no hardware: see
 [A Mac as a satellite](mac-satellite.md).

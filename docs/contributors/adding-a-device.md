@@ -12,7 +12,7 @@ The hub speaks Home Assistant MQTT discovery. It holds no per-device code. Each 
 |---|---|---|
 | A Zigbee device Zigbee2MQTT does not know | [Fix it in Zigbee2MQTT](#zigbee-devices-unknown-to-zigbee2mqtt) | External converter, then upstream PR. Not a Nidoo change. |
 | The device is not Zigbee (cloud API, Wi-Fi, vendor protocol) | [Write a bridge](#writing-a-bridge) | Separate process, any language, own repo. It publishes discovery to the broker. |
-| The device publishes discovery for a component Nidoo ignores (`GET /api/v1/ignored` reports `ignored component <name>`) | [Add a type or a kind](#adding-a-component-kind-to-nidoo) | Usually a JSON entry in `crates/nidoo-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Nidoo, one per component, never per device. |
+| The device publishes discovery for a component Nidoo does not read (the config is on the broker, but no entity appears and `GET /api/v1/ignored` does not list it) | [Add a type or a kind](#adding-a-component-kind-to-nidoo) | Usually a JSON entry in `crates/nidoo-core/src/types/table.json`. A Rust kind only when the table cannot describe it. PR to Nidoo, one per component, never per device. |
 | The device is a type Nidoo describes but reports no state for the primary field | [Type table](#a-type-table-entry-json-no-rust) | Bridge or firmware: publish the state topic of the primary field, retained. A `requires_state` type is rejected without it. |
 | The device works but looks wrong (wrong room, wrong name, a relay that is really a heater or light) | [Override](#overrides) | No code. Web device sheet, `PATCH /api/v1/entities/{id}/override`, or MCP `set_override`. |
 
@@ -53,13 +53,13 @@ Rules:
 
 Hand-written kinds (each becomes an entity):
 
-`light`, `switch`, `cover`, `climate`, `sensor`, `binary_sensor`, `alarm_control_panel`, `number`, `select`, `button`, `vacuum`, `water_heater`.
+`light`, `switch`, `cover`, `climate`, `sensor`, `binary_sensor`, `alarm_control_panel`, `number`, `select`, `button`, `vacuum`, `water_heater`, `media_player`.
 
 Type-table components (each becomes an entity from its table entry, no Rust needed):
 
 `camera`, `device_automation`, `device_tracker`, `event`, `fan`, `humidifier`, `image`, `lawn_mower`, `lock`, `notify`, `scene`, `siren`, `tag`, `text`, `update`, `valve`.
 
-Any other component is listed under `GET /api/v1/ignored` as `ignored component <name>`.
+The hub does not read any other component. Its config topic is not treated as discovery, so it shows neither as an entity nor under `GET /api/v1/ignored`.
 
 ### Fields the hub reads
 
@@ -140,7 +140,8 @@ Retained configs cover most restarts. The birth message covers a broker that los
 
 ### Checking it
 
-- `GET /api/v1/ignored`: every discovery topic that did not become an entity, with the reason (bad JSON, `sensor without state_topic`, ignored component, and so on).
+- `GET /api/v1/ignored`: every discovery topic of a known component that did not become an entity, with the reason (bad JSON, `sensor without state_topic`, a table type without its state topic, and so on).
+- A config that shows in neither list uses a component Nidoo does not read. Confirm it is on the broker with `mosquitto_sub -v -t 'nidoo/<component>/#'`, then see [Adding a component kind to Nidoo](#adding-a-component-kind-to-nidoo).
 - `GET /api/v1/snapshot`: the entity under `entities`, with state and availability. The snapshot's `devices` list holds Zigbee2MQTT devices only. A bridge's device appears through its entities' `device_id`.
 - MCP `get_entity`: the entity with its `bindings` (the expanded discovery config). Use it to confirm abbreviations expanded as expected.
 
@@ -160,8 +161,8 @@ Find or add the entry in `crates/nidoo-core/src/types/table.json` (the covered c
 | `icon` | A glyph name for the card. |
 | `primary` | The field name shown on the card, or `null`. |
 | `requires_state` | When `true`, discovery is rejected without the primary field's topic. |
-| `fields` | A map of `field_name` to `{ shape, topic, template?, values?, options?, range?, on? }`. `shape` is `on_off`, `number`, `choice`, `text`, `picture` or `version`. `topic` is the config key holding the state topic, `template` the config key holding its value template. `values` lists the allowed values, each with the config `key` that may override its payload and the Home Assistant `default`. `options` names a list in the config (such as `preset_modes`). `range` is `{min, max, step}`. `on` is the value that counts as on. `json_path`, for a `text` or `version` shape, reads one top-level key when the rendered template produces a JSON object. |
-| `controls` | A map of `control_name` to `{ shape, topic, template?, field?, press?, payload?, payload_on?, payload_off?, json_key?, requires?, labels? }`. `topic` is the config key of the command topic. `press: true` makes a button, which has no state. `payload` is a WordDef `{value, default}`, which may also carry an optional `key` as the other WordDefs do. `field` ties the control to a field it changes. |
+| `fields` | A map of `field_name` to `{ shape, topic, template?, values?, options?, range?, on? }`. `shape` is `on_off`, `number`, `choice`, `text`, `picture` or `version`. `topic` is the config key holding the state topic, `template` the config key holding its value template. `values` lists the allowed values, each with the config `key` that may override its payload and the Home Assistant `default`. `options` names a list in the config (such as `preset_modes`). `range` is `{min, max, step}`, the defaults, plus optional `min_key`, `max_key` and `step_key` naming config keys that override them. `on` is the value that counts as on. `json_path`, for a `text` or `version` shape, reads one top-level key when the rendered template produces a JSON object. |
+| `controls` | A map of `control_name` to `{ shape, topic, template?, field?, press?, payload?, payload_on?, payload_off?, json_key?, requires?, labels? }`. `topic` is the config key of the command topic. `press: true` makes a button, which has no state. `payload` is a WordDef `{value, default}`, which may also carry an optional `key` as the other WordDefs do. `field` ties the control to a field it changes. `json_key` sends `{"<json_key>": value}` instead of the bare value. `requires` names a config key that must be present for the control to be announced. `labels` is `{on, off}`, the card's button words for an `on_off` control. |
 | `main` | The default main control, in preference order. |
 | `alerts` | `[{field, any_of}]`: field values that put the card in alert style. |
 | `history` | `{field, map}`. `map` turns the field's text values into numbers, such as `{"on": 1.0, "off": 0.0}`. An empty `map` keeps a number as it is. |
@@ -191,27 +192,71 @@ A short example, the `device_tracker` entry:
 
 The hub publishes the whole table retained on `nidoo/ui/_types` (`{ui_prefix}/_types`) on every connection, so the Android app reads the same vocabulary. Its own echo is ignored. Camera and image entities carry their picture in the `picture` field. `GET /api/v1/entities/{id}/picture` serves the stored bytes, or the bytes of its URL fetched by the hub now (10 s timeout, 5 MiB cap, no redirects followed).
 
-Check it with `GET /api/v1/ignored` (the component must no longer appear there) and `GET /api/v1/snapshot` (the entity must show its primary field). A type-table entry needs no other change to appear in the flow editor: `nidoo_core::vocabulary` turns its announced controls into actions and its primary field into the values an `if` card offers.
+A `card` entry shows on Home as the generic card (`crates/nidoo-web/src/cards/generic.rs`), which draws its primary field and a button or input per announced control; `lock` is the one table type with a card of its own. `signal`, `target` and `update` entries do not show on Home. In the web UI:
+
+- `icon` is a name, not a drawing. Map it to a glyph in `generic_icon` (`crates/nidoo-web/src/icons.rs`); an unmapped name draws the sensor glyph.
+- A field name reads as its words, capitalised (`battery_level` shows as "Battery level"). Add an English and French label to `field_label` (`crates/nidoo-web/src/i18n/flows.rs`) when that reads badly.
+
+A type-table entry needs no other change to appear in the flow editor: `nidoo_core::vocabulary` turns its announced controls into actions and its primary field into the values an `if` card offers.
+
+Check it:
+
+- `cargo test -p nidoo-core types`: `every_reference_in_the_table_resolves` fails when `primary`, `main`, `history`, an alert or a control's `field` names something the entry does not define, or a `press` control has no `payload`.
+- On a hub, `GET /api/v1/snapshot` must list the entity with its primary field, and `GET /api/v1/ignored` must not list its topic. A `requires_state` entry whose config lacks the primary field's topic is listed there with the reason.
 
 ### A hand-written kind (Rust)
 
-Base the PR on how `water_heater` was added. A kind touches these files:
+Base the PR on how `media_player`, the newest kind, was added: commits `2de8cffb` (kind and state), `ed6f1612` (commands, capabilities, flow fields) and `1727041b` (web card). A hand-written kind wins over a table entry of the same name, so delete the component's entry from `table.json` if it has one.
+
+Start with the `Kind` variant: the compiler then points at most of the other places. `cargo check --workspace --all-targets` and `cargo check -p nidoo-web --target wasm32-unknown-unknown` list every `match` on `Kind` that no longer covers all the variants. Some matches end in `_ =>` and stay silent; search for `Kind::MediaPlayer` to find them all.
+
+Core (`crates/nidoo-core`):
 
 | File | Change |
 |---|---|
-| `crates/nidoo-core/src/model/kind.rs` | Add the `Kind` variant, its component name and `Kind::ALL`. Remove the name from `IGNORED_COMPONENTS`. |
-| `crates/nidoo-core/src/discovery/capabilities.rs` | What the kind can do, read from the config. |
-| `crates/nidoo-core/src/model/state.rs` | State model for the kind. |
-| `crates/nidoo-core/src/state/kinds/<kind>.rs`, `state/kinds/mod.rs` | Reading the kind's state. |
-| `crates/nidoo-core/src/command/kinds.rs` | Mapping commands to publishes. |
-| `crates/nidoo-core/src/flow/scalar.rs` | The kind's scalar for flows. |
-| `crates/nidoo-core/src/vocabulary.rs` | What the kind accepts (`actions`) and reports (`reports`): the flow editor's Action and Value lists and the ambiance device action read them. |
-| `crates/nidoo-core/src/energy/units.rs` | Only if the kind reports energy. |
-| `crates/nidoo-web/src/cards/<kind>.rs`, `icons.rs`, `format.rs`, `screens/home.rs` | Web card. |
+| `src/model/kind.rs` | The `Kind` variant, its component name in `Kind::component`, and the variant in `Kind::ALL`. |
+| `src/discovery/capabilities.rs` | What the kind can do, read from the config. |
+| `src/model/state.rs`, `src/state/kinds/<kind>.rs`, `src/state/kinds/mod.rs` | The kind's state model and how its state topics are read. |
+| `src/model/command.rs`, `src/command/kinds.rs` | New command variants, if any, and how each command becomes a publish. `src/command/echo.rs` only when the device's echo does not match the command (the media player's does not). |
+| `src/flow/scalar.rs`, `src/flow/field.rs` | The kind's main value and its other fields, as flows and `if` cards read them. |
+| `src/vocabulary.rs` | What the kind accepts (`actions`) and reports (`reports`): the flow editor's Action and Value lists and the ambiance device action read them. |
+| `src/history/mod.rs` | How the state is recorded, if it is not a single number or on/off. |
+| `src/dashboard/model.rs` | A `WidgetKind` and its allowed sizes, if the kind gets a dashboard card. |
+| `src/energy/units.rs` | Only if the kind reports energy. |
 
-The Android app needs the matching card.
+Hub, API and assistant:
 
-Tests run against recorded broker messages in `crates/nidoo-core/tests/fixtures`. Add cases to `crates/nidoo-core/tests/state.rs`. `crates/nidoo-core/tests/vocabulary.rs` runs every action `vocabulary::actions` lists through the command mapper, so the editors never offer a command the hub refuses; add a hand-written config there when the recording has no entity of the new kind.
+| File | Change |
+|---|---|
+| `crates/nidoo-api/src/search.rs` | The words that find the kind in search (`kind_words`), in English and French. |
+| `crates/nidoo/src/groups/discovery.rs`, `groups/state.rs`, `groups/topics.rs` | Whether entities of the kind can be grouped, and how a group's state is combined. A kind that cannot be grouped is listed with the others that cannot. |
+| `crates/nidoo/src/dashboards/store.rs` | Which widget config the new `WidgetKind` accepts. |
+| `crates/nidoo-assist/src/plan.rs` | Only for voice phrases of its own (the media player has music phrases). |
+
+Web (`crates/nidoo-web`):
+
+| File | Change |
+|---|---|
+| `src/cards/<kind>.rs`, `src/cards/mod.rs` | The card. |
+| `src/screens/home.rs` | `card_for` picks the card for the kind (and a group card if the kind can be grouped). |
+| `src/icons.rs`, `src/format.rs` | The kind's glyph (`kind_icon`) and how its state reads as text. |
+| `src/i18n/states.rs`, `src/i18n/groups.rs`, `src/i18n/devices.rs` | The kind's name, its state words and its count ("2 chauffe-eau"), in English and French. |
+| `src/flow_text.rs`, `src/if_value.rs` | Which state words the flow editor uses for the kind. |
+| `src/dashboards/library.rs`, `src/dashboards/widget.rs` | The kind's section in the card library and the card a dashboard draws for it. |
+| `src/screens/group_wizard.rs` | Whether the group wizard offers the kind. |
+| `styles/cards.css` | The card's styles. |
+
+Every word a person reads goes through the FR/EN table in `src/i18n/`, never a bare literal in a view. `tests/bare_text.rs` fails on a bare literal; a literal that is not a word (a class, a key name, a code shown as code) goes in `tests/bare_text_allow.txt` with a comment. Run `cargo test -p nidoo-web` (not only `--lib`) to include that check.
+
+The Android app (Nidoo-app) needs the matching card.
+
+Tests:
+
+- `crates/nidoo-core/tests/discovery.rs`: a config of the new component becomes an entity of the kind.
+- `crates/nidoo-core/tests/state.rs`: state messages, against the recorded broker messages in `crates/nidoo-core/tests/fixtures`.
+- `crates/nidoo-core/tests/command.rs`: each command's publish.
+- `crates/nidoo-core/tests/vocabulary.rs` runs every action `vocabulary::actions` lists through the command mapper, so the editors never offer a command the hub refuses; add a hand-written config there when the recording has no entity of the new kind.
+- `crates/nidoo-web/tests/rich_cards.rs`: a headless-browser test of the card. Run that one file, not the whole set: see [Development](development.md#smoke-test).
 
 Before opening the PR, run the commands in [Development](development.md#checks): `cargo test`, `clippy -D warnings`, `fmt --check`, and the wasm32 checks for `nidoo-core`, `nidoo-api` and `nidoo-web`.
 

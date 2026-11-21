@@ -4,7 +4,7 @@ sidebar_position: 5
 description: The kinds and the JSON type table that describe entities, the folding and masking rules, and every override field.
 ---
 
-Every discovered component becomes an entity of a `Kind`. Twelve kinds are hand-written in Rust; every other component is described as data by a JSON type table, compiled into the hub. Components that are neither are reported under `GET /api/v1/ignored`. To add one, see [Adding a device](../contributors/adding-a-device.md).
+Every discovered component becomes an entity of a `Kind`. Thirteen kinds are hand-written in Rust; every other component is described as data by a JSON type table, compiled into the hub. The hub drops a component that is neither without a trace: its config topic does not become an entity and is not listed under `GET /api/v1/ignored`. To add one, see [Adding a device](../contributors/adding-a-device.md).
 
 ## Kinds
 
@@ -22,9 +22,10 @@ Every discovered component becomes an entity of a `Kind`. Twelve kinds are hand-
 | `button` | `button` |
 | `vacuum` | `vacuum` |
 | `water_heater` | `water_heater` |
+| `media_player` | `media_player` |
 | `generic` | any component the type table describes; the component name is in the entity's `component` |
 
-Only `device` (device-based discovery) is folded by routing: it expands into one entity per entry. Any other component that the hand-written kinds and the table do not describe is reported as `ignored component <name>` under `GET /api/v1/ignored`.
+Only `device` (device-based discovery) is folded by routing: it expands into one entity per entry. Any other component that the hand-written kinds and the table do not describe is not read at all: its topic is not treated as discovery, so it shows neither as an entity nor under `GET /api/v1/ignored`.
 
 ## The type table
 

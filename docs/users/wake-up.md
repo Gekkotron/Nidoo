@@ -29,8 +29,9 @@ Open **Wake-up** and choose **Add an alarm**.
 
 1. Give it a name, or leave it: the default is « Wake-up 07:00 », following the
    time until you type one.
-2. Set the hour and the minute, and pick the weekdays. Monday to Friday is
-   ticked at first. With no day picked, the alarm cannot be saved.
+2. Set the hour and the minute, and pick the weekdays. A time field selects its
+   content when you click it: type the digits, and it pads them when you leave
+   it. Monday to Friday is ticked at first. With no day picked, the alarm cannot be saved.
 3. Pick the **playlist** (Favorites first) and whether to shuffle it.
 4. Pick the **output**: the Nidoo speakers, or any output the player lists. The
    Nidoo speakers are chosen first when the player lists them.

@@ -84,6 +84,9 @@ Starts a run when an entity's scalar changes to a different value.
 | `field` | string, optional | A value inside the entity's state (vacuum `battery`, `fan_speed`; light `brightness` (in %), `color_temp`, `effect`; cover `position`; climate `current`, `target`, `fan_mode`, `action`; water heater `current`, `target`; a type-table entity's other fields). Absent: the entity's headline value. The trigger fires when that value changes, `to` and `from` compare it, and the run carries it as the trigger value. A field the entity does not report refuses the save: "node `x`: `entity` reports no field `f`". |
 | `to` | JSON value, optional | Fire only when the new scalar equals it (`true`, `"ON"`, `21.5`). |
 | `from` | JSON value, optional | Fire only when the previous scalar equalled it. |
+| `above` | number, optional | Fire once when a number crosses above it: the previous value was not above it and the new one is (`25` fires on 24.8 to 25.3, not on 25.3 to 25.6). Exclusive. Not with `to` or `from`. |
+| `below` | number, optional | Fire once when a number crosses below it, like `above`. With both, fires when the value enters the range between them; `above` must be lower than `below`. Not with `to` or `from`. |
+| `for` | duration string, optional | Fire only once the condition has held this long: `30s`, `5m` or `1h30m`, from `1s` to `168h`. The condition is `to`, or the `above` / `below` bounds, or, with none of them, that the value stays unchanged. A report that breaks the condition cancels the wait; a value that goes unknown does not. At the deadline the hub re-reads the value and fires only if it still holds. A wait in progress is lost when the hub restarts. |
 
 Outputs: one. The run carries the entity's new value.
 
