@@ -126,3 +126,62 @@ async fn escape_closes_the_panel_and_focuses_the_button() {
         .unwrap();
     assert!(focused.class_list().contains("assist-fab"));
 }
+
+/// The turns list as the stylesheet makes it in the panel: a short box that scrolls.
+fn scrolling_turns() -> web_sys::Element {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let style = document.create_element("style").unwrap();
+    style.set_text_content(Some(
+        ".assist-panel .assist__turns{display:block;height:120px;overflow-y:auto;margin:0;padding:0}\
+         .assist-panel .assist__turn{display:block;height:60px}",
+    ));
+    document.head().unwrap().append_child(&style).unwrap();
+    style
+}
+
+#[wasm_bindgen_test]
+async fn the_newest_turn_is_scrolled_into_view() {
+    let style = scrolling_turns();
+    let stub = FetchStub::install();
+    let past: Vec<Value> = (0..6)
+        .map(|i| turn(&format!("p{i}"), "acted", "C'est fait.", Value::Null))
+        .collect();
+    let list = serde_json::json!({ "turns": past, "kept": true });
+    stub.reply("GET", TURNS, 200, &list.to_string());
+    let answer = turn("t1", "acted", "Salon allumé (4 lumières).", Value::Null);
+    stub.reply("POST", "/api/v1/assist", 200, &answer.to_string());
+    let m = mount_shell("/");
+    wait_for(&m.host, ".assist-fab").await.click();
+    wait_for(&m.host, ".assist-panel .assist__turn").await;
+    gloo_timers::future::TimeoutFuture::new(100).await;
+    let turns = find(&m.host, ".assist-panel .assist__turns").unwrap();
+    // Opening shows the end of the conversation.
+    assert!(turns.scroll_top() > 0, "on open: {}", turns.scroll_top());
+
+    // Scrolled back up, a sentence and its reply come into view.
+    turns.set_scroll_top(0);
+    send(&m.host, "allume le salon");
+    for _ in 0..80 {
+        if all(&m.host, ".assist-panel .assist__turn").len() == 7 {
+            break;
+        }
+        gloo_timers::future::TimeoutFuture::new(25).await;
+    }
+    gloo_timers::future::TimeoutFuture::new(100).await;
+    assert_eq!(all(&m.host, ".assist-panel .assist__turn").len(), 7);
+    let last = all(&m.host, ".assist-panel .assist__turn").pop().unwrap();
+    let (list, turn) = (
+        turns.get_bounding_client_rect(),
+        last.get_bounding_client_rect(),
+    );
+    assert!(
+        turn.top() >= list.top() - 1.0 && turn.bottom() <= list.bottom() + 1.0,
+        "the new turn is outside the list: {}..{} in {}..{}",
+        turn.top(),
+        turn.bottom(),
+        list.top(),
+        list.bottom()
+    );
+    style.remove();
+    let _ = storage().remove_item("nidoo.assist.history");
+}
