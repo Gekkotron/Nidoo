@@ -31,7 +31,7 @@ The model is in [`crates/nidoo-core/src/flow`](https://github.com/Gekkotron/Nido
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | string | 1 to 64 characters of `a-z`, `0-9`, `_` and `-`. It is the last topic segment. |
+| `id` | string | 1 to 64 characters of `a-z`, `0-9`, `_` and `-`. It is the last topic segment. A draft made with **New flow** in the web UI gets a random lowercase v4 UUID on its first save, and the flow is saved disabled; the id never changes after that, so a rename keeps the address. `set_flow` and `PUT /api/v1/flows/{id}` keep the id they are given. |
 | `name` | string | Free text shown in the UI. |
 | `description` | string, optional | Free text. |
 | `enabled` | bool, default `true` | A disabled flow keeps its definition but never runs. |
@@ -50,12 +50,12 @@ Each node is `{"id", "type", "params", "name"?, "position"?}`:
 - `name`: an optional label shown on the canvas.
 - `position`: optional `{x, y}` canvas coordinates. The hub ignores it.
 
-Each edge is `{"from", "to", "port"?}`. An edge leaving a branching node must carry one of its ports: `"true"` or `"false"` for an `if`, `"1"` to `"10"` or `"otherwise"` for a `switch`, `"in"` or `"out"` for a `time.between`. Omit a port to do nothing there. An edge leaving any other node has no `port`.
+Each edge is `{"from", "to", "port"?}`. An edge leaving a branching node must carry one of its ports: `"true"` or `"false"` for an `if`, `"1"` to `"10"` or `"otherwise"` for a `switch`, `"in"` or `"out"` for a `time.between`, `"1"` to `"6"` or `"none"` for an `ask` (`"1"` is its first answer), `"ok"`, `"partial"` or `"failed"` for a `backup.run`. A port with no edge does nothing there. An edge leaving any other node (`limit` included) has no `port`.
 
 A flow is refused when:
 
 - an id is malformed or a node id is used twice;
-- an edge names a missing node, a port that does not exist, or lacks the port a branching node (`if`, `switch`, `time.between`) needs;
+- an edge names a missing node, a port that does not exist, or lacks the port a branching node (`if`, `switch`, `time.between`, `ask`, `backup.run`) needs;
 - there is no trigger node;
 - the graph has a cycle (the error names the path);
 - a node's params are invalid (see each node below).
@@ -64,7 +64,7 @@ On save the hub also checks the house: every entity a node names must exist, a `
 
 ### How a run goes
 
-A run follows the graph from the trigger that fired, depth first. A failing node ends its own branch (its successors never run) but not its siblings: the branches still pending go on, and the run then ends as `failed`. A branching step (`if`, `switch`, `time.between`) that succeeds records the `ports` it followed, which can be none (a `switch` whose rules all missed); the web UI uses them to light the right wires. Other steps carry no `ports`. A non-trigger node with no incoming edge never runs. A run that is skipped (because of `single` mode, or because the broker link is offline when a schedule or sun trigger fires) is recorded as a skipped run.
+A run follows the graph from the trigger that fired, depth first. A failing node ends its own branch (its successors never run) but not its siblings: the branches still pending go on, and the run then ends as `failed`. A branching step (`if`, `switch`, `time.between`, `ask`, `backup.run`) that succeeds records the `ports` it followed, which can be none (a `switch` whose rules all missed); the web UI uses them to light the right wires. Other steps carry no `ports`. A non-trigger node with no incoming edge never runs. A run that is skipped (because of `single` mode, or because the broker link is offline when a schedule or sun trigger fires) is recorded as a skipped run.
 
 The **scalar** is the one value of a state that triggers and `if` compare: the on/off bool, the number, the text, a light's `on`, a cover's `state`.
 
@@ -81,7 +81,7 @@ Starts a run when an entity's scalar changes to a different value.
 | Param | Type | Description |
 | --- | --- | --- |
 | `entity` | string | The entity id (from `search` or `list_entities`). |
-| `field` | string, optional | A value inside the entity's state (vacuum `battery`, `fan_speed`; light `brightness` (in %), `color_temp`, `effect`; cover `position`; climate `current`, `target`, `fan_mode`, `action`; water heater `current`, `target`; a type-table entity's other fields). Absent: the entity's headline value. The trigger fires when that value changes, `to` and `from` compare it, and the run carries it as the trigger value. A field the entity does not report refuses the save: "node `x`: `entity` reports no field `f`". |
+| `field` | string, optional | A value inside the entity's state (vacuum `battery`, `fan_speed`; light `brightness` (in %), `color_temp`, `effect`; cover `position`; climate `current`, `target`, `fan_mode`, `action`; water heater `current`, `target`; a type-table entity's other fields). Absent: the entity's headline value. The trigger fires when that value changes, `to` and `from` compare it, and the run carries it as the trigger value. A field the entity does not report refuses the save: "node `x`: `entity` reports no field `f`". A Zigbee device's battery is an entity of its own (`<ieee>_battery_zigbee2mqtt`): set `entity` to it instead of using `field`. |
 | `to` | JSON value, optional | Fire only when the new scalar equals it (`true`, `"ON"`, `21.5`). |
 | `from` | JSON value, optional | Fire only when the previous scalar equalled it. |
 | `above` | number, optional | Fire once when a number crosses above it: the previous value was not above it and the new one is (`25` fires on 24.8 to 25.3, not on 25.3 to 25.6). Exclusive. Not with `to` or `from`. |
@@ -90,6 +90,7 @@ Starts a run when an entity's scalar changes to a different value.
 
 Outputs: one. The run carries the entity's new value.
 
+- `above` and `below` have no dead band: a value that hovers around a threshold fires on every crossing. Add `for` to fire only once it has settled.
 - The replayed value after boot or reconnect arms the entity silently. It never fires on that replay, on an availability-only change, or on an equal-value report. A change needs a known previous value and a known new one.
 - A **button** (a virtual or discovered `button`) has no value: a press is an event and fires the trigger with the value `PRESS`. A button trigger takes no `to` or `from`, and a retained message is a replay, never a press.
 - The trigger is refused on entities that send signals (remotes, events, tags): use `trigger.signal`.
@@ -224,6 +225,8 @@ Outputs: one. No input.
 - Without a `value`, it is a valueless trigger like `trigger.schedule`: an `if` or `switch` reachable from it must name an `entity` (`op: is_dark` excepted), or the flow is refused with "node `x`: an if after a schedule, sun or manual trigger without a value must name an entity" (a `switch` reads "a switch after ...").
 - With a `value`, an `if` or `switch` without an `entity` compares that value, and `{trigger}` in a notify text prints it. Such an `if` or `switch` cannot use `average`: "node `x`: an average after a manual trigger must name an entity".
 - The run's step detail reads `manual`, or `manual: <json value>` when the card has a value.
+- Without `node` (the web UI's Run now, `POST /api/v1/flows/{id}/run` with no body, `run_flow` with no `node`), the run starts from the flow's first trigger node, and carries its value only when that node is a manual trigger. With `node`, it starts from that card, and is refused when the card is not a manual trigger of the flow.
+- Refused when the flow is disabled, invalid or already running, and while the broker link is down. A card press (`node`) on a `restart` flow replaces the active run; any other start is refused while a run is active, in both modes.
 
 ## `if`
 
@@ -234,7 +237,7 @@ Branches on a comparison.
 | `op` | `eq`, `ne`, `gt`, `lt`, `gte`, `lte`, `is_dark` or `is_off_peak` | The comparison. |
 | `value` | bool, number or string | The constant to compare with. Required for every op except `is_dark` and `is_off_peak`, where it is refused. |
 | `entity` | string, optional | The entity whose current scalar is read, live. Absent: the entity that triggered the run. Refused with `is_dark` and `is_off_peak`. |
-| `field` | string, optional | A value inside `entity`'s state, as for [`trigger.state`](#triggerstate); a brightness is compared in %. Needs `entity` ("node `x`: a field needs an entity"). With `average`, only the entity's recorded number: cover `position`, climate and water heater `current` ("node `x`: `f` of `entity` has no history to average"). Without `entity`, the field the trigger read is compared, and `average` is refused after a trigger on a field with no history. |
+| `field` | string, optional | A value inside `entity`'s state, as for [`trigger.state`](#triggerstate); a brightness is compared in %. A vacuum's `battery` is one such field. A Zigbee device's battery is its own entity (`<ieee>_battery_zigbee2mqtt`), so set `entity` to it. Needs `entity` ("node `x`: a field needs an entity"). With `average`, only the entity's recorded number: cover `position`, climate and water heater `current` ("node `x`: `f` of `entity` has no history to average"). Without `entity`, the field the trigger read is compared, and `average` is refused after a trigger on a field with no history. |
 | `missing` | `fail`, `true` or `false`, optional | What to do when the value is unknown. Refused with `is_dark` and `is_off_peak`. |
 | `average` | duration, optional | A window such as `15m` or `1h`, at most `24h`. Compare the mean of the entity's readings over that window instead of its current value. `value` must then be a number. Refused with `is_dark` and `is_off_peak`. |
 | `offset_minutes` | integer in [-720, 720], optional | With `is_dark` only. Moves civil dusk by this many minutes and civil dawn by the opposite. Absent means 0. Refused with every other op. |
@@ -259,6 +262,12 @@ Example: a temperature sensor averaging 19 or less over 30 minutes takes `true`,
 { "id": "low", "type": "if", "params": { "entity": "sensor_temperature", "op": "lte", "value": 19, "average": "30m", "missing": "false" } }
 ```
 
+A low-battery check on a vacuum compares its `battery` field, not its headline value:
+
+```json
+{ "id": "low", "type": "if", "params": { "entity": "vacuum_roborock", "field": "battery", "op": "lte", "value": 55 } }
+```
+
 ## `switch`
 
 Branches on several values at once: one output per rule, tried in order. It is an `if` with many comparisons.
@@ -267,7 +276,7 @@ Branches on several values at once: one output per rule, tried in order. It is a
 | --- | --- | --- |
 | `rules` | array of rules | 1 to 10 rules. Required. See below. |
 | `entity` | string, optional | The entity whose current scalar is read, live. Absent: the entity that triggered the run. |
-| `field` | string, optional | A value inside `entity`'s state, with the same rules as the [`if`](#if) `field`. |
+| `field` | string, optional | A value inside `entity`'s state, with the same rules as the [`if`](#if) `field` (a vacuum's `battery`; a Zigbee device's battery is an entity of its own). |
 | `average` | duration, optional | A window such as `15m` or `1h`, at most `24h`. Compare the mean of the entity's readings over that window, as for the [`if`](#if) `average`. Every rule `value` (and `to`) must then be a number. |
 | `result` | string, optional | The `name` of a [`math`](#math) card. Its result of this run is switched on instead of an entity's value. Refused together with `entity` or `average`; every rule's `value` must then be a number. A result missing from the run fails the node. |
 | `otherwise` | bool, default `false` | Adds an `otherwise` port, taken when no rule matches. |
@@ -311,7 +320,7 @@ A `switch` refuses to save when `rules` is empty or has more than 10 entries, a 
 
 ## `math`
 
-Computes one number from entity readings and from the results of earlier `math` cards, and can save it to a number entity. The result is kept for the rest of the run, so a later `command` (`value_from`), `if` or `switch` (`result`) or `notify` text (`{name}`) can use it.
+Computes one number from entity readings and from the results of earlier `math` cards, and can save it to a number entity. The result is kept for the rest of the run, so a later `command` (`value_from`), `if` or `switch` (`result`) or `notify` text (`{name}`) can use it. A worked example is in [Compute a value](../users/flows.md#compute-a-value).
 
 | Param | Type | Description |
 | --- | --- | --- |
@@ -446,11 +455,20 @@ Sends a phone push notification.
 | `image_url` | string, optional | An image to show with the alert. |
 | `silent` | bool, optional | Deliver without sound. |
 | `id` | string, optional | A fixed alert id. Absent: `flow-<flow id>-<run id>`, one alert per run. A fixed `id` makes each run replace the previous alert. |
-| `lang` | string, optional | The language placeholder values are written in: `en` (default) or `fr`. The web editor sets it on save. |
+| `lang` | string, optional | The language placeholder values are written in: `en` (default) or `fr`. The web editor stamps the web app's language on every `notify` when the flow is saved. |
 
 Outputs: one. The step fails if the push service rejects the alert.
 
 A placeholder named after a [`math`](#math) card (`{name}`, or `{name:2}` to round) prints that card's result from this run; a result the run did not compute prints `?`. A math result wins over an entity of the same name, and the hub refuses a math `name` that is an entity id, so the two never clash.
+
+Placeholders work the same in a `notify` `title` and `body`, a `speak` `text` and an `ask` `text`:
+
+- `{entity_id}` is the entity's value with its unit (`10.1 °C`, `Cloudy`, `open`). `{entity_id:N}` rounds to N decimals, 0 to 6; without `:N` a number shows at most 2 decimals, trailing zeros dropped. A value that is unknown when the step runs prints `?`, and the push is still sent.
+- Inside braces: numbers, names, `+ - * /` and parentheses. Put spaces around operators, since `a-b` is an entity id and `a - b` a subtraction.
+- `{trigger}` is the trigger value: the state, the `for` text of a `trigger.silent`, the value of a Manual card. It prints `?` in a run that no state change started (a schedule or sun trigger, Run now).
+- `{{` and `}}` print a literal `{` and `}`.
+- On/off and text values are worded in `lang` (open/closed, detected/clear, weather conditions, cover, alarm and climate states).
+- Refused on save: a text that does not parse, and a placeholder naming an entity the house does not have.
 
 ## `speak`
 
@@ -464,6 +482,37 @@ Says a sentence out loud on the speaker satellites (see [Sound](../users/sound.m
 Only satellites whose Allowed and Connected are both on speak; a muted one counts and stays silent. The sentence plays over the music, which is turned down while it plays.
 
 Outputs: one. The step detail reads `spoke on <n> satellite(s): <text>`. The step fails, with the reason, when speech is not set up on the hub, when no satellite can speak in the room, or when the broker is offline.
+
+## `ask`
+
+Says a question on the speaker satellites and branches on the answer heard (see [Ask a question](../users/flows.md#ask-a-question)).
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `text` | string | The question. Required, not empty. Takes `{entity_id}` placeholders like a `speak` text. |
+| `room` | string, optional | The room to ask in: an area id, or a room name that the hub turns into its id on save. Absent: every room. An unknown room is refused on save. |
+| `answers` | array of 1 to 6 | The answers, in port order. Each is `{"label", "words"?}`. `label` is required and matched against what was heard, case, accents and punctuation ignored; two labels may not be equal after that. `words` is an optional list of other ways of saying the answer. |
+| `name` | string, optional | Names a number said in the answer, for later cards. Same form as a [`math`](#math) name (`[a-z][a-z0-9_]{0,31}`), not a function name, and not an entity id. |
+| `default` | number, optional | The value of `name` when the answer holds no number. Needs `name`. |
+
+Outputs: one port per answer, `"1"` to `"n"` in answer order, then `"none"`, which is always there. Every edge leaving an `ask` names one. The step is always Ok: silence, a non-answer and a missing speech input all leave by `none`.
+
+- The question is spoken on each satellite that can speak and listen, one per room (the first by id), skipping one busy in another Assist exchange. The first answer heard wins.
+- Silence leaves by `none` at once. An answer heard that matches nothing gets one retry on the satellite that heard it, after "I didn't understand." (French: "Je n'ai pas compris."), if at least 5 seconds remain. Then `none`.
+- The whole step, retry included, takes 45 seconds at most.
+- Matching: the phrase that matches the most words wins, and the first answer wins a tie. A label is matched with its `words`, and an answer labelled `Yes` or `Oui` also takes the usual yes phrasings (`d accord`, `volontiers`, ...), `No` or `Non` the usual no phrasings (`non merci`, `no thanks`, ...). So "yes but no thanks" goes to No.
+- A number said in the answer is stored under `name`, as a result of the run (read by `command` `value_from`, `if` / `switch` `result` and `{name}`, as for a `math` result). A leading article alone (`un`, `une`, `one`) is not a number. With no number said, `default` is stored if set.
+- No speech input, or no satellite to ask on: `none`, and the step detail says why. It needs [speech input](../users/sound.md#talk-to-a-satellite) on a satellite with a microphone.
+
+The step detail reads the question, what was heard and the answer, for example `asked "Shall I turn the heating up?" → heard "yes" → Yes (default 21)`, or `→ none`.
+
+```json
+{ "id": "ask", "type": "ask", "params": {
+    "text": "Shall I turn the heating up?",
+    "room": "living_room",
+    "answers": [ { "label": "Yes", "words": ["sure", "okay"] }, { "label": "No" } ],
+    "name": "temp", "default": 21 } }
+```
 
 ## `flow.enable`
 
@@ -488,6 +537,20 @@ Switches a label, like the label's buttons on the Flows page.
 Outputs: one. Only flows not already in the target state are written; invalid flows are skipped and listed in the step detail. The step detail reads `picked ete: 2 on, 1 off`, `on vacances: 3 on`, `off vacances: 3 off` or `picked ete: nothing to change`, with `, N skipped (Name: reason, …)` when some flows could not be switched. A step that turns its own flow off still finishes the current run.
 
 On save, an empty `label` is refused ("node `x`: choose a label"), and so is an unknown label ("unknown label `x` in node `n`") or a `pick` of a label in no choice ("label `x` is no longer in a choice in node `n`"). A node left as it was stored passes, so a flow whose label was deleted can still be saved to fix another node; at run time the step then fails with the same reason, and a `pick` in a choice with fewer than two labels fails too.
+
+A switch acts once: flows turned on or off by hand afterwards stay that way until the next switch. A flow that picks the `ete` label on 21 June:
+
+```json
+{
+  "id": "summer_starts",
+  "name": "Summer starts",
+  "nodes": [
+    { "id": "june", "type": "trigger.schedule", "params": { "cron": "0 0 21 6 *" } },
+    { "id": "pick", "type": "flow.label", "params": { "label": "ete", "action": "pick" } }
+  ],
+  "edges": [{ "from": "june", "to": "pick" }]
+}
+```
 
 ## `backup.run`
 
