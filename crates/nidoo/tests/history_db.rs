@@ -1213,8 +1213,16 @@ async fn fields_tracks_a_vacuum_over_time_db() {
     let TrackData::Number { points, .. } = &reply.tracks[1].data else {
         panic!("battery is a number");
     };
-    assert_eq!(points.last().map(|p| p.3), Some(100.0), "{points:?}");
-    assert_eq!(points.last().map(|p| p.2), Some(90.0), "{points:?}");
+    // The drop to 90 lands 15 minutes before `now`: its 10-minute window spans 100 → 90, and
+    // the last window holds 90 only.
+    let drop = (now - HOUR / 4) / 1_000_000;
+    let window = points
+        .iter()
+        .find(|p| p.0 <= drop && drop < p.0 + 600)
+        .expect("window of the drop");
+    assert_eq!((window.2, window.3), (90.0, 100.0), "{points:?}");
+    let last = points.last().expect("points");
+    assert_eq!((last.1, last.2, last.3), (90.0, 90.0, 90.0), "{points:?}");
 
     let missing = query::fields(&history, &vacuum_entity("other"), HistoryRange::Day, now).await;
     assert!(matches!(
