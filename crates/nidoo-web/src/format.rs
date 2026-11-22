@@ -8,7 +8,7 @@ use crate::i18n::Lang;
 use crate::i18n::format::{number, with_unit};
 use crate::i18n::states::{self, StateCtx, on_off, state_word};
 
-const DASH: &str = "—";
+pub(crate) const DASH: &str = "—";
 
 /// The value line of `entity`: [`display_value`], except that a switch shown as a light reads
 /// "On" / "Off" the way a light does.

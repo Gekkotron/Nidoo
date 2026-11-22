@@ -5,6 +5,7 @@
 
 pub mod climate;
 pub mod db;
+pub mod fields;
 pub mod query;
 pub mod restore;
 pub mod rollup;

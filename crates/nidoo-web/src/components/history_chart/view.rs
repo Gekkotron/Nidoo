@@ -306,12 +306,12 @@ fn series_tip(
 
 /// Whether an x label at `pos` sits close enough to the "now" label at the right edge to run
 /// into it on a narrow chart (the CSS hides it there).
-fn near_end(pos: f64) -> bool {
+pub(crate) fn near_end(pos: f64) -> bool {
     (0.7..1.0).contains(&pos)
 }
 
 /// Whether each point of `range` is a bucket (mean, min, max) rather than a raw sample.
-fn is_bucketed(range: HistoryRange) -> bool {
+pub(crate) fn is_bucketed(range: HistoryRange) -> bool {
     matches!(
         range,
         HistoryRange::Week | HistoryRange::Month | HistoryRange::Year

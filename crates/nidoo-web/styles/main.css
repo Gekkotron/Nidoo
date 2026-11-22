@@ -10764,3 +10764,162 @@ dialog.popup::backdrop {
     grid-column: 2 / 4;
   }
 }
+
+/* Field tracks: one row per value an entity reports, under its history chart, on one time axis. */
+
+.field-tracks:not(:empty) {
+  margin-top: 12px;
+}
+
+.field-tracks__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  box-sizing: border-box;
+  background: var(--card-bg, rgba(28, 32, 42, 0.9));
+  border: 1px solid var(--chip-border, rgba(255, 255, 255, 0.08));
+  border-radius: 12px;
+}
+
+.field-tracks__row {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) 4.5rem;
+  align-items: center;
+  column-gap: 8px;
+  font: 400 12px/16px var(--font-body);
+}
+
+.field-tracks__label {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-tracks__value {
+  text-align: right;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.field-tracks__strip {
+  position: relative;
+  height: 28px;
+}
+
+.field-tracks__strip--tall {
+  height: 40px;
+}
+
+.field-tracks__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.field-tracks__grid {
+  stroke: var(--chip-border);
+  stroke-opacity: 0.45;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.field-tracks__line {
+  stroke: var(--accent-mint);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.field-tracks__spread {
+  fill: var(--accent-mint);
+  fill-opacity: 0.1;
+  stroke: none;
+}
+
+.field-tracks__band {
+  fill-opacity: 0.4;
+  stroke: var(--card-bg, rgba(28, 32, 42, 0.9));
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.field-tracks__band--0 { fill: var(--accent-cyan); }
+.field-tracks__band--1 { fill: var(--accent-mint); }
+.field-tracks__band--2 { fill: var(--accent-amber); }
+.field-tracks__band--3 { fill: var(--accent-violet); }
+.field-tracks__band--4 { fill: var(--accent-rose); }
+
+/* The words sit over the bands as text, so the stretched SVG does not distort them. */
+.field-tracks__words {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.field-tracks__word {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font: 500 11px/28px var(--font-body);
+}
+
+.field-tracks__axis {
+  position: relative;
+  height: 14px;
+  font: 400 10px/12px var(--font-body);
+  color: var(--muted);
+}
+
+.field-tracks__axis > span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.field-tracks__axis > span:last-child {
+  transform: translateX(-100%);
+}
+
+@media (max-width: 600px) {
+  .field-tracks__row {
+    grid-template-columns: 5rem minmax(0, 1fr) 3.5rem;
+  }
+
+  .field-tracks__axis > .field-tracks__tick--near-end {
+    display: none;
+  }
+}
+
+.field-tracks__shimmer {
+  width: 100%;
+  min-height: 120px;
+  margin-top: 12px;
+  border-radius: 8px;
+  background: linear-gradient(90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.03) 100%);
+  background-size: 200% 100%;
+  animation: history-shimmer 1.4s linear infinite;
+}
+
+.field-tracks__err {
+  margin: 12px 0 0;
+  font: 400 12px/16px var(--font-body);
+  opacity: 0.75;
+}

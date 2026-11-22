@@ -6,7 +6,8 @@ use crate::i18n::current_lang;
 use crate::i18n::errors::{WebError, web_error_text};
 use gloo_net::http::Request;
 use nidoo_api::{
-    EnergyKind, GridDay, HistoryDaily, HistoryRange, HistorySeries, HistoryToday, LastChange,
+    EnergyKind, GridDay, HistoryDaily, HistoryFields, HistoryRange, HistorySeries, HistoryToday,
+    LastChange,
 };
 
 /// Why a history call failed: variant per status class the hub returns.
@@ -47,6 +48,14 @@ fn kind_wire(kind: EnergyKind) -> &'static str {
 pub(crate) fn series_url(entity: &str, range: HistoryRange) -> String {
     format!(
         "/api/v1/history/series?entity={}&range={}",
+        encode_id(entity),
+        range_wire(range)
+    )
+}
+
+pub(crate) fn fields_url(entity: &str, range: HistoryRange) -> String {
+    format!(
+        "/api/v1/history/fields?entity={}&range={}",
         encode_id(entity),
         range_wire(range)
     )
@@ -145,6 +154,13 @@ pub async fn fetch_series(
     fetch(&series_url(entity, range)).await
 }
 
+pub async fn fetch_fields(
+    entity: &str,
+    range: HistoryRange,
+) -> Result<HistoryFields, HistoryApiError> {
+    fetch(&fields_url(entity, range)).await
+}
+
 pub async fn fetch_daily(
     entity: &str,
     days: u16,
@@ -214,6 +230,15 @@ mod tests {
         assert!(series_url("x", HistoryRange::Year).ends_with("&range=1y"));
         assert!(series_url("x", HistoryRange::Week).ends_with("&range=7d"));
         assert!(series_url("x", HistoryRange::Month).ends_with("&range=30d"));
+    }
+
+    #[test]
+    fn fields_url_uses_wire_range_names_and_encodes_id() {
+        assert_eq!(
+            fields_url("vacuum.up/stairs", HistoryRange::Day),
+            "/api/v1/history/fields?entity=vacuum.up%2Fstairs&range=24h"
+        );
+        assert!(fields_url("x", HistoryRange::Week).ends_with("&range=7d"));
     }
 
     #[test]

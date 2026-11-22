@@ -7,7 +7,9 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 use nidoo_api::{EntityView, HistoryRange};
 use nidoo_core::energy::{EnergyMeters, EnergyUnits};
+use nidoo_core::model::Kind;
 
+use crate::components::field_tracks::FieldTracks;
 use crate::components::history_chart::{Flavor, HistoryChart};
 use crate::energy::{energy_entities, energy_entity};
 use crate::format::{area_name, shown_name, title_suffix, type_word, wrap_id};
@@ -152,6 +154,10 @@ pub fn HistoryDetailScreen() -> impl IntoView {
         }
     };
 
+    // The tracks reply says whether the entity's headline is a word the main chart cannot draw.
+    let (headline, set_headline) = signal(false);
+    let kind_sig: Memo<Kind> = Memo::new(move |_| entity.get().map_or(Kind::Generic, |e| e.kind));
+
     let known = Memo::new(move |_| house.entities.with(|m| m.contains_key(&id.get())));
     let loaded = Memo::new(move |_| {
         house.entities.with(|m| !m.is_empty())
@@ -186,13 +192,21 @@ pub fn HistoryDetailScreen() -> impl IntoView {
                                     }
                                 }).collect_view()}
                             </div>
-                            <HistoryChart
+                            <Show when=move || !headline.get()>
+                                <HistoryChart
+                                    entity_id=Signal::derive(move || id.get())
+                                    range=Signal::derive(move || range.get())
+                                    flavor=Signal::derive(move || flavor_sig.get())
+                                    kind=Signal::derive(move || kind_str.get())
+                                    unit=Signal::derive(move || unit_opt.get())
+                                    power_pair=Signal::derive(move || power_pair.get())
+                                />
+                            </Show>
+                            <FieldTracks
                                 entity_id=Signal::derive(move || id.get())
                                 range=Signal::derive(move || range.get())
-                                flavor=Signal::derive(move || flavor_sig.get())
-                                kind=Signal::derive(move || kind_str.get())
-                                unit=Signal::derive(move || unit_opt.get())
-                                power_pair=Signal::derive(move || power_pair.get())
+                                kind=Signal::derive(move || kind_sig.get())
+                                headline=set_headline
                             />
                         </section>
                     }.into_any()

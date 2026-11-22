@@ -1336,6 +1336,14 @@ impl Hub {
             .collect()
     }
 
+    /// A copy of the entity, for reading its history.
+    pub fn entity_for_history(&self, id: &str) -> Result<Entity, HubError> {
+        self.read()
+            .entity(id)
+            .cloned()
+            .ok_or_else(|| HubError::UnknownEntity(id.to_owned()))
+    }
+
     pub fn entity_view(&self, id: &str) -> Option<EntityView> {
         let reg = self.read();
         let entity = reg.entity(id)?;
@@ -2406,7 +2414,7 @@ impl Hub {
 
 /// The number history plots for a state: the type table's mapping for a generic entity,
 /// the kind's own for the others.
-fn history_num_of(entity: &Entity, value: &StateValue) -> Option<f64> {
+pub(crate) fn history_num_of(entity: &Entity, value: &StateValue) -> Option<f64> {
     match value {
         StateValue::Generic(gs) => nidoo_core::types::type_def(&entity.component)
             .and_then(|def| nidoo_core::types::history_num(def, gs)),

@@ -55,8 +55,8 @@ pub use flows::{
 };
 pub use groups::{GroupMemberView, GroupSpec, GroupView};
 pub use history::{
-    EnergyKind, GridDay, GridSlot, GridTotals, HistoryDaily, HistoryRange, HistorySeries,
-    HistoryToday, LastChange, LastChangeItem,
+    EnergyKind, FieldTrack, GridDay, GridSlot, GridTotals, HistoryDaily, HistoryFields,
+    HistoryRange, HistorySeries, HistoryToday, LastChange, LastChangeItem, TrackData,
 };
 pub use home::{EnergyView, HomeSettings, OffPeakDevice, OffPeakEntry, OffPeakWindow};
 pub use mobile::{MobileCode, MobileInput, MobileView};
