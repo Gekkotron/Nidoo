@@ -6,6 +6,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use nidoo_core::flow::Scalar;
 pub use nidoo_core::history::buckets::EnergyKind;
 
 /// Named chart ranges and their window / span, in seconds.
@@ -66,6 +67,43 @@ impl HistoryRange {
 pub struct HistorySeries {
     pub window: i64,
     pub points: Vec<(i64, f64, f64, f64)>,
+}
+
+/// `GET /history/fields?entity=&range=`: every value of one entity over `range`, one track
+/// each, on the shared time axis `[from, to)` (unix seconds). The headline value comes first,
+/// then the entity's fields (a vacuum's `battery`, a light's `brightness` …).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HistoryFields {
+    pub from: i64,
+    pub to: i64,
+    pub tracks: Vec<FieldTrack>,
+}
+
+/// One value of an entity over a [`HistoryFields`] window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FieldTrack {
+    /// The field's name (`battery` …); absent for the entity's headline value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub data: TrackData,
+}
+
+/// How a track is drawn: numbers as a line, anything else as bands of equal value.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TrackData {
+    /// One `[t, mean, min, max]` per `window` seconds, as [`HistorySeries`]; windows with no
+    /// known value are left out.
+    Number {
+        window: i64,
+        points: Vec<(i64, f64, f64, f64)>,
+    },
+    /// `[t, value]` at each change, oldest first. The first entry is at `from` and carries the
+    /// value already held then; each value lasts until the next entry or `to`. `null` means
+    /// unknown (not reported yet, or a state without this field).
+    Steps { changes: Vec<(i64, Option<Scalar>)> },
 }
 
 /// kWh per calendar day in the house zone.
