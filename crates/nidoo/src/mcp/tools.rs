@@ -444,7 +444,9 @@ impl NidooMcp {
         })
     }
 
-    /// Returns one slice of an entity's history: `series` (chart over `range`), `daily`
+    /// Returns one slice of an entity's history: `series` (chart over `range`), `fields` (every
+    /// value the entity reports over `range`, one track each: its headline word and fields such
+    /// as a vacuum's battery and fan speed), `daily`
     /// (kWh per day over `days` with `kind`), `today` (kWh since local midnight with
     /// `kind`), or `last_change` (when the entity last changed). The reply is always a
     /// one-field object: the field matches `what`. 503 `history_unavailable` when
@@ -469,6 +471,19 @@ impl NidooMcp {
                     .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
                 Ok(Json(HistoryAnswer {
                     series: Some(series),
+                    ..HistoryAnswer::default()
+                }))
+            }
+            HistoryWhat::Fields => {
+                let range = params
+                    .range
+                    .ok_or_else(|| ToolError("fields requires `range`".into()))?;
+                let entity = self.hub.entity_for_history(&params.entity)?;
+                let fields = history_query::fields(history, &entity, range, now)
+                    .await
+                    .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+                Ok(Json(HistoryAnswer {
+                    fields: Some(fields),
                     ..HistoryAnswer::default()
                 }))
             }

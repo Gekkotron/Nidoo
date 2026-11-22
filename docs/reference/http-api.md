@@ -218,6 +218,7 @@ Available when the database is connected (**Settings → Database**). See [Histo
 | Route | What it does |
 | --- | --- |
 | `GET /api/v1/history/series?entity=&range=` | A chart series over `1h`, `6h`, `24h`, `7d`, `30d` or `1y`: `{window, points: [[t, mean, min, max], …]}`, times in unix seconds. |
+| `GET /api/v1/history/fields?entity=&range=` | Every value of the entity over `range` (as `series`), one track each: `{from, to, tracks: [{field?, unit?, data}, …]}`, times in unix seconds. The headline value comes first, only when the entity's main chart does not draw it (a vacuum's activity, an alarm, a text sensor), then the entity's fields in order (a vacuum's `battery`, `fan_speed`). A number field has `data: {type: "number", window, points: [[t, mean, min, max], …]}` (windows with no known value are left out); any other has `data: {type: "steps", changes: [[t, value], …]}`, the first at `from` with the value held then (`null` when unknown), then one per change. `404` for an unknown entity. |
 | `GET /api/v1/history/daily?entity=&days=&kind=` | kWh per calendar day for the last `days` days (7, 30 or 365), with `kind` (`counter` or `power`): `{days: [[t, kwh], …]}`. |
 | `GET /api/v1/history/today?entity=&kind=` | kWh since local midnight: `{kwh, since}`. |
 | `GET /api/v1/history/last_change?entity=&entity=…` | Last change time of 1 to 50 entities, in request order: `{items: [{changed_at, recorded}, …]}`. |

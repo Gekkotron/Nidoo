@@ -105,7 +105,7 @@ Network presence needs `network.enabled`, on by default; otherwise these tools a
 
 | Tool | What it does |
 | --- | --- |
-| `get_history` | One slice of an entity's history, available only when the database is connected (**Settings → Database**). Args: `entity`, `what`, and by `what`: `series` needs `range` (`1h`, `6h`, `24h`, `7d`, `30d`, `1y`); `daily` needs `days` (7, 30 or 365) and `kind` (`counter` or `power`); `today` needs `kind`; `last_change` needs nothing more. The reply is a one-field object named after `what`. Errors read `history_unavailable: …` or `not_recorded: …`. |
+| `get_history` | One slice of an entity's history, available only when the database is connected (**Settings → Database**). Args: `entity`, `what`, and by `what`: `series` needs `range` (`1h`, `6h`, `24h`, `7d`, `30d`, `1y`); `fields` needs `range` too and returns every value the entity reports over time, one track each (its headline word when the main chart does not draw it, then fields such as a vacuum's `battery` and `fan_speed`; same shape as `GET /history/fields`); `daily` needs `days` (7, 30 or 365) and `kind` (`counter` or `power`); `today` needs `kind`; `last_change` needs nothing more. The reply is a one-field object named after `what`. Errors read `history_unavailable: …` or `not_recorded: …`. |
 | `get_grid_day` | What crossed the grid meter on one house-local day, per half hour: kWh bought off-peak and peak, kWh sold, with the day's totals and off-peak bands (the shape of `GET /history/grid_day`). Args: `date` (`YYYY-MM-DD`, today when absent). Errors read `history_unavailable: …`, `no_grid_meter: …` or `bad_request: …`. |
 
 ## Weather

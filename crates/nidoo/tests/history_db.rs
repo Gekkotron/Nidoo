@@ -1164,3 +1164,89 @@ async fn purge_removes_only_system_rows() {
 
     tdb.drop_db().await;
 }
+
+#[tokio::test]
+async fn fields_tracks_a_vacuum_over_time_db() {
+    use nidoo::history::{History, query};
+    use nidoo_api::{HistoryRange, TrackData};
+    use nidoo_core::flow::Scalar;
+    use nidoo_core::model::{
+        Bindings, Capabilities, Entity, EntityCategory, Kind, UiOverride, VacuumState,
+    };
+    let Some(tdb) = fresh_db().await else { return };
+    let vac = |at: i64, state: &str, battery: u8, fan: &str| ValueRow {
+        at,
+        id: "vac".into(),
+        value: StateValue::Vacuum(VacuumState {
+            state: Some(state.into()),
+            battery: Some(battery),
+            fan_speed: Some(fan.into()),
+        }),
+        num: None,
+    };
+    let now = 48 * HOUR;
+    tdb.db
+        .insert(&Rows {
+            values: vec![
+                vac(now - 2 * HOUR, "docked", 100, "balanced"),
+                vac(now - HOUR / 2, "cleaning", 100, "balanced"),
+                vac(now - HOUR / 4, "cleaning", 90, "max"),
+            ],
+            availability: vec![],
+        })
+        .await
+        .unwrap();
+    let history = History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    let entity = vacuum_entity("vac");
+    let reply = query::fields(&history, &entity, HistoryRange::Day, now)
+        .await
+        .expect("fields");
+    let names: Vec<_> = reply.tracks.iter().map(|t| t.field.as_deref()).collect();
+    assert_eq!(names, [None, Some("battery"), Some("fan_speed")]);
+    assert_eq!(reply.to, now / 1_000_000);
+    let TrackData::Steps { changes } = &reply.tracks[0].data else {
+        panic!("headline is steps");
+    };
+    assert_eq!(changes.len(), 3, "{changes:?}");
+    assert_eq!(changes[0], (reply.from, None));
+    assert_eq!(changes[2].1, Some(Scalar::Text("cleaning".into())));
+    let TrackData::Number { points, .. } = &reply.tracks[1].data else {
+        panic!("battery is a number");
+    };
+    assert_eq!(points.last().map(|p| p.3), Some(100.0), "{points:?}");
+    assert_eq!(points.last().map(|p| p.2), Some(90.0), "{points:?}");
+
+    let missing = query::fields(&history, &vacuum_entity("other"), HistoryRange::Day, now).await;
+    assert!(matches!(
+        missing,
+        Err(nidoo::history::HistoryError::NotRecorded)
+    ));
+
+    tdb.drop_db().await;
+
+    fn vacuum_entity(id: &str) -> Entity {
+        Entity {
+            unique_id: id.into(),
+            kind: Kind::Vacuum,
+            protocol_kind: Kind::Vacuum,
+            component: "vacuum".into(),
+            device_id: None,
+            name: id.into(),
+            device_name: None,
+            label: None,
+            device_class: None,
+            unit: None,
+            icon: None,
+            category: EntityCategory::default(),
+            enabled_by_default: true,
+            capabilities: Capabilities::default(),
+            bindings: Bindings::default(),
+            suggested_area: None,
+            path_area: None,
+            area: String::new(),
+            ui: UiOverride::default(),
+            part_of: None,
+            discovery_topic: String::new(),
+        }
+    }
+}

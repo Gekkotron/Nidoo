@@ -6,17 +6,19 @@ use chrono::{DateTime, NaiveDate, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 
 use nidoo_api::{
-    GridDay, GridSlot, GridTotals, HistoryDaily, HistoryRange, HistorySeries, HistoryToday,
-    LastChange, LastChangeItem,
+    GridDay, GridSlot, GridTotals, HistoryDaily, HistoryFields, HistoryRange, HistorySeries,
+    HistoryToday, LastChange, LastChangeItem,
 };
 use nidoo_core::energy::{
     GridCounters, OffPeakDevice, OffPeakEntry, device_off_peak, is_off_peak, windows_for,
 };
+use nidoo_core::flow::fields as entity_fields;
 use nidoo_core::history::buckets::{Bucket, EnergyKind, Sample, fill, kwh, merge, rollup, round3};
 use nidoo_core::history::grid_day::{HALF_HOUR, fill_slots, increases, slot_starts};
 use nidoo_core::history::{HOUR, Micros};
-use nidoo_core::model::{Availability, StateValue};
+use nidoo_core::model::{Availability, Entity, StateValue};
 
+use super::fields::{TrackInput, build_tracks};
 use super::{History, HistoryError};
 
 fn hour_floor(t: Micros) -> Micros {
@@ -463,6 +465,48 @@ pub async fn series(
     Ok(HistorySeries {
         window: window_secs,
         points,
+    })
+}
+
+/// Every value of `entity` over `range` as one track each: the headline when the main chart
+/// does not draw it, then its fields. `404 not_recorded` when it has no rows.
+pub async fn fields(
+    h: &History,
+    entity: &Entity,
+    range: HistoryRange,
+    now: Micros,
+) -> Result<HistoryFields, HistoryError> {
+    let db = h.db()?;
+    let id = entity.unique_id.as_str();
+    if !db.is_recorded(id).await.map_err(unavailable)? {
+        return Err(HistoryError::NotRecorded);
+    }
+    let window = range.window_secs() * 1_000_000;
+    let from = align_down(now - range.span_secs() * 1_000_000, window);
+    let (carry, rows) = db
+        .states_between(id, from, now)
+        .await
+        .map_err(unavailable)?;
+    let list = entity_fields(
+        entity.kind,
+        &entity.component,
+        &entity.capabilities,
+        entity.unit.as_deref(),
+    );
+    let tracks = build_tracks(&TrackInput {
+        component: &entity.component,
+        fields: &list,
+        headline_num: &|v| crate::hub::history_num_of(entity, v),
+        carry: carry.as_ref(),
+        rows: &rows,
+        from,
+        to: now,
+        window,
+    });
+    Ok(HistoryFields {
+        from: from / 1_000_000,
+        to: now / 1_000_000,
+        tracks,
     })
 }
 

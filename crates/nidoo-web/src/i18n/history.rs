@@ -25,6 +25,8 @@ pub enum HistoryText {
     /// Legend words of `min_max`; the same in both languages.
     Min,
     Max,
+    /// Label of a headline value that is not a number: "State" / "État".
+    State,
     /// Chart key of the line on the bucketed ranges.
     Average,
     /// Chart key of the shaded band around the line on the bucketed ranges.
@@ -59,6 +61,7 @@ pub fn history_text(lang: Lang, k: HistoryText) -> &'static str {
         T::LastYear => ("Last year", "12 derniers mois"),
         T::Min => ("min", "min"),
         T::Max => ("max", "max"),
+        T::State => ("State", "État"),
         T::Average => ("Average", "Moyenne"),
         T::Spread => ("Min–max range", "Écart min–max"),
         T::SpreadHint => (

@@ -223,7 +223,7 @@ fn instructions() -> String {
          earlier state message on its topic, and then becomes `to`; it never fires on the first value seen after boot. \
          Set the house location in the settings; the hub falls back to \
          Paris otherwise and reports a warning on save. `get_history` returns one slice of an entity's history — a chart \
-         series (`what: series` with `range`), kWh per day (`daily` with `days` and \
+         series (`what: series` with `range`), every value of an entity over time (`fields` with `range`), kWh per day (`daily` with `days` and \
          `kind`), kWh since midnight (`today` with `kind`), or `last_change` — when \
          `[history] url` is set in the hub's config. `send_notification` sends a phone push (`title` \
          required; `channel` alarm, security, camera, energy, climate, system or misc; `severity` \

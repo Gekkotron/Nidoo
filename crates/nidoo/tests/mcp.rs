@@ -1292,6 +1292,23 @@ async fn get_history_without_history_reports_unavailable() {
 }
 
 #[tokio::test]
+async fn get_history_fields_needs_range_and_history() {
+    let server = Server::start().await;
+    let client = server.client().await;
+
+    let result = call(
+        &client,
+        "get_history",
+        json!({ "entity": "x", "what": "fields", "range": "24h" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(text_of(&result).contains("history_unavailable"));
+
+    client.cancel().await.expect("close");
+}
+
+#[tokio::test]
 async fn get_history_is_listed() {
     let server = Server::start().await;
     let client = server.client().await;

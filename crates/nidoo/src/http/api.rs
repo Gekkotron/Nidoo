@@ -17,10 +17,10 @@ use nidoo_api::{
     AlertView, Ambiance, AmbianceView, ApiError, ApplyReport, AreaView, CameraInfo, CamerasView,
     CommandResponse, ConnectionStatus, Dashboard, DashboardReorder, DashboardView, EnergyKind,
     EntityView, FlowLabelsView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec,
-    GroupView, HistoryDaily, HistoryRange, HistorySeries, HistoryToday, HomeSettings, IgnoredView,
-    LabelEdit, LabelSwitchBody, LabelSwitchResult, LastChange, NetworkWatchSpec, NetworkWatchView,
-    NotifyInput, OverridePatch, RunView, SchedulePreview, Snapshot, SupervisorSettings,
-    SupervisorView, SystemView, VirtualSpec, WeatherView,
+    GroupView, HistoryDaily, HistoryFields, HistoryRange, HistorySeries, HistoryToday,
+    HomeSettings, IgnoredView, LabelEdit, LabelSwitchBody, LabelSwitchResult, LastChange,
+    NetworkWatchSpec, NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview,
+    Snapshot, SupervisorSettings, SupervisorView, SystemView, VirtualSpec, WeatherView,
 };
 use nidoo_climate::doc::{HouseSettings, Rules, ZoneSettings};
 use nidoo_climate::view::{ClimateView, DecisionLog, LearnStatus, OverrideRequest, RoomEcoRequest};
@@ -126,6 +126,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         )
         .route("/virtual/{id}", put(put_virtual).delete(delete_virtual))
         .route("/history/series", get(history_series))
+        .route("/history/fields", get(history_fields))
         .route("/history/daily", get(history_daily))
         .route("/history/today", get(history_today))
         .route("/history/last_change", get(history_last_change))
@@ -1235,6 +1236,25 @@ async fn history_series(
     let history = require_history(&hub)?;
     Ok(Json(
         history_query::series(history, entity, range, now_micros()).await?,
+    ))
+}
+
+/// `GET /history/fields?entity=&range=` — every value of the entity over `range`, one track
+/// each; 400 for a missing or unknown range, 404 for an unknown or never recorded entity, 503
+/// without history.
+async fn history_fields(
+    State(hub): HubState,
+    RawQuery(q): RawQuery,
+) -> Result<Json<HistoryFields>, HttpError> {
+    let params = parse_query(q.as_deref());
+    let id = get_one(&params, "entity").ok_or_else(bad_request)?;
+    let range = get_one(&params, "range")
+        .and_then(HistoryRange::parse)
+        .ok_or_else(bad_request)?;
+    let history = require_history(&hub)?;
+    let entity = hub.entity_for_history(id)?;
+    Ok(Json(
+        history_query::fields(history, &entity, range, now_micros()).await?,
     ))
 }
 

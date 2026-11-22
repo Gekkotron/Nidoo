@@ -1925,6 +1925,28 @@ async fn history_routes_without_history_are_503() {
 }
 
 #[tokio::test]
+async fn history_fields_without_history_is_503_and_unknown_entity_404() {
+    let server = Server::start().await;
+    let res = server
+        .get("/api/v1/history/fields?entity=x&range=24h")
+        .await;
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let (history, _rx) = nidoo::history::History::detached(8, chrono_tz::UTC);
+    server.hub.set_history(history);
+    let res = server
+        .get("/api/v1/history/fields?entity=nope&range=24h")
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    let res = server
+        .get("/api/v1/history/fields?entity=nope&range=2d")
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = server.get("/api/v1/history/fields?range=24h").await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn history_bad_params_are_400() {
     let server = Server::start().await;
     let (history, _rx) = nidoo::history::History::detached(8, chrono_tz::UTC);

@@ -3,9 +3,9 @@
 
 use nidoo_api::{
     Ambiance, AmbianceView, AreaView, BridgeView, ConnectionStatus, DeviceView, EnergyKind,
-    EntityView, GroupSpec, GroupView, HistoryDaily, HistoryRange, HistorySeries, HistoryToday,
-    IgnoredView, LastChangeItem, NetworkWatchSpec, NetworkWatchView, OverridePatch, RunStatus,
-    VirtualSpec,
+    EntityView, GroupSpec, GroupView, HistoryDaily, HistoryFields, HistoryRange, HistorySeries,
+    HistoryToday, IgnoredView, LastChangeItem, NetworkWatchSpec, NetworkWatchView, OverridePatch,
+    RunStatus, VirtualSpec,
 };
 use nidoo_core::flow::Flow;
 use nidoo_core::model::{Area, Command, Kind, UiOverride};
@@ -593,6 +593,8 @@ pub enum HistoryWhat {
     Daily,
     /// kWh since local midnight (`kind` required).
     Today,
+    /// Every value of the entity over a named range, one track each (`range` required).
+    Fields,
     /// The time of the last state change for the entity.
     LastChange,
 }
@@ -607,9 +609,9 @@ pub struct GetGridDayParams {
 pub struct GetHistoryParams {
     /// The entity id, as `list_entities` returns it.
     pub entity: String,
-    /// What to return: `series`, `daily`, `today` or `last_change`.
+    /// What to return: `series`, `fields`, `daily`, `today` or `last_change`.
     pub what: HistoryWhat,
-    /// `1h`, `6h`, `24h`, `7d`, `30d` or `1y`. Required for `what = series`.
+    /// `1h`, `6h`, `24h`, `7d`, `30d` or `1y`. Required for `what = series` and `what = fields`.
     pub range: Option<HistoryRange>,
     /// 7, 30 or 365. Required for `what = daily`.
     pub days: Option<u32>,
@@ -618,12 +620,14 @@ pub struct GetHistoryParams {
     pub kind: Option<EnergyKind>,
 }
 
-/// A single-entry object: at most one of `series`, `daily`, `today` or `last_change` is
+/// A single-entry object: at most one of `series`, `fields`, `daily`, `today` or `last_change` is
 /// present, matching the `what` of the request.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct HistoryAnswer {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub series: Option<HistorySeries>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<HistoryFields>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily: Option<HistoryDaily>,
     #[serde(skip_serializing_if = "Option::is_none")]
