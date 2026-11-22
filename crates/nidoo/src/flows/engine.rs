@@ -1770,7 +1770,9 @@ async fn run_node(
                 (Some(window), Some(Scalar::Number(mean))) => {
                     format!("average {window} = {mean:.1} → {outcome}")
                 }
-                _ => outcome.to_string(),
+                // The value compared, so a run's history shows why it went that way.
+                (_, Some(value)) => format!("{} → {outcome}", scalar_text(value)),
+                (_, None) => format!("unknown → {outcome}"),
             };
             match compare(left.as_ref(), params.op, &right) {
                 Ok(true) => (StepOutcome::Ok, shown(true), vec!["true".to_owned()]),
@@ -3146,6 +3148,7 @@ mod tests {
         )
         .await;
         assert_eq!(outcome, StepOutcome::Ok, "{detail}");
+        assert_eq!(detail, "55 → true");
         assert_eq!(port, ["true"]);
     }
 
@@ -3168,6 +3171,7 @@ mod tests {
         )
         .await;
         assert_eq!(outcome, StepOutcome::Ok, "{detail}");
+        assert_eq!(detail, "50 → true");
         assert_eq!(port, ["true"]);
     }
 
