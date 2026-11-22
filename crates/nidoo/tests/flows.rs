@@ -487,7 +487,7 @@ async fn motion_true_turns_the_led_on() {
 
     assert_eq!(step_nodes(&run), ["motion", "moving", "on"]);
     assert_eq!(run.steps[0].detail, format!("{MOTION_ID} = true"));
-    assert_eq!(run.steps[1].detail, "true");
+    assert_eq!(run.steps[1].detail, "true → true");
     assert_eq!(run.steps[2].detail, "accepted");
     let trigger = run.trigger.expect("trigger");
     assert_eq!(trigger.value, serde_json::json!(true));
@@ -512,7 +512,7 @@ async fn motion_false_turns_off_after_the_delay() {
         r.status == RunStatus::Running && step_nodes(r) == ["motion", "moving"]
     })
     .await;
-    assert_eq!(waiting.steps[1].detail, "false");
+    assert_eq!(waiting.steps[1].detail, "false → false");
     settle().await;
 
     tokio::time::advance(Duration::from_secs(4 * 60 + 59)).await;
@@ -1066,7 +1066,7 @@ async fn if_without_entity_reads_the_registry() {
     })
     .await;
     assert_eq!(run.trigger.expect("trigger").value, serde_json::json!(true));
-    assert_eq!(run.steps.last().expect("step").detail, "false");
+    assert_eq!(run.steps.last().expect("step").detail, "false → false");
 }
 
 /// A flow that sends `turn_on` to the LED on a cron schedule.
@@ -1271,9 +1271,9 @@ async fn if_missing_default_still_fails() {
     let mut events = hub.subscribe();
     hub.run_flow("a").expect("run");
     // Without `missing` the step behaves exactly as before: `compare` of a missing value is
-    // plain false, with no "missing →" note.
+    // plain false, noted "unknown" rather than "missing".
     let run = next_run_event(&mut events, RunStatus::Done).await;
-    assert_eq!(run.steps[1].detail, "false");
+    assert_eq!(run.steps[1].detail, "unknown → false");
     let sent = published(&log);
     assert!(sent.len() == 1 && sent[0].contains("OFF"), "{sent:?}");
 }
