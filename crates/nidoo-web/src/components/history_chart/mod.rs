@@ -3,6 +3,7 @@
 pub mod format;
 pub mod geom;
 pub mod periods;
+pub mod selection;
 pub mod view;
 
 pub use format::paris_offset;
