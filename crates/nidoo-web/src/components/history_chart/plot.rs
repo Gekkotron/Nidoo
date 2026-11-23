@@ -4,11 +4,11 @@
 use nidoo_api::{FieldTrack, HistoryFields, HistorySeries, TrackData};
 
 use crate::components::history_chart::Flavor;
-use crate::components::history_chart::geom::{YScale, y_scale};
+use crate::components::history_chart::geom::YScale;
 use crate::components::history_chart::selection::{Chip, Selection, Slot, default_selection};
 
 /// The `/history/fields` reply as the view holds it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FieldsState {
     Loading,
     Ready(HistoryFields),
@@ -31,7 +31,6 @@ pub enum Plot {
     Words {
         track: usize,
     },
-    FieldsError(String),
 }
 
 fn find<'a>(chips: &'a [Chip], key: &Option<String>, slot: Slot) -> Option<&'a Chip> {
@@ -94,17 +93,13 @@ pub fn field_series(track: &FieldTrack) -> Option<(HistorySeries, Option<String>
     }
 }
 
-/// The y extent of a number track: a percentage always reads 0 to 100, anything else fits the
-/// data with headroom.
-pub fn track_scale(unit: Option<&str>, points: &[(i64, f64, f64, f64)]) -> YScale {
-    if unit == Some("%") {
-        YScale {
-            min: 0.0,
-            max: 100.0,
-        }
-    } else {
-        y_scale(points)
-    }
+/// The fixed y extent of a number field track: a percentage always reads 0 to 100. Any other
+/// unit, and the entity's own headline value, fit their data.
+pub fn percent_scale(unit: Option<&str>) -> Option<YScale> {
+    (unit == Some("%")).then_some(YScale {
+        min: 0.0,
+        max: 100.0,
+    })
 }
 
 #[cfg(test)]
@@ -254,11 +249,10 @@ mod tests {
     }
 
     #[test]
-    fn a_percentage_reads_zero_to_one_hundred() {
-        let pts = [(0, 40.0, 40.0, 40.0)];
-        let s = track_scale(Some("%"), &pts);
+    fn a_percentage_field_reads_zero_to_one_hundred() {
+        let s = percent_scale(Some("%")).unwrap();
         assert_eq!((s.min, s.max), (0.0, 100.0));
-        let other = track_scale(Some("°C"), &pts);
-        assert!(other.min < 40.0 && other.max > 40.0);
+        assert_eq!(percent_scale(Some("°C")), None);
+        assert_eq!(percent_scale(None), None);
     }
 }

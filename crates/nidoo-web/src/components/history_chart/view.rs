@@ -19,8 +19,8 @@ use super::geom::{
     plot_points, slot_index, smooth_path, step_decimals, step_path, tooltip_flips, value_decimals,
     y_scale,
 };
-use super::periods::{Band, band_title, legend, periods, scalar_text, value_at, x_frac};
-use super::plot::{FieldsState, Plot, field_series, headline_or_error, plot_for, track_scale};
+use super::periods::{Band, band_near, legend, periods, scalar_text, value_at, word_in};
+use super::plot::{FieldsState, Plot, field_series, headline_or_error, percent_scale, plot_for};
 use super::selection::{chip_label, chips, parse_show, show_param, toggle};
 use crate::api::history::{HistoryApiError, fetch_daily, fetch_fields, fetch_series};
 use crate::components::now::Now;
@@ -39,7 +39,7 @@ pub enum Flavor {
 }
 
 /// What the chart is currently drawing.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum State {
     Loading,
     Series(HistorySeries),
@@ -144,7 +144,15 @@ pub fn HistoryChart(
                         return;
                     }
                     match outcome {
-                        Ok(f) => fields.set(FieldsState::Ready(f)),
+                        Ok(f) => {
+                            // A refresh that changed nothing keeps the chart (and its tooltip).
+                            let same = fields.with_untracked(
+                                |cur| matches!(cur, FieldsState::Ready(c) if *c == f),
+                            );
+                            if !same {
+                                fields.set(FieldsState::Ready(f));
+                            }
+                        }
                         Err(e) => {
                             // A failed refresh keeps what is drawn.
                             if !refresh
@@ -171,9 +179,14 @@ pub fn HistoryChart(
                 if is_stale(my_req, latest_check.get()) {
                     return;
                 }
+                let set_unless_same = |next: State| {
+                    if state.with_untracked(|cur| *cur != next) {
+                        state.set(next);
+                    }
+                };
                 match outcome {
-                    FetchResult::Series(Ok(s)) => state.set(State::Series(s)),
-                    FetchResult::Daily(Ok(d)) => state.set(State::Bars(d)),
+                    FetchResult::Series(Ok(s)) => set_unless_same(State::Series(s)),
+                    FetchResult::Daily(Ok(d)) => set_unless_same(State::Bars(d)),
                     FetchResult::Series(Err(e)) | FetchResult::Daily(Err(e)) => {
                         // A failed refresh keeps what is drawn; one that superseded the first
                         // fetch still has to end the shimmer.
@@ -255,12 +268,12 @@ pub fn HistoryChart(
                     Plot::Loading => {
                         view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any()
                     }
-                    Plot::FieldsError(msg) => error_block(lang, &msg, retry_bump).into_any(),
                     Plot::Field { track, overlay } => {
                         let overlay = overlay_of(lang, entity_kind, &tracks, overlay, range);
                         match tracks.get(track).and_then(field_series) {
                             Some((s, unit)) => {
-                                render_series(lang, s, range, field_series_kind(), unit, overlay).into_any()
+                                let fixed = percent_scale(unit.as_deref());
+                                render_series(lang, s, range, field_series_kind(), unit, overlay, fixed).into_any()
                             }
                             None => render_words(lang, range, overlay).into_any(),
                         }
@@ -289,7 +302,7 @@ pub fn HistoryChart(
                         State::Error(msg) => error_block(lang, &msg, retry_bump).into_any(),
                         State::Series(s) => match headline_or_error(&fields_now, &s) {
                             Some(msg) => error_block(lang, &msg, retry_bump).into_any(),
-                            None => render_series(lang, s, range, kind_rx.get(), unit_rx.get(), overlay).into_any(),
+                            None => render_series(lang, s, range, kind_rx.get(), unit_rx.get(), overlay, None).into_any(),
                         },
                         State::Bars(d) => render_bars(lang, d, range).into_any(),
                         }
@@ -372,21 +385,29 @@ impl Overlay {
         })
     }
 
-    /// The word in force at `frac` of the window.
-    fn word_at(&self, frac: f64) -> String {
-        let t = self.from + (frac * (self.to - self.from) as f64) as i64;
+    fn text(&self, value: Option<&Scalar>) -> String {
         scalar_text(
             self.lang,
             self.kind,
             self.field.as_deref(),
             self.unit.as_deref(),
-            value_at(&self.changes, t).as_ref(),
+            value,
         )
     }
 
-    /// The period holding `frac` of the window.
-    fn band_at(&self, frac: f64) -> Option<&Band> {
-        self.periods.iter().find(|b| frac >= b.x0 && frac <= b.x1)
+    /// The word in force at unix second `t`.
+    fn word_at(&self, t: i64) -> String {
+        self.text(value_at(&self.changes, t).as_ref())
+    }
+
+    /// The word naming the span `start..end`: the coloured value held longest in it.
+    fn word_over(&self, start: i64, end: i64) -> String {
+        self.text(word_in(&self.changes, &self.periods, start, end).as_ref())
+    }
+
+    /// The period under `frac` of the window, with `tol` of slack either side.
+    fn band_near(&self, frac: f64, tol: f64) -> Option<&Band> {
+        band_near(&self.periods, frac, tol)
     }
 }
 
@@ -403,40 +424,32 @@ fn overlay_of(
 }
 
 /// The shaded periods behind the plot: only the coloured ones; the baseline stays plain.
-fn periods_layer(
-    lang: Lang,
-    range: HistoryRange,
-    overlay: &Overlay,
-    behind: bool,
-) -> impl IntoView + use<> {
-    let now = overlay.to;
-    let words: Vec<(Band, String)> = overlay
+fn periods_layer(overlay: &Overlay, behind: bool) -> impl IntoView + use<> {
+    let coloured: Vec<(f64, f64, usize)> = overlay
         .periods
         .iter()
-        .filter(|b| b.color.is_some())
-        .map(|b| {
-            let word = scalar_text(
-                lang,
-                overlay.kind,
-                overlay.field.as_deref(),
-                overlay.unit.as_deref(),
-                b.value.as_ref(),
-            );
-            (b.clone(), word)
-        })
+        .filter_map(|b| Some((b.x0, b.x1, b.color?)))
         .collect();
     view! {
         <div class="history-chart__periods" class:history-chart__periods--behind=behind>
-            {words.into_iter().map(|(b, word)| {
-                let n = b.color.unwrap_or(0);
+            {coloured.into_iter().map(|(x0, x1, n)| {
                 view! {
                     <i class=format!("history-chart__period history-chart__period--{n}")
-                        style=format!("left: {}; width: max({}, 3px)", pct(b.x0), pct(b.x1 - b.x0))
-                        title=band_title(lang, range, now, &word, &b)></i>
+                        style=period_style(x0, x1)></i>
                 }
             }).collect::<Vec<_>>()}
         </div>
     }
+}
+
+/// The inline style of a period: at least 3 px wide, and never pushed out of the box when it
+/// starts at the right edge.
+fn period_style(x0: f64, x1: f64) -> String {
+    format!(
+        "left: min({}, calc(100% - 3px)); width: max({}, 3px)",
+        pct(x0),
+        pct(x1 - x0)
+    )
 }
 
 /// What each value of the periods is, under the chart.
@@ -465,15 +478,16 @@ fn period_key(overlay: &Overlay) -> impl IntoView + use<> {
 fn render_words(lang: Lang, range: HistoryRange, overlay: Option<Overlay>) -> impl IntoView {
     let now = (crate::energy::now_ms() / 1000) as i64;
     let xticks = tick_labels(lang, range, now);
-    let layer = overlay
-        .as_ref()
-        .map(|o| periods_layer(lang, range, o, false));
+    let layer = overlay.as_ref().map(|o| periods_layer(o, false));
     let key = overlay.as_ref().map(period_key);
     let overlay = StoredValue::new(overlay);
     let plot = NodeRef::<html::Div>::new();
     let hover = RwSignal::new(None::<f64>);
+    // The hover slack, as a fraction of the plot width at the time of the pointer.
+    let tol = StoredValue::new(0.0_f64);
     let track = move |ev: web_sys::PointerEvent| {
-        if let Some(f) = pointer_frac(&plot, &ev) {
+        if let Some((f, width)) = pointer_frac_width(&plot, &ev) {
+            tol.set_value(HOVER_SLACK_PX / width);
             hover.set(Some(f));
         }
     };
@@ -491,12 +505,17 @@ fn render_words(lang: Lang, range: HistoryRange, overlay: Option<Overlay>) -> im
                     style=move || hover.get().map(|x| format!("left: {}", pct(x))).unwrap_or_default()>
                     {move || hover.get().and_then(|f| overlay.with_value(|o| o.as_ref().map(|o| {
                         let t = o.from + (f * (o.to - o.from) as f64) as i64;
-                        let span = o.band_at(f).map(|b| format!(
+                        let band = o.band_near(f, tol.get_value());
+                        let span = band.map(|b| format!(
                             "{} – {}",
                             tooltip_time(lang, range, b.start, o.to),
                             tooltip_time(lang, range, b.end, o.to)
                         ));
-                        (tooltip_time(lang, range, t, o.to), o.word_at(f), span)
+                        let word = match band {
+                            Some(b) => o.text(b.value.as_ref()),
+                            None => o.word_at(t),
+                        };
+                        (tooltip_time(lang, range, t, o.to), word, span)
                     }))).map(|(time, word, span)| view! {
                         <span class="history-chart__tip-time">{time}</span>
                         <strong class="history-chart__tip-value history-chart__tip-word">{word}</strong>
@@ -601,12 +620,25 @@ fn next_gradient_id() -> String {
     format!("hc-fill-{}", CHART_IDS.fetch_add(1, Ordering::Relaxed))
 }
 
+/// The pointer's x across `plot`, as a fraction of its width, and that width in pixels.
+fn pointer_frac_width(plot: &NodeRef<html::Div>, ev: &web_sys::PointerEvent) -> Option<(f64, f64)> {
+    let rect = plot.get()?.get_bounding_client_rect();
+    (rect.width() > 0.0).then(|| {
+        (
+            ((f64::from(ev.client_x()) - rect.left()) / rect.width()).clamp(0.0, 1.0),
+            rect.width(),
+        )
+    })
+}
+
 /// The pointer's x across `plot`, as a fraction of its width.
 fn pointer_frac(plot: &NodeRef<html::Div>, ev: &web_sys::PointerEvent) -> Option<f64> {
-    let rect = plot.get()?.get_bounding_client_rect();
-    (rect.width() > 0.0)
-        .then(|| ((f64::from(ev.client_x()) - rect.left()) / rect.width()).clamp(0.0, 1.0))
+    pointer_frac_width(plot, ev).map(|(f, _)| f)
 }
+
+/// How far from a period, in pixels, the pointer still counts as on it: periods are drawn at
+/// least 3 px wide, however briefly they lasted.
+const HOVER_SLACK_PX: f64 = 1.5;
 
 /// A fraction as a CSS percentage.
 fn pct(frac: f64) -> String {
@@ -647,6 +679,19 @@ pub(crate) fn near_end(pos: f64) -> bool {
     (0.7..1.0).contains(&pos)
 }
 
+/// Where the bucket of point `i` ends: at the next point, else as long as the one before it.
+fn bucket_end(points: &[(i64, f64, f64, f64)], i: usize) -> i64 {
+    let t = points[i].0;
+    match (
+        points.get(i + 1),
+        i.checked_sub(1).and_then(|j| points.get(j)),
+    ) {
+        (Some(next), _) => next.0,
+        (None, Some(prev)) => t + (t - prev.0),
+        (None, None) => t + 1,
+    }
+}
+
 /// Whether each point of `range` is a bucket (mean, min, max) rather than a raw sample.
 pub(crate) fn is_bucketed(range: HistoryRange) -> bool {
     matches!(
@@ -670,6 +715,7 @@ fn render_series(
     kind: String,
     unit: Option<String>,
     overlay: Option<Overlay>,
+    fixed: Option<YScale>,
 ) -> impl IntoView {
     let discrete = state_axis_labels(lang, None, &kind).is_some();
     // The x-axis is the whole range ending now, so short history sits at the right edge.
@@ -678,17 +724,8 @@ fn render_series(
     let base = y_scale(&s.points);
     let (min_v, max_v) = series_min_max(&s.points);
     // Round ticks around the data itself; a flat line keeps the padded extent.
-    // A percentage always reads 0 to 100.
-    let nice = nice_scale(if unit.as_deref() == Some("%") {
-        track_scale(unit.as_deref(), &s.points)
-    } else if max_v > min_v {
-        YScale {
-            min: min_v,
-            max: max_v,
-        }
-    } else {
-        base
-    });
+    // A number field in % is the one series with a fixed extent.
+    let nice = nice_scale(nice_input(fixed, min_v, max_v, base));
     let scale = if discrete { base } else { nice.scale };
     let (line, area, band) = if discrete {
         let StepPath { d, .. } = step_path(&s.points, scale, t_start, now, VIEW_W, VIEW_H);
@@ -731,9 +768,7 @@ fn render_series(
     };
     let gid = next_gradient_id();
     let fill = format!("url(#{gid})");
-    let layer = overlay
-        .as_ref()
-        .map(|o| periods_layer(lang, range, o, true));
+    let layer = overlay.as_ref().map(|o| periods_layer(o, true));
     let key = overlay.as_ref().map(period_key);
     let overlay = StoredValue::new(overlay);
 
@@ -774,7 +809,14 @@ fn render_series(
                     {move || hover.get().and_then(|i| points.with_value(|p| p.get(i).cloned())).map(|p| {
                         let tip = series_tip(lang, range, &kind, unit_tip.as_deref(), decimals, now, &p);
                         let word = overlay.with_value(|o| o.as_ref().map(|o| {
-                            o.word_at(x_frac(p.0, o.from, o.to))
+                            if is_bucketed(range) {
+                                let end = hover.get_untracked().map_or(p.0 + 1, |i| {
+                                    points.with_value(|pts| bucket_end(pts, i))
+                                });
+                                o.word_over(p.0, end)
+                            } else {
+                                o.word_at(p.0)
+                            }
                         }));
                         view! {
                             <span class="history-chart__tip-time">{tip.time}</span>
@@ -809,6 +851,19 @@ fn render_series(
             <span>{min_max(lang, min_v, max_v, unit.as_deref())}</span>
         </div>
     }
+}
+
+/// The extent the y ticks are rounded around: the fixed one of a percentage field, else the data
+/// itself; a flat line keeps the padded extent.
+fn nice_input(fixed: Option<YScale>, min_v: f64, max_v: f64, padded: YScale) -> YScale {
+    fixed.unwrap_or(if max_v > min_v {
+        YScale {
+            min: min_v,
+            max: max_v,
+        }
+    } else {
+        padded
+    })
 }
 
 /// Whether the chart draws the min/max band, and so keys it in the legend: a continuous value
@@ -910,6 +965,50 @@ fn series_min_max(points: &[(i64, f64, f64, f64)]) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_percentage_field_fixes_the_extent() {
+        let padded = YScale {
+            min: 40.0,
+            max: 60.0,
+        };
+        let fixed = percent_scale(Some("%"));
+        assert_eq!(
+            nice_input(fixed, 50.0, 55.0, padded),
+            YScale {
+                min: 0.0,
+                max: 100.0
+            }
+        );
+        // A headline percentage (humidity, battery) fits its data as before.
+        assert_eq!(
+            nice_input(None, 50.0, 55.0, padded),
+            YScale {
+                min: 50.0,
+                max: 55.0
+            }
+        );
+        assert_eq!(nice_input(None, 50.0, 50.0, padded), padded);
+    }
+
+    #[test]
+    fn a_bucket_ends_at_the_next_point_or_as_long_as_the_last_gap() {
+        let pts = [
+            (0, 1.0, 1.0, 1.0),
+            (3600, 1.0, 1.0, 1.0),
+            (7200, 1.0, 1.0, 1.0),
+        ];
+        assert_eq!(bucket_end(&pts, 0), 3600);
+        assert_eq!(bucket_end(&pts, 2), 10_800);
+        assert_eq!(bucket_end(&pts[..1], 0), 1);
+    }
+
+    #[test]
+    fn a_period_at_the_right_edge_stays_inside_the_box() {
+        let style = period_style(0.999, 1.0);
+        assert!(style.contains("min(99.90%, calc(100% - 3px))"), "{style}");
+        assert!(style.contains("max(0.10%, 3px)"), "{style}");
+    }
+
     use super::*;
 
     #[test]

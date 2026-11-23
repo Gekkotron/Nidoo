@@ -266,6 +266,22 @@ async fn activity_shades_the_cleaning_behind_the_battery_line() {
         texts(&m.host, ".history-chart__legend .history-chart__key-item"),
         ["À la base", "Nettoyage"]
     );
+    let style = all(&m.host, ".history-chart__period")[0]
+        .get_attribute("style")
+        .unwrap_or_default();
+    assert!(
+        style.contains("max(") && style.contains("3px)"),
+        "a short run stays 3 px wide: {style}"
+    );
+    assert_eq!(
+        all(
+            &m.host,
+            ".history-chart__legend .history-chart__swatch--base"
+        )
+        .len(),
+        1,
+        "the baseline swatch is in the legend"
+    );
 }
 
 #[wasm_bindgen_test]

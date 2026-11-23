@@ -3,10 +3,11 @@
 use nidoo_api::{FieldTrack, TrackData};
 use nidoo_core::model::Kind;
 
+use crate::components::history_chart::format::state_axis_labels;
 use crate::components::history_chart::periods::track_label;
 use crate::i18n::Lang;
-use crate::i18n::flows::field_label;
 use crate::i18n::history::{HistoryText, history_text};
+use crate::i18n::states::device_class_word;
 
 /// Key of the headline value's chip.
 pub const HEADLINE_KEY: &str = "state";
@@ -125,8 +126,8 @@ pub fn toggle(sel: &Selection, chip: &Chip) -> Selection {
     next
 }
 
-/// The text of a chip: a track's row label, or for the headline number the device class, else
-/// "Value".
+/// The text of a chip: a track's row label; for the headline number its device class in words,
+/// else "Value"; for an on/off headline "State".
 pub fn chip_label(
     lang: Lang,
     kind: Kind,
@@ -136,10 +137,13 @@ pub fn chip_label(
 ) -> String {
     match chip.track.and_then(|i| tracks.get(i)) {
         Some(t) => track_label(lang, kind, t.field.as_deref()),
-        None => match device_class {
-            Some(dc) => field_label(lang, dc),
-            None => history_text(lang, HistoryText::Value).to_owned(),
-        },
+        None if state_axis_labels(lang, None, &format!("{kind:?}")).is_some() => {
+            history_text(lang, HistoryText::State).to_owned()
+        }
+        None => device_class
+            .and_then(|dc| device_class_word(lang, dc))
+            .unwrap_or_else(|| history_text(lang, HistoryText::Value))
+            .to_owned(),
     }
 }
 
@@ -295,6 +299,24 @@ mod tests {
         assert_eq!(
             chip_label(Lang::Fr, Kind::Sensor, None, &[], &s[0]),
             "Valeur"
+        );
+        assert_eq!(
+            chip_label(Lang::Fr, Kind::Sensor, Some("temperature"), &[], &s[0]),
+            "Température"
+        );
+        assert_eq!(
+            chip_label(Lang::En, Kind::Sensor, Some("temperature"), &[], &s[0]),
+            "Temperature"
+        );
+        assert_eq!(
+            chip_label(Lang::Fr, Kind::Sensor, Some("unheard_of"), &[], &s[0]),
+            "Valeur"
+        );
+        // On/off headlines are a state, whatever the device class.
+        assert_eq!(chip_label(Lang::Fr, Kind::Light, None, &[], &s[0]), "État");
+        assert_eq!(
+            chip_label(Lang::En, Kind::Switch, Some("outlet"), &[], &s[0]),
+            "State"
         );
     }
 }

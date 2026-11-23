@@ -1,11 +1,9 @@
 //! The periods of a value over a window: bands that hold, merged, coloured by first appearance
 //! with the longest-held value as a quiet baseline, plus the words that name them.
 
-use nidoo_api::HistoryRange;
 use nidoo_core::flow::Scalar;
 use nidoo_core::model::Kind;
 
-use crate::components::history_chart::format::tooltip_time;
 use crate::format::DASH;
 use crate::i18n::Lang;
 use crate::i18n::flows::field_label;
@@ -126,15 +124,6 @@ pub fn track_label(lang: Lang, kind: Kind, field: Option<&str>) -> String {
     }
 }
 
-/// The hover text of a band: "Cleaning · 08:10 – 08:42".
-pub fn band_title(lang: Lang, range: HistoryRange, now: i64, word: &str, band: &Band) -> String {
-    format!(
-        "{word} · {} – {}",
-        tooltip_time(lang, range, band.start, now),
-        tooltip_time(lang, range, band.end, now)
-    )
-}
-
 /// `bands`, with adjacent equal values merged and recoloured: unknown and the baseline have no
 /// colour, every other value takes a palette slot by first appearance, skipping the baseline.
 pub fn periods(changes: &[(i64, Option<Scalar>)], from: i64, to: i64) -> Vec<Band> {
@@ -208,6 +197,50 @@ pub fn value_at(changes: &[(i64, Option<Scalar>)], t: i64) -> Option<Scalar> {
         .take_while(|(at, _)| *at <= t)
         .last()
         .and_then(|(_, v)| v.clone())
+}
+
+/// The value that names the span `start..end`: among the coloured values present in it, the one
+/// held longest; with none, the value in force at `start`. A short run inside a long bucket
+/// still names the bucket.
+pub fn word_in(
+    changes: &[(i64, Option<Scalar>)],
+    periods: &[Band],
+    start: i64,
+    end: i64,
+) -> Option<Scalar> {
+    let mut totals: Vec<(String, Scalar, i64)> = Vec::new();
+    for b in periods.iter().filter(|b| b.color.is_some()) {
+        let Some(v) = &b.value else { continue };
+        let held = b.end.min(end) - b.start.max(start);
+        if held <= 0 {
+            continue;
+        }
+        let key = value_key(v);
+        match totals.iter_mut().find(|t| t.0 == key) {
+            Some(t) => t.2 += held,
+            None => totals.push((key, v.clone(), held)),
+        }
+    }
+    let mut best: Option<&(String, Scalar, i64)> = None;
+    for t in &totals {
+        if best.is_none_or(|b| t.2 > b.2) {
+            best = Some(t);
+        }
+    }
+    match best {
+        Some(t) => Some(t.1.clone()),
+        None => value_at(changes, start),
+    }
+}
+
+/// The period under `frac` of the window, widened by `tol` on each side so a sliver drawn wider
+/// than it lasted can be hit: a coloured period wins over the baseline.
+pub fn band_near(periods: &[Band], frac: f64, tol: f64) -> Option<&Band> {
+    let hit = |b: &&Band, t: f64| frac >= b.x0 - t && frac <= b.x1 + t;
+    periods
+        .iter()
+        .find(|b| b.color.is_some() && hit(b, tol))
+        .or_else(|| periods.iter().find(|b| hit(b, 0.0)))
 }
 
 #[cfg(test)]
@@ -435,5 +468,58 @@ mod tests {
         assert_eq!(value_at(&c, 49), text("a"));
         assert_eq!(value_at(&c, 50), text("b"));
         assert_eq!(value_at(&c, -1), None);
+    }
+
+    #[test]
+    fn a_short_run_names_a_long_bucket() {
+        // Docked for a day, with a 9 minute cleaning inside the 1 h bucket 3600..7200.
+        let c = [
+            (0, text("docked")),
+            (4000, text("cleaning")),
+            (4540, text("docked")),
+        ];
+        let p = periods(&c, 0, 86_400);
+        assert_eq!(word_in(&c, &p, 3600, 7200), text("cleaning"));
+    }
+
+    #[test]
+    fn with_no_coloured_value_the_word_in_force_names_the_span() {
+        let c = [(0, text("docked")), (4000, text("cleaning"))];
+        let p = periods(&c, 0, 86_400);
+        // Before the cleaning: only the baseline is present.
+        assert_eq!(word_in(&c, &p, 0, 3600), text("docked"));
+        // Nothing coloured at all.
+        let one = [(0, text("docked"))];
+        assert_eq!(
+            word_in(&one, &periods(&one, 0, 100), 10, 20),
+            text("docked")
+        );
+    }
+
+    #[test]
+    fn the_longest_coloured_value_wins() {
+        let c = [
+            (0, text("docked")),
+            (100, text("cleaning")),
+            (200, text("returning")),
+            (500, text("docked")),
+            (10_000, text("docked")),
+        ];
+        let p = periods(&c, 0, 20_000);
+        assert_eq!(word_in(&c, &p, 0, 1000), text("returning"));
+    }
+
+    #[test]
+    fn a_widened_hover_finds_a_sliver_over_the_baseline() {
+        let c = [
+            (0, text("docked")),
+            (500, text("cleaning")),
+            (503, text("docked")),
+        ];
+        let p = periods(&c, 0, 1000);
+        let at = |f: f64, tol: f64| band_near(&p, f, tol).and_then(|b| b.value.clone());
+        assert_eq!(at(0.51, 0.0), text("docked"));
+        assert_eq!(at(0.51, 0.01), text("cleaning"));
+        assert_eq!(at(0.2, 0.01), text("docked"));
     }
 }

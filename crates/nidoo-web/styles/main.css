@@ -10797,22 +10797,22 @@ dialog.popup::backdrop {
 
 .history-chart__period--1,
 .history-chart__swatch--1 {
-  background: var(--accent-mint);
+  background: var(--accent-amber);
 }
 
 .history-chart__period--2,
 .history-chart__swatch--2 {
-  background: var(--accent-amber);
+  background: var(--accent-violet);
 }
 
 .history-chart__period--3,
 .history-chart__swatch--3 {
-  background: var(--accent-violet);
+  background: var(--accent-rose);
 }
 
 .history-chart__period--4,
 .history-chart__swatch--4 {
-  background: var(--accent-rose);
+  background: var(--accent-mint);
 }
 
 .history-chart__swatch {
