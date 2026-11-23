@@ -1,0 +1,44 @@
+name: Version bump
+
+# After each merge to main, bump the workspace patch version (0.1.4 -> 0.1.5),
+# commit it to main and tag it. Merges that land while a bump is waiting share
+# the next one: GitHub keeps only the newest pending run of a concurrency group.
+# A push made with GITHUB_TOKEN starts no workflow, so the bump commit never
+# triggers CI or this workflow again.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Bump, commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Another merge can land between checkout and push: rebase onto it and retry.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            version=$(python3 tools/ci/bump_version.py)
+            git commit -am "chore(release): v$version"
+            git tag "v$version"
+            if git push --atomic origin HEAD:main "v$version"; then
+              exit 0
+            fi
+            git tag -d "v$version"
+          done
+          echo "could not push the version bump" >&2
+          exit 1
