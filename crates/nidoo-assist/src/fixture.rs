@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use nidoo_api::{AreaView, EntityView};
 use nidoo_climate::doc::{Decision, Setpoint, Source, ZoneSettings, ZoneState};
 use nidoo_climate::view::{LearnStatus, ZoneView};
+use nidoo_core::discovery::naming;
 use nidoo_core::model::{
     Availability, Capabilities, CoverState, EntityCategory, EntityState, Kind, LightState,
     MediaPlayerState, StateValue, VacuumState,
@@ -193,11 +194,20 @@ pub fn vacuum(id: &str, name: &str, area: &str, device: &str) -> EntityView {
     e
 }
 
-/// A button of the vacuum's device: pressing it cleans one room. Its name starts with the
-/// device's, as discovery names it ("Aspirateur Clean kitchen").
-pub fn vacuum_button(id: &str, name: &str, area: &str, device: &str) -> EntityView {
-    let mut e = entity(id, name, Kind::Button, area);
+/// A button of the vacuum's device, pressing it cleans one room, named as discovery names it:
+/// "<device> <entity>" ("Aspirateur Clean kitchen"), the entity's own name kept as its label.
+pub fn vacuum_button(
+    id: &str,
+    device_name: &str,
+    entity_name: &str,
+    area: &str,
+    device: &str,
+) -> EntityView {
+    let (name, device_name, label, _) = naming::split(Some(device_name), Some(entity_name));
+    let mut e = entity(id, &name, Kind::Button, area);
     e.device_id = Some(device.into());
+    e.device_name = device_name;
+    e.label = label;
     e
 }
 
@@ -321,31 +331,36 @@ pub fn house() -> Fixture {
             vacuum("vacuum_robot", "Aspirateur", "salon", "vacuum_robot"),
             vacuum_button(
                 "vacuum_robot_clean_kitchen",
-                "Aspirateur Clean kitchen",
+                "Aspirateur",
+                "Clean kitchen",
                 "salon",
                 "vacuum_robot",
             ),
             vacuum_button(
                 "vacuum_robot_clean_living_room",
-                "Aspirateur Clean living room",
+                "Aspirateur",
+                "Clean living room",
                 "salon",
                 "vacuum_robot",
             ),
             vacuum_button(
                 "vacuum_robot_clean_bathroom",
-                "Aspirateur Clean bathroom",
+                "Aspirateur",
+                "Clean bathroom",
                 "salon",
                 "vacuum_robot",
             ),
             vacuum_button(
                 "vacuum_robot_clean_entrance",
-                "Aspirateur Clean entrance",
+                "Aspirateur",
+                "Clean entrance",
                 "salon",
                 "vacuum_robot",
             ),
             vacuum_button(
                 "vacuum_robot_clean_office",
-                "Aspirateur Clean office",
+                "Aspirateur",
+                "Clean office",
                 "salon",
                 "vacuum_robot",
             ),

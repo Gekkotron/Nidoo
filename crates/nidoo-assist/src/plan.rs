@@ -1219,32 +1219,33 @@ fn vacuums<'a>(house: &House<'a>) -> Vec<&'a EntityView> {
 /// Words that say the whole house: "nettoie la maison", "aspire partout".
 const WHOLE_HOUSE: &[&str] = &["maison", "partout", "tout", "house", "everywhere"];
 
-/// The vacuum's own names, lowercased, longest first: its device's and its own. A discovered
-/// button's name usually starts with one ("Roborock Clean kitchen").
-fn vacuum_names(vac: &EntityView) -> Vec<String> {
-    let mut names: Vec<String> = [vac.device_name.as_deref(), Some(vac.name.as_str())]
+/// The words of the vacuum's own names, its device's and its own: "Roborock, nettoie" names
+/// the vacuum, not a room.
+fn vacuum_words(vac: &EntityView) -> Vec<String> {
+    [vac.device_name.as_deref(), Some(vac.name.as_str())]
         .into_iter()
         .flatten()
-        .map(|n| n.trim().to_lowercase())
-        .filter(|n| !n.is_empty())
-        .collect();
-    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
-    names.dedup();
-    names
+        .flat_map(name_words)
+        .collect()
 }
 
-/// A room button's name without the vacuum's name and its leading verb: "Roborock Clean
-/// kitchen" is "kitchen".
-fn room_label(name: &str, vac: &EntityView) -> String {
-    let mut lower = name.trim().to_lowercase();
-    for own in vacuum_names(vac) {
-        if let Some(rest) = lower.strip_prefix(&own)
-            && rest.starts_with(' ')
-        {
-            lower = rest.trim_start().to_owned();
-            break;
-        }
+/// A room button's own name: the user's name for it when they gave one, else the name it was
+/// discovered with, without its device's ("Clean kitchen" of "Roborock Clean kitchen").
+fn button_name(button: &EntityView) -> &str {
+    let renamed = button
+        .ui
+        .name
+        .as_deref()
+        .is_some_and(|n| !n.trim().is_empty());
+    match &button.label {
+        Some(label) if !renamed => label,
+        _ => &button.name,
     }
+}
+
+/// A room button's name without its leading verb: "Clean kitchen" is "kitchen".
+fn room_label(button: &EntityView) -> String {
+    let lower = button_name(button).trim().to_lowercase();
     for verb in ["clean ", "nettoyer ", "nettoie ", "aspirer ", "aspire "] {
         if let Some(rest) = lower.strip_prefix(verb) {
             return rest.trim().to_owned();
@@ -1253,9 +1254,9 @@ fn room_label(name: &str, vac: &EntityView) -> String {
     lower
 }
 
-/// The words of a button name that name its room: no vacuum name, no linkers, no verb.
-fn button_words(name: &str, vac: &EntityView) -> Vec<String> {
-    name_words(&room_label(name, vac))
+/// The words of a button's name that name its room: no linkers, no verb.
+fn button_words(button: &EntityView) -> Vec<String> {
+    name_words(&room_label(button))
         .into_iter()
         .filter(|w| !matches!(class(w), Some(Class::Clean)) && w != "nettoyer")
         .collect()
@@ -1267,7 +1268,6 @@ fn button_words(name: &str, vac: &EntityView) -> Vec<String> {
 fn room_buttons<'a>(
     said: &[String],
     buttons: &[&'a EntityView],
-    vac: &EntityView,
     house: &House,
 ) -> Vec<&'a EntityView> {
     let mut candidates = vec![said.to_vec()];
@@ -1279,7 +1279,7 @@ fn room_buttons<'a>(
         .iter()
         .copied()
         .filter(|b| {
-            let words = button_words(&b.name, vac);
+            let words = button_words(b);
             candidates.iter().any(|cand| {
                 !cand.is_empty()
                     && (score(cand, &words) > 0
@@ -1368,12 +1368,8 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
         .collect();
     // "Roborock, nettoie la cuisine": the vacuum's own name is not a room, unless a room button
     // is called that way.
-    let own: Vec<String> = vacuum_names(vac)
-        .iter()
-        .flat_map(|n| name_words(n))
-        .collect();
-    if said.iter().any(|w| own.contains(w)) && room_buttons(&said, &buttons, vac, house).is_empty()
-    {
+    let own = vacuum_words(vac);
+    if said.iter().any(|w| own.contains(w)) && room_buttons(&said, &buttons, house).is_empty() {
         said.retain(|w| !own.contains(w));
     }
     let whole = action == VacuumIntent::Clean
@@ -1424,7 +1420,7 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
     }
     let found: Vec<&EntityView> = match &chosen.room {
         Some(id) => buttons.iter().copied().filter(|b| &b.id == id).collect(),
-        None => room_buttons(&said, &buttons, vac, house),
+        None => room_buttons(&said, &buttons, house),
     };
     trace.room_how = Some(format!(
         "{} : {}",
@@ -1438,7 +1434,7 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
         [] => {
             let rooms = buttons
                 .iter()
-                .map(|b| room_label(&b.name, vac))
+                .map(|b| room_label(b))
                 .collect::<Vec<_>>()
                 .join(", ");
             let reply = match house.lang {
@@ -1458,7 +1454,7 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
             let noun = room_noun(&said);
             let label = match (house.lang, noun) {
                 (Lang::Fr, Some(noun)) => noun.fr.to_owned(),
-                _ => room_label(&button.name, vac),
+                _ => room_label(button),
             };
             Plan::Act {
                 actions: vec![Action::Vacuum {
@@ -2438,6 +2434,18 @@ mod tests {
                 name: "Aspirateur".into(),
             }
         );
+        // The vacuum renamed in the app: its buttons keep their discovered names.
+        let mut f = fixture::house();
+        let vac = f.entity_mut("vacuum_robot");
+        vac.ui.name = Some("Robbie".into());
+        vac.name = "Robbie".into();
+        let Plan::Answer { reply, .. } = plan("nettoie le garage", &f.house()) else {
+            panic!("not an answer");
+        };
+        assert!(
+            reply.ends_with("Pièces : kitchen, living room, bathroom, entrance, office."),
+            "{reply}"
+        );
     }
 
     #[test]
@@ -2463,7 +2471,9 @@ mod tests {
     #[test]
     fn a_renamed_button_is_found_by_its_name() {
         let mut f = fixture::house();
-        f.entity_mut("vacuum_robot_clean_kitchen").name = "Cuisine".into();
+        let button = f.entity_mut("vacuum_robot_clean_kitchen");
+        button.ui.name = Some("Cuisine".into());
+        button.name = "Cuisine".into();
         let plan = plan("nettoie la cuisine", &f.house());
         assert_eq!(
             vacuum_actions(&plan),
@@ -2476,7 +2486,8 @@ mod tests {
         let mut f = fixture::house();
         f.entities.push(fixture::vacuum_button(
             "vacuum_robot_clean_kitchen_2",
-            "Aspirateur Clean kitchen island",
+            "Aspirateur",
+            "Clean kitchen island",
             "salon",
             "vacuum_robot",
         ));
