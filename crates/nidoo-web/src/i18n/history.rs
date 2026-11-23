@@ -27,6 +27,10 @@ pub enum HistoryText {
     Max,
     /// Label of a headline value that is not a number: "State" / "État".
     State,
+    /// Label of the headline number chip when the entity has no device class.
+    Value,
+    /// `aria-label` of the row of value chips.
+    ValuesShown,
     /// Chart key of the line on the bucketed ranges.
     Average,
     /// Chart key of the shaded band around the line on the bucketed ranges.
@@ -62,6 +66,8 @@ pub fn history_text(lang: Lang, k: HistoryText) -> &'static str {
         T::Min => ("min", "min"),
         T::Max => ("max", "max"),
         T::State => ("State", "État"),
+        T::Value => ("Value", "Valeur"),
+        T::ValuesShown => ("Values shown", "Valeurs affichées"),
         T::Average => ("Average", "Moyenne"),
         T::Spread => ("Min–max range", "Écart min–max"),
         T::SpreadHint => (
