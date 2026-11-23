@@ -76,6 +76,10 @@ cd ../.. && cargo build --release -p nidoo
 
 The hub embeds `crates/nidoo-web/dist/` with `rust-embed` when it is compiled. Rebuild the hub after every `trunk build`. A binary built before `trunk build` has no UI to serve: every path that is not `/api`, `/ws` or `/mcp` answers a `503` page that says the UI has not been built. `index.html` is never cached; hashed assets are cached for a year. A release `trunk build` also writes `.gz` copies of the wasm, js and css (and `.br` copies when `brotli` is installed), through the `post_build` hook in `crates/nidoo-web/compress.sh`; the hub sends them to browsers that accept them. Browsers offer brotli only over HTTPS, so a plain-HTTP hub sends gzip, which takes the wasm from about 11 MB to about 3.4 MB.
 
+### Version numbers
+
+Every merge to `main` bumps the patch version: the `Version bump` workflow (`.github/workflows/version.yml`) runs `tools/ci/bump_version.py`, which rewrites `[workspace.package] version` in `Cargo.toml` and the workspace crates in both lock files, then commits `chore(release): vX.Y.Z` to `main` and tags it. Merges that land while a bump is waiting share the next one. Settings shows the number, so it tells you which merge a hub runs. Don't bump the version in a pull request; to change the minor or major number, edit `Cargo.toml` by hand and the next merge goes on from there.
+
 ### Smoke test
 
 The smoke test mounts the app in headless Chrome and checks the shell:
