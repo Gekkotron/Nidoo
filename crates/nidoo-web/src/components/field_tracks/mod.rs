@@ -11,8 +11,8 @@ use nidoo_api::{FieldTrack, HistoryFields, HistoryRange, TrackData};
 use nidoo_core::model::Kind;
 
 use self::plan::{
-    NUMBER_H, VIEW_W, band_title, bands, has_headline, number_paths, number_text, scalar_text,
-    track_label, track_scale,
+    NUMBER_H, VIEW_W, band_title, bands, fits_label, has_headline, number_paths, number_text,
+    scalar_text, track_label, track_scale,
 };
 use super::history_chart::format::tick_labels;
 use super::history_chart::view::{is_bucketed, is_stale, near_end, refresh_period_s};
@@ -232,7 +232,7 @@ fn render_row(
             let texts = spans
                 .iter()
                 .zip(words)
-                .filter(|(b, _)| b.color.is_some() && b.fits_label())
+                .filter(|(b, _)| b.color.is_some() && fits_label(b))
                 .map(|(b, word)| {
                     view! {
                         <span class="field-tracks__word"

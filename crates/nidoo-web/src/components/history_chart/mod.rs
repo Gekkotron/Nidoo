@@ -2,6 +2,7 @@
 
 pub mod format;
 pub mod geom;
+pub mod periods;
 pub mod view;
 
 pub use format::paris_offset;
