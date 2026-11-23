@@ -9,12 +9,12 @@ use nidoo_core::flow::Lang;
 use nidoo_core::model::{Availability, Command, EntityCategory, Kind, StateValue, SwitchType};
 
 use crate::house::House;
-use crate::intent::{Change, Intent, LITTLE, MediaIntent, parse_in, play_by_name_in};
-use crate::lexicon::Colour;
+use crate::intent::{Change, Intent, LITTLE, MediaIntent, VacuumIntent, parse_in, play_by_name_in};
+use crate::lexicon::{Class, Colour, class, room_noun};
 use crate::reply::{
     Lack, cannot_in, dans, de, lack, le, number, number_in, place, room_in, temp, temp_in, the,
 };
-use crate::room::{RoomMatch, name_words, resolve_room};
+use crate::room::{RoomMatch, name_words, resolve_room, score};
 use crate::text::{Word, words};
 use crate::view::Trace;
 
@@ -32,9 +32,20 @@ pub struct Request {
     pub switches: Option<Vec<String>>,
     /// The media player chosen in a question.
     pub player: Option<String>,
+    /// The vacuum and room button chosen in questions; boxed to keep a pending question small.
+    pub vacuum: Option<Box<VacuumPick>>,
     /// The room of the satellite that heard the sentence; `None` from the web.
     pub speaker_room: Option<String>,
     pub confirmed: bool,
+}
+
+/// What the questions of the vacuum have settled.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VacuumPick {
+    /// The vacuum chosen.
+    pub vacuum: Option<String>,
+    /// The vacuum's room button chosen.
+    pub room: Option<String>,
 }
 
 impl Request {
@@ -46,6 +57,7 @@ impl Request {
             covers: None,
             switches: None,
             player: None,
+            vacuum: None,
             speaker_room: None,
             confirmed: false,
         }
@@ -81,6 +93,11 @@ pub enum Action {
     },
     /// A speaker's music volume (`SetNumber`) or mute switch (`TurnOn` / `TurnOff`).
     Speaker {
+        entity: String,
+        command: Command,
+    },
+    /// The vacuum: a `VacuumAction`, or the `Press` of one of its room buttons.
+    Vacuum {
         entity: String,
         command: Command,
     },
@@ -127,6 +144,13 @@ pub enum Done {
     Volume { area: String, level: Option<u8> },
     /// A room's speakers muted (`on`) or not.
     Mute { area: String, on: bool },
+    /// The vacuum: `room` is the room cleaned as the reply says it, `None` for a full clean or
+    /// any other action; `name` is the vacuum's name.
+    Vacuum {
+        action: VacuumIntent,
+        room: Option<String>,
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -264,6 +288,7 @@ pub fn plan_request(req: &Request, house: &House) -> Plan {
         Intent::Media(what) => media(req, what, house),
         Intent::Volume { change, room } => volume(req, *change, room, house),
         Intent::Mute { on, room } => mute(req, *on, room, house),
+        Intent::Vacuum { action, room } => vacuum(req, *action, room, house),
         Intent::MediaHint => answer(
             say(
                 house,
@@ -1182,6 +1207,260 @@ fn media(req: &Request, what: &MediaIntent, house: &House) -> Plan {
     }
 }
 
+/// The vacuums that may be commanded.
+fn vacuums<'a>(house: &House<'a>) -> Vec<&'a EntityView> {
+    house
+        .entities
+        .iter()
+        .filter(|e| e.kind == Kind::Vacuum && commandable(e))
+        .collect()
+}
+
+/// Words that say the whole house: "nettoie la maison", "aspire partout".
+const WHOLE_HOUSE: &[&str] = &["maison", "partout", "tout", "house", "everywhere"];
+
+/// A room button's name without its leading verb: "Clean kitchen" is "kitchen".
+fn room_label(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    for verb in ["clean ", "nettoyer ", "nettoie ", "aspirer ", "aspire "] {
+        if let Some(rest) = lower.strip_prefix(verb) {
+            return rest.trim().to_owned();
+        }
+    }
+    lower
+}
+
+/// The words of a button name that name its room: no linkers, no verb.
+fn button_words(name: &str) -> Vec<String> {
+    name_words(name)
+        .into_iter()
+        .filter(|w| !matches!(class(w), Some(Class::Clean)) && w != "nettoyer")
+        .collect()
+}
+
+/// The room buttons (of the vacuum's device) the said words name: by the button's own name
+/// ("Cuisine"), or through the generic room nouns ("cuisine" is "Clean kitchen"). A room the
+/// house calls the same way is tried too, by its name and id.
+fn room_buttons<'a>(
+    said: &[String],
+    buttons: &[&'a EntityView],
+    house: &House,
+) -> Vec<&'a EntityView> {
+    let mut candidates = vec![said.to_vec()];
+    if let RoomMatch::One(id) = resolve_room(house, said) {
+        candidates.push(name_words(house.area_name(&id)));
+        candidates.push(name_words(&id));
+    }
+    buttons
+        .iter()
+        .copied()
+        .filter(|b| {
+            let words = button_words(&b.name);
+            candidates.iter().any(|cand| {
+                !cand.is_empty()
+                    && (score(cand, &words) > 0
+                        || room_noun(cand).is_some_and(|noun| {
+                            noun.names
+                                .iter()
+                                .any(|alt| alt.split(' ').all(|w| words.iter().any(|bw| bw == w)))
+                        }))
+            })
+        })
+        .collect()
+}
+
+/// The vacuum: start, stop, pause, go back to its base, or clean one room by pressing the room's
+/// button. A full clean never depends on the room the satellite is in.
+fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -> Plan {
+    let intent = match action {
+        VacuumIntent::Clean => "vacuum_clean",
+        VacuumIntent::Stop => "vacuum_stop",
+        VacuumIntent::Pause => "vacuum_pause",
+        VacuumIntent::Dock => "vacuum_dock",
+    };
+    let mut trace = Trace {
+        intent: Some(intent.into()),
+        ..Default::default()
+    };
+    let all = vacuums(house);
+    let chosen = req.vacuum.as_deref().cloned().unwrap_or_default();
+    let picked = match (&chosen.vacuum, all.as_slice()) {
+        (Some(id), _) => all.iter().copied().find(|v| &v.id == id),
+        (None, [one]) => Some(*one),
+        _ => None,
+    };
+    let vac = match picked {
+        Some(vac) => vac,
+        None if all.is_empty() || chosen.vacuum.is_some() => {
+            return answer(
+                say(
+                    house,
+                    "Pas d'aspirateur dans la maison.",
+                    "No vacuum in the house.",
+                ),
+                trace,
+            );
+        }
+        None => {
+            let choices = all
+                .iter()
+                .take(MAX_CHOICES)
+                .map(|v| {
+                    let mut next = req.clone();
+                    next.vacuum = Some(Box::new(VacuumPick {
+                        vacuum: Some(v.id.clone()),
+                        room: None,
+                    }));
+                    (v.name.clone(), next)
+                })
+                .collect();
+            return Plan::Ask {
+                question: say(house, "Quel aspirateur ?", "Which vacuum?"),
+                choices,
+                trace,
+            };
+        }
+    };
+    let feature = match action {
+        VacuumIntent::Stop => Some("stop"),
+        VacuumIntent::Pause => Some("pause"),
+        VacuumIntent::Dock => Some("return_to_base"),
+        VacuumIntent::Clean => None,
+    };
+    let said: Vec<String> = room
+        .iter()
+        .map(|w| fold(w))
+        .filter(|w| !matches!(class(w), Some(Class::Linker | Class::Noise)))
+        .collect();
+    let whole = action == VacuumIntent::Clean
+        && (said.is_empty()
+            || (said.iter().all(|w| WHOLE_HOUSE.contains(&w.as_str()))
+                && matches!(resolve_room(house, &said), RoomMatch::Unknown)));
+    if feature.is_some() || whole {
+        let wanted = feature.unwrap_or("start");
+        if !vac.capabilities.vacuum_actions.iter().any(|a| a == wanted) {
+            return answer(
+                say(
+                    house,
+                    "Cet aspirateur ne sait pas faire ça.",
+                    "This vacuum can't do that.",
+                ),
+                trace,
+            );
+        }
+        let command = Command::VacuumAction {
+            action: wanted.into(),
+        };
+        if whole {
+            trace.room_how = Some(say(house, "toute la maison", "the whole house"));
+        }
+        trace.entities = vec![vac.id.clone()];
+        return Plan::Act {
+            actions: vec![Action::Vacuum {
+                entity: vac.id.clone(),
+                command,
+            }],
+            done: Done::Vacuum {
+                action,
+                room: None,
+                name: vac.name.clone(),
+            },
+            trace,
+        };
+    }
+    let buttons: Vec<&EntityView> = house
+        .entities
+        .iter()
+        .filter(|e| {
+            e.kind == Kind::Button
+                && commandable(e)
+                && e.device_id.is_some()
+                && e.device_id == vac.device_id
+        })
+        .collect();
+    if buttons.is_empty() {
+        return answer(
+            say(
+                house,
+                "L'aspirateur ne sait pas nettoyer une seule pièce.",
+                "The vacuum can't clean a single room.",
+            ),
+            trace,
+        );
+    }
+    let found: Vec<&EntityView> = match &chosen.room {
+        Some(id) => buttons.iter().copied().filter(|b| &b.id == id).collect(),
+        None => room_buttons(&said, &buttons, house),
+    };
+    trace.room_how = Some(format!(
+        "{} : {}",
+        say(house, "mots", "words"),
+        said.join(", ")
+    ));
+    if let RoomMatch::One(id) = resolve_room(house, &said) {
+        trace.room = Some(id);
+    }
+    match found.as_slice() {
+        [] => {
+            let rooms = buttons
+                .iter()
+                .map(|b| room_label(&b.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let reply = match house.lang {
+                Lang::Fr => format!(
+                    "L'aspirateur ne connaît pas la pièce « {} ». Pièces : {rooms}.",
+                    said.join(" ")
+                ),
+                Lang::En => format!(
+                    "The vacuum doesn't know the room \"{}\". Rooms: {rooms}.",
+                    said.join(" ")
+                ),
+            };
+            answer(reply, trace)
+        }
+        [button] => {
+            trace.entities = vec![button.id.clone()];
+            let noun = room_noun(&said);
+            let label = match (house.lang, noun) {
+                (Lang::Fr, Some(noun)) => noun.fr.to_owned(),
+                _ => room_label(&button.name),
+            };
+            Plan::Act {
+                actions: vec![Action::Vacuum {
+                    entity: button.id.clone(),
+                    command: Command::Press,
+                }],
+                done: Done::Vacuum {
+                    action,
+                    room: Some(label),
+                    name: vac.name.clone(),
+                },
+                trace,
+            }
+        }
+        several => {
+            let choices = several
+                .iter()
+                .take(MAX_CHOICES)
+                .map(|b| {
+                    let mut next = req.clone();
+                    next.vacuum = Some(Box::new(VacuumPick {
+                        vacuum: Some(vac.id.clone()),
+                        room: Some(b.id.clone()),
+                    }));
+                    (b.name.clone(), next)
+                })
+                .collect();
+            Plan::Ask {
+                question: say(house, "Quelle pièce ?", "Which room?"),
+                choices,
+                trace,
+            }
+        }
+    }
+}
+
 /// A room's speaker controls marked `device_class` (`volume` numbers, `mute` switches), every
 /// room's when `area` is `None`.
 fn speaker_controls<'a>(class: &str, area: Option<&str>, house: &House<'a>) -> Vec<&'a EntityView> {
@@ -2006,6 +2285,170 @@ mod tests {
             Plan::Ask { choices, .. } => choices.iter().map(|(l, _)| l.clone()).collect(),
             other => panic!("not a question: {other:?}"),
         }
+    }
+
+    fn vacuum_actions(plan: &Plan) -> Vec<(String, Command)> {
+        match plan {
+            Plan::Act { actions, .. } => actions
+                .iter()
+                .map(|a| match a {
+                    Action::Vacuum { entity, command } => (entity.clone(), command.clone()),
+                    other => panic!("not a vacuum action: {other:?}"),
+                })
+                .collect(),
+            other => panic!("not an act: {other:?}"),
+        }
+    }
+
+    fn vacuum_action(action: &str) -> Command {
+        Command::VacuumAction {
+            action: action.into(),
+        }
+    }
+
+    fn en_plan(s: &str) -> Plan {
+        let f = fixture::house();
+        plan(s, &f.house_en())
+    }
+
+    #[test]
+    fn vacuum_presses_the_room_button() {
+        let want = vec![("vacuum_robot_clean_kitchen".to_string(), Command::Press)];
+        assert_eq!(vacuum_actions(&p("nettoie la cuisine")), want);
+        assert_eq!(vacuum_actions(&en_plan("vacuum the kitchen")), want);
+        let Plan::Act { done, trace, .. } = p("aspire la salle de bain") else {
+            panic!("not an act");
+        };
+        assert_eq!(
+            done,
+            Done::Vacuum {
+                action: VacuumIntent::Clean,
+                room: Some("salle de bain".into()),
+                name: "Aspirateur".into(),
+            }
+        );
+        assert_eq!(trace.intent.as_deref(), Some("vacuum_clean"));
+        assert_eq!(trace.entities, vec!["vacuum_robot_clean_bathroom"]);
+        // The room the house knows is found by its area too.
+        let Plan::Act { trace, .. } = p("nettoie le bureau") else {
+            panic!("not an act");
+        };
+        assert_eq!(trace.room.as_deref(), Some("bureau"));
+        assert_eq!(trace.entities, vec!["vacuum_robot_clean_office"]);
+    }
+
+    #[test]
+    fn a_full_clean_ignores_the_speaker_room() {
+        let f = fixture::house();
+        let plan = plan_heard("lance l'aspirateur", &f.house(), Some("bureau"));
+        assert_eq!(
+            vacuum_actions(&plan),
+            vec![("vacuum_robot".to_string(), vacuum_action("start"))]
+        );
+        assert_eq!(
+            vacuum_actions(&p("nettoie la maison")),
+            vec![("vacuum_robot".to_string(), vacuum_action("start"))]
+        );
+        assert_eq!(
+            vacuum_actions(&en_plan("start the vacuum")),
+            vec![("vacuum_robot".to_string(), vacuum_action("start"))]
+        );
+    }
+
+    #[test]
+    fn vacuum_stop_pause_and_dock() {
+        for (s, action) in [
+            ("arrête l'aspirateur", "stop"),
+            ("mets l'aspirateur en pause", "pause"),
+            ("renvoie l'aspirateur à la base", "return_to_base"),
+        ] {
+            assert_eq!(
+                vacuum_actions(&p(s)),
+                vec![("vacuum_robot".to_string(), vacuum_action(action))],
+                "{s}"
+            );
+        }
+        assert_eq!(
+            vacuum_actions(&en_plan("send the vacuum back to the dock")),
+            vec![("vacuum_robot".to_string(), vacuum_action("return_to_base"))]
+        );
+    }
+
+    #[test]
+    fn an_unknown_room_lists_the_rooms_the_vacuum_knows() {
+        let Plan::Answer { reply, .. } = p("nettoie le garage") else {
+            panic!("not an answer");
+        };
+        assert!(reply.starts_with("L'aspirateur ne connaît pas la pièce « garage »."));
+        assert!(
+            reply.contains("kitchen") && !reply.contains("Clean"),
+            "{reply}"
+        );
+        let Plan::Answer { reply, .. } = en_plan("clean the garage") else {
+            panic!("not an answer");
+        };
+        assert!(reply.starts_with("The vacuum doesn't know the room \"garage\"."));
+    }
+
+    #[test]
+    fn a_renamed_button_is_found_by_its_name() {
+        let mut f = fixture::house();
+        f.entity_mut("vacuum_robot_clean_kitchen").name = "Cuisine".into();
+        let plan = plan("nettoie la cuisine", &f.house());
+        assert_eq!(
+            vacuum_actions(&plan),
+            vec![("vacuum_robot_clean_kitchen".to_string(), Command::Press)]
+        );
+    }
+
+    #[test]
+    fn two_matching_buttons_are_asked() {
+        let mut f = fixture::house();
+        f.entities.push(fixture::vacuum_button(
+            "vacuum_robot_clean_kitchen_2",
+            "Clean kitchen island",
+            "salon",
+            "vacuum_robot",
+        ));
+        assert_eq!(
+            labels(&plan("nettoie la cuisine", &f.house())),
+            vec!["Clean kitchen", "Clean kitchen island"]
+        );
+    }
+
+    #[test]
+    fn several_vacuums_are_asked_and_none_is_answered() {
+        let mut f = fixture::house();
+        f.entities.push(fixture::vacuum(
+            "vacuum_two",
+            "Étage",
+            "bureau",
+            "vacuum_two",
+        ));
+        let asked = plan("lance l'aspirateur", &f.house());
+        assert_eq!(labels(&asked), vec!["Aspirateur", "Étage"]);
+        let Plan::Ask { choices, .. } = asked else {
+            panic!("not a question");
+        };
+        assert_eq!(
+            vacuum_actions(&plan_request(&choices[1].1, &f.house())),
+            vec![("vacuum_two".to_string(), vacuum_action("start"))]
+        );
+        f.entities.retain(|e| e.kind != Kind::Vacuum);
+        let Plan::Answer { reply, .. } = plan("lance l'aspirateur", &f.house()) else {
+            panic!("not an answer");
+        };
+        assert_eq!(reply, "Pas d'aspirateur dans la maison.");
+    }
+
+    #[test]
+    fn a_vacuum_without_room_buttons_cannot_clean_a_room() {
+        let mut f = fixture::house();
+        f.entities.retain(|e| e.kind != Kind::Button);
+        let Plan::Answer { reply, .. } = plan("nettoie la cuisine", &f.house()) else {
+            panic!("not an answer");
+        };
+        assert_eq!(reply, "L'aspirateur ne sait pas nettoyer une seule pièce.");
     }
 
     #[test]

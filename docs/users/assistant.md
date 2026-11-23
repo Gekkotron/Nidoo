@@ -1,7 +1,7 @@
 ---
 title: Assistant
 sidebar_position: 19
-description: Short French or English sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, control the music and the speakers' volume, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
+description: Short French or English sentences typed on the Assistant page switch lights, open shutters, turn TVs and plugs on and off, send the robot vacuum to a room, control the music and the speakers' volume, set heating setpoints and read temperatures, with safety checks, a Simulation switch and a Wrong button.
 ---
 
 The **Assistant** understands short French or English sentences about the house and acts on them or answers, with a one-line reply. Open it from **Assistant** in the sidebar, or from the round button in the bottom-right corner of every page, which opens the conversation as a small chat panel over the page you are on.
@@ -21,6 +21,7 @@ The Assistant page reads sentences and writes replies in the language of the scr
 | "open the shutters to 30%", "close all the blinds" | « ouvre les volets à 30 % », « ferme tous les volets » |
 | "turn off the TV", "switch on the coffee plug" | « éteins la télé », « allume la prise café » |
 | "play Shape of You", "pause", "next song", "turn the volume up", "mute the kitchen", "what's playing?" | « joue Shape of You », « pause », « chanson suivante », « monte le son », « coupe le son de la cuisine », « qu'est-ce qu'on écoute ? » |
+| "vacuum the kitchen", "start the vacuum", "send the vacuum home" | « aspire la cuisine », « lance l'aspirateur », « renvoie l'aspirateur à la base » |
 
 In English a colour is said after "in" or "to", or as the last word ("turn the lamp red"); before the light word it is part of a name ("the red lamp"). Numbers can be digits or words ("nineteen point five"). Answer a question with "yes", "no", "cancel" or a room's name. Satellites still speak French.
 
@@ -83,6 +84,17 @@ A shutter is a cover whose device class is a window covering (shutter, blind, cu
 | « allume les 2 prises du bureau » | the plugs of the Bureau |
 
 "Télé", "télévision" and "TV" are TVs, "prise" is a plug. Only a switch whose **Show as** type is **TV** or **Plug** is used: set it once in the device's settings. A plain switch, a siren, a door opener, a chime, a group or a hub-made virtual switch is never touched, whatever its name. With no room and no "toutes", the assistant asks "Dans quelle pièce ?"; with several plugs in the room and a name that fits none, it asks which one. Devices already on or off as asked are left alone, an offline one gets no command and the reply says it did not answer. A sentence with a lights word still means lights: « éteins le salon » never turns off a TV or a plug.
+
+**The robot vacuum**, a whole clean or one room:
+
+| Sentence | Does | Reply |
+|---|---|---|
+| « aspire la cuisine », « nettoie le salon », « lance l'aspirateur dans le bureau », « passe l'aspirateur dans l'entrée » | cleans that room only | "L'aspirateur nettoie la cuisine." |
+| « lance l'aspirateur », « passe l'aspirateur », « aspire partout », « nettoie la maison » | a full clean | "L'aspirateur est lancé." |
+| « arrête l'aspirateur », « mets l'aspirateur en pause » | stops, or pauses | "L'aspirateur est arrêté." |
+| « renvoie l'aspirateur à la base » | back to its dock | "L'aspirateur rentre à sa base." |
+
+One room is cleaned by pressing one of the vacuum's own room buttons (the buttons of the same device, such as "Clean kitchen"). The room you say is matched against the button's name, directly ("Cuisine" if you renamed it) or through the usual French room nouns: cuisine is kitchen, salon or séjour is living room, bureau is office, salle de bain is bathroom, entrée is entrance, chambre is bedroom, couloir is hallway. A room the vacuum does not know gets a reply listing the rooms it knows, and nothing moves. A full clean never depends on the room the sentence was heard in. A vacuum already cleaning, docked or paused as asked is left alone. "Aspirateur" and "robot" are the vacuum; « nettoie » and « aspire » are enough on their own.
 
 **Music**, on a [media player](media-players.md):
 

@@ -437,6 +437,21 @@ pub fn already_there(view: &EntityView, cmd: &Command) -> bool {
             };
             matches!(value, StateValue::MediaPlayer(p) if p.state.as_deref() == Some(wanted))
         }
+        // Cleaning already, docked or on its way home already, idle or paused already. A room
+        // button's `Press` is never "already there".
+        Command::VacuumAction { action } => {
+            let StateValue::Vacuum(v) = value else {
+                return false;
+            };
+            let state = v.state.as_deref();
+            match action.as_str() {
+                "start" => state == Some("cleaning"),
+                "return_to_base" => matches!(state, Some("docked" | "returning")),
+                "stop" => matches!(state, Some("docked" | "idle")),
+                "pause" => state == Some("paused"),
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -444,7 +459,7 @@ pub fn already_there(view: &EntityView, cmd: &Command) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nidoo_core::model::{ClimateState, CoverState, EntityState, LightState};
+    use nidoo_core::model::{ClimateState, CoverState, EntityState, LightState, VacuumState};
     use serde_json::json;
 
     /// Spec Appendix A.2, without the comment. The command is the real `select_option`
@@ -892,6 +907,25 @@ mod tests {
             }),
         );
 
+        let vacuum = |state: &str| {
+            with_state(
+                entity("v", Kind::Vacuum),
+                StateValue::Vacuum(VacuumState {
+                    state: Some(state.into()),
+                    ..Default::default()
+                }),
+            )
+        };
+        let action = |a: &str| Command::VacuumAction { action: a.into() };
+        assert!(already_there(&vacuum("cleaning"), &action("start")));
+        assert!(!already_there(&vacuum("docked"), &action("start")));
+        assert!(already_there(
+            &vacuum("returning"),
+            &action("return_to_base")
+        ));
+        assert!(already_there(&vacuum("docked"), &action("stop")));
+        assert!(!already_there(&vacuum("cleaning"), &action("pause")));
+        assert!(!already_there(&vacuum("docked"), &Command::Press));
         assert!(already_there(&plug(false), &Command::TurnOff));
         assert!(!already_there(&plug(true), &Command::TurnOff));
         assert!(already_there(&light(false, None), &Command::TurnOff));

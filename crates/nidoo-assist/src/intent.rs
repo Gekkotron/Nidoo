@@ -76,6 +76,23 @@ pub enum Intent {
         warmer: bool,
         room: Vec<String>,
     },
+    /// The robot vacuum: `room` holds the words that may name the room to clean, only ever with
+    /// [`VacuumIntent::Clean`].
+    Vacuum {
+        action: VacuumIntent,
+        room: Vec<String>,
+    },
+}
+
+/// What is asked of the vacuum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VacuumIntent {
+    /// Clean a room, or the whole house when no room is said.
+    Clean,
+    Stop,
+    Pause,
+    /// Send it back to its base.
+    Dock,
 }
 
 /// What is asked of the music player.
@@ -175,6 +192,12 @@ fn tag(words: &[Word], lang: Lang) -> Vec<Tok> {
 /// the last word ("turn the lamp red please").
 const EN_TAIL: &[&str] = &["please", "pls", "plz", "now", "thanks", "thank", "you", "?"];
 
+/// Words that may come before an English "vacuum" that is a verb: "can you vacuum the kitchen".
+const EN_POLITE: &[&str] = &[
+    "please", "pls", "plz", "can", "could", "would", "will", "you", "hey", "ok", "okay", "now",
+    "just", "and",
+];
+
 /// [`tag`] for English: "per cent", "go back", "mute" and "unmute", and a colour said after "in"
 /// or "to" ("in red", "to blue") or as the last word after a word that is not an article ("turn
 /// the lamp red"). Any other colour word is part of a name ("the red lamp").
@@ -220,6 +243,12 @@ fn tag_en(words: &[Word]) -> Vec<Tok> {
                         out.push(Tok::Known(Class::Previous, "back".into()));
                         i += 2;
                         continue;
+                    }
+                    // "vacuum the kitchen" cleans; "start the vacuum" names the machine.
+                    ("vacuum" | "hoover", _)
+                        if (0..i).all(|j| text(j).is_some_and(|w| EN_POLITE.contains(&w))) =>
+                    {
+                        out.push(Tok::Known(Class::Clean, t.to_owned()));
                     }
                     ("last", Some("song" | "track")) => {
                         out.push(Tok::Known(Class::Previous, "last".into()));
@@ -465,6 +494,16 @@ fn parse_toks(mut toks: Vec<Tok>, coloured: bool) -> Option<Intent> {
             }
         }
     }
+    if vacuum_sentence(&toks) {
+        return vacuum(&toks);
+    }
+    // Not about the vacuum: its words are plain words again ("le chargeur", "la station"), as
+    // before they were known.
+    for t in &mut toks {
+        if let Tok::Known(Class::Vacuum | Class::Clean | Class::Dock, w) = t {
+            *t = Tok::Free(std::mem::take(w));
+        }
+    }
     if music_sentence(&toks) {
         // A music word the music intents cannot use is not understood: never lights or heating.
         return media(&toks);
@@ -701,6 +740,86 @@ fn feeling(toks: &mut [Tok]) -> Option<Intent> {
         }
     }
     None
+}
+
+/// A sentence about the vacuum: a vacuum or a clean word, and no light, shutter, heating,
+/// temperature, TV or plug word (those sentences are read as before).
+fn vacuum_sentence(toks: &[Tok]) -> bool {
+    let has = |c: Class| {
+        toks.iter()
+            .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
+    };
+    let blockers = [
+        Class::Light,
+        Class::LightNamed,
+        Class::Cover,
+        Class::Heating,
+        Class::Temperature,
+        Class::Tv,
+        Class::Plug,
+    ];
+    (has(Class::Vacuum) || has(Class::Clean)) && !blockers.into_iter().any(has)
+}
+
+/// The vacuum: clean (a room, or everything), stop, pause or go back to the base. A negation,
+/// a statement or a question that is not a polite request, a value, or a sentence with no verb
+/// ("l'aspirateur") is `None`.
+fn vacuum(toks: &[Tok]) -> Option<Intent> {
+    let has = |c: Class| {
+        toks.iter()
+            .any(|t| matches!(t, Tok::Known(k, _) if *k == c))
+    };
+    let question_word = toks
+        .iter()
+        .any(|t| matches!(t, Tok::Known(Class::Question, w) if w != "?"));
+    let describes = has(Class::Statement) || has(Class::Fait) || question_word;
+    let asked = has(Class::Question) && !has(Class::Request);
+    let roles = roles(toks);
+    let valued = toks.iter().zip(&roles).any(|(t, r)| {
+        matches!(t, Tok::Signed(_)) || (matches!(t, Tok::Number(_)) && *r != Some(Role::Name))
+    });
+    let other = [
+        Class::Negation,
+        Class::Percent,
+        Class::Degree,
+        Class::Raise,
+        Class::Lower,
+        Class::Open,
+        Class::Close,
+        Class::OtherDevice,
+    ];
+    if (describes && !has(Class::Request)) || asked || valued || other.into_iter().any(has) {
+        return None;
+    }
+    let action = if has(Class::Vacuum) && has(Class::Dock) {
+        VacuumIntent::Dock
+    } else if has(Class::Pause) {
+        VacuumIntent::Pause
+    } else if has(Class::Off) || has(Class::Stop) {
+        VacuumIntent::Stop
+    } else if has(Class::On)
+        || has(Class::Launch)
+        || has(Class::Set)
+        || has(Class::Resume)
+        || has(Class::Clean)
+    {
+        VacuumIntent::Clean
+    } else {
+        return None;
+    };
+    let room = match action {
+        VacuumIntent::Clean => toks
+            .iter()
+            .zip(&roles)
+            .filter_map(|(t, r)| match (t, r) {
+                (Tok::Free(w), _) => Some(w.clone()),
+                (Tok::Number(n), Some(Role::Name)) => Some(number_text(*n)),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some(Intent::Vacuum { action, room })
 }
 
 /// The lexicon classes only the music and volume intents read.
@@ -2059,6 +2178,91 @@ mod tests {
             set(Change::Absolute(20.0), &["remets"])
         );
     }
+
+    fn vacuum(action: VacuumIntent, room: &[&str]) -> Option<Intent> {
+        Some(Intent::Vacuum {
+            action,
+            room: v(room),
+        })
+    }
+
+    #[test]
+    fn vacuum_cleans_one_room() {
+        for (s, room) in [
+            ("aspire la cuisine", &["cuisine"][..]),
+            ("lance l'aspirateur dans la cuisine", &["cuisine"]),
+            ("nettoie la cuisine", &["cuisine"]),
+            ("nettoie le salon", &["salon"]),
+            ("passe l'aspirateur dans le bureau", &["bureau"]),
+            ("aspire la salle de bain", &["salle", "bain"]),
+            ("nettoie l'entrée", &["entree"]),
+        ] {
+            assert_eq!(p(s), vacuum(VacuumIntent::Clean, room), "{s}");
+        }
+    }
+
+    #[test]
+    fn vacuum_cleans_everything() {
+        for s in [
+            "lance l'aspirateur",
+            "passe l'aspirateur",
+            "aspire",
+            "démarre l'aspirateur",
+            "mets l'aspirateur en marche",
+            "peux-tu lancer l'aspirateur ?",
+        ] {
+            assert_eq!(p(s), vacuum(VacuumIntent::Clean, &[]), "{s}");
+        }
+        assert_eq!(
+            p("nettoie la maison"),
+            vacuum(VacuumIntent::Clean, &["maison"])
+        );
+        assert_eq!(
+            p("aspire partout"),
+            vacuum(VacuumIntent::Clean, &["partout"])
+        );
+    }
+
+    #[test]
+    fn vacuum_stop_pause_and_dock() {
+        for s in ["arrête l'aspirateur", "stop l'aspirateur"] {
+            assert_eq!(p(s), vacuum(VacuumIntent::Stop, &[]), "{s}");
+        }
+        for s in ["mets l'aspirateur en pause", "pause l'aspirateur"] {
+            assert_eq!(p(s), vacuum(VacuumIntent::Pause, &[]), "{s}");
+        }
+        for s in [
+            "renvoie l'aspirateur à la base",
+            "ramène l'aspirateur à sa base",
+            "l'aspirateur rentre à la base",
+        ] {
+            assert_eq!(p(s), vacuum(VacuumIntent::Dock, &[]), "{s}");
+        }
+    }
+
+    #[test]
+    fn vacuum_never_guessed() {
+        assert_eq!(p("n'aspire pas la cuisine"), None);
+        assert_eq!(p("ne lance pas l'aspirateur"), None);
+        assert_eq!(p("l'aspirateur"), None);
+        assert_eq!(p("l'aspirateur est en marche"), None);
+        assert_eq!(p("qui a lancé l'aspirateur"), None);
+        assert_eq!(p("l'aspirateur nettoie quoi ?"), None);
+        assert_eq!(p("ouvre l'aspirateur"), None);
+    }
+
+    #[test]
+    fn vacuum_words_stay_plain_words_elsewhere() {
+        assert_eq!(
+            p("éteins le chargeur"),
+            lights(false, false, &[], &["chargeur"])
+        );
+        assert_eq!(
+            p("allume la lumière de la station"),
+            lights(true, false, &[], &["station"])
+        );
+        assert_eq!(p("pause"), Some(Intent::Media(MediaIntent::Pause)));
+    }
 }
 
 #[cfg(test)]
@@ -2381,6 +2585,49 @@ mod english {
         );
     }
 
+    fn vacuum(action: VacuumIntent, room: &[&str]) -> Option<Intent> {
+        Some(Intent::Vacuum {
+            action,
+            room: v(room),
+        })
+    }
+
+    #[test]
+    fn vacuum_sentences() {
+        assert_eq!(
+            p("vacuum the kitchen"),
+            vacuum(VacuumIntent::Clean, &["kitchen"])
+        );
+        assert_eq!(
+            p("clean the living room"),
+            vacuum(VacuumIntent::Clean, &["living"])
+        );
+        assert_eq!(
+            p("can you vacuum the office please"),
+            vacuum(VacuumIntent::Clean, &["office"])
+        );
+        assert_eq!(p("start the vacuum"), vacuum(VacuumIntent::Clean, &[]));
+        assert_eq!(p("stop the vacuum"), vacuum(VacuumIntent::Stop, &[]));
+        assert_eq!(p("pause the vacuum"), vacuum(VacuumIntent::Pause, &[]));
+        assert_eq!(p("send the vacuum home"), vacuum(VacuumIntent::Dock, &[]));
+        assert_eq!(
+            p("send the vacuum back to the dock"),
+            vacuum(VacuumIntent::Dock, &[])
+        );
+        assert_eq!(
+            p("clean the house"),
+            vacuum(VacuumIntent::Clean, &["house"])
+        );
+    }
+
+    #[test]
+    fn vacuum_never_guessed() {
+        assert_eq!(p("don't vacuum the kitchen"), None);
+        assert_eq!(p("the vacuum"), None);
+        assert_eq!(p("is the vacuum running?"), None);
+        assert_eq!(p("who started the vacuum"), None);
+    }
+
     /// The table of docs/users/assistant.md, both columns.
     #[test]
     fn the_documented_sentences_parse() {
@@ -2405,6 +2652,9 @@ mod english {
             "turn the volume up",
             "mute the kitchen",
             "what's playing?",
+            "vacuum the kitchen",
+            "start the vacuum",
+            "send the vacuum home",
         ];
         for s in en {
             assert!(m(s).is_some(), "{s}");
@@ -2430,6 +2680,9 @@ mod english {
             "monte le son",
             "coupe le son de la cuisine",
             "qu'est-ce qu'on écoute ?",
+            "aspire la cuisine",
+            "lance l'aspirateur",
+            "renvoie l'aspirateur à la base",
         ];
         for s in fr {
             assert!(

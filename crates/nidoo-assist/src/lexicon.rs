@@ -73,6 +73,12 @@ pub enum Class {
     /// "écoute" of "qu'est-ce qu'on écoute ?".
     Listen,
     Noise,
+    /// A word for a robot vacuum ("aspirateur", "robot").
+    Vacuum,
+    /// "aspire", "nettoie": clean (a room, or the house).
+    Clean,
+    /// A word for the vacuum's base ("base", "socle") or for sending it there ("renvoie").
+    Dock,
 }
 
 const TABLE: &[(Class, &[&str])] = &[
@@ -247,6 +253,28 @@ const TABLE: &[(Class, &[&str])] = &[
     (Class::Back, &["reviens", "revenir", "revient", "retourne"]),
     (Class::Listen, &["ecoute", "ecoutes", "ecouter", "ecoutez"]),
     (Class::Fait, &["fait"]),
+    (Class::Vacuum, &["aspirateur", "aspirateurs", "robot"]),
+    (
+        Class::Clean,
+        &[
+            "aspire",
+            "aspirer",
+            "aspires",
+            "aspirez",
+            "nettoie",
+            "nettoyer",
+            "nettoies",
+            "nettoyez",
+            "nettoyage",
+        ],
+    ),
+    (
+        Class::Dock,
+        &[
+            "base", "socle", "station", "chargeur", "renvoie", "ramene", "rentre", "renvoyer",
+            "ramener", "rentrer",
+        ],
+    ),
     (
         Class::Cold,
         &[
@@ -450,6 +478,9 @@ const TABLE_EN: &[(Class, &[&str])] = &[
     (Class::Stop, &["stop"]),
     (Class::Listen, &["listening", "listen", "playing"]),
     (Class::Fait, &["warm", "hot", "cold", "cool", "chilly"]),
+    (Class::Vacuum, &["vacuum", "vacuums", "hoover", "robot"]),
+    (Class::Clean, &["clean", "cleans"]),
+    (Class::Dock, &["dock", "home", "base"]),
     (Class::Little, &["slightly", "bit", "little", "tad"]),
     (
         Class::OtherDevice,
@@ -776,6 +807,102 @@ pub const NOT_BEDROOM: &[&str] = &[
     "home",
 ];
 
+/// A generic room noun and the words a vacuum's room buttons usually name it with.
+pub struct RoomNoun {
+    /// The noun as a reply says it, accents and linkers kept.
+    pub fr: &'static str,
+    /// The ways to say it: folded words with the linkers left out ("salle bain" for "salle de
+    /// bain"), as the parser hands them over.
+    pub said: &'static [&'static str],
+    /// The other names a button may carry for the same room, folded; a button matches when it
+    /// has every word of one of them.
+    pub names: &'static [&'static str],
+}
+
+/// Generic French room nouns and their usual English names, for the room buttons of a vacuum
+/// ("Clean kitchen"). Generic room kinds only, never a house's own names: those come from the
+/// house.
+pub const ROOM_NOUNS: &[RoomNoun] = &[
+    RoomNoun {
+        fr: "cuisine",
+        said: &["cuisine"],
+        names: &["kitchen"],
+    },
+    RoomNoun {
+        fr: "salon",
+        said: &["salon"],
+        names: &["living", "lounge"],
+    },
+    RoomNoun {
+        fr: "séjour",
+        said: &["sejour"],
+        names: &["living", "lounge"],
+    },
+    RoomNoun {
+        fr: "bureau",
+        said: &["bureau"],
+        names: &["office", "study"],
+    },
+    RoomNoun {
+        fr: "salle de bain",
+        said: &["salle bain", "salle bains", "sdb"],
+        names: &["bathroom", "bath"],
+    },
+    RoomNoun {
+        fr: "entrée",
+        said: &["entree"],
+        names: &["entrance", "entry", "hall"],
+    },
+    RoomNoun {
+        fr: "chambre",
+        said: &["chambre"],
+        names: &["bedroom"],
+    },
+    RoomNoun {
+        fr: "couloir",
+        said: &["couloir"],
+        names: &["hallway", "corridor", "hall"],
+    },
+    RoomNoun {
+        fr: "salle à manger",
+        said: &["salle manger"],
+        names: &["dining"],
+    },
+    RoomNoun {
+        fr: "toilettes",
+        said: &["toilettes", "toilette", "wc"],
+        names: &["toilet", "toilets", "wc"],
+    },
+    RoomNoun {
+        fr: "buanderie",
+        said: &["buanderie"],
+        names: &["laundry"],
+    },
+    RoomNoun {
+        fr: "cellier",
+        said: &["cellier"],
+        names: &["pantry"],
+    },
+    RoomNoun {
+        fr: "garage",
+        said: &["garage"],
+        names: &["garage"],
+    },
+    RoomNoun {
+        fr: "escalier",
+        said: &["escalier"],
+        names: &["stairs", "stair", "staircase"],
+    },
+];
+
+/// The room noun the folded `said` words name, exactly.
+pub fn room_noun(said: &[String]) -> Option<&'static RoomNoun> {
+    let phrase = said.join(" ");
+    ROOM_NOUNS
+        .iter()
+        .find(|n| n.said.contains(&phrase.as_str()))
+}
+
 /// Classes a typo may reach. Set, raise and lower never do: a typo must not invent a setpoint
 /// ("laisse" is not "baisse").
 fn fuzzy(class: Class) -> bool {
@@ -889,6 +1016,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn room_nouns_are_found_by_their_folded_words() {
+        let said = |ws: &[&str]| ws.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            room_noun(&said(&["cuisine"])).map(|n| n.fr),
+            Some("cuisine")
+        );
+        assert_eq!(
+            room_noun(&said(&["salle", "bain"])).map(|n| n.fr),
+            Some("salle de bain")
+        );
+        assert_eq!(room_noun(&said(&["kitchen"])).map(|n| n.fr), None);
+    }
+
+    #[test]
+    fn vacuum_words() {
+        assert_eq!(class("aspirateur"), Some(Class::Vacuum));
+        assert_eq!(class("nettoie"), Some(Class::Clean));
+        assert_eq!(class("base"), Some(Class::Dock));
+        assert_eq!(class_in("dock", Lang::En), Some(Class::Dock));
+        assert_eq!(class_in("vacuum", Lang::En), Some(Class::Vacuum));
     }
 
     #[test]
