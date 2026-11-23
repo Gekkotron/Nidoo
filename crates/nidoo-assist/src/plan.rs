@@ -1219,9 +1219,33 @@ fn vacuums<'a>(house: &House<'a>) -> Vec<&'a EntityView> {
 /// Words that say the whole house: "nettoie la maison", "aspire partout".
 const WHOLE_HOUSE: &[&str] = &["maison", "partout", "tout", "house", "everywhere"];
 
+/// The words of the vacuum's own names, its device's and its own: "Roborock, nettoie" names
+/// the vacuum, not a room.
+fn vacuum_words(vac: &EntityView) -> Vec<String> {
+    [vac.device_name.as_deref(), Some(vac.name.as_str())]
+        .into_iter()
+        .flatten()
+        .flat_map(name_words)
+        .collect()
+}
+
+/// A room button's own name: the user's name for it when they gave one, else the name it was
+/// discovered with, without its device's ("Clean kitchen" of "Roborock Clean kitchen").
+fn button_name(button: &EntityView) -> &str {
+    let renamed = button
+        .ui
+        .name
+        .as_deref()
+        .is_some_and(|n| !n.trim().is_empty());
+    match &button.label {
+        Some(label) if !renamed => label,
+        _ => &button.name,
+    }
+}
+
 /// A room button's name without its leading verb: "Clean kitchen" is "kitchen".
-fn room_label(name: &str) -> String {
-    let lower = name.trim().to_lowercase();
+fn room_label(button: &EntityView) -> String {
+    let lower = button_name(button).trim().to_lowercase();
     for verb in ["clean ", "nettoyer ", "nettoie ", "aspirer ", "aspire "] {
         if let Some(rest) = lower.strip_prefix(verb) {
             return rest.trim().to_owned();
@@ -1230,9 +1254,9 @@ fn room_label(name: &str) -> String {
     lower
 }
 
-/// The words of a button name that name its room: no linkers, no verb.
-fn button_words(name: &str) -> Vec<String> {
-    name_words(name)
+/// The words of a button's name that name its room: no linkers, no verb.
+fn button_words(button: &EntityView) -> Vec<String> {
+    name_words(&room_label(button))
         .into_iter()
         .filter(|w| !matches!(class(w), Some(Class::Clean)) && w != "nettoyer")
         .collect()
@@ -1255,7 +1279,7 @@ fn room_buttons<'a>(
         .iter()
         .copied()
         .filter(|b| {
-            let words = button_words(&b.name);
+            let words = button_words(b);
             candidates.iter().any(|cand| {
                 !cand.is_empty()
                     && (score(cand, &words) > 0
@@ -1327,11 +1351,27 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
         VacuumIntent::Dock => Some("return_to_base"),
         VacuumIntent::Clean => None,
     };
-    let said: Vec<String> = room
+    let mut said: Vec<String> = room
         .iter()
         .map(|w| fold(w))
         .filter(|w| !matches!(class(w), Some(Class::Linker | Class::Noise)))
         .collect();
+    let buttons: Vec<&EntityView> = house
+        .entities
+        .iter()
+        .filter(|e| {
+            e.kind == Kind::Button
+                && commandable(e)
+                && e.device_id.is_some()
+                && e.device_id == vac.device_id
+        })
+        .collect();
+    // "Roborock, nettoie la cuisine": the vacuum's own name is not a room, unless a room button
+    // is called that way.
+    let own = vacuum_words(vac);
+    if said.iter().any(|w| own.contains(w)) && room_buttons(&said, &buttons, house).is_empty() {
+        said.retain(|w| !own.contains(w));
+    }
     let whole = action == VacuumIntent::Clean
         && (said.is_empty()
             || (said.iter().all(|w| WHOLE_HOUSE.contains(&w.as_str()))
@@ -1368,16 +1408,6 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
             trace,
         };
     }
-    let buttons: Vec<&EntityView> = house
-        .entities
-        .iter()
-        .filter(|e| {
-            e.kind == Kind::Button
-                && commandable(e)
-                && e.device_id.is_some()
-                && e.device_id == vac.device_id
-        })
-        .collect();
     if buttons.is_empty() {
         return answer(
             say(
@@ -1404,7 +1434,7 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
         [] => {
             let rooms = buttons
                 .iter()
-                .map(|b| room_label(&b.name))
+                .map(|b| room_label(b))
                 .collect::<Vec<_>>()
                 .join(", ");
             let reply = match house.lang {
@@ -1424,7 +1454,7 @@ fn vacuum(req: &Request, action: VacuumIntent, room: &[String], house: &House) -
             let noun = room_noun(&said);
             let label = match (house.lang, noun) {
                 (Lang::Fr, Some(noun)) => noun.fr.to_owned(),
-                _ => room_label(&button.name),
+                _ => room_label(button),
             };
             Plan::Act {
                 actions: vec![Action::Vacuum {
@@ -2379,10 +2409,11 @@ mod tests {
         let Plan::Answer { reply, .. } = p("nettoie le garage") else {
             panic!("not an answer");
         };
-        assert!(reply.starts_with("L'aspirateur ne connaît pas la pièce « garage »."));
-        assert!(
-            reply.contains("kitchen") && !reply.contains("Clean"),
-            "{reply}"
+        // The buttons' names lose the vacuum's name and the verb: "Aspirateur Clean kitchen".
+        assert_eq!(
+            reply,
+            "L'aspirateur ne connaît pas la pièce « garage ». \
+             Pièces : kitchen, living room, bathroom, entrance, office."
         );
         let Plan::Answer { reply, .. } = en_plan("clean the garage") else {
             panic!("not an answer");
@@ -2391,9 +2422,58 @@ mod tests {
     }
 
     #[test]
+    fn the_reply_names_the_room_without_the_vacuum() {
+        let Plan::Act { done, .. } = en_plan("vacuum the kitchen") else {
+            panic!("not an act");
+        };
+        assert_eq!(
+            done,
+            Done::Vacuum {
+                action: VacuumIntent::Clean,
+                room: Some("kitchen".into()),
+                name: "Aspirateur".into(),
+            }
+        );
+        // The vacuum renamed in the app: its buttons keep their discovered names.
+        let mut f = fixture::house();
+        let vac = f.entity_mut("vacuum_robot");
+        vac.ui.name = Some("Robbie".into());
+        vac.name = "Robbie".into();
+        let Plan::Answer { reply, .. } = plan("nettoie le garage", &f.house()) else {
+            panic!("not an answer");
+        };
+        assert!(
+            reply.ends_with("Pièces : kitchen, living room, bathroom, entrance, office."),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn the_vacuum_name_in_the_sentence_is_not_a_room() {
+        let mut f = fixture::house();
+        for e in &mut f.entities {
+            if e.device_id.as_deref() == Some("vacuum_robot") {
+                e.name = e.name.replace("Aspirateur", "Roborock");
+                e.device_name = Some("Roborock".into());
+            }
+        }
+        // Every button's name holds "Roborock": the name alone matches none of them.
+        assert_eq!(
+            vacuum_actions(&plan("Roborock, nettoie la cuisine", &f.house())),
+            vec![("vacuum_robot_clean_kitchen".to_string(), Command::Press)]
+        );
+        assert_eq!(
+            vacuum_actions(&plan("Roborock, nettoie", &f.house())),
+            vec![("vacuum_robot".to_string(), vacuum_action("start"))]
+        );
+    }
+
+    #[test]
     fn a_renamed_button_is_found_by_its_name() {
         let mut f = fixture::house();
-        f.entity_mut("vacuum_robot_clean_kitchen").name = "Cuisine".into();
+        let button = f.entity_mut("vacuum_robot_clean_kitchen");
+        button.ui.name = Some("Cuisine".into());
+        button.name = "Cuisine".into();
         let plan = plan("nettoie la cuisine", &f.house());
         assert_eq!(
             vacuum_actions(&plan),
@@ -2406,13 +2486,17 @@ mod tests {
         let mut f = fixture::house();
         f.entities.push(fixture::vacuum_button(
             "vacuum_robot_clean_kitchen_2",
+            "Aspirateur",
             "Clean kitchen island",
             "salon",
             "vacuum_robot",
         ));
         assert_eq!(
             labels(&plan("nettoie la cuisine", &f.house())),
-            vec!["Clean kitchen", "Clean kitchen island"]
+            vec![
+                "Aspirateur Clean kitchen",
+                "Aspirateur Clean kitchen island"
+            ]
         );
     }
 
