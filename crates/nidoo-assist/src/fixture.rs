@@ -7,7 +7,7 @@ use nidoo_climate::doc::{Decision, Setpoint, Source, ZoneSettings, ZoneState};
 use nidoo_climate::view::{LearnStatus, ZoneView};
 use nidoo_core::model::{
     Availability, Capabilities, CoverState, EntityCategory, EntityState, Kind, LightState,
-    MediaPlayerState, StateValue,
+    MediaPlayerState, StateValue, VacuumState,
 };
 
 use crate::house::{HeatRange, House};
@@ -175,6 +175,29 @@ pub fn speaker_mute(id: &str, area: &str) -> EntityView {
     e
 }
 
+/// A robot vacuum, docked, that starts, pauses, stops and goes back to its base.
+pub fn vacuum(id: &str, name: &str, area: &str, device: &str) -> EntityView {
+    let mut e = entity(id, name, Kind::Vacuum, area);
+    e.device_id = Some(device.into());
+    e.capabilities.vacuum_actions = ["start", "pause", "stop", "return_to_base"]
+        .iter()
+        .map(|a| (*a).to_string())
+        .collect();
+    e.state.value = StateValue::Vacuum(VacuumState {
+        state: Some("docked".into()),
+        battery: Some(100),
+        fan_speed: None,
+    });
+    e
+}
+
+/// A button of the vacuum's device: pressing it cleans one room.
+pub fn vacuum_button(id: &str, name: &str, area: &str, device: &str) -> EntityView {
+    let mut e = entity(id, name, Kind::Button, area);
+    e.device_id = Some(device.into());
+    e
+}
+
 pub fn thermometer(id: &str, area: &str, value: f64) -> EntityView {
     let mut e = entity(id, "Température", Kind::Sensor, area);
     e.device_class = Some("temperature".into());
@@ -242,7 +265,8 @@ pub fn zone(
 
 /// Salon (4 lights, the lamp and the led in colour, a hidden one, plus a group; two shutters with a position; a TV), Salon TV,
 /// Bureau (a thermometer, no heating; a plug and a plain switch), Chambre Léa (heated, an
-/// open/close-only shutter) and Chambre Tom (heated; a plug), Garage (a siren switch).
+/// open/close-only shutter) and Chambre Tom (heated; a plug), Garage (a siren switch). A robot
+/// vacuum with a button per room (kitchen, living room, bathroom, entrance, office) sits in the Salon.
 pub fn house() -> Fixture {
     let mut hidden = light("light_ambiance_tv", "Ambiance TV", "salon", false);
     hidden.ui.hidden = true;
@@ -291,6 +315,37 @@ pub fn house() -> Fixture {
             speaker_volume("number_salon_volume", "salon", 40.0),
             speaker_mute("switch_salon_mute", "salon"),
             speaker_volume("number_bureau_volume", "bureau", 30.0),
+            vacuum("vacuum_robot", "Aspirateur", "salon", "vacuum_robot"),
+            vacuum_button(
+                "vacuum_robot_clean_kitchen",
+                "Clean kitchen",
+                "salon",
+                "vacuum_robot",
+            ),
+            vacuum_button(
+                "vacuum_robot_clean_living_room",
+                "Clean living room",
+                "salon",
+                "vacuum_robot",
+            ),
+            vacuum_button(
+                "vacuum_robot_clean_bathroom",
+                "Clean bathroom",
+                "salon",
+                "vacuum_robot",
+            ),
+            vacuum_button(
+                "vacuum_robot_clean_entrance",
+                "Clean entrance",
+                "salon",
+                "vacuum_robot",
+            ),
+            vacuum_button(
+                "vacuum_robot_clean_office",
+                "Clean office",
+                "salon",
+                "vacuum_robot",
+            ),
         ],
         zones: vec![
             zone(

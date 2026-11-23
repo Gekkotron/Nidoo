@@ -7,7 +7,7 @@ use nidoo_core::flow::Lang;
 use nidoo_core::model::{MediaPlayerState, SwitchType};
 
 use crate::house::House;
-use crate::intent::MediaIntent;
+use crate::intent::{MediaIntent, VacuumIntent};
 use crate::lexicon::{Class, class, class_in};
 use crate::plan::Done;
 use crate::room::{name_words, named_after_person};
@@ -354,6 +354,9 @@ pub fn done(done: &Done, results: &[ActionResult], house: &House, simulate: bool
             };
             speakers(house.area_name(area), done, already, results, lang)
         }
+        Done::Vacuum { action, room, .. } => {
+            vacuum(*action, room.as_deref(), results.first(), lang)
+        }
     };
     match (simulate, en) {
         (false, _) => text,
@@ -431,6 +434,67 @@ fn media_en(what: &MediaIntent, result: Option<&ActionResult>) -> String {
         Some(ActionResult::Failed(why)) if no_answer(why) => "The player didn't answer.".into(),
         Some(ActionResult::Failed(why)) => format!("The player didn't answer: {why}."),
         Some(ActionResult::Ok) | None => plain(),
+    }
+}
+
+/// The vacuum's reply; `room` is the room cleaned, `None` for a full clean.
+fn vacuum(
+    action: VacuumIntent,
+    room: Option<&str>,
+    result: Option<&ActionResult>,
+    lang: Lang,
+) -> String {
+    let en = lang == Lang::En;
+    match result {
+        Some(ActionResult::Skipped) => {
+            return match (action, en) {
+                (VacuumIntent::Clean, false) => "L'aspirateur est déjà en marche.",
+                (VacuumIntent::Clean, true) => "The vacuum is already running.",
+                (VacuumIntent::Stop, false) => "L'aspirateur est déjà arrêté.",
+                (VacuumIntent::Stop, true) => "The vacuum is already stopped.",
+                (VacuumIntent::Pause, false) => "L'aspirateur est déjà en pause.",
+                (VacuumIntent::Pause, true) => "The vacuum is already paused.",
+                (VacuumIntent::Dock, false) => "L'aspirateur est déjà à sa base.",
+                (VacuumIntent::Dock, true) => "The vacuum is already at its dock.",
+            }
+            .into();
+        }
+        Some(ActionResult::Offline) => {
+            return if en {
+                "The vacuum isn't responding.".into()
+            } else {
+                "L'aspirateur ne répond pas.".into()
+            };
+        }
+        Some(ActionResult::Failed(why)) if no_answer(why) => {
+            return if en {
+                "The vacuum didn't answer.".into()
+            } else {
+                "L'aspirateur n'a pas répondu.".into()
+            };
+        }
+        Some(ActionResult::Failed(why)) => {
+            return if en {
+                format!("The vacuum didn't answer: {why}.")
+            } else {
+                format!("L'aspirateur n'a pas répondu : {why}.")
+            };
+        }
+        Some(ActionResult::Ok | ActionResult::Echo(_)) | None => {}
+    }
+    match (action, room, en) {
+        (VacuumIntent::Clean, Some(room), false) => format!("L'aspirateur nettoie {}.", le(room)),
+        (VacuumIntent::Clean, Some(room), true) => {
+            format!("The vacuum is cleaning {}.", the(room))
+        }
+        (VacuumIntent::Clean, None, false) => "L'aspirateur est lancé.".into(),
+        (VacuumIntent::Clean, None, true) => "The vacuum has started.".into(),
+        (VacuumIntent::Stop, _, false) => "L'aspirateur est arrêté.".into(),
+        (VacuumIntent::Stop, _, true) => "The vacuum has stopped.".into(),
+        (VacuumIntent::Pause, _, false) => "L'aspirateur est en pause.".into(),
+        (VacuumIntent::Pause, _, true) => "The vacuum is paused.".into(),
+        (VacuumIntent::Dock, _, false) => "L'aspirateur rentre à sa base.".into(),
+        (VacuumIntent::Dock, _, true) => "The vacuum is going back to its dock.".into(),
     }
 }
 
@@ -1821,5 +1885,108 @@ mod tests {
             "Simulation: Led on in the Salon."
         );
         assert!(done(&d, &[ActionResult::Ok], &f.house(), true).starts_with("Simulation : "));
+    }
+
+    #[test]
+    fn vacuum_replies() {
+        let d = |action, room: Option<&str>| Done::Vacuum {
+            action,
+            room: room.map(Into::into),
+            name: "Aspirateur".into(),
+        };
+        let clean = |room| d(VacuumIntent::Clean, room);
+        let ok = [ActionResult::Ok];
+        assert_eq!(
+            said(&clean(Some("cuisine")), &ok),
+            "L'aspirateur nettoie la cuisine."
+        );
+        assert_eq!(
+            said(&clean(Some("salon")), &ok),
+            "L'aspirateur nettoie le salon."
+        );
+        assert_eq!(
+            said(&clean(Some("entrée")), &ok),
+            "L'aspirateur nettoie l'entrée."
+        );
+        assert_eq!(
+            said(&clean(Some("salle de bain")), &ok),
+            "L'aspirateur nettoie la salle de bain."
+        );
+        assert_eq!(said(&clean(None), &ok), "L'aspirateur est lancé.");
+        assert_eq!(
+            said(&d(VacuumIntent::Stop, None), &ok),
+            "L'aspirateur est arrêté."
+        );
+        assert_eq!(
+            said(&d(VacuumIntent::Pause, None), &ok),
+            "L'aspirateur est en pause."
+        );
+        assert_eq!(
+            said(&d(VacuumIntent::Dock, None), &ok),
+            "L'aspirateur rentre à sa base."
+        );
+        assert_eq!(
+            said(&clean(None), &[ActionResult::Skipped]),
+            "L'aspirateur est déjà en marche."
+        );
+        assert_eq!(
+            said(&d(VacuumIntent::Dock, None), &[ActionResult::Skipped]),
+            "L'aspirateur est déjà à sa base."
+        );
+        assert_eq!(
+            said(&clean(None), &[ActionResult::Offline]),
+            "L'aspirateur ne répond pas."
+        );
+        assert_eq!(
+            said(&clean(None), &[ActionResult::Failed(NO_ANSWER.into())]),
+            "L'aspirateur n'a pas répondu."
+        );
+        assert_eq!(
+            said(&clean(None), &[ActionResult::Failed("refusé".into())]),
+            "L'aspirateur n'a pas répondu : refusé."
+        );
+        let f = fixture::house();
+        assert_eq!(
+            done(&clean(None), &ok, &f.house(), true),
+            "Simulation : L'aspirateur est lancé."
+        );
+    }
+
+    #[test]
+    fn english_vacuum_replies() {
+        let d = |action, room: Option<&str>| Done::Vacuum {
+            action,
+            room: room.map(Into::into),
+            name: "Vacuum".into(),
+        };
+        let ok = [ActionResult::Ok];
+        assert_eq!(
+            said_en(&d(VacuumIntent::Clean, Some("kitchen")), &ok),
+            "The vacuum is cleaning the kitchen."
+        );
+        assert_eq!(
+            said_en(&d(VacuumIntent::Clean, None), &ok),
+            "The vacuum has started."
+        );
+        assert_eq!(
+            said_en(&d(VacuumIntent::Stop, None), &ok),
+            "The vacuum has stopped."
+        );
+        assert_eq!(
+            said_en(&d(VacuumIntent::Pause, None), &ok),
+            "The vacuum is paused."
+        );
+        assert_eq!(
+            said_en(&d(VacuumIntent::Dock, None), &ok),
+            "The vacuum is going back to its dock."
+        );
+        assert_eq!(
+            said_en(&d(VacuumIntent::Stop, None), &[ActionResult::Skipped]),
+            "The vacuum is already stopped."
+        );
+        assert_eq!(
+            said_en(&d(VacuumIntent::Stop, None), &[ActionResult::Offline]),
+            "The vacuum isn't responding."
+        );
     }
 }

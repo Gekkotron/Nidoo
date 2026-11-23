@@ -254,6 +254,15 @@ fn what(action: &Action, lang: Lang) -> (String, String) {
             Command::Close => "close".into(),
             _ => "open".into(),
         },
+        Action::Vacuum { command, .. } => match command {
+            Command::VacuumAction { action } => match action.as_str() {
+                "stop" => "stop".into(),
+                "pause" => "pause".into(),
+                "return_to_base" => "return to base".into(),
+                _ => "start".into(),
+            },
+            _ => "clean the room".into(),
+        },
     };
     (target, en)
 }
@@ -322,6 +331,18 @@ fn what_fr(action: &Action) -> (String, String) {
                 _ => "ouvrir".into(),
             };
             (entity.clone(), what)
+        }
+        Action::Vacuum { entity, command } => {
+            let what = match command {
+                Command::VacuumAction { action } => match action.as_str() {
+                    "stop" => "arrêter",
+                    "pause" => "pause",
+                    "return_to_base" => "renvoyer à la base",
+                    _ => "lancer",
+                },
+                _ => "nettoyer la pièce",
+            };
+            (entity.clone(), what.into())
         }
     }
 }
@@ -653,7 +674,8 @@ impl Hub {
                 | Action::Cover { entity, command }
                 | Action::Switch { entity, command }
                 | Action::Media { entity, command }
-                | Action::Speaker { entity, command } => {
+                | Action::Speaker { entity, command }
+                | Action::Vacuum { entity, command } => {
                     let Some(view) = house.entity(entity) else {
                         let unknown = tr(house.lang, "inconnue", "unknown");
                         return (ActionResult::Failed(unknown.into()), None);

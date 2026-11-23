@@ -20,6 +20,9 @@ enum Expect {
     Media(&'static str, &'static str, Option<&'static str>),
     /// Each speaker control listed, in order, with its command.
     Speaker(&'static [(&'static str, Command)]),
+    /// One vacuum command per entity listed: "press" for a room button, else the `VacuumAction`'s
+    /// action.
+    Vacuum(&'static str, &'static [&'static str]),
     NotUnderstood,
 }
 
@@ -277,6 +280,65 @@ const ROWS: &[(&str, Expect)] = &[
         )]),
     ),
     ("monte le son", Ask(&["Salon", "Bureau"])),
+    (
+        "aspire la cuisine",
+        Vacuum("press", &["vacuum_robot_clean_kitchen"]),
+    ),
+    (
+        "lance l'aspirateur dans la cuisine",
+        Vacuum("press", &["vacuum_robot_clean_kitchen"]),
+    ),
+    (
+        "nettoie la cuisine",
+        Vacuum("press", &["vacuum_robot_clean_kitchen"]),
+    ),
+    (
+        "nettoie le salon",
+        Vacuum("press", &["vacuum_robot_clean_living_room"]),
+    ),
+    (
+        "passe l'aspirateur dans le bureau",
+        Vacuum("press", &["vacuum_robot_clean_office"]),
+    ),
+    (
+        "aspire la salle de bain",
+        Vacuum("press", &["vacuum_robot_clean_bathroom"]),
+    ),
+    (
+        "nettoie l'entrée",
+        Vacuum("press", &["vacuum_robot_clean_entrance"]),
+    ),
+    ("lance l'aspirateur", Vacuum("start", &["vacuum_robot"])),
+    ("passe l'aspirateur", Vacuum("start", &["vacuum_robot"])),
+    ("aspire", Vacuum("start", &["vacuum_robot"])),
+    ("nettoie la maison", Vacuum("start", &["vacuum_robot"])),
+    ("aspire partout", Vacuum("start", &["vacuum_robot"])),
+    ("arrête l'aspirateur", Vacuum("stop", &["vacuum_robot"])),
+    ("stop l'aspirateur", Vacuum("stop", &["vacuum_robot"])),
+    (
+        "mets l'aspirateur en pause",
+        Vacuum("pause", &["vacuum_robot"]),
+    ),
+    ("pause l'aspirateur", Vacuum("pause", &["vacuum_robot"])),
+    (
+        "renvoie l'aspirateur à la base",
+        Vacuum("return_to_base", &["vacuum_robot"]),
+    ),
+    (
+        "ramène l'aspirateur à sa base",
+        Vacuum("return_to_base", &["vacuum_robot"]),
+    ),
+    (
+        "l'aspirateur rentre à la base",
+        Vacuum("return_to_base", &["vacuum_robot"]),
+    ),
+    ("n'aspire pas la cuisine", NotUnderstood),
+    (
+        "nettoie le garage",
+        Answer(
+            "L'aspirateur ne connaît pas la pièce « garage ». Pièces : kitchen, living room, bathroom, entrance, office.",
+        ),
+    ),
 ];
 
 #[test]
@@ -295,7 +357,8 @@ fn regression_table() {
                         | Action::Cover { .. }
                         | Action::Switch { .. }
                         | Action::Media { .. }
-                        | Action::Speaker { .. } => None,
+                        | Action::Speaker { .. }
+                        | Action::Vacuum { .. } => None,
                     }
                 }
                 let want = if *on {
@@ -361,6 +424,18 @@ fn regression_table() {
                 actions.len() == want.len()
                     && actions.iter().zip(want.iter()).all(|(a, (id, cmd))| {
                         matches!(a, Action::Speaker { entity, command } if entity == id && command == cmd)
+                    })
+            }
+            (Vacuum(want, ids), Plan::Act { actions, .. }) => {
+                actions.len() == ids.len()
+                    && actions.iter().zip(ids.iter()).all(|(a, id)| {
+                        let want = match *want {
+                            "press" => Command::Press,
+                            action => Command::VacuumAction {
+                                action: action.into(),
+                            },
+                        };
+                        matches!(a, Action::Vacuum { entity, command } if entity == id && *command == want)
                     })
             }
             (Answer(text), Plan::Answer { reply, .. }) => reply == text,

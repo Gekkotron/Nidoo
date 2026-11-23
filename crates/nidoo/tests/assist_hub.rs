@@ -1196,3 +1196,27 @@ async fn every_turn_tells_the_open_pages() {
     }
     assert_eq!(told, [turn.id], "one event, naming the turn");
 }
+
+const VACUUM_FIXTURE: &str = "vacuum__roborock_40313ca8b964__roborock_40313ca8b964.json";
+const VACUUM_TOPIC: &str = "nidoo/vacuum/roborock_40313ca8b964/roborock_40313ca8b964/config";
+const KITCHEN_TOPIC: &str = "nidoo/button/roborock_40313ca8b964/clean_kitchen/config";
+const KITCHEN_COMMAND_TOPIC: &str = "roborock/ha/clean_kitchen/press";
+
+/// The vacuum's "Clean kitchen" button, a second entity of the vacuum's device.
+const KITCHEN_BUTTON: &str = r#"{"name":"Clean kitchen","unique_id":"roborock_40313ca8b964_clean_kitchen","object_id":"roborock_40313ca8b964_clean_kitchen","device":{"identifiers":["roborock_40313ca8b964"],"name":"Roborock"},"command_topic":"roborock/ha/clean_kitchen/press","payload_press":"segment_clean [16]"}"#;
+
+#[tokio::test]
+async fn cleaning_the_kitchen_presses_the_vacuum_room_button() {
+    let (hub, mut rx) = house().await;
+    hub.ingest(VACUUM_TOPIC, &fixture(VACUUM_FIXTURE));
+    hub.ingest(KITCHEN_TOPIC, KITCHEN_BUTTON.as_bytes());
+    let turn = say(&hub, "nettoie la cuisine").await;
+    assert_eq!(turn.outcome, OutcomeKind::Acted, "{turn:?}");
+    assert_eq!(turn.reply, "L'aspirateur nettoie la cuisine.", "{turn:?}");
+    let sent = drain(&mut rx);
+    let press = sent
+        .iter()
+        .find(|p| p.topic == KITCHEN_COMMAND_TOPIC)
+        .unwrap_or_else(|| panic!("no press in {sent:?}"));
+    assert_eq!(press.payload, "segment_clean [16]");
+}

@@ -66,8 +66,8 @@ pub fn assistant_text(lang: Lang, k: AssistantText) -> &'static str {
             "Comprendre et répondre sans rien envoyer à la maison",
         ),
         Hint => (
-            "Lights, shutters, heating setpoints, temperatures and music.",
-            "Lumières, volets, consignes de chauffage, températures et musique.",
+            "Lights, shutters, heating setpoints, temperatures, music and the vacuum.",
+            "Lumières, volets, consignes de chauffage, températures, musique et aspirateur.",
         ),
         Yes => ("Yes", "Oui"),
         No => ("No", "Non"),
