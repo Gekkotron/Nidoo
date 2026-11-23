@@ -1,6 +1,5 @@
 #![cfg(target_arch = "wasm32")]
-//! `/history/:id` for a vacuum: one row per value the hub reports, and the main chart steps
-//! aside when the headline is a word it cannot draw.
+//! `/history/:id` for a vacuum: one chart, with a chip per value the hub reports.
 
 use leptos::prelude::*;
 use leptos::task::tick;
@@ -22,7 +21,13 @@ mod fetch_stub;
 use fetch_stub::FetchStub;
 
 /// The request as the browser reports it: gloo-net leaves a trailing `&` on a query.
-const URL: &str = "/api/v1/history/fields?entity=vacuum.roborock&range=24h&";
+fn fields_url(range: &str) -> String {
+    format!("/api/v1/history/fields?entity=vacuum.roborock&range={range}&")
+}
+
+fn series_url(range: &str) -> String {
+    format!("/api/v1/history/series?entity=vacuum.roborock&range={range}&")
+}
 
 fn now() -> i64 {
     (js_sys::Date::now() / 1000.0) as i64
@@ -81,7 +86,7 @@ struct Mounted {
     host: web_sys::Element,
 }
 
-fn mount(lang: Lang) -> Mounted {
+fn mount(lang: Lang, url: &str) -> Mounted {
     let document = web_sys::window().unwrap().document().unwrap();
     let host = document.create_element("div").unwrap();
     document.body().unwrap().append_child(&host).unwrap();
@@ -89,11 +94,7 @@ fn mount(lang: Lang) -> Mounted {
         .unwrap()
         .history()
         .unwrap()
-        .replace_state_with_url(
-            &wasm_bindgen::JsValue::NULL,
-            "",
-            Some("/history/vacuum.roborock?range=24h"),
-        )
+        .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(url))
         .unwrap();
     let house = House::new();
     house
@@ -154,55 +155,95 @@ async fn wait_for(host: &web_sys::Element, selector: &str, n: usize) {
     settle().await;
 }
 
+fn stub_range(stub: &FetchStub, range: &str, fields: &Value, series: &Value) {
+    stub.reply("GET", &fields_url(range), 200, &fields.to_string());
+    stub.reply("GET", &series_url(range), 200, &series.to_string());
+}
+
+fn empty_series() -> Value {
+    json!({"window": 60, "points": []})
+}
+
+fn search() -> String {
+    web_sys::window().unwrap().location().search().unwrap()
+}
+
 #[wasm_bindgen_test]
-async fn a_vacuum_shows_a_row_per_value_and_hides_the_main_chart() {
+async fn a_vacuum_opens_on_battery_and_activity() {
     let stub = FetchStub::install();
-    stub.reply("GET", URL, 200, &vacuum_fields(true).to_string());
-    let m = mount(Lang::Fr);
-    wait_for(&m.host, ".field-tracks__row", 3).await;
+    stub_range(&stub, "24h", &vacuum_fields(true), &empty_series());
+    let m = mount(Lang::Fr, "/history/vacuum.roborock?range=24h");
+    wait_for(&m.host, ".history-chart__chips .chip", 3).await;
     assert_eq!(
-        texts(&m.host, ".field-tracks__label"),
+        texts(&m.host, ".history-chart__chips .chip"),
         ["Activité", "Batterie", "Vitesse d'aspiration"]
     );
-    let words = texts(&m.host, ".field-tracks__word");
-    assert!(words.contains(&"Nettoyage".to_owned()), "{words:?}");
-    assert!(words.contains(&"À la base".to_owned()), "{words:?}");
-    assert!(words.contains(&"Turbo".to_owned()), "{words:?}");
     assert_eq!(
-        texts(&m.host, ".field-tracks__value")[1],
-        "52\u{A0}%",
-        "the latest battery reading"
+        texts(&m.host, ".history-chart__chips .chip[aria-pressed=true]"),
+        ["Activité", "Batterie"]
     );
-    assert!(all(&m.host, ".history-chart").is_empty());
+    assert_eq!(
+        all(&m.host, ".history-chart__line").len(),
+        1,
+        "battery line drawn"
+    );
+    assert!(all(&m.host, ".field-tracks").is_empty());
 }
 
 #[wasm_bindgen_test]
-async fn without_a_headline_track_the_main_chart_stays() {
+async fn tapping_a_word_chip_swaps_the_word_and_writes_the_url() {
     let stub = FetchStub::install();
-    stub.reply("GET", URL, 200, &vacuum_fields(false).to_string());
-    let m = mount(Lang::En);
-    wait_for(&m.host, ".field-tracks__row", 2).await;
+    stub_range(&stub, "24h", &vacuum_fields(true), &empty_series());
+    let m = mount(Lang::Fr, "/history/vacuum.roborock?range=24h");
+    wait_for(&m.host, ".history-chart__chips .chip", 3).await;
+    all(&m.host, ".history-chart__chips .chip")[2].click();
+    wait_for(&m.host, ".history-chart__chips .chip[aria-pressed=true]", 2).await;
     assert_eq!(
-        texts(&m.host, ".field-tracks__label"),
-        ["Battery", "Fan speed"]
+        texts(&m.host, ".history-chart__chips .chip[aria-pressed=true]"),
+        ["Batterie", "Vitesse d'aspiration"]
     );
-    assert_eq!(all(&m.host, ".history-chart").len(), 1);
+    let q = search();
+    assert!(
+        q.contains("show=battery%2Cfan_speed") || q.contains("show=battery,fan_speed"),
+        "{q}"
+    );
 }
 
 #[wasm_bindgen_test]
-async fn no_tracks_leave_only_the_main_chart() {
+async fn range_change_keeps_the_selection() {
+    let stub = FetchStub::install();
+    stub_range(&stub, "24h", &vacuum_fields(true), &empty_series());
+    stub_range(&stub, "7d", &vacuum_fields(true), &empty_series());
+    let m = mount(
+        Lang::Fr,
+        "/history/vacuum.roborock?range=24h&show=battery,fan_speed",
+    );
+    wait_for(&m.host, ".history-chart__chips .chip", 3).await;
+    let week = all(&m.host, ".history-detail__chips .chip")
+        .into_iter()
+        .find(|c| c.text_content().unwrap_or_default() == "7\u{a0}j")
+        .expect("the 7 j chip");
+    week.click();
+    wait_for(&m.host, ".history-chart__chips .chip", 3).await;
+    let q = search();
+    assert!(q.contains("range=7d") && q.contains("show=battery"), "{q}");
+    assert_eq!(
+        texts(&m.host, ".history-chart__chips .chip[aria-pressed=true]"),
+        ["Batterie", "Vitesse d'aspiration"]
+    );
+}
+
+#[wasm_bindgen_test]
+async fn a_plain_sensor_has_no_chip_row() {
     let stub = FetchStub::install();
     let to = now();
-    stub.reply(
-        "GET",
-        URL,
-        200,
-        &json!({"from": to - 86_400, "to": to, "tracks": []}).to_string(),
-    );
-    let m = mount(Lang::En);
-    settle().await;
-    gloo_timers::future::TimeoutFuture::new(100).await;
-    assert!(all(&m.host, ".field-tracks__row").is_empty());
-    assert!(all(&m.host, ".field-tracks__shimmer").is_empty());
-    assert_eq!(all(&m.host, ".history-chart").len(), 1);
+    let fields = json!({"from": to - 86_400, "to": to, "tracks": []});
+    let series = json!({"window": 60, "points": [
+        [to - 3_600, 20.0, 20.0, 20.0], [to - 60, 22.0, 22.0, 22.0]
+    ]});
+    stub_range(&stub, "24h", &fields, &series);
+    let m = mount(Lang::En, "/history/vacuum.roborock?range=24h");
+    wait_for(&m.host, ".history-chart__line", 1).await;
+    assert!(all(&m.host, ".history-chart__chips").is_empty());
+    assert_eq!(all(&m.host, ".history-chart__line").len(), 1);
 }

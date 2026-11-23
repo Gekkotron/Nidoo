@@ -8,7 +8,6 @@ pub mod card_place;
 pub mod confirm;
 pub mod curve;
 pub mod dial;
-pub mod field_tracks;
 pub mod flow_switch;
 pub mod history_chart;
 pub mod hs_wheel;

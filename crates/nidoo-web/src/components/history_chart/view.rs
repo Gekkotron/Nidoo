@@ -7,7 +7,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use leptos::html;
 use leptos::prelude::*;
-use nidoo_api::{EnergyKind, HistoryDaily, HistoryRange, HistorySeries};
+use nidoo_api::{EnergyKind, HistoryDaily, HistoryFields, HistoryRange, HistorySeries};
+use nidoo_core::model::Kind;
 
 use super::format::{state_axis_labels, state_value_label, tick_labels, tooltip_day, tooltip_time};
 use super::geom::{
@@ -15,7 +16,9 @@ use super::geom::{
     plot_points, slot_index, smooth_path, step_decimals, step_path, tooltip_flips, value_decimals,
     y_scale,
 };
-use crate::api::history::{HistoryApiError, fetch_daily, fetch_series};
+use super::plot::{FieldsState, Plot, field_series, headline_or_error, plot_for, track_scale};
+use super::selection::{chip_label, chips, parse_show, show_param, toggle};
+use crate::api::history::{HistoryApiError, fetch_daily, fetch_fields, fetch_series};
 use crate::components::now::Now;
 use crate::house::House;
 use crate::i18n::format as fmt;
@@ -77,8 +80,23 @@ pub fn HistoryChart(
     #[prop(into)] kind: Signal<String>,
     #[prop(into)] unit: Signal<Option<String>>,
     #[prop(into)] power_pair: Signal<Option<String>>,
+    /// The raw `show` query value: which value chips are on.
+    #[prop(optional, into)]
+    show: Signal<Option<String>>,
+    /// Called with the new `show` value when a chip is tapped. Without it the chart is a plain
+    /// series chart: no fields fetch, no chips (dashboard widgets).
+    #[prop(optional)]
+    on_show: Option<Callback<String>>,
+    /// The entity's device class, which names the headline number's chip.
+    #[prop(optional, into)]
+    device_class: Signal<Option<String>>,
+    /// The entity's kind, which words the chips and the periods.
+    #[prop(optional)]
+    field_kind: Option<Signal<Kind>>,
 ) -> impl IntoView {
+    let wants_fields = on_show.is_some();
     let state = RwSignal::new(State::Loading);
+    let fields = RwSignal::new(FieldsState::Loading);
     let latest: Rc<Cell<u32>> = Rc::new(Cell::new(0));
     let retry_bump = RwSignal::new(0u32);
 
@@ -103,11 +121,46 @@ pub fn HistoryChart(
             let refresh = prev.as_ref() == Some(&inputs);
             let my_req = latest.get() + 1;
             latest.set(my_req);
+            let with_fields = wants_fields && inputs.2 == Flavor::Series;
             if !refresh {
                 state.set(State::Loading);
+                fields.set(if with_fields {
+                    FieldsState::Loading
+                } else {
+                    FieldsState::Ready(no_fields())
+                });
             }
 
             let (id, r, f, pp, _) = inputs.clone();
+            if with_fields {
+                let (id, latest_check) = (id.clone(), latest.clone());
+                leptos::task::spawn_local(async move {
+                    let outcome = fetch_fields(&id, r).await;
+                    if is_stale(my_req, latest_check.get()) {
+                        return;
+                    }
+                    match outcome {
+                        Ok(f) => fields.set(FieldsState::Ready(f)),
+                        Err(e) => {
+                            // A failed refresh keeps what is drawn.
+                            if !refresh
+                                || fields.with_untracked(|s| matches!(s, FieldsState::Loading))
+                            {
+                                fields.set(match e {
+                                    HistoryApiError::NotRecorded
+                                    | HistoryApiError::NoGridMeter
+                                    | HistoryApiError::Unavailable => {
+                                        FieldsState::Ready(no_fields())
+                                    }
+                                    HistoryApiError::BadRequest(m) | HistoryApiError::Other(m) => {
+                                        FieldsState::Failed(m)
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
             let latest_check = latest.clone();
             leptos::task::spawn_local(async move {
                 let outcome = fetch_for(&id, r, f, pp.as_deref()).await;
@@ -143,7 +196,7 @@ pub fn HistoryChart(
         })
     });
 
-    // Each render reads `state` and composes the right view.
+    // Each render reads `state` and `fields` and composes the right view.
     let kind_rx = kind;
     let unit_rx = drawn_unit;
     let range_rx = range;
@@ -153,29 +206,126 @@ pub fn HistoryChart(
             {move || {
                 // Read here, so a language flip redraws the labels without a refetch.
                 let lang = lang();
-                match state.get() {
-                State::Loading => view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any(),
-                State::NotRecorded => view! {
-                    <p class="history-chart__empty">{history_text(lang, HistoryText::NotRecorded)}</p>
-                }.into_any(),
-                State::Unavailable => view! {
-                    <p class="history-chart__err">{history_text(lang, HistoryText::Unavailable)}</p>
-                }.into_any(),
-                State::Error(msg) => {
-                    let msg = msg.clone();
-                    view! {
-                        <div class="history-chart__err">
-                            <p>{load_error(lang, &msg)}</p>
-                            <button type="button" class="chip" on:click=move |_| retry_bump.update(|v| *v += 1)>
-                                {history_text(lang, HistoryText::Retry)}
-                            </button>
-                        </div>
-                    }.into_any()
-                }
-                State::Series(s) => render_series(lang, s, range_rx.get(), kind_rx.get(), unit_rx.get()).into_any(),
-                State::Bars(d) => render_bars(lang, d, range_rx.get()).into_any(),
-                }
+                let range = range_rx.get();
+                let fields_now = fields.get();
+                let tracks = match &fields_now {
+                    FieldsState::Ready(f) => f.tracks.clone(),
+                    _ => Vec::new(),
+                };
+                let chip_list = chips(&tracks);
+                let sel = parse_show(show.get().as_deref(), &chip_list);
+                let plot = plot_for(flavor.get(), &fields_now, &sel, &chip_list);
+                let row = match on_show {
+                    Some(on_show)
+                        if chip_list.len() > 1 && matches!(fields_now, FieldsState::Ready(_)) =>
+                    {
+                        let entity_kind = field_kind.map_or(Kind::Generic, |k| k.get());
+                        let dc = device_class.get();
+                        let buttons = chip_list
+                            .iter()
+                            .map(|chip| {
+                                let label = chip_label(lang, entity_kind, dc.as_deref(), &tracks, chip);
+                                let on = sel.number.as_deref() == Some(chip.key.as_str())
+                                    || sel.word.as_deref() == Some(chip.key.as_str());
+                                let (chip, sel) = (chip.clone(), sel.clone());
+                                view! {
+                                    <button type="button" class="chip"
+                                        class:chip--selected=on
+                                        aria-pressed=on.to_string()
+                                        on:click={move |_| on_show.run(show_param(&toggle(&sel, &chip)))}>
+                                        {label}
+                                    </button>
+                                }
+                            })
+                            .collect_view();
+                        Some(view! {
+                            <div class="chips history-chart__chips" role="group"
+                                aria-label=history_text(lang, HistoryText::ValuesShown)>
+                                {buttons}
+                            </div>
+                        })
+                    }
+                    _ => None,
+                };
+                let body = match plot {
+                    Plot::Loading => {
+                        view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any()
+                    }
+                    Plot::FieldsError(msg) => error_block(lang, &msg, retry_bump).into_any(),
+                    Plot::Field { track, overlay: _ } => {
+                        match tracks.get(track).and_then(field_series) {
+                            Some((s, unit)) => {
+                                render_series(lang, s, range, FIELD_KIND.to_owned(), unit, None).into_any()
+                            }
+                            None => render_words(lang, range).into_any(),
+                        }
+                    }
+                    Plot::Words { .. } => render_words(lang, range).into_any(),
+                    Plot::Bars | Plot::Headline { .. } => match state.get() {
+                        State::Loading => {
+                            view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any()
+                        }
+                        State::NotRecorded => view! {
+                            <p class="history-chart__empty">{history_text(lang, HistoryText::NotRecorded)}</p>
+                        }.into_any(),
+                        State::Unavailable => view! {
+                            <p class="history-chart__err">{history_text(lang, HistoryText::Unavailable)}</p>
+                        }.into_any(),
+                        State::Error(msg) => error_block(lang, &msg, retry_bump).into_any(),
+                        State::Series(s) => match headline_or_error(&fields_now, &s) {
+                            Some(msg) => error_block(lang, &msg, retry_bump).into_any(),
+                            None => render_series(lang, s, range, kind_rx.get(), unit_rx.get(), None).into_any(),
+                        },
+                        State::Bars(d) => render_bars(lang, d, range).into_any(),
+                    },
+                };
+                view! { {row} {body} }
             }}
+        </div>
+    }
+}
+
+/// The kind a field's series is worded with: a plain continuous number, whatever the entity.
+const FIELD_KIND: &str = "Sensor";
+
+/// A fields reply with nothing in it.
+fn no_fields() -> HistoryFields {
+    HistoryFields {
+        from: 0,
+        to: 0,
+        tracks: Vec::new(),
+    }
+}
+
+/// The load error with its Retry button, which refetches the series and the fields.
+fn error_block(lang: Lang, msg: &str, retry_bump: RwSignal<u32>) -> impl IntoView {
+    view! {
+        <div class="history-chart__err">
+            <p>{load_error(lang, msg)}</p>
+            <button type="button" class="chip" on:click=move |_| retry_bump.update(|v| *v += 1)>
+                {history_text(lang, HistoryText::Retry)}
+            </button>
+        </div>
+    }
+}
+
+/// A word value's periods drawn over the plot; Task 5 fills it in.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub(crate) struct Overlay;
+
+/// The plot box of a word value shown alone: the x axis, with nothing on it yet.
+fn render_words(lang: Lang, range: HistoryRange) -> impl IntoView {
+    let now = (crate::energy::now_ms() / 1000) as i64;
+    let xticks = tick_labels(lang, range, now);
+    view! {
+        <div class="history-chart__inset">
+            <div class="history-chart__plot"></div>
+            <div class="history-chart__axis-x">
+                {xticks.into_iter().map(|(pos, l)| view! {
+                    <span class:history-chart__tick--near-end=near_end(pos) style=format!("left: {}%", pos * 100.0)>{l}</span>
+                }).collect::<Vec<_>>()}
+            </div>
         </div>
     }
 }
@@ -332,6 +482,7 @@ fn render_series(
     range: HistoryRange,
     kind: String,
     unit: Option<String>,
+    _overlay: Option<Overlay>,
 ) -> impl IntoView {
     let discrete = state_axis_labels(lang, None, &kind).is_some();
     // The x-axis is the whole range ending now, so short history sits at the right edge.
@@ -340,7 +491,10 @@ fn render_series(
     let base = y_scale(&s.points);
     let (min_v, max_v) = series_min_max(&s.points);
     // Round ticks around the data itself; a flat line keeps the padded extent.
-    let nice = nice_scale(if max_v > min_v {
+    // A percentage always reads 0 to 100.
+    let nice = nice_scale(if unit.as_deref() == Some("%") {
+        track_scale(unit.as_deref(), &s.points)
+    } else if max_v > min_v {
         YScale {
             min: min_v,
             max: max_v,

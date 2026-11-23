@@ -9,7 +9,6 @@ use nidoo_api::{EntityView, HistoryRange};
 use nidoo_core::energy::{EnergyMeters, EnergyUnits};
 use nidoo_core::model::Kind;
 
-use crate::components::field_tracks::FieldTracks;
 use crate::components::history_chart::{Flavor, HistoryChart};
 use crate::energy::{energy_entities, energy_entity};
 use crate::format::{area_name, shown_name, title_suffix, type_word, wrap_id};
@@ -65,6 +64,20 @@ fn range_slug(r: HistoryRange) -> &'static str {
     }
 }
 
+/// The page's address for a range and, when chips picked values, the `show` list.
+fn history_path(id: &str, range: HistoryRange, show: Option<&str>) -> String {
+    let mut path = format!(
+        "/history/{}?range={}",
+        crate::api::encode_id(id),
+        range_slug(range)
+    );
+    if let Some(show) = show.filter(|s| !s.is_empty()) {
+        path.push_str("&show=");
+        path.push_str(show);
+    }
+    path
+}
+
 const RANGES: [HistoryRange; 6] = [
     HistoryRange::Hour,
     HistoryRange::SixHours,
@@ -84,6 +97,7 @@ pub fn HistoryDetailScreen() -> impl IntoView {
 
     let id = Memo::new(move |_| params.read().get("id").unwrap_or_default());
     let range = Memo::new(move |_| parse_range(query.read().get("range")));
+    let show = Memo::new(move |_| query.read().get("show"));
 
     let entity: Memo<Option<EntityView>> =
         Memo::new(move |_| house.entities.with(|m| m.get(&id.get()).cloned()));
@@ -139,11 +153,7 @@ pub fn HistoryDetailScreen() -> impl IntoView {
     let on_range = {
         let navigate = navigate.clone();
         move |r: HistoryRange| {
-            let path = format!(
-                "/history/{}?range={}",
-                crate::api::encode_id(&id_for_nav.get()),
-                range_slug(r)
-            );
+            let path = history_path(&id_for_nav.get(), r, show.get().as_deref());
             navigate(
                 &path,
                 NavigateOptions {
@@ -154,8 +164,22 @@ pub fn HistoryDetailScreen() -> impl IntoView {
         }
     };
 
-    // The tracks reply says whether the entity's headline is a word the main chart cannot draw.
-    let (headline, set_headline) = signal(false);
+    // The value chips write their selection to the `show` query param, replacing the entry.
+    let on_show = {
+        let navigate = navigate.clone();
+        Callback::new(move |param: String| {
+            let path = history_path(&id.get_untracked(), range.get_untracked(), Some(&param));
+            navigate(
+                &path,
+                NavigateOptions {
+                    replace: true,
+                    ..Default::default()
+                },
+            );
+        })
+    };
+    let device_class: Memo<Option<String>> =
+        Memo::new(move |_| entity.get().and_then(|e| e.device_class));
     let kind_sig: Memo<Kind> = Memo::new(move |_| entity.get().map_or(Kind::Generic, |e| e.kind));
 
     let known = Memo::new(move |_| house.entities.with(|m| m.contains_key(&id.get())));
@@ -192,21 +216,17 @@ pub fn HistoryDetailScreen() -> impl IntoView {
                                     }
                                 }).collect_view()}
                             </div>
-                            <Show when=move || !headline.get()>
-                                <HistoryChart
-                                    entity_id=Signal::derive(move || id.get())
-                                    range=Signal::derive(move || range.get())
-                                    flavor=Signal::derive(move || flavor_sig.get())
-                                    kind=Signal::derive(move || kind_str.get())
-                                    unit=Signal::derive(move || unit_opt.get())
-                                    power_pair=Signal::derive(move || power_pair.get())
-                                />
-                            </Show>
-                            <FieldTracks
+                            <HistoryChart
                                 entity_id=Signal::derive(move || id.get())
                                 range=Signal::derive(move || range.get())
-                                kind=Signal::derive(move || kind_sig.get())
-                                headline=set_headline
+                                flavor=Signal::derive(move || flavor_sig.get())
+                                kind=Signal::derive(move || kind_str.get())
+                                unit=Signal::derive(move || unit_opt.get())
+                                power_pair=Signal::derive(move || power_pair.get())
+                                show=Signal::derive(move || show.get())
+                                on_show=on_show
+                                device_class=Signal::derive(move || device_class.get())
+                                field_kind=Signal::derive(move || kind_sig.get())
                             />
                         </section>
                     }.into_any()
@@ -302,6 +322,18 @@ mod tests {
         assert_eq!(parse_range(Some("1y".into())), HistoryRange::Year);
         assert_eq!(parse_range(Some("junk".into())), HistoryRange::Day);
         assert_eq!(parse_range(None), HistoryRange::Day);
+    }
+
+    #[test]
+    fn the_path_keeps_the_picked_values() {
+        assert_eq!(
+            history_path("vacuum.x", HistoryRange::Week, None),
+            "/history/vacuum.x?range=7d"
+        );
+        assert_eq!(
+            history_path("vacuum.x", HistoryRange::Week, Some("battery,fan_speed")),
+            "/history/vacuum.x?range=7d&show=battery,fan_speed"
+        );
     }
 
     #[test]
