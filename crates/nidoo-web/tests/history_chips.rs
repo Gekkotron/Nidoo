@@ -213,7 +213,9 @@ async fn tapping_a_word_chip_swaps_the_word_and_writes_the_url() {
 async fn range_change_keeps_the_selection() {
     let stub = FetchStub::install();
     stub_range(&stub, "24h", &vacuum_fields(true), &empty_series());
-    stub_range(&stub, "7d", &vacuum_fields(true), &empty_series());
+    // The week's reply has no activity track, so its first chip is the series' "Valeur" rather than "Activité": seeing them
+    // proves the 7 d reply has landed, not a stale day.
+    stub_range(&stub, "7d", &vacuum_fields(false), &empty_series());
     let m = mount(
         Lang::Fr,
         "/history/vacuum.roborock?range=24h&show=battery,fan_speed",
@@ -224,13 +226,90 @@ async fn range_change_keeps_the_selection() {
         .find(|c| c.text_content().unwrap_or_default() == "7\u{a0}j")
         .expect("the 7 j chip");
     week.click();
-    wait_for(&m.host, ".history-chart__chips .chip", 3).await;
+    for _ in 0..80 {
+        if texts(&m.host, ".history-chart__chips .chip")
+            .first()
+            .map(String::as_str)
+            == Some("Valeur")
+        {
+            break;
+        }
+        gloo_timers::future::TimeoutFuture::new(25).await;
+    }
+    settle().await;
+    assert_eq!(
+        texts(&m.host, ".history-chart__chips .chip"),
+        ["Valeur", "Batterie", "Vitesse d'aspiration"],
+        "the 7 d reply's chips"
+    );
     let q = search();
     assert!(q.contains("range=7d") && q.contains("show=battery"), "{q}");
     assert_eq!(
         texts(&m.host, ".history-chart__chips .chip[aria-pressed=true]"),
         ["Batterie", "Vitesse d'aspiration"]
     );
+}
+
+#[wasm_bindgen_test]
+async fn activity_shades_the_cleaning_behind_the_battery_line() {
+    let stub = FetchStub::install();
+    stub_range(&stub, "24h", &vacuum_fields(true), &empty_series());
+    let m = mount(Lang::Fr, "/history/vacuum.roborock?range=24h");
+    wait_for(&m.host, ".history-chart__line", 1).await;
+    assert_eq!(
+        all(&m.host, ".history-chart__period").len(),
+        1,
+        "cleaning only"
+    );
+    assert_eq!(all(&m.host, ".history-chart__periods--behind").len(), 1);
+    assert_eq!(
+        texts(&m.host, ".history-chart__legend .history-chart__key-item"),
+        ["À la base", "Nettoyage"]
+    );
+}
+
+#[wasm_bindgen_test]
+async fn a_word_alone_has_periods_and_no_line() {
+    let stub = FetchStub::install();
+    stub_range(&stub, "24h", &vacuum_fields(true), &empty_series());
+    let m = mount(
+        Lang::Fr,
+        "/history/vacuum.roborock?range=24h&show=fan_speed",
+    );
+    wait_for(&m.host, ".history-chart__period", 1).await;
+    assert!(all(&m.host, ".history-chart__line").is_empty());
+    assert!(all(&m.host, ".history-chart__periods--behind").is_empty());
+    assert_eq!(all(&m.host, ".history-chart__period").len(), 1);
+    assert_eq!(
+        texts(&m.host, ".history-chart__legend .history-chart__key-item"),
+        ["Turbo"]
+    );
+}
+
+#[wasm_bindgen_test]
+async fn a_failed_fields_reply_with_no_series_offers_retry() {
+    let stub = FetchStub::install();
+    stub.reply("GET", &fields_url("24h"), 500, "{\"error\":\"boom\"}");
+    stub.reply("GET", &series_url("24h"), 200, &empty_series().to_string());
+    let m = mount(Lang::Fr, "/history/vacuum.roborock?range=24h");
+    wait_for(&m.host, ".history-chart__err", 1).await;
+    let retry = all(&m.host, ".history-chart__err button");
+    assert_eq!(retry.len(), 1, "a Retry button");
+    let count =
+        |stub: &FetchStub, url: &str| stub.requests().iter().filter(|r| r.url == url).count();
+    let (f0, s0) = (
+        count(&stub, &fields_url("24h")),
+        count(&stub, &series_url("24h")),
+    );
+    retry[0].click();
+    for _ in 0..80 {
+        if count(&stub, &fields_url("24h")) > f0 && count(&stub, &series_url("24h")) > s0 {
+            break;
+        }
+        gloo_timers::future::TimeoutFuture::new(25).await;
+    }
+    assert!(count(&stub, &fields_url("24h")) > f0, "fields asked again");
+    assert!(count(&stub, &series_url("24h")) > s0, "series asked again");
 }
 
 #[wasm_bindgen_test]

@@ -10770,3 +10770,63 @@ dialog.popup::backdrop {
   margin: 0 0 10px;
   flex-wrap: wrap;
 }
+
+/* A word value's periods: shaded behind the plot, one colour per value; the baseline is plain. */
+.history-chart__periods {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.history-chart__periods--behind {
+  opacity: 0.18;
+}
+
+.history-chart__period {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.history-chart__period--0,
+.history-chart__swatch--0 {
+  background: var(--accent-cyan);
+}
+
+.history-chart__period--1,
+.history-chart__swatch--1 {
+  background: var(--accent-mint);
+}
+
+.history-chart__period--2,
+.history-chart__swatch--2 {
+  background: var(--accent-amber);
+}
+
+.history-chart__period--3,
+.history-chart__swatch--3 {
+  background: var(--accent-violet);
+}
+
+.history-chart__period--4,
+.history-chart__swatch--4 {
+  background: var(--accent-rose);
+}
+
+.history-chart__swatch {
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.history-chart__swatch--base {
+  box-sizing: border-box;
+  border: 1px solid var(--muted);
+  background: transparent;
+}
+
+.history-chart__tip-word {
+  font-weight: 600;
+}

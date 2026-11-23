@@ -73,7 +73,7 @@ fn history_path(id: &str, range: HistoryRange, show: Option<&str>) -> String {
     );
     if let Some(show) = show.filter(|s| !s.is_empty()) {
         path.push_str("&show=");
-        path.push_str(show);
+        path.push_str(&crate::api::encode_id(show));
     }
     path
 }
@@ -332,7 +332,15 @@ mod tests {
         );
         assert_eq!(
             history_path("vacuum.x", HistoryRange::Week, Some("battery,fan_speed")),
-            "/history/vacuum.x?range=7d&show=battery,fan_speed"
+            "/history/vacuum.x?range=7d&show=battery%2Cfan_speed"
+        );
+    }
+
+    #[test]
+    fn a_value_with_url_characters_stays_in_its_parameter() {
+        assert_eq!(
+            history_path("vacuum.x", HistoryRange::Day, Some("a&b=c d")),
+            "/history/vacuum.x?range=24h&show=a%26b%3Dc%20d"
         );
     }
 

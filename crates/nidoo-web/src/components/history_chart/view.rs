@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use leptos::html;
 use leptos::prelude::*;
-use nidoo_api::{EnergyKind, HistoryDaily, HistoryFields, HistoryRange, HistorySeries};
+use nidoo_api::{
+    EnergyKind, FieldTrack, HistoryDaily, HistoryFields, HistoryRange, HistorySeries, TrackData,
+};
+use nidoo_core::flow::Scalar;
 use nidoo_core::model::Kind;
 
 use super::format::{state_axis_labels, state_value_label, tick_labels, tooltip_day, tooltip_time};
@@ -16,6 +19,7 @@ use super::geom::{
     plot_points, slot_index, smooth_path, step_decimals, step_path, tooltip_flips, value_decimals,
     y_scale,
 };
+use super::periods::{Band, band_title, legend, periods, scalar_text, value_at, x_frac};
 use super::plot::{FieldsState, Plot, field_series, headline_or_error, plot_for, track_scale};
 use super::selection::{chip_label, chips, parse_show, show_param, toggle};
 use crate::api::history::{HistoryApiError, fetch_daily, fetch_fields, fetch_series};
@@ -208,6 +212,7 @@ pub fn HistoryChart(
                 let lang = lang();
                 let range = range_rx.get();
                 let fields_now = fields.get();
+                let entity_kind = field_kind.map_or(Kind::Generic, |k| k.get());
                 let tracks = match &fields_now {
                     FieldsState::Ready(f) => f.tracks.clone(),
                     _ => Vec::new(),
@@ -219,7 +224,6 @@ pub fn HistoryChart(
                     Some(on_show)
                         if chip_list.len() > 1 && matches!(fields_now, FieldsState::Ready(_)) =>
                     {
-                        let entity_kind = field_kind.map_or(Kind::Generic, |k| k.get());
                         let dc = device_class.get();
                         let buttons = chip_list
                             .iter()
@@ -252,16 +256,27 @@ pub fn HistoryChart(
                         view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any()
                     }
                     Plot::FieldsError(msg) => error_block(lang, &msg, retry_bump).into_any(),
-                    Plot::Field { track, overlay: _ } => {
+                    Plot::Field { track, overlay } => {
+                        let overlay = overlay_of(lang, entity_kind, &tracks, overlay, range);
                         match tracks.get(track).and_then(field_series) {
                             Some((s, unit)) => {
-                                render_series(lang, s, range, FIELD_KIND.to_owned(), unit, None).into_any()
+                                render_series(lang, s, range, field_series_kind(), unit, overlay).into_any()
                             }
-                            None => render_words(lang, range).into_any(),
+                            None => render_words(lang, range, overlay).into_any(),
                         }
                     }
-                    Plot::Words { .. } => render_words(lang, range).into_any(),
-                    Plot::Bars | Plot::Headline { .. } => match state.get() {
+                    Plot::Words { track } => {
+                        let overlay = overlay_of(lang, entity_kind, &tracks, Some(track), range);
+                        render_words(lang, range, overlay).into_any()
+                    }
+                    Plot::Bars | Plot::Headline { .. } => {
+                        let overlay = match plot {
+                            Plot::Headline { overlay } => {
+                                overlay_of(lang, entity_kind, &tracks, overlay, range)
+                            }
+                            _ => None,
+                        };
+                        match state.get() {
                         State::Loading => {
                             view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any()
                         }
@@ -274,10 +289,11 @@ pub fn HistoryChart(
                         State::Error(msg) => error_block(lang, &msg, retry_bump).into_any(),
                         State::Series(s) => match headline_or_error(&fields_now, &s) {
                             Some(msg) => error_block(lang, &msg, retry_bump).into_any(),
-                            None => render_series(lang, s, range, kind_rx.get(), unit_rx.get(), None).into_any(),
+                            None => render_series(lang, s, range, kind_rx.get(), unit_rx.get(), overlay).into_any(),
                         },
                         State::Bars(d) => render_bars(lang, d, range).into_any(),
-                    },
+                        }
+                    }
                 };
                 view! { {row} {body} }
             }}
@@ -285,8 +301,11 @@ pub fn HistoryChart(
     }
 }
 
-/// The kind a field's series is worded with: a plain continuous number, whatever the entity.
-const FIELD_KIND: &str = "Sensor";
+/// The kind a field's series is worded with: a plain continuous number, whatever the entity. A
+/// field is never the entity's own state, so it takes none of the entity kind's wording.
+fn field_series_kind() -> String {
+    format!("{:?}", Kind::Sensor)
+}
 
 /// A fields reply with nothing in it.
 fn no_fields() -> HistoryFields {
@@ -309,23 +328,191 @@ fn error_block(lang: Lang, msg: &str, retry_bump: RwSignal<u32>) -> impl IntoVie
     }
 }
 
-/// A word value's periods drawn over the plot; Task 5 fills it in.
+/// A word value's periods, drawn over the plot with a legend and named in the tooltip.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub(crate) struct Overlay;
+pub(crate) struct Overlay {
+    pub changes: Vec<(i64, Option<Scalar>)>,
+    pub periods: Vec<Band>,
+    /// The word of each `legend` entry.
+    pub words: Vec<String>,
+    pub legend: Vec<(Scalar, Option<usize>)>,
+    /// The window the periods span, unix seconds.
+    from: i64,
+    to: i64,
+    lang: Lang,
+    kind: Kind,
+    field: Option<String>,
+    unit: Option<String>,
+}
 
-/// The plot box of a word value shown alone: the x axis, with nothing on it yet.
-fn render_words(lang: Lang, range: HistoryRange) -> impl IntoView {
+impl Overlay {
+    /// The overlay of a steps track over the window `from..to`; `None` for a number track.
+    fn new(lang: Lang, kind: Kind, track: &FieldTrack, from: i64, to: i64) -> Option<Self> {
+        let TrackData::Steps { changes } = &track.data else {
+            return None;
+        };
+        let periods = periods(changes, from, to);
+        let legend = legend(&periods);
+        let (field, unit) = (track.field.clone(), track.unit.clone());
+        let words = legend
+            .iter()
+            .map(|(v, _)| scalar_text(lang, kind, field.as_deref(), unit.as_deref(), Some(v)))
+            .collect();
+        Some(Self {
+            changes: changes.clone(),
+            periods,
+            words,
+            legend,
+            from,
+            to,
+            lang,
+            kind,
+            field,
+            unit,
+        })
+    }
+
+    /// The word in force at `frac` of the window.
+    fn word_at(&self, frac: f64) -> String {
+        let t = self.from + (frac * (self.to - self.from) as f64) as i64;
+        scalar_text(
+            self.lang,
+            self.kind,
+            self.field.as_deref(),
+            self.unit.as_deref(),
+            value_at(&self.changes, t).as_ref(),
+        )
+    }
+
+    /// The period holding `frac` of the window.
+    fn band_at(&self, frac: f64) -> Option<&Band> {
+        self.periods.iter().find(|b| frac >= b.x0 && frac <= b.x1)
+    }
+}
+
+/// The overlay of track `idx` of the fields reply, over the window ending now.
+fn overlay_of(
+    lang: Lang,
+    kind: Kind,
+    tracks: &[FieldTrack],
+    idx: Option<usize>,
+    range: HistoryRange,
+) -> Option<Overlay> {
+    let now = (crate::energy::now_ms() / 1000) as i64;
+    Overlay::new(lang, kind, tracks.get(idx?)?, now - range.span_secs(), now)
+}
+
+/// The shaded periods behind the plot: only the coloured ones; the baseline stays plain.
+fn periods_layer(
+    lang: Lang,
+    range: HistoryRange,
+    overlay: &Overlay,
+    behind: bool,
+) -> impl IntoView + use<> {
+    let now = overlay.to;
+    let words: Vec<(Band, String)> = overlay
+        .periods
+        .iter()
+        .filter(|b| b.color.is_some())
+        .map(|b| {
+            let word = scalar_text(
+                lang,
+                overlay.kind,
+                overlay.field.as_deref(),
+                overlay.unit.as_deref(),
+                b.value.as_ref(),
+            );
+            (b.clone(), word)
+        })
+        .collect();
+    view! {
+        <div class="history-chart__periods" class:history-chart__periods--behind=behind>
+            {words.into_iter().map(|(b, word)| {
+                let n = b.color.unwrap_or(0);
+                view! {
+                    <i class=format!("history-chart__period history-chart__period--{n}")
+                        style=format!("left: {}; width: max({}, 3px)", pct(b.x0), pct(b.x1 - b.x0))
+                        title=band_title(lang, range, now, &word, &b)></i>
+                }
+            }).collect::<Vec<_>>()}
+        </div>
+    }
+}
+
+/// What each value of the periods is, under the chart.
+fn period_key(overlay: &Overlay) -> impl IntoView + use<> {
+    let items = overlay
+        .legend
+        .iter()
+        .zip(overlay.words.iter().cloned())
+        .map(|((_, color), word)| {
+            let swatch = match color {
+                Some(n) => format!("history-chart__swatch history-chart__swatch--{n}"),
+                None => "history-chart__swatch history-chart__swatch--base".to_owned(),
+            };
+            view! {
+                <span class="history-chart__key-item">
+                    <i class=swatch aria-hidden="true"></i>
+                    {word}
+                </span>
+            }
+        })
+        .collect::<Vec<_>>();
+    view! { <span class="history-chart__key">{items}</span> }
+}
+
+/// The plot box of a word value shown alone: its periods, the x axis and the legend.
+fn render_words(lang: Lang, range: HistoryRange, overlay: Option<Overlay>) -> impl IntoView {
     let now = (crate::energy::now_ms() / 1000) as i64;
     let xticks = tick_labels(lang, range, now);
+    let layer = overlay
+        .as_ref()
+        .map(|o| periods_layer(lang, range, o, false));
+    let key = overlay.as_ref().map(period_key);
+    let overlay = StoredValue::new(overlay);
+    let plot = NodeRef::<html::Div>::new();
+    let hover = RwSignal::new(None::<f64>);
+    let track = move |ev: web_sys::PointerEvent| {
+        if let Some(f) = pointer_frac(&plot, &ev) {
+            hover.set(Some(f));
+        }
+    };
     view! {
         <div class="history-chart__inset">
-            <div class="history-chart__plot"></div>
+            <div class="history-chart__plot" node_ref=plot
+                on:pointermove=track on:pointerdown=track
+                on:pointerleave=move |_| hover.set(None)
+                on:pointercancel=move |_| hover.set(None)>
+                {layer}
+                <div class="history-chart__cursor" hidden=move || hover.get().is_none()
+                    style=move || hover.get().map(|x| format!("left: {}", pct(x))).unwrap_or_default()></div>
+                <div class="history-chart__tip" hidden=move || hover.get().is_none()
+                    class:history-chart__tip--left=move || hover.get().is_some_and(tooltip_flips)
+                    style=move || hover.get().map(|x| format!("left: {}", pct(x))).unwrap_or_default()>
+                    {move || hover.get().and_then(|f| overlay.with_value(|o| o.as_ref().map(|o| {
+                        let t = o.from + (f * (o.to - o.from) as f64) as i64;
+                        let span = o.band_at(f).map(|b| format!(
+                            "{} – {}",
+                            tooltip_time(lang, range, b.start, o.to),
+                            tooltip_time(lang, range, b.end, o.to)
+                        ));
+                        (tooltip_time(lang, range, t, o.to), o.word_at(f), span)
+                    }))).map(|(time, word, span)| view! {
+                        <span class="history-chart__tip-time">{time}</span>
+                        <strong class="history-chart__tip-value history-chart__tip-word">{word}</strong>
+                        {span.map(|s| view! { <span class="history-chart__tip-band">{s}</span> })}
+                    })}
+                </div>
+            </div>
             <div class="history-chart__axis-x">
                 {xticks.into_iter().map(|(pos, l)| view! {
                     <span class:history-chart__tick--near-end=near_end(pos) style=format!("left: {}%", pos * 100.0)>{l}</span>
                 }).collect::<Vec<_>>()}
             </div>
+        </div>
+        <div class="history-chart__legend">
+            <span>{range_name(lang, range)}</span>
+            {key}
         </div>
     }
 }
@@ -482,7 +669,7 @@ fn render_series(
     range: HistoryRange,
     kind: String,
     unit: Option<String>,
-    _overlay: Option<Overlay>,
+    overlay: Option<Overlay>,
 ) -> impl IntoView {
     let discrete = state_axis_labels(lang, None, &kind).is_some();
     // The x-axis is the whole range ending now, so short history sits at the right edge.
@@ -544,6 +731,11 @@ fn render_series(
     };
     let gid = next_gradient_id();
     let fill = format!("url(#{gid})");
+    let layer = overlay
+        .as_ref()
+        .map(|o| periods_layer(lang, range, o, true));
+    let key = overlay.as_ref().map(period_key);
+    let overlay = StoredValue::new(overlay);
 
     view! {
         <div class="history-chart__inset">
@@ -551,6 +743,7 @@ fn render_series(
                 on:pointermove=track on:pointerdown=track
                 on:pointerleave=move |_| hover.set(None)
                 on:pointercancel=move |_| hover.set(None)>
+                {layer}
                 <svg class="history-chart__svg" viewBox=format!("0 0 {VIEW_W} {VIEW_H}") preserveAspectRatio=ASPECT role="img">
                     <defs inner_html=gradient_markup(&gid)></defs>
                     {hlines.into_iter().map(|y| view! {
@@ -580,10 +773,14 @@ fn render_series(
                     style=move || x_at().map(|x| format!("left: {}", pct(x))).unwrap_or_default()>
                     {move || hover.get().and_then(|i| points.with_value(|p| p.get(i).cloned())).map(|p| {
                         let tip = series_tip(lang, range, &kind, unit_tip.as_deref(), decimals, now, &p);
+                        let word = overlay.with_value(|o| o.as_ref().map(|o| {
+                            o.word_at(x_frac(p.0, o.from, o.to))
+                        }));
                         view! {
                             <span class="history-chart__tip-time">{tip.time}</span>
                             <strong class="history-chart__tip-value">{tip.value}</strong>
                             {tip.band.map(|b| view! { <span class="history-chart__tip-band">{b}</span> })}
+                            {word.map(|w| view! { <span class="history-chart__tip-word">{w}</span> })}
                         }
                     })}
                 </div>
@@ -608,6 +805,7 @@ fn render_series(
                     </span>
                 </span>
             })}
+            {key}
             <span>{min_max(lang, min_v, max_v, unit.as_deref())}</span>
         </div>
     }
