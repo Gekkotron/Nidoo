@@ -3,11 +3,12 @@
 
 use nidoo_api::FieldTrack;
 
-use crate::components::history_chart::geom::{YScale, y_scale};
+use crate::components::history_chart::geom::YScale;
 
 pub use crate::components::history_chart::periods::{
     Band, PALETTE, band_title, bands, number_text, scalar_text, track_label, x_frac,
 };
+pub use crate::components::history_chart::plot::track_scale;
 
 /// Width of every strip's viewBox; the strip is stretched to its box.
 pub const VIEW_W: f64 = 1000.0;
@@ -30,19 +31,6 @@ pub struct NumberPaths {
     pub line: String,
     /// The min–max band, one closed shape per run; empty when `spread` is false.
     pub band: String,
-}
-
-/// The y extent of a number track: a percentage always reads 0 to 100, anything else fits the
-/// data with headroom.
-pub fn track_scale(unit: Option<&str>, points: &[(i64, f64, f64, f64)]) -> YScale {
-    if unit == Some("%") {
-        YScale {
-            min: 0.0,
-            max: 100.0,
-        }
-    } else {
-        y_scale(points)
-    }
 }
 
 /// Lines for `points` (`[t, mean, min, max]`, one per `window` seconds) over `from..to`. A gap
@@ -174,15 +162,6 @@ mod tests {
     fn no_points_no_paths() {
         let p = number_paths(&[], 60, 0, 100, YScale { min: 0.0, max: 1.0 }, true);
         assert_eq!(p, NumberPaths::default());
-    }
-
-    #[test]
-    fn a_percentage_reads_zero_to_one_hundred() {
-        let pts = [(0, 40.0, 40.0, 40.0)];
-        let s = track_scale(Some("%"), &pts);
-        assert_eq!((s.min, s.max), (0.0, 100.0));
-        let other = track_scale(Some("°C"), &pts);
-        assert!(other.min < 40.0 && other.max > 40.0);
     }
 
     #[test]
