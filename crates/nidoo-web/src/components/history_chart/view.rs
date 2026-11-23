@@ -39,7 +39,7 @@ pub enum Flavor {
 }
 
 /// What the chart is currently drawing.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 enum State {
     Loading,
     Series(HistorySeries),
@@ -144,15 +144,7 @@ pub fn HistoryChart(
                         return;
                     }
                     match outcome {
-                        Ok(f) => {
-                            // A refresh that changed nothing keeps the chart (and its tooltip).
-                            let same = fields.with_untracked(
-                                |cur| matches!(cur, FieldsState::Ready(c) if *c == f),
-                            );
-                            if !same {
-                                fields.set(FieldsState::Ready(f));
-                            }
-                        }
+                        Ok(f) => fields.set(FieldsState::Ready(f)),
                         Err(e) => {
                             // A failed refresh keeps what is drawn.
                             if !refresh
@@ -179,14 +171,9 @@ pub fn HistoryChart(
                 if is_stale(my_req, latest_check.get()) {
                     return;
                 }
-                let set_unless_same = |next: State| {
-                    if state.with_untracked(|cur| *cur != next) {
-                        state.set(next);
-                    }
-                };
                 match outcome {
-                    FetchResult::Series(Ok(s)) => set_unless_same(State::Series(s)),
-                    FetchResult::Daily(Ok(d)) => set_unless_same(State::Bars(d)),
+                    FetchResult::Series(Ok(s)) => state.set(State::Series(s)),
+                    FetchResult::Daily(Ok(d)) => state.set(State::Bars(d)),
                     FetchResult::Series(Err(e)) | FetchResult::Daily(Err(e)) => {
                         // A failed refresh keeps what is drawn; one that superseded the first
                         // fetch still has to end the shimmer.
