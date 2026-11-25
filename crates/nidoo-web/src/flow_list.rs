@@ -37,6 +37,8 @@ pub enum TriggerKind {
     Manual,
     OffPeak,
     Alarm,
+    /// A flow that starts before a wake-up alarm.
+    WakeUp,
     Silent,
 }
 
@@ -184,6 +186,7 @@ pub fn trigger_kinds(view: &FlowView) -> BTreeSet<TriggerKind> {
             NodeKind::TriggerSignal(_) => Some(TriggerKind::Signal),
             NodeKind::TriggerManual(_) => Some(TriggerKind::Manual),
             NodeKind::TriggerAlarm(_) => Some(TriggerKind::Alarm),
+            NodeKind::TriggerWakeUp(_) => Some(TriggerKind::WakeUp),
             _ => None,
         })
         .collect()

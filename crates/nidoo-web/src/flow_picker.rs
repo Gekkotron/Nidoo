@@ -2,11 +2,12 @@
 
 use nidoo_core::flow::TriggerSignalParams;
 use nidoo_core::flow::{
-    AlarmModeFilter, AskAnswer, AskParams, BackupRunParams, CommandParams, DelayParams,
-    FlowEnableParams, FlowLabelParams, IfParams, LabelAction, LimitParams, MathParams, Node,
-    NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp, Scalar, SpeakParams, SunWhich, SwitchParams,
-    SwitchRule, TimeBetweenParams, TriggerAlarmParams, TriggerManualParams, TriggerOffPeakParams,
-    TriggerScheduleParams, TriggerSilentParams, TriggerStateParams,
+    AlarmModeFilter, AskAnswer, AskParams, BackupRunParams, ClimateEcoParams, ClimateHoldParams,
+    ClimateSetpoint, CommandParams, DelayParams, FlowEnableParams, FlowLabelParams, IfParams,
+    LabelAction, LimitParams, MathParams, Node, NodeKind, NotifyParams, OffPeakEdge, Op, RuleOp,
+    Scalar, SpeakParams, SunWhich, SwitchParams, SwitchRule, TimeBetweenParams, TriggerAlarmParams,
+    TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams, TriggerSilentParams,
+    TriggerStateParams, TriggerWakeUpParams,
 };
 use nidoo_core::model::{Command, Kind};
 use serde_json::Value;
@@ -93,6 +94,9 @@ fn card_search_words(kind: &NodeKind) -> &'static str {
         NodeKind::TriggerAlarm(_) => "alarm alarme armed armee security securite intrusion",
         NodeKind::FlowLabel(_) => "choice choix season saison tag",
         NodeKind::BackupRun(_) => "backup sauvegarde ftp",
+        NodeKind::TriggerWakeUp(_) => "wake reveil alarm alarme morning matin",
+        NodeKind::ClimateHold(_) => "heating chauffage thermostat temperature maintien hold",
+        NodeKind::ClimateEco(_) => "eco heating chauffage thermostat setback",
         _ => "",
     }
 }
@@ -158,6 +162,18 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             NodeKind::TriggerManual(TriggerManualParams::default()),
             Some(FlowText::NodeManual),
             FlowText::ManualSub,
+        ),
+        (
+            Group::When,
+            NodeKind::TriggerWakeUp(TriggerWakeUpParams {
+                before_minutes: 45,
+                // A new wake-up card starts catching up: a hub that was off at the time still
+                // warms the house for the alarm.
+                catch_up_minutes: Some(60),
+                ..Default::default()
+            }),
+            Some(FlowText::NodeWakeUp),
+            FlowText::NodeWakeUpSub,
         ),
         (
             Group::And,
@@ -277,6 +293,30 @@ pub fn entries(query: &str, ctx: &Ctx) -> Vec<Entry> {
             }),
             Some(FlowText::Ask),
             FlowText::AskSub,
+        ),
+        (
+            Group::Then,
+            NodeKind::ClimateHold(ClimateHoldParams {
+                zones: Vec::new(),
+                setpoint: ClimateSetpoint::Temp(20.0),
+                mode: None,
+                minutes: Some(120),
+                until: None,
+                extra: Default::default(),
+            }),
+            Some(FlowText::NodeClimateHold),
+            FlowText::NodeClimateHoldSub,
+        ),
+        (
+            Group::Then,
+            NodeKind::ClimateEco(ClimateEcoParams {
+                zones: Vec::new(),
+                minutes: None,
+                until: Some("18:00".into()),
+                extra: Default::default(),
+            }),
+            Some(FlowText::NodeClimateEco),
+            FlowText::NodeClimateEcoSub,
         ),
         (
             Group::Flow,
@@ -599,7 +639,7 @@ mod tests {
         assert_eq!(labels[1], "Programmation");
         assert!(labels.contains(&"Quand il fait nuit"));
         assert!(
-            matches!(&fr[12].kind, NodeKind::Notify(p) if p.title == "Notification"),
+            matches!(&fr[13].kind, NodeKind::Notify(p) if p.title == "Notification"),
             "the stored default follows the language at creation"
         );
         // The English word finds the card on the French UI, and the French word on the English UI.
@@ -715,6 +755,7 @@ mod tests {
                 (Group::When, "Alarm"),
                 (Group::When, "Silent for"),
                 (Group::When, "Manual"),
+                (Group::When, "Before a wake-up alarm"),
                 (Group::And, "When it's dark"),
                 (Group::And, "Is it off-peak?"),
                 (Group::And, "Switch"),
@@ -723,6 +764,8 @@ mod tests {
                 (Group::Then, "Notify"),
                 (Group::Then, "Speak"),
                 (Group::Then, "Ask"),
+                (Group::Then, "Heating hold"),
+                (Group::Then, "Room eco"),
                 (Group::Wait, "Wait"),
                 (Group::Wait, "Limit"),
                 (Group::Flow, "Disable this flow"),
@@ -742,6 +785,7 @@ mod tests {
                 Some("When the alarm changes mode"),
                 Some("When an entity stops reporting"),
                 Some("Start by hand from the ▶ button"),
+                Some("Starts a set time before a wake-up alarm rings"),
                 Some("Between dusk and dawn"),
                 Some("Off-peak hours right now"),
                 Some("Several exits, one per rule"),
@@ -750,6 +794,8 @@ mod tests {
                 Some("A push to your phone"),
                 Some("Said out loud on the speakers"),
                 Some("Asks out loud and waits for the answer"),
+                Some("Holds a temperature in rooms for a while"),
+                Some("Puts rooms in eco for a while"),
                 Some("A fixed or random delay"),
                 Some("Lets only so many runs through"),
                 Some("Stops it from running again"),
@@ -762,26 +808,26 @@ mod tests {
             &got[1].kind,
             NodeKind::TriggerSchedule(p) if p.cron == "0 * * * *"
         ));
-        assert!(matches!(&got[10].kind, NodeKind::Math(p) if p.name.is_empty()));
-        assert!(matches!(&got[12].kind, NodeKind::Notify(p) if p.title == "Notification"));
+        assert!(matches!(&got[11].kind, NodeKind::Math(p) if p.name.is_empty()));
+        assert!(matches!(&got[13].kind, NodeKind::Notify(p) if p.title == "Notification"));
         assert!(matches!(
-            &got[13].kind,
+            &got[14].kind,
             NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
         ));
         assert!(matches!(
-            &got[14].kind,
+            &got[15].kind,
             NodeKind::Ask(p) if p.answers.len() == 2 && p.room.is_none()
                 && p.answers[0].label == "Yes" && p.answers[1].label == "No"
         ));
-        assert!(matches!(&got[15].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+        assert!(matches!(&got[18].kind, NodeKind::Delay(p) if p.for_ == "5m"));
         assert!(matches!(
-            &got[9].kind,
+            &got[10].kind,
             NodeKind::Switch(p) if p.otherwise && p.entity.is_none()
                 && p.rules.len() == 1 && p.rules[0].op == RuleOp::Eq
                 && p.rules[0].value == Value::Bool(true)
         ));
         assert!(matches!(
-            &got[11].kind,
+            &got[12].kind,
             NodeKind::TimeBetween(p) if p.from == "07:00" && p.to == "22:00"
         ));
     }
@@ -1239,5 +1285,49 @@ mod tests {
             panic!()
         };
         assert_eq!(p.command, Command::SetTemperature { temperature: 20.0 });
+    }
+
+    #[test]
+    fn picker_offers_three_new_cards() {
+        let got = run("", &BTreeMap::new());
+        let wake = got
+            .iter()
+            .find_map(|e| match &e.kind {
+                NodeKind::TriggerWakeUp(p) => Some((e.group, p.clone())),
+                _ => None,
+            })
+            .expect("a wake-up card");
+        assert_eq!(wake.0, Group::When);
+        assert_eq!(wake.1.before_minutes, 45);
+        assert_eq!(wake.1.catch_up_minutes, Some(60));
+        let hold = got
+            .iter()
+            .find_map(|e| match &e.kind {
+                NodeKind::ClimateHold(p) => Some((e.group, p.clone())),
+                _ => None,
+            })
+            .expect("a heating hold card");
+        assert_eq!(hold.0, Group::Then);
+        assert_eq!(
+            hold.1.setpoint,
+            nidoo_core::flow::ClimateSetpoint::Temp(20.0)
+        );
+        assert_eq!((hold.1.minutes, hold.1.until), (Some(120), None));
+        let eco = got
+            .iter()
+            .find_map(|e| match &e.kind {
+                NodeKind::ClimateEco(p) => Some((e.group, p.clone())),
+                _ => None,
+            })
+            .expect("a room eco card");
+        assert_eq!(eco.0, Group::Then);
+        assert_eq!(
+            (eco.1.minutes, eco.1.until.as_deref()),
+            (None, Some("18:00"))
+        );
+        // Found by its words, in either language.
+        for q in ["wake", "réveil", "heating", "chauffage", "eco"] {
+            assert!(!run(q, &BTreeMap::new()).is_empty(), "no card for {q:?}");
+        }
     }
 }

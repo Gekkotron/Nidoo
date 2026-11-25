@@ -11,11 +11,14 @@ use nidoo_core::flow::{
 use nidoo_core::model::{Command, Kind};
 
 use super::Editor;
+use super::catch_up::CatchUpField;
+use super::climate_step::climate_step_sheet;
 use super::graph::Selection;
 use super::math::math_fields;
 use super::sun::{FallbackBadge, sun_sheet};
 use super::template_field::{NotifyPreview, TemplateField};
 use super::value_field::IfValueField;
+use super::wake_up::wake_up_sheet;
 use crate::command_form::{CommandFields, FieldStyle, entity_actions, retarget};
 use crate::entity_picker::needs::{is_commandable, is_signal, keep};
 use crate::entity_picker::{EntityPickField, Suggest};
@@ -398,9 +401,9 @@ fn node_editor_body(
         NodeKind::FlowEnable(_) => FlowText::NodeFlowSwitch,
         NodeKind::FlowLabel(_) => FlowText::NodeFlowLabel,
         NodeKind::BackupRun(_) => FlowText::NodeBackupRun,
-        // Task 6: own labels for the wake-up trigger and the climate steps.
-        NodeKind::TriggerWakeUp(_) => FlowText::NodeAlarm,
-        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => FlowText::NodeCommand,
+        NodeKind::TriggerWakeUp(_) => FlowText::NodeWakeUp,
+        NodeKind::ClimateHold(_) => FlowText::NodeClimateHold,
+        NodeKind::ClimateEco(_) => FlowText::NodeClimateEco,
         NodeKind::Notify(_) => FlowText::Notify,
         NodeKind::Speak(_) => FlowText::Speak,
         NodeKind::Ask(_) => FlowText::Ask,
@@ -1379,14 +1382,33 @@ fn trigger_entity_write(form: Form, id: String) -> Callback<Option<String>> {
     })
 }
 
+/// A sheet's own copy of card `id` (holding `kind`): the sheet edits the copy and each change is
+/// written back into the draft, so a sheet can read and write its card as one signal.
+fn draft_copy(form: Form, id: String, kind: NodeKind) -> RwSignal<Node> {
+    let node = RwSignal::new(Node {
+        id: id.clone(),
+        name: None,
+        position: None,
+        kind,
+        extra: Default::default(),
+    });
+    Effect::new(move |prev: Option<()>| {
+        let kind = node.with(|n| n.kind.clone());
+        if prev.is_some() {
+            form.update(&id, |n| n.kind = kind);
+        }
+    });
+    node
+}
+
 fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
     let t = use_flow_text();
     let lang = use_lang();
     match kind {
         NodeKind::Math(_) => math_fields(form, id).into_any(),
-        // Task 6: the sheets for the wake-up trigger and the climate steps.
-        NodeKind::TriggerWakeUp(_) | NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => {
-            view! { <div></div> }.into_any()
+        NodeKind::TriggerWakeUp(_) => wake_up_sheet(draft_copy(form, id, kind)).into_any(),
+        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => {
+            climate_step_sheet(draft_copy(form, id, kind)).into_any()
         }
         NodeKind::TriggerState(_) => {
             let entity_value = node_entity(form, id.clone(), |k| match k {
@@ -2087,6 +2109,7 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
             .into_any()
         }
         NodeKind::TriggerSchedule(p) => {
+            let catch_up_id = id.clone();
             let write = Callback::new(move |cron: String| {
                 form.update(&id, |n| {
                     if let NodeKind::TriggerSchedule(ref mut s) = n.kind {
@@ -2094,23 +2117,21 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
                     }
                 });
             });
-            view! { <ScheduleField initial=p.cron write=write /> }.into_any()
+            let catch_up = Callback::new(move |value: Option<u32>| {
+                form.update(&catch_up_id, |n| {
+                    if let NodeKind::TriggerSchedule(ref mut s) = n.kind {
+                        s.catch_up_minutes = value;
+                    }
+                });
+            });
+            view! {
+                <ScheduleField initial=p.cron write=write />
+                <CatchUpField initial=p.catch_up_minutes write=catch_up />
+            }
+            .into_any()
         }
         NodeKind::TriggerSun(params) => {
-            let node = RwSignal::new(nidoo_core::flow::Node {
-                id: id.clone(),
-                name: None,
-                position: None,
-                kind: NodeKind::TriggerSun(params),
-                extra: Default::default(),
-            });
-            // The sheet edits its own copy of the node; each change goes into the draft.
-            Effect::new(move |prev: Option<()>| {
-                let kind = node.with(|n| n.kind.clone());
-                if prev.is_some() {
-                    form.update(&id, |n| n.kind = kind);
-                }
-            });
+            let node = draft_copy(form, id, NodeKind::TriggerSun(params));
             let cfg = Signal::from(expect_context::<House>().flows_config);
             sun_sheet(node, cfg).into_any()
         }

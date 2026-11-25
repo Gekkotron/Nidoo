@@ -84,11 +84,9 @@ fn summary_label(lang: Lang, node: &Node) -> String {
             format!("{}: {}", flow_text(lang, FlowText::NodeFlowLabel), p.label)
         }
         NodeKind::BackupRun(_) => flow_text(lang, FlowText::NodeBackupRun).into(),
-        // Task 6: own titles for the wake-up trigger and the climate steps.
-        NodeKind::TriggerWakeUp(_) => flow_text(lang, FlowText::NodeAlarm).into(),
-        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => {
-            flow_text(lang, FlowText::NodeCommand).into()
-        }
+        NodeKind::TriggerWakeUp(_) => flow_text(lang, FlowText::NodeWakeUp).into(),
+        NodeKind::ClimateHold(_) => flow_text(lang, FlowText::NodeClimateHold).into(),
+        NodeKind::ClimateEco(_) => flow_text(lang, FlowText::NodeClimateEco).into(),
         NodeKind::Notify(_) => flow_text(lang, FlowText::Notify).into(),
         NodeKind::Speak(_) => flow_text(lang, FlowText::Speak).into(),
         NodeKind::Ask(_) => flow_text(lang, FlowText::Ask).into(),
@@ -113,6 +111,7 @@ pub fn trigger_summary(lang: Lang, flow: &Flow, entities: &BTreeMap<String, Enti
             )),
             NodeKind::TriggerSchedule(p) => Some(describe(lang, &p.cron)),
             NodeKind::TriggerSun(p) => Some(sun_summary(lang, p.which, p.offset())),
+            NodeKind::TriggerWakeUp(p) => Some(t::wake_up_sentence(lang, p.before_minutes, &[])),
             NodeKind::TriggerManual(_) => Some(flow_text(lang, FlowText::NodeManual).into()),
             NodeKind::TriggerSilent(p) => Some(t::silent_for(
                 lang,
