@@ -15,6 +15,7 @@ mod backup_restore;
 mod climate_hub;
 mod config;
 mod dashboards;
+mod engine_catch_up;
 mod engine_sun;
 mod engine_wake_up;
 mod flow_climate;

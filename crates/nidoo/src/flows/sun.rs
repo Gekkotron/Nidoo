@@ -1,7 +1,9 @@
 //! Wall-clock bookkeeping for `trigger.sun`: the armed events and the search for the next one.
 //! `nidoo-core` computes the sun's position; every clock and zone lives here.
 
-use chrono::{DateTime, Duration, Utc};
+use std::ops::RangeInclusive;
+
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use nidoo_core::flow::SunWhich;
 use nidoo_core::flow::sun::sun_events;
@@ -16,6 +18,30 @@ pub(super) struct ArmedSun {
     pub at: DateTime<Tz>,
     pub which: SunWhich,
     pub offset_minutes: i32,
+}
+
+/// Every fire of `which` (shifted by `offset_minutes`) whose event lies on one of the UTC days
+/// `first + days`.
+fn fires_on(
+    lat: f64,
+    lon: f64,
+    zone: Tz,
+    which: SunWhich,
+    offset_minutes: i32,
+    first: NaiveDate,
+    days: RangeInclusive<i64>,
+) -> impl Iterator<Item = DateTime<Tz>> {
+    days.filter_map(move |days| {
+        let events = sun_events(lat, lon, first + Duration::days(days));
+        let event = match which {
+            SunWhich::Sunrise => events.sunrise,
+            SunWhich::Sunset => events.sunset,
+            SunWhich::Dusk => events.dusk,
+            SunWhich::Dawn => events.dawn,
+        }?;
+        let at = event.checked_add_signed(Duration::minutes(i64::from(offset_minutes)))?;
+        Some(at.with_timezone(&zone))
+    })
 }
 
 /// The first fire of `which` (shifted by `offset_minutes`) strictly after `now`, searching the
@@ -33,20 +59,36 @@ pub(super) fn next_sun_fire(
     // after `now`.
     let first = now.with_timezone(&Utc).date_naive();
     let limit = now + Duration::days(SEARCH_DAYS);
-    (-1..=SEARCH_DAYS)
-        .filter_map(|days| {
-            let events = sun_events(lat, lon, first + Duration::days(days));
-            let event = match which {
-                SunWhich::Sunrise => events.sunrise,
-                SunWhich::Sunset => events.sunset,
-                SunWhich::Dusk => events.dusk,
-                SunWhich::Dawn => events.dawn,
-            }?;
-            let at = event.checked_add_signed(Duration::minutes(i64::from(offset_minutes)))?;
-            Some(at.with_timezone(&zone))
-        })
-        .filter(|at| *at > now && *at <= limit)
-        .min()
+    fires_on(
+        lat,
+        lon,
+        zone,
+        which,
+        offset_minutes,
+        first,
+        -1..=SEARCH_DAYS,
+    )
+    .filter(|at| *at > now && *at <= limit)
+    .min()
+}
+
+/// The latest fire of `which` (shifted by `offset_minutes`) with `from <= at <= to`, `None` when
+/// the window holds none.
+pub(super) fn latest_sun_fire_in(
+    lat: f64,
+    lon: f64,
+    zone: Tz,
+    which: SunWhich,
+    offset_minutes: i32,
+    from: DateTime<Tz>,
+    to: DateTime<Tz>,
+) -> Option<DateTime<Tz>> {
+    let first = from.with_timezone(&Utc).date_naive();
+    let span = (to - from).num_days() + 1;
+    // One UTC day earlier and later: the offset can push an event over a day boundary.
+    fires_on(lat, lon, zone, which, offset_minutes, first, -1..=span + 1)
+        .filter(|at| *at >= from && *at <= to)
+        .max()
 }
 
 #[cfg(test)]
@@ -78,6 +120,27 @@ mod tests {
         let base = next_sun_fire(lat, lon, zone, SunWhich::Sunset, 0, now).unwrap();
         let minus30 = next_sun_fire(lat, lon, zone, SunWhich::Sunset, -30, now).unwrap();
         assert_eq!((base - minus30).num_minutes(), 30);
+    }
+
+    #[test]
+    fn latest_sun_fire_in_picks_the_event_inside_the_window() {
+        let zone = chrono_tz::Europe::Paris;
+        let (lat, lon) = (48.8566, 2.3522);
+        let now = zone
+            .with_ymd_and_hms(2026, 1, 1, 20, 0, 0)
+            .single()
+            .unwrap();
+        let sunset =
+            next_sun_fire(lat, lon, zone, SunWhich::Sunset, 0, now - Duration::days(1)).unwrap();
+        let hit = |from, to| latest_sun_fire_in(lat, lon, zone, SunWhich::Sunset, 0, from, to);
+        // Both ends are inclusive.
+        assert_eq!(hit(sunset, now), Some(sunset));
+        assert_eq!(hit(sunset - Duration::hours(1), sunset), Some(sunset));
+        assert_eq!(hit(sunset + Duration::seconds(1), now), None);
+        assert_eq!(
+            hit(sunset - Duration::hours(2), sunset - Duration::seconds(1)),
+            None
+        );
     }
 
     #[test]

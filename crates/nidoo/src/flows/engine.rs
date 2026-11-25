@@ -39,7 +39,7 @@ use tokio::task::{AbortHandle, JoinSet};
 use super::EngineRequest;
 use super::labels::switch_detail;
 use super::schedule::{Armed, Now, now_in, rearm, timer_clock};
-use super::sun::{ArmedSun, next_sun_fire};
+use super::sun::{ArmedSun, latest_sun_fire_in, next_sun_fire};
 use super::wake_up_timer::ArmedWakeUp;
 use crate::assist::stt::ask::{ASK_LIMIT, AskOutcome};
 use crate::clock;
@@ -50,6 +50,10 @@ use nidoo_api::ConnectionStatus;
 
 /// How long after the link comes back the off-peak base is seeded when no device report did.
 const OFF_PEAK_SETTLE: chrono::Duration = chrono::Duration::seconds(60);
+
+/// How long after the hub starts, or the link comes back, the catch-up check waits: the broker
+/// replays the retained flows and markers first, so a fire already recorded is never repeated.
+const CATCH_UP_SETTLE: chrono::Duration = chrono::Duration::seconds(10);
 
 /// The port a `limit` node reports when it holds the run back; `execute` follows no edge then.
 const LIMITED: &str = "limited";
@@ -102,7 +106,11 @@ pub(super) async fn run_with(
         off_peak_base: None,
         off_peak_timer: None,
         off_peak_settle: None,
+        catch_up_settle: None,
     };
+    if engine.online() {
+        engine.catch_up_settle = Some(now_in(&engine.now, engine.zone) + CATCH_UP_SETTLE);
+    }
     engine.reload();
     loop {
         let deadline = engine.next_deadline();
@@ -137,6 +145,7 @@ pub(super) async fn run_with(
                 engine.tick_suns();
                 engine.tick_wake_ups();
                 engine.tick_off_peak();
+                engine.tick_catch_up();
             }
             event = events.recv() => match event {
                 Ok(event) => engine.handle_event(event),
@@ -219,6 +228,9 @@ struct Engine {
     off_peak_timer: Option<chrono::DateTime<chrono_tz::Tz>>,
     /// A minute after the link comes back: seeds the base if no device report did by then.
     off_peak_settle: Option<chrono::DateTime<chrono_tz::Tz>>,
+    /// When the next catch-up check runs: a few seconds after the hub starts or the link comes
+    /// back online, never after an edit.
+    catch_up_settle: Option<chrono::DateTime<chrono_tz::Tz>>,
     /// Valid and enabled flows.
     flows: Vec<Flow>,
     /// The last value seen for every (entity, field) a trigger watches; `None` inside means
@@ -647,6 +659,7 @@ impl Engine {
             .chain(self.wake_timers.values().map(|armed| armed.at.to_utc()))
             .chain(self.off_peak_timer.map(|at| at.to_utc()))
             .chain(self.off_peak_settle.map(|at| at.to_utc()))
+            .chain(self.catch_up_settle.map(|at| at.to_utc()))
             .chain(silent)
             .chain(self.holds.values().map(|hold| hold.at))
             .min()?;
@@ -672,6 +685,7 @@ impl Engine {
                 continue;
             };
             let node = armed.node.clone();
+            let due_at = armed.at;
             let next = rearm(&armed.schedule, armed.at, now);
             match next {
                 Some(at) => armed.at = at,
@@ -683,12 +697,7 @@ impl Engine {
             let Some(flow) = self.flows.iter().find(|f| f.id == flow_id).cloned() else {
                 continue;
             };
-            if online {
-                self.fire(flow, node, None);
-            } else {
-                self.hub
-                    .add_skipped_run_because(&flow.id, &node, "the broker link is offline");
-            }
+            self.fire_due(flow, node, due_at, online);
         }
     }
 
@@ -710,6 +719,7 @@ impl Engine {
                 continue;
             };
             let node = armed.node.clone();
+            let due_at = armed.at;
             let next = next_sun_fire(lat, lon, self.zone, armed.which, armed.offset_minutes, now);
             match next {
                 Some(at) => armed.at = at,
@@ -721,12 +731,7 @@ impl Engine {
             let Some(flow) = self.flows.iter().find(|f| f.id == flow_id).cloned() else {
                 continue;
             };
-            if online {
-                self.fire(flow, node, None);
-            } else {
-                self.hub
-                    .add_skipped_run_because(&flow.id, &node, "the broker link is offline");
-            }
+            self.fire_due(flow, node, due_at, online);
         }
     }
 
@@ -812,6 +817,7 @@ impl Engine {
                 continue;
             };
             let node = armed.node.clone();
+            let due_at = armed.at;
             let from = armed.at.max(now);
             let params = flow.nodes.iter().find_map(|n| match &n.kind {
                 NodeKind::TriggerWakeUp(p) if n.id == node => Some(p.clone()),
@@ -827,12 +833,7 @@ impl Engine {
                     self.wake_timers.remove(&key);
                 }
             }
-            if online {
-                self.fire(flow, node, None);
-            } else {
-                self.hub
-                    .add_skipped_run_because(&flow.id, &node, "the broker link is offline");
-            }
+            self.fire_due(flow, node, due_at, online);
         }
     }
 
@@ -1003,6 +1004,7 @@ impl Engine {
             WsEvent::ConnectionChanged(ConnectionStatus::Online) => {
                 self.restart_silents();
                 self.off_peak_settle = Some(now_in(&self.now, self.zone) + OFF_PEAK_SETTLE);
+                self.catch_up_settle = Some(now_in(&self.now, self.zone) + CATCH_UP_SETTLE);
             }
             WsEvent::ButtonPressed { id } => self.button_pressed(&id),
             WsEvent::SignalReceived { id, signal } => self.signal_received(&id, &signal),
@@ -1012,6 +1014,7 @@ impl Engine {
                 self.known.clear();
                 self.confirmed_unknown.clear();
                 self.off_peak_lost();
+                self.catch_up_settle = None;
             }
             _ => {}
         }
@@ -1244,6 +1247,89 @@ impl Engine {
         }
     }
 
+    /// Fires a time trigger that came due at `due_at`, or records the run as skipped while the
+    /// broker link is not online. A trigger with a catch-up window records the fire, so the
+    /// next check does not repeat it.
+    fn fire_due(
+        &mut self,
+        flow: Flow,
+        node: String,
+        due_at: chrono::DateTime<chrono_tz::Tz>,
+        online: bool,
+    ) {
+        if !online {
+            self.hub
+                .add_skipped_run_because(&flow.id, &node, "the broker link is offline");
+            return;
+        }
+        if catch_up_window(&flow, &node) > 0 {
+            self.hub.record_fired(&flow.id, &node, due_at.to_utc());
+        }
+        self.fire(flow, node, None);
+    }
+
+    /// Runs the catch-up check once its settle time is up, if the link is still online.
+    fn tick_catch_up(&mut self) {
+        let now = now_in(&self.now, self.zone);
+        if self.catch_up_settle.is_some_and(|at| at <= now) {
+            self.catch_up_settle = None;
+            if self.online() {
+                self.catch_up(now);
+            }
+        }
+    }
+
+    /// For every time trigger with a catch-up window, fires its flow once when the trigger came
+    /// due inside the window and no fire is recorded for that instant. Only the latest missed
+    /// instant counts. A trigger with no marker yet is taken as caught up: the marker is seeded
+    /// and nothing fires.
+    fn catch_up(&mut self, now: chrono::DateTime<chrono_tz::Tz>) {
+        let (lat, lon) = self.hub.house_point();
+        let mut fires = Vec::new();
+        for flow in &self.flows {
+            for node in flow.triggers() {
+                let minutes = node.kind.catch_up_minutes();
+                if minutes == 0 {
+                    continue;
+                }
+                let from = now - chrono::Duration::minutes(i64::from(minutes));
+                let due = match &node.kind {
+                    NodeKind::TriggerSchedule(p) => Schedule::parse(&p.cron)
+                        .ok()
+                        .and_then(|schedule| schedule.latest_in(&from, &now)),
+                    NodeKind::TriggerSun(p) => {
+                        latest_sun_fire_in(lat, lon, self.zone, p.which, p.offset(), from, now)
+                    }
+                    NodeKind::TriggerWakeUp(p) => {
+                        let (schedules, _) = self.wake_up_inputs(p);
+                        wake_up::latest_pre_ring_in(&schedules, p.before_minutes, &from, &now)
+                    }
+                    _ => None,
+                };
+                match (self.hub.fired_due(&flow.id, &node.id), due) {
+                    (None, due) => {
+                        self.hub
+                            .record_fired(&flow.id, &node.id, due.unwrap_or(now).to_utc());
+                    }
+                    (Some(marker), Some(due)) if marker < due.timestamp() => {
+                        self.hub.record_fired(&flow.id, &node.id, due.to_utc());
+                        fires.push((flow.clone(), node.id.clone(), due));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for (flow, node, due) in fires {
+            let trigger = TriggerInfo {
+                entity: None,
+                field: None,
+                value: Value::String(format!("caught up: due {}", due.format("%H:%M"))),
+                previous: Value::Null,
+            };
+            self.fire(flow, node, Some(trigger));
+        }
+    }
+
     /// Starts a run for a satisfied trigger, honouring the flow's mode when one is active.
     fn fire(&mut self, flow: Flow, node_id: String, trigger: Option<TriggerInfo>) {
         if self.active.contains_key(&flow.id) {
@@ -1372,6 +1458,22 @@ impl Engine {
 /// `eq` semantics of `compare`: the filter must be a scalar equal to the value, type included.
 /// Whether the reported `value` still satisfies a state trigger that waits on it: its `to`, its
 /// bounds, or, with neither, the value the edge brought.
+/// The catch-up window of the time trigger `node` of `flow`, in minutes; 0 when it has none.
+fn catch_up_window(flow: &Flow, node: &str) -> u32 {
+    flow.nodes
+        .iter()
+        .find(|n| n.id == node)
+        .map_or(0, |n| n.kind.catch_up_minutes())
+}
+
+/// What a catch-up run's trigger step says: the text its trigger carries, when it is a string.
+fn caught_up(trigger: Option<&TriggerInfo>) -> Option<String> {
+    match trigger.map(|t| &t.value) {
+        Some(Value::String(text)) => Some(text.clone()),
+        _ => None,
+    }
+}
+
 fn still_holds(params: &TriggerStateParams, edge: &Scalar, value: &Scalar) -> bool {
     if params.to.is_some() {
         filter_matches(params.to.as_ref(), value)
@@ -1726,7 +1828,7 @@ async fn run_node(
         },
         NodeKind::TriggerSchedule(params) => (
             StepOutcome::Ok,
-            format!("schedule {}", params.cron),
+            caught_up(trigger).unwrap_or_else(|| format!("schedule {}", params.cron)),
             Vec::new(),
         ),
         NodeKind::TriggerManual(p) => {
@@ -1750,16 +1852,18 @@ async fn run_node(
         }
         NodeKind::TriggerSun(params) => (
             StepOutcome::Ok,
-            format!(
-                "sun {} {:+}m",
-                format!("{:?}", params.which).to_lowercase(),
-                params.offset()
-            ),
+            caught_up(trigger).unwrap_or_else(|| {
+                format!(
+                    "sun {} {:+}m",
+                    format!("{:?}", params.which).to_lowercase(),
+                    params.offset()
+                )
+            }),
             Vec::new(),
         ),
         NodeKind::TriggerWakeUp(params) => (
             StepOutcome::Ok,
-            format!("wake-up -{}m", params.before_minutes),
+            caught_up(trigger).unwrap_or_else(|| format!("wake-up -{}m", params.before_minutes)),
             Vec::new(),
         ),
         NodeKind::ClimateHold(params) => climate_hold(hub, now, params).await,
@@ -2418,6 +2522,7 @@ mod tests {
             off_peak_base: None,
             off_peak_timer: None,
             off_peak_settle: None,
+            catch_up_settle: None,
         }
     }
 

@@ -120,10 +120,21 @@ impl Hub {
         let warnings = self.flow_warnings(&flow);
         let warning = (!warnings.is_empty()).then(|| warnings.join(" "));
         let flow = self.write_flow(&flow)?;
+        // A trigger that is gone, renamed or without a window loses its marker, so a later one
+        // with the same id starts from nothing instead of replaying an old fire.
+        let keep = flow
+            .definition
+            .nodes
+            .iter()
+            .filter(|node| node.kind.catch_up_minutes() > 0)
+            .map(|node| node.id.clone())
+            .collect();
+        self.clear_fired(&flow.definition.id, &keep);
         Ok(FlowWriteOutcome { flow, warning })
     }
 
-    /// Removes a flow, valid or not: publishes an empty retained payload and applies it.
+    /// Removes a flow, valid or not: publishes an empty retained payload and applies it. Its
+    /// catch-up markers go with it.
     pub async fn delete_flow(&self, id: &str) -> Result<(), HubError> {
         if !self.flow_store().exists(id) {
             return Err(HubError::UnknownFlow(id.to_owned()));
@@ -135,6 +146,7 @@ impl Hub {
             retain: true,
         })?;
         self.ingest_flow(id, b"");
+        self.clear_fired(id, &BTreeSet::new());
         Ok(())
     }
 
@@ -826,6 +838,84 @@ impl Hub {
 }
 
 impl Hub {
+    /// Applies a retained `fired` marker from the broker: `{"due": <unix seconds>}`, or an empty
+    /// payload when it was cleared. A marker never moves back: an older echo of our own write
+    /// must not undo a newer one.
+    pub(crate) fn ingest_fired(&self, flow: &str, node: &str, payload: &[u8]) {
+        let key = (flow.to_owned(), node.to_owned());
+        let mut fired = self.fired();
+        if payload.is_empty() {
+            fired.remove(&key);
+            return;
+        }
+        match serde_json::from_slice::<serde_json::Value>(payload)
+            .ok()
+            .and_then(|v| v.get("due")?.as_i64())
+        {
+            Some(due) => {
+                let slot = fired.entry(key).or_insert(due);
+                *slot = (*slot).max(due);
+            }
+            None => tracing::warn!(flow, node, "invalid catch-up marker ignored"),
+        }
+    }
+
+    /// When the time trigger `node` of `flow` last fired (the instant it was due, unix seconds),
+    /// if a marker is known.
+    pub(crate) fn fired_due(&self, flow: &str, node: &str) -> Option<i64> {
+        self.fired()
+            .get(&(flow.to_owned(), node.to_owned()))
+            .copied()
+    }
+
+    /// Records that the time trigger `node` of `flow` fired for the instant `due`: a retained
+    /// marker that survives a restart, and the local copy.
+    pub(crate) fn record_fired(&self, flow: &str, node: &str, due: chrono::DateTime<chrono::Utc>) {
+        let due = due.timestamp();
+        let published = self.publish(Publish {
+            topic: self.fired_topic(flow, node),
+            payload: serde_json::json!({ "due": due }).to_string(),
+            retain: true,
+        });
+        if let Err(err) = published {
+            tracing::warn!(flow, node, error = %err, "could not publish a catch-up marker");
+        }
+        self.fired().insert((flow.to_owned(), node.to_owned()), due);
+    }
+
+    /// Clears the markers of `flow` whose node is not in `keep`: an empty retained payload each.
+    fn clear_fired(&self, flow: &str, keep: &BTreeSet<String>) {
+        let stale: Vec<String> = self
+            .fired()
+            .keys()
+            .filter(|(f, node)| f == flow && !keep.contains(node))
+            .map(|(_, node)| node.clone())
+            .collect();
+        for node in stale {
+            let cleared = self.publish(Publish {
+                topic: self.fired_topic(flow, &node),
+                payload: String::new(),
+                retain: true,
+            });
+            if let Err(err) = cleared {
+                tracing::warn!(flow, node = %node, error = %err, "could not clear a catch-up marker");
+            }
+            self.fired().remove(&(flow.to_owned(), node));
+        }
+    }
+
+    fn fired(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::BTreeMap<(String, String), i64>> {
+        self.fired
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn fired_topic(&self, flow: &str, node: &str) -> String {
+        format!("{}/fired/{node}", self.flow_topic(flow))
+    }
+
     /// Lets a run through the `limit` node `node` of `flow` when fewer than `max` runs passed it
     /// in the last `per`, and records the pass: `Ok` holds the passes in the window, this one
     /// included. Over the limit nothing is recorded and `Err` holds the passes in the window.
