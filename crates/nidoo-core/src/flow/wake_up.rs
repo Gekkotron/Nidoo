@@ -4,10 +4,12 @@
 
 use std::fmt;
 
+use chrono::{DateTime, TimeDelta, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::model::{CommandParams, Edge, Flow, Node, NodeKind, Position, TriggerScheduleParams};
+use super::schedule::Schedule;
 use crate::model::Command;
 
 /// The label every alarm flow carries.
@@ -255,6 +257,55 @@ pub fn is_managed(flow: &Flow) -> bool {
     flow.extra.contains_key(EXTRA_KEY)
 }
 
+/// The alarms a wake-up trigger follows: `(flow id, cron, schedule)` of every enabled, managed,
+/// readable alarm flow, sorted by id. A non-empty `only` keeps just those flow ids.
+pub fn alarm_schedules(flows: &[Flow], only: &[String]) -> Vec<(String, String, Schedule)> {
+    let mut out: Vec<(String, String, Schedule)> = flows
+        .iter()
+        .filter(|f| f.enabled && (only.is_empty() || only.contains(&f.id)))
+        .filter_map(|f| {
+            let w = read(f)?.ok()?;
+            let expr = cron(&w);
+            let schedule = Schedule::parse(&expr).ok()?;
+            Some((f.id.clone(), expr, schedule))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// The next pre-ring strictly after `after`: the earliest over the alarms of the ring that
+/// follows `after + before`, minus `before`. Absolute time, so a DST change keeps the gap exact.
+pub fn next_pre_ring<Tz: TimeZone>(
+    alarms: &[Schedule],
+    before_minutes: u32,
+    after: &DateTime<Tz>,
+) -> Option<DateTime<Tz>> {
+    let before = TimeDelta::minutes(i64::from(before_minutes));
+    let shifted = after.clone() + before;
+    alarms
+        .iter()
+        .filter_map(|s| s.next_after(&shifted))
+        .min()
+        .map(|ring| ring - before)
+}
+
+/// The latest pre-ring in `from..=to`, or `None` when no alarm rings in the shifted window.
+pub fn latest_pre_ring_in<Tz: TimeZone>(
+    alarms: &[Schedule],
+    before_minutes: u32,
+    from: &DateTime<Tz>,
+    to: &DateTime<Tz>,
+) -> Option<DateTime<Tz>> {
+    let before = TimeDelta::minutes(i64::from(before_minutes));
+    let (from, to) = (from.clone() + before, to.clone() + before);
+    alarms
+        .iter()
+        .filter_map(|s| s.latest_in(&from, &to))
+        .max()
+        .map(|ring| ring - before)
+}
+
 /// The lowest free `wake-up-<n>` id, `n` from 1.
 pub fn next_id(taken: &[&str]) -> String {
     (1..)
@@ -341,6 +392,69 @@ mod tests {
             player: "music-player".to_owned(),
             ..WakeUp::default()
         }
+    }
+
+    fn paris(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<chrono_tz::Tz> {
+        chrono_tz::Europe::Paris
+            .with_ymd_and_hms(y, mo, d, h, mi, 0)
+            .unwrap()
+    }
+
+    fn sched(expr: &str) -> Schedule {
+        Schedule::parse(expr).unwrap()
+    }
+
+    #[test]
+    fn pre_ring_crosses_midnight() {
+        // 2026-11-22 is a Sunday; the Monday 00:15 alarm pre-rings 45 min earlier.
+        let got = next_pre_ring(&[sched("15 0 * * 1")], 45, &paris(2026, 11, 22, 22, 0));
+        assert_eq!(got, Some(paris(2026, 11, 22, 23, 30)));
+    }
+
+    #[test]
+    fn pre_ring_two_alarms_same_time_once() {
+        let two = [sched("0 7 * * *"), sched("0 7 * * *")];
+        let got = next_pre_ring(&two, 30, &paris(2026, 11, 25, 6, 0));
+        assert_eq!(got, Some(paris(2026, 11, 25, 6, 30)));
+        let latest = latest_pre_ring_in(
+            &two,
+            30,
+            &paris(2026, 11, 25, 6, 0),
+            &paris(2026, 11, 25, 7, 0),
+        );
+        assert_eq!(latest, Some(paris(2026, 11, 25, 6, 30)));
+    }
+
+    #[test]
+    fn pre_ring_dst_day() {
+        // Spring forward 2026-03-29: 02:00 becomes 03:00, so 07:00 CEST is 06:00 UTC.
+        let got = next_pre_ring(&[sched("0 7 * * *")], 45, &paris(2026, 3, 29, 0, 0)).unwrap();
+        assert_eq!(got, paris(2026, 3, 29, 7, 0) - TimeDelta::minutes(45));
+        assert_eq!(got.format("%H:%M").to_string(), "06:15");
+    }
+
+    #[test]
+    fn alarm_schedules_skips_disabled_and_unknown() {
+        let w = WakeUp {
+            player: "p".to_owned(),
+            ..WakeUp::default()
+        };
+        let on = to_flow("wake-up-1", "a", true, &w);
+        let off = to_flow("wake-up-2", "b", false, &w);
+        let plain = Flow {
+            id: "other".to_owned(),
+            enabled: true,
+            ..Flow::default()
+        };
+        let flows = [plain, off, on];
+        let got = alarm_schedules(&flows, &[]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            (got[0].0.as_str(), got[0].1.as_str()),
+            ("wake-up-1", "0 7 * * 1-5")
+        );
+        assert!(alarm_schedules(&flows, &["nope".to_owned()]).is_empty());
+        assert_eq!(alarm_schedules(&flows, &["wake-up-1".to_owned()]).len(), 1);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! day-of-week), no seconds and no year. Pure computation over `chrono` values; the hub owns the
 //! clock and the timers.
 
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, TimeDelta, TimeZone};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 
@@ -46,7 +46,32 @@ impl Schedule {
     pub fn next_after<Tz: TimeZone>(&self, after: &DateTime<Tz>) -> Option<DateTime<Tz>> {
         self.cron.find_next_occurrence(after, false).ok()
     }
+
+    /// The last tick `t` with `from <= t <= to`, or `None` when the window holds none. Walks
+    /// forward from `from`, so a very dense schedule over a long window stops at
+    /// [`MAX_WALK_TICKS`] ticks and returns the last one seen.
+    pub fn latest_in<Tz: TimeZone>(
+        &self,
+        from: &DateTime<Tz>,
+        to: &DateTime<Tz>,
+    ) -> Option<DateTime<Tz>> {
+        let mut cursor = from.clone() - TimeDelta::seconds(1);
+        let mut latest = None;
+        for _ in 0..MAX_WALK_TICKS {
+            match self.next_after(&cursor) {
+                Some(t) if t <= *to => {
+                    cursor = t.clone();
+                    latest = Some(t);
+                }
+                _ => break,
+            }
+        }
+        latest
+    }
 }
+
+/// The most ticks [`Schedule::latest_in`] walks, a guard for `* * * * *` over a long window.
+pub const MAX_WALK_TICKS: usize = 10_000;
 
 #[cfg(test)]
 mod tests {
@@ -73,6 +98,17 @@ mod tests {
                 .with_ymd_and_hms(2026, 10, 20, 18, 20, 0)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn latest_in_picks_last_tick() {
+        use chrono_tz::Europe::Paris;
+        let s = Schedule::parse("0 * * * *").unwrap();
+        let at = |h, m| Paris.with_ymd_and_hms(2026, 11, 25, h, m, 0).unwrap();
+        assert_eq!(s.latest_in(&at(5, 10), &at(7, 30)), Some(at(7, 0)));
+        // Both ends are inclusive.
+        assert_eq!(s.latest_in(&at(6, 0), &at(7, 0)), Some(at(7, 0)));
+        assert_eq!(s.latest_in(&at(5, 10), &at(5, 50)), None);
     }
 
     #[test]

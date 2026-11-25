@@ -2,6 +2,7 @@
 //! Pure data and helpers, no I/O, so the hub, the API and the web canvas share one definition.
 
 pub mod answer;
+pub mod climate;
 mod clock;
 mod duration;
 mod field;
