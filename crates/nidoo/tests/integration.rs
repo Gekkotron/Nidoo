@@ -17,6 +17,7 @@ mod config;
 mod dashboards;
 mod engine_sun;
 mod engine_wake_up;
+mod flow_climate;
 mod flow_labels;
 mod flows;
 mod history_db;

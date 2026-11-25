@@ -18,16 +18,17 @@ use chrono::Timelike;
 
 use nidoo_api::{RunStatus, StepOutcome, StepView, TriggerInfo, WsEvent};
 use nidoo_core::flow::answer::{first_number, match_answer, not_understood};
+use nidoo_core::flow::climate::until_after;
 use nidoo_core::flow::math::{fit_to_entity, parse_formula};
 use nidoo_core::flow::sun::is_dark_with_offset;
 use nidoo_core::flow::template::{Lang, render};
 use nidoo_core::flow::wake_up;
 use nidoo_core::flow::{
-    ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, BACKUP_PARTIAL_PORT, Flow,
-    FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule,
-    TriggerStateParams, command_with_number, compare, field_scalar, format_duration,
-    headline_scalar, hold, in_time_range, parse_clock, parse_duration, pick_duration, switch_exits,
-    window,
+    ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, BACKUP_PARTIAL_PORT,
+    ClimateEcoParams, ClimateHoldParams, ClimateSetpoint, Flow, FlowMode, MathParams, Missing,
+    Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule, TriggerStateParams,
+    command_with_number, compare, field_scalar, format_duration, headline_scalar, hold,
+    in_time_range, parse_clock, parse_duration, pick_duration, switch_exits, window,
 };
 use nidoo_core::history::buckets::{Sample, readings_mean};
 use nidoo_core::model::{Command, StateValue};
@@ -1569,9 +1570,110 @@ fn speech_lang(hub: &Hub) -> Lang {
     }
 }
 
+/// The end of a climate step at engine time `now`: `minutes` from now, or the next local `until`
+/// time, as Unix seconds.
+fn climate_end(
+    hub: &Hub,
+    now: &Now,
+    minutes: Option<u32>,
+    until: Option<&str>,
+) -> Result<u64, String> {
+    let at = now();
+    match (minutes, until) {
+        (Some(minutes), None) => Ok(at.timestamp().max(0) as u64 + u64::from(minutes) * 60),
+        (None, Some(hhmm)) => until_after(&now_in(now, hub.zone()), hhmm)
+            .map(|end| end.timestamp().max(0) as u64)
+            .ok_or_else(|| format!("bad time `{hhmm}`")),
+        _ => Err("give exactly one of minutes and until".to_owned()),
+    }
+}
+
+/// The local `HH:MM` of Unix time `end`, for a step's detail.
+fn climate_clock(hub: &Hub, end: u64) -> String {
+    let at = chrono::DateTime::from_timestamp(end as i64, 0).unwrap_or_default();
+    at.with_timezone(&hub.zone()).format("%H:%M").to_string()
+}
+
+/// The outcome of a climate step over several zones: every zone was tried, in list order, and
+/// the ones that worked stay applied.
+fn climate_outcome(done: Vec<String>, failed: Vec<String>) -> (StepOutcome, String, Vec<String>) {
+    if failed.is_empty() {
+        (StepOutcome::Ok, done.join(", "), Vec::new())
+    } else {
+        (StepOutcome::Failed, failed.join("; "), Vec::new())
+    }
+}
+
+/// `climate.hold`: an override on each zone until the end, the way a person's boost is.
+async fn climate_hold(
+    hub: &Arc<Hub>,
+    now: &Now,
+    params: &ClimateHoldParams,
+) -> (StepOutcome, String, Vec<String>) {
+    let fail = |detail: String| (StepOutcome::Failed, detail, Vec::new());
+    let end = match climate_end(hub, now, params.minutes, params.until.as_deref()) {
+        Ok(end) => end,
+        Err(err) => return fail(err),
+    };
+    let mode = match params.mode.as_deref() {
+        None => None,
+        Some("heat") => Some(nidoo_climate::doc::Mode::Heat),
+        Some("cool") => Some(nidoo_climate::doc::Mode::Cool),
+        Some(other) => return fail(format!("unknown mode `{other}`")),
+    };
+    let (setpoint, label) = match params.setpoint {
+        ClimateSetpoint::Temp(t) => (nidoo_climate::doc::Setpoint::Temp(t), format!("{t} °C")),
+        ClimateSetpoint::Off => (nidoo_climate::doc::Setpoint::Off, "off".to_owned()),
+    };
+    let request = nidoo_climate::view::OverrideRequest {
+        setpoint: Some(setpoint),
+        mode,
+        until: Some(end),
+        ..Default::default()
+    };
+    let at = now().timestamp().max(0) as u64;
+    let (mut done, mut failed) = (Vec::new(), Vec::new());
+    for zone in &params.zones {
+        let result = match request.clone().into_override(at) {
+            Ok(ov) => hub.set_climate_override(zone, ov).await,
+            Err(why) => Err(HubError::Rejected(why)),
+        };
+        match result {
+            Ok(()) => done.push(format!("{zone} {label} until {}", climate_clock(hub, end))),
+            Err(err) => failed.push(format!("{zone}: {err}")),
+        }
+    }
+    climate_outcome(done, failed)
+}
+
+/// `climate.eco`: each zone in eco until the end.
+async fn climate_eco(
+    hub: &Arc<Hub>,
+    now: &Now,
+    params: &ClimateEcoParams,
+) -> (StepOutcome, String, Vec<String>) {
+    let end = match climate_end(hub, now, params.minutes, params.until.as_deref()) {
+        Ok(end) => end,
+        Err(err) => return (StepOutcome::Failed, err, Vec::new()),
+    };
+    let at = now().timestamp().max(0) as u64;
+    let (mut done, mut failed) = (Vec::new(), Vec::new());
+    for zone in &params.zones {
+        let result = match (nidoo_climate::view::RoomEcoRequest { until: end }).into_room_eco(at) {
+            Ok(eco) => hub.set_climate_eco(zone, eco).await,
+            Err(why) => Err(HubError::Rejected(why)),
+        };
+        match result {
+            Ok(()) => done.push(format!("{zone} eco until {}", climate_clock(hub, end))),
+            Err(err) => failed.push(format!("{zone}: {err}")),
+        }
+    }
+    climate_outcome(done, failed)
+}
+
 /// Runs one node: its outcome, the detail to record and the output port to follow.
 async fn run_node(
-    hub: &Hub,
+    hub: &Arc<Hub>,
     now: &Now,
     flow_id: &str,
     run_id: &str,
@@ -1659,8 +1761,8 @@ async fn run_node(
             format!("wake-up -{}m", params.before_minutes),
             Vec::new(),
         ),
-        // Task 4: the engine runs the climate steps.
-        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => failed("not implemented".to_owned()),
+        NodeKind::ClimateHold(params) => climate_hold(hub, now, params).await,
+        NodeKind::ClimateEco(params) => climate_eco(hub, now, params).await,
         NodeKind::FlowEnable(params) => {
             let target = params.flow.as_deref().unwrap_or(flow_id);
             if hub.flow(target).is_none() {

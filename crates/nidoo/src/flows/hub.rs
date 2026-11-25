@@ -13,9 +13,10 @@ use nidoo_api::{
 };
 use nidoo_core::command::{Publish, map_command};
 use nidoo_core::flow::template::parse;
+use nidoo_core::flow::wake_up;
 use nidoo_core::flow::{
-    Flow, FlowMode, LabelAction, LabelError, NodeKind, Reading, Scalar, field_scalar, fields,
-    headline_scalar, math_names, uses_sun_or_is_dark, validate,
+    ClimateSetpoint, Flow, FlowMode, LabelAction, LabelError, NodeKind, Reading, Scalar,
+    field_scalar, fields, headline_scalar, math_names, uses_sun_or_is_dark, validate,
 };
 use nidoo_core::model::{Command, Kind, UNASSIGNED_AREA};
 use nidoo_core::types::{Placement, type_def};
@@ -116,8 +117,8 @@ impl Hub {
         self.check_labels(&mut flow)?;
         self.check_area(&mut flow)?;
         self.check_speak_rooms(&mut flow)?;
-        let warning = (self.fallback_active() && uses_sun_or_is_dark(&flow))
-            .then(|| PARIS_FALLBACK_WARNING.to_owned());
+        let warnings = self.flow_warnings(&flow);
+        let warning = (!warnings.is_empty()).then(|| warnings.join(" "));
         let flow = self.write_flow(&flow)?;
         Ok(FlowWriteOutcome { flow, warning })
     }
@@ -528,11 +529,92 @@ impl Hub {
         Ok(())
     }
 
+    /// What is worth telling the person who just saved `flow`, without refusing it: the Paris
+    /// fallback under a sun flow, climate zones and wake-up alarms that do not exist (yet).
+    fn flow_warnings(&self, flow: &Flow) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.fallback_active() && uses_sun_or_is_dark(flow) {
+            warnings.push(PARIS_FALLBACK_WARNING.to_owned());
+        }
+        let climate_on = self.climate_enabled();
+        let known_zones = if climate_on {
+            self.climate_zone_ids()
+        } else {
+            Vec::new()
+        };
+        let mut said_off = false;
+        let mut alarms: Option<Vec<String>> = None;
+        for node in &flow.nodes {
+            let zones = match &node.kind {
+                NodeKind::ClimateHold(params) => &params.zones,
+                NodeKind::ClimateEco(params) => &params.zones,
+                NodeKind::TriggerWakeUp(params) => {
+                    let alarms = alarms.get_or_insert_with(|| {
+                        self.flow_definitions()
+                            .into_iter()
+                            .filter(wake_up::is_managed)
+                            .map(|f| f.id)
+                            .collect()
+                    });
+                    if alarms.is_empty() {
+                        warnings.push(format!(
+                            "Node `{}`: no wake-up alarm exists, so it will never fire.",
+                            node.id
+                        ));
+                    }
+                    let unknown: Vec<&str> = params
+                        .alarms
+                        .iter()
+                        .filter(|id| !alarms.contains(id))
+                        .map(String::as_str)
+                        .collect();
+                    if !unknown.is_empty() {
+                        warnings.push(format!(
+                            "Node `{}`: unknown wake-up alarm {}.",
+                            node.id,
+                            unknown.join(", ")
+                        ));
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if !climate_on {
+                if !std::mem::replace(&mut said_off, true) {
+                    warnings
+                        .push("The climate engine is off, so climate steps will fail.".to_owned());
+                }
+                continue;
+            }
+            let unknown: Vec<&str> = zones
+                .iter()
+                .filter(|zone| !known_zones.contains(zone))
+                .map(String::as_str)
+                .collect();
+            if !unknown.is_empty() {
+                warnings.push(format!(
+                    "Node `{}`: unknown climate zone {}.",
+                    node.id,
+                    unknown.join(", ")
+                ));
+            }
+        }
+        warnings
+    }
+
     /// Checks every entity a node names exists and every command maps; publishes nothing.
     fn check_house(&self, flow: &Flow) -> Result<(), HubError> {
         let reg = self.read();
         let results = math_names(flow);
         for node in &flow.nodes {
+            if let NodeKind::ClimateHold(params) = &node.kind
+                && let ClimateSetpoint::Temp(t) = params.setpoint
+            {
+                nidoo_climate::doc::check_setpoint(&nidoo_climate::doc::Setpoint::Temp(t))
+                    .map_err(|e| {
+                        HubError::InvalidFlow(format!("node `{}`: hold setpoint: {e}", node.id))
+                    })?;
+            }
             if let NodeKind::Math(params) = &node.kind {
                 if reg.entity(&params.name).is_some() {
                     return Err(HubError::InvalidFlow(format!(
