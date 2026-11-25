@@ -112,6 +112,14 @@ mod tests {
     }
 
     #[test]
+    fn latest_in_includes_from() {
+        use chrono_tz::Europe::Paris;
+        let s = Schedule::parse("0 * * * *").unwrap();
+        let at = |h, m| Paris.with_ymd_and_hms(2026, 11, 25, h, m, 0).unwrap();
+        assert_eq!(s.latest_in(&at(7, 0), &at(7, 30)), Some(at(7, 0)));
+    }
+
+    #[test]
     fn rejects_non_five_field_and_garbage() {
         for bad in [
             "",

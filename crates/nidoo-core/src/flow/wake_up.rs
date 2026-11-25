@@ -434,6 +434,41 @@ mod tests {
     }
 
     #[test]
+    fn pre_ring_after_inside_window_goes_next_week() {
+        // Sunday 23:45 is already inside the 45 min before Monday 00:15, so the next pre-ring is
+        // the following Sunday 23:30 (2026-11-29), strictly after `after`.
+        let after = paris(2026, 11, 22, 23, 45);
+        let got = next_pre_ring(&[sched("15 0 * * 1")], 45, &after).unwrap();
+        assert_eq!(got, paris(2026, 11, 29, 23, 30));
+        assert!(got > after);
+    }
+
+    #[test]
+    fn pre_ring_dst_absolute() {
+        // 03:30 CEST on 2026-03-29 is 01:30 UTC; 45 absolute minutes earlier is 01:45 CET.
+        let got = next_pre_ring(&[sched("30 3 * * *")], 45, &paris(2026, 3, 29, 0, 0)).unwrap();
+        assert_eq!(got, paris(2026, 3, 29, 1, 45));
+        assert_eq!(got, paris(2026, 3, 29, 3, 30) - TimeDelta::minutes(45));
+    }
+
+    #[test]
+    fn alarm_schedules_sorted_by_id() {
+        let w = WakeUp {
+            player: "p".to_owned(),
+            ..WakeUp::default()
+        };
+        let flows = [
+            to_flow("wake-up-2", "b", true, &w),
+            to_flow("wake-up-1", "a", true, &w),
+        ];
+        let ids: Vec<String> = alarm_schedules(&flows, &[])
+            .into_iter()
+            .map(|e| e.0)
+            .collect();
+        assert_eq!(ids, ["wake-up-1", "wake-up-2"]);
+    }
+
+    #[test]
     fn alarm_schedules_skips_disabled_and_unknown() {
         let w = WakeUp {
             player: "p".to_owned(),
