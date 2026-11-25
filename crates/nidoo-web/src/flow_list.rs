@@ -201,6 +201,10 @@ pub fn rows(
     entities: &BTreeMap<String, EntityView>,
     catalog: &FlowLabelCatalog,
 ) -> Vec<ListRow> {
+    let names: Vec<(String, String)> = flows
+        .iter()
+        .map(|v| (v.definition.id.clone(), v.definition.name.clone()))
+        .collect();
     flows
         .iter()
         .map(|view| {
@@ -211,7 +215,7 @@ pub fn rows(
                 .filter(|id| *id != UNASSIGNED_AREA)
                 .and_then(|id| areas.iter().find(|a| a.id == id));
             ListRow {
-                trigger_text: trigger_summary(lang, &view.definition, entities),
+                trigger_text: trigger_summary(lang, &view.definition, entities, &names),
                 kinds: trigger_kinds(view),
                 room: area.map(|a| a.id.clone()),
                 room_name: area.map(|a| a.name.clone()),

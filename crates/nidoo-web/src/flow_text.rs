@@ -325,6 +325,9 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
 /// The names of climate zones as a step reads them: the room's name, or the raw id when no room
 /// has it any more.
 fn zone_names(zones: &[String], ctx: &Ctx) -> String {
+    if zones.is_empty() {
+        return flow_text(ctx.lang, FlowText::ZonesPlaceholder).to_owned();
+    }
     zones
         .iter()
         .map(|id| {
@@ -335,6 +338,20 @@ fn zone_names(zones: &[String], ctx: &Ctx) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The names of the wake-up alarms a trigger follows: the flow's name, or the raw id when no
+/// flow has it any more. `flows` is `(id, name)` of every flow.
+pub fn alarm_names(alarms: &[String], flows: &[(String, String)]) -> Vec<String> {
+    alarms
+        .iter()
+        .map(|id| {
+            flows
+                .iter()
+                .find(|(fid, _)| fid == id)
+                .map_or_else(|| id.clone(), |(_, name)| name.clone())
+        })
+        .collect()
 }
 
 /// How long a climate step lasts, worded.
@@ -519,17 +536,7 @@ fn base_sentence(node: &Node, ctx: &Ctx) -> String {
         }
         NodeKind::BackupRun(_) => flow_text(lang, FlowText::BackupRunSentence).to_owned(),
         NodeKind::TriggerWakeUp(p) => {
-            let names: Vec<String> = p
-                .alarms
-                .iter()
-                .map(|id| {
-                    ctx.flows
-                        .iter()
-                        .find(|(fid, _)| fid == id)
-                        .map_or_else(|| id.clone(), |(_, name)| name.clone())
-                })
-                .collect();
-            t::wake_up_sentence(lang, p.before_minutes, &names)
+            t::wake_up_sentence(lang, p.before_minutes, &alarm_names(&p.alarms, ctx.flows))
         }
         NodeKind::ClimateHold(p) => {
             let temperature = match p.setpoint {
@@ -1644,5 +1651,31 @@ mod generic_tests {
             ..ctx
         };
         assert!(sentence(&wake, &fr).ends_with(", rattrape dans les 60\u{a0}min"));
+    }
+
+    #[test]
+    fn a_step_with_no_rooms_reads_a_placeholder() {
+        use nidoo_core::flow::{ClimateEcoParams, ClimateHoldParams, ClimateSetpoint};
+        let entities = BTreeMap::new();
+        let ctx = ctx_of(&entities);
+        let hold = node_of(NodeKind::ClimateHold(ClimateHoldParams {
+            zones: Vec::new(),
+            setpoint: ClimateSetpoint::Temp(20.0),
+            mode: None,
+            minutes: Some(120),
+            until: None,
+            extra: Default::default(),
+        }));
+        assert_eq!(
+            sentence(&hold, &ctx),
+            "Hold rooms\u{2026} at 20\u{a0}\u{b0}C for 2\u{a0}h"
+        );
+        let eco = node_of(NodeKind::ClimateEco(ClimateEcoParams {
+            zones: Vec::new(),
+            minutes: None,
+            until: Some("18:00".into()),
+            extra: Default::default(),
+        }));
+        assert_eq!(sentence(&eco, &ctx), "Eco in rooms\u{2026} until 18:00");
     }
 }

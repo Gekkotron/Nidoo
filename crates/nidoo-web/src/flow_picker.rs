@@ -1330,4 +1330,28 @@ mod tests {
             assert!(!run(q, &BTreeMap::new()).is_empty(), "no card for {q:?}");
         }
     }
+
+    #[test]
+    fn picker_schedule_and_sun_cards_start_without_catch_up() {
+        let got = run("", &BTreeMap::new());
+        let mut seen = 0;
+        for e in &got {
+            if matches!(
+                e.kind,
+                NodeKind::TriggerSchedule(_) | NodeKind::TriggerSun(_)
+            ) {
+                seen += 1;
+                assert_eq!(e.kind.catch_up_minutes(), 0);
+            }
+        }
+        assert_eq!(seen, 2);
+        assert!(got.iter().any(|e| matches!(
+            &e.kind,
+            NodeKind::TriggerSchedule(p) if p.catch_up_minutes.is_none()
+        )));
+        assert!(got.iter().any(|e| matches!(
+            &e.kind,
+            NodeKind::TriggerSun(p) if p.catch_up_minutes.is_none()
+        )));
+    }
 }

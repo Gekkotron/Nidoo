@@ -8,6 +8,7 @@ use nidoo_api::{EntityView, RunStatus, RunView, StepOutcome, StepView};
 use nidoo_core::command::command_name;
 use nidoo_core::flow::{Flow, Node, NodeKind, parse_duration};
 
+use crate::flow_text::alarm_names;
 use crate::flow_text::{off_peak_edge_text, sun_summary, value_words};
 use crate::format::entity_title;
 use crate::i18n::Lang;
@@ -98,27 +99,45 @@ fn summary_label(lang: Lang, node: &Node) -> String {
 
 /// Just the trigger node(s) in words: "Every 10 minutes" for a schedule, the entity label
 /// for a state trigger. Multiple triggers are joined by " · ".
-pub fn trigger_summary(lang: Lang, flow: &Flow, entities: &BTreeMap<String, EntityView>) -> String {
+///
+/// `flows` is `(id, name)` of every flow, to name the alarms a wake-up trigger follows.
+pub fn trigger_summary(
+    lang: Lang,
+    flow: &Flow,
+    entities: &BTreeMap<String, EntityView>,
+    flows: &[(String, String)],
+) -> String {
     let parts: Vec<String> = flow
         .nodes
         .iter()
-        .filter_map(|n| match &n.kind {
-            NodeKind::TriggerState(p) => Some(entity_label(lang, &p.entity, entities)),
-            NodeKind::TriggerSignal(p) => Some(t::sends(
-                lang,
-                &entity_label(lang, &p.entity, entities),
-                p.signal.as_deref(),
-            )),
-            NodeKind::TriggerSchedule(p) => Some(describe(lang, &p.cron)),
-            NodeKind::TriggerSun(p) => Some(sun_summary(lang, p.which, p.offset())),
-            NodeKind::TriggerWakeUp(p) => Some(t::wake_up_sentence(lang, p.before_minutes, &[])),
-            NodeKind::TriggerManual(_) => Some(flow_text(lang, FlowText::NodeManual).into()),
-            NodeKind::TriggerSilent(p) => Some(t::silent_for(
-                lang,
-                &entity_label(lang, &p.entity, entities),
-                &p.for_,
-            )),
-            _ => None,
+        .filter_map(|n| {
+            let text = match &n.kind {
+                NodeKind::TriggerState(p) => Some(entity_label(lang, &p.entity, entities)),
+                NodeKind::TriggerSignal(p) => Some(t::sends(
+                    lang,
+                    &entity_label(lang, &p.entity, entities),
+                    p.signal.as_deref(),
+                )),
+                NodeKind::TriggerSchedule(p) => Some(describe(lang, &p.cron)),
+                NodeKind::TriggerSun(p) => Some(sun_summary(lang, p.which, p.offset())),
+                NodeKind::TriggerWakeUp(p) => Some(t::wake_up_sentence(
+                    lang,
+                    p.before_minutes,
+                    &alarm_names(&p.alarms, flows),
+                )),
+                NodeKind::TriggerManual(_) => Some(flow_text(lang, FlowText::NodeManual).into()),
+                NodeKind::TriggerSilent(p) => Some(t::silent_for(
+                    lang,
+                    &entity_label(lang, &p.entity, entities),
+                    &p.for_,
+                )),
+                _ => None,
+            };
+            // The catch-up tail the card's sentence carries.
+            text.map(|text| match n.kind.catch_up_minutes() {
+                0 => text,
+                m => format!("{text}{}", t::catch_up_suffix(lang, m)),
+            })
         })
         .collect();
     if parts.is_empty() {
@@ -655,16 +674,19 @@ mod tests {
     fn trigger_summary_joins_every_trigger() {
         let entities = BTreeMap::new();
         let mut flow = reference();
-        assert_eq!(trigger_summary(Lang::En, &flow, &entities), "m");
+        assert_eq!(trigger_summary(Lang::En, &flow, &entities, &[]), "m");
         flow.nodes.push(node(
             r#"{ "id": "s", "type": "trigger.schedule", "params": { "cron": "*/10 * * * *" } }"#,
         ));
         assert_eq!(
-            trigger_summary(Lang::En, &flow, &entities),
+            trigger_summary(Lang::En, &flow, &entities, &[]),
             "m · Every 10 minutes"
         );
         flow.nodes.retain(|n| !n.kind.is_trigger());
-        assert_eq!(trigger_summary(Lang::En, &flow, &entities), "No trigger");
+        assert_eq!(
+            trigger_summary(Lang::En, &flow, &entities, &[]),
+            "No trigger"
+        );
     }
 
     #[test]
@@ -680,7 +702,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            trigger_summary(Lang::En, &flow, &BTreeMap::new()),
+            trigger_summary(Lang::En, &flow, &BTreeMap::new(), &[]),
             "15\u{a0}min after sunset"
         );
     }
@@ -708,7 +730,7 @@ mod tests {
             "Motion → Si → Allumer / Attente 5m → Éteindre"
         );
         assert_eq!(
-            trigger_summary(Lang::Fr, &Flow::default(), &BTreeMap::new()),
+            trigger_summary(Lang::Fr, &Flow::default(), &BTreeMap::new(), &[]),
             "Aucun déclencheur"
         );
         assert_eq!(status_word(Lang::Fr, RunStatus::Done), "Terminé");
@@ -814,6 +836,26 @@ mod tests {
             !h.edges
                 .iter()
                 .any(|(_, p, _)| p.as_deref() == Some("false"))
+        );
+    }
+
+    #[test]
+    fn trigger_summary_names_alarms_and_notes_catch_up() {
+        let flow = Flow::decode(
+            br#"{
+          "id": "f", "name": "F",
+          "nodes": [
+            { "id": "w", "type": "trigger.wake_up",
+              "params": { "before_minutes": 45, "alarms": ["wake-up-1"], "catch_up_minutes": 60 } }
+          ],
+          "edges": []
+        }"#,
+        )
+        .unwrap();
+        let names = [("wake-up-1".to_owned(), "Weekdays".to_owned())];
+        assert_eq!(
+            trigger_summary(Lang::En, &flow, &BTreeMap::new(), &names),
+            "45\u{a0}min before Weekdays, catches up within 60\u{a0}min"
         );
     }
 }

@@ -103,6 +103,7 @@ pub fn climate_step_sheet(node: RwSignal<Node>) -> impl IntoView {
 
     // The rooms the hub has a heating zone for, by name; loaded once.
     let known = RwSignal::new(Vec::<(String, String)>::new());
+    let loaded = RwSignal::new(false);
     leptos::task::spawn_local(async move {
         if let Ok(climate) = get_climate().await
             && climate.enabled
@@ -114,16 +115,23 @@ pub fn climate_step_sheet(node: RwSignal<Node>) -> impl IntoView {
                     .map(|z| (z.zone.clone(), z.name.clone()))
                     .collect(),
             );
+            loaded.try_set(true);
         }
     });
     let zones = Memo::new(move |_| node.with(|n| zones_of(&n.kind)));
     // The known zones, then any stored room the hub no longer lists (shown by id, so it can be
     // dropped).
     let choices = Memo::new(move |_| {
-        let mut list = known.get();
+        let mut list: Vec<(String, String, bool)> = known
+            .get()
+            .into_iter()
+            .map(|(id, name)| (id, name, false))
+            .collect();
+        // Only once the hub has answered: before that every stored room would look gone.
+        let gone = loaded.get();
         for id in zones.get() {
-            if !list.iter().any(|(z, _)| *z == id) {
-                list.push((id.clone(), id));
+            if !list.iter().any(|(z, _, _)| *z == id) {
+                list.push((id.clone(), id, gone));
             }
         }
         list
@@ -190,8 +198,8 @@ pub fn climate_step_sheet(node: RwSignal<Node>) -> impl IntoView {
             <div class="segmented" role="group" aria-label=move || t(FlowText::ClimateZones)>
                 <For
                     each=move || choices.get()
-                    key=|(id, name)| (id.clone(), name.clone())
-                    children=move |(id, name)| {
+                    key=|(id, name, gone)| (id.clone(), name.clone(), *gone)
+                    children=move |(id, name, gone)| {
                         let pick = id.clone();
                         let on = id.clone();
                         view! {
@@ -204,6 +212,9 @@ pub fn climate_step_sheet(node: RwSignal<Node>) -> impl IntoView {
                                 }}
                             >
                                 {name}
+                                {gone.then(|| view! {
+                                    <small>{move || format!(" ({})", t(FlowText::ClimateZoneGone))}</small>
+                                })}
                             </button>
                         }
                     }

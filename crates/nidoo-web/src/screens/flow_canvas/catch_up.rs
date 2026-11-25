@@ -23,6 +23,15 @@ fn typed_minutes(text: &str) -> Option<u32> {
     Some(m.clamp(0.0, f64::from(MAX_CATCH_UP_MINUTES)) as u32)
 }
 
+/// What typing `text` into the window does: the toggle and the minutes it leaves. Zero (or less)
+/// turns the toggle off, like the stored `None`, and the next switch-on starts at the default.
+fn after_typing(text: &str) -> Option<(bool, u32)> {
+    match typed_minutes(text)? {
+        0 => Some((false, DEFAULT_CATCH_UP_MINUTES)),
+        m => Some((true, m)),
+    }
+}
+
 /// The toggle and the window of a trigger, starting from its stored window; each change hands
 /// the new window (or `None`) to `write`.
 #[component]
@@ -44,11 +53,12 @@ pub fn CatchUpField(initial: Option<u32>, write: Callback<Option<u32>>) -> impl 
         write.run(catch_up_value(now_on, minutes.get_untracked()));
     };
     let on_minutes = move |ev: web_sys::Event| {
-        let Some(m) = typed_minutes(&event_target_value(&ev)) else {
+        let Some((now_on, m)) = after_typing(&event_target_value(&ev)) else {
             return;
         };
+        on.set(now_on);
         minutes.set(m);
-        write.run(catch_up_value(on.get_untracked(), m));
+        write.run(catch_up_value(now_on, m));
     };
     view! {
         <div class="node-editor__field">
@@ -88,6 +98,16 @@ mod tests {
     fn on_stores_the_window_within_the_limit() {
         assert_eq!(catch_up_value(true, 60), Some(60));
         assert_eq!(catch_up_value(true, 5000), Some(MAX_CATCH_UP_MINUTES));
+    }
+
+    #[test]
+    fn typing_zero_turns_the_toggle_off() {
+        assert_eq!(after_typing("0"), Some((false, DEFAULT_CATCH_UP_MINUTES)));
+        assert_eq!(after_typing("-3"), Some((false, DEFAULT_CATCH_UP_MINUTES)));
+        assert_eq!(after_typing("45"), Some((true, 45)));
+        assert_eq!(after_typing("x"), None);
+        // What is stored agrees with the toggle.
+        assert_eq!(catch_up_value(false, DEFAULT_CATCH_UP_MINUTES), None);
     }
 
     #[test]
