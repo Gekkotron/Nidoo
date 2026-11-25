@@ -248,19 +248,30 @@ async fn second_restart_does_not_refire() {
 
 #[tokio::test(start_paused = true)]
 async fn missed_ticks_fire_once() {
-    let now = Utc::now().timestamp();
+    let start = Utc::now();
     let retained = vec![
         flow_retained(
             "often",
             flow_doc("often", schedule_trigger("at", "*/5 * * * *", Some(60))),
         ),
-        marker("often", "at", now - 50 * 60),
+        marker("often", "at", start.timestamp() - 50 * 60),
     ];
-    let (hub, _log) = boot(&retained);
+    let (hub, log) = boot(&retained);
     settle().await;
     advance(10).await;
 
-    assert_eq!(done_runs(&hub, "often").await.len(), 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    settle().await;
+    let runs = hub.flow("often").unwrap().runs;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    // Only the latest missed tick is recorded, whichever path fired it.
+    let latest = (start.timestamp() + 10) / 300 * 300;
+    let published = marker_publishes(&log, "often", "at");
+    assert_eq!(
+        marker_due(published.last().unwrap()),
+        latest,
+        "{published:?}"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -421,11 +432,26 @@ async fn wake_up_catch_up() {
     };
     let alarm =
         serde_json::to_string(&wake_up::to_flow("wake-up-1", "alarm", true, &settings)).unwrap();
+    // A second alarm, outside the trigger's filter, whose pre-ring (20 minutes ago) is later
+    // than the first one's and inside the window: it must not count.
+    let (_, other_ring) = daily_cron_ago(5);
+    let other_settings = WakeUp {
+        hour: other_ring.hour() as u8,
+        minute: other_ring.minute() as u8,
+        ..settings.clone()
+    };
+    let other = serde_json::to_string(&wake_up::to_flow(
+        "wake-up-2",
+        "other",
+        true,
+        &other_settings,
+    ))
+    .unwrap();
     let heat = serde_json::json!({
         "id": "heat", "name": "heat", "enabled": true, "mode": "single",
         "nodes": [
             { "id": "at", "type": "trigger.wake_up",
-              "params": { "before_minutes": 15, "alarms": [], "catch_up_minutes": 60 } },
+              "params": { "before_minutes": 15, "alarms": ["wake-up-1"], "catch_up_minutes": 60 } },
             { "id": "on", "type": "command",
               "params": { "entity": LED_ID, "command": { "type": "turn_on" } } }
         ],
@@ -435,6 +461,7 @@ async fn wake_up_catch_up() {
     let due = ring - chrono::Duration::minutes(15);
     let retained = vec![
         flow_retained("wake-up-1", alarm),
+        flow_retained("wake-up-2", other),
         flow_retained("heat", heat),
         marker("heat", "at", yesterday(due)),
     ];
@@ -505,4 +532,96 @@ async fn sun_catch_up() {
     let published = marker_publishes(&log, "sun", "at");
     assert_eq!(published.len(), 1, "{published:?}");
     assert_eq!(marker_due(&published[0]), due.timestamp());
+}
+
+/// A flow with a daily trigger 2 minutes ahead; runs until it has fired once, online.
+async fn fire_normally(catch_up: Option<u32>) -> (Arc<Hub>, Log, DateTime<chrono_tz::Tz>) {
+    let (cron, due) = daily_cron_ago(-2);
+    let retained = vec![flow_retained(
+        "morning",
+        flow_doc("morning", schedule_trigger("at", &cron, catch_up)),
+    )];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    advance(10).await;
+    advance(180).await;
+    (hub, log, due)
+}
+
+#[tokio::test(start_paused = true)]
+async fn normal_fire_writes_marker() {
+    let (hub, log, due) = fire_normally(Some(60)).await;
+
+    assert_eq!(done_runs(&hub, "morning").await.len(), 1);
+    let published = marker_publishes(&log, "morning", "at");
+    assert_eq!(
+        marker_due(published.last().unwrap()),
+        due.timestamp(),
+        "{published:?}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn normal_fire_without_option_writes_no_marker() {
+    let (hub, log, _) = fire_normally(None).await;
+
+    assert_eq!(done_runs(&hub, "morning").await.len(), 1);
+    assert!(
+        log.lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.topic.contains("/fired/"))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn disabled_then_enabled_does_not_catch_up() {
+    let (cron, due) = daily_cron_ago(25);
+    let retained = vec![
+        flow_retained(
+            "morning",
+            flow_doc("morning", schedule_trigger("at", &cron, Some(60))),
+        ),
+        marker("morning", "at", yesterday(due)),
+    ];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    hub.set_flow_enabled("morning", false)
+        .await
+        .expect("disabled");
+    settle().await;
+    assert_eq!(
+        marker_publishes(&log, "morning", "at"),
+        [""],
+        "disabling clears the marker"
+    );
+    hub.set_flow_enabled("morning", true)
+        .await
+        .expect("enabled");
+    settle().await;
+    advance(11).await;
+
+    assert!(done_runs(&hub, "morning").await.is_empty());
+    let published = marker_publishes(&log, "morning", "at");
+    assert_eq!(published.len(), 2, "{published:?}");
+    assert_eq!(marker_due(&published[1]), due.timestamp());
+}
+
+#[tokio::test(start_paused = true)]
+async fn saving_a_disabled_flow_clears_its_markers() {
+    let (cron, due) = daily_cron_ago(25);
+    let retained = vec![
+        flow_retained(
+            "morning",
+            flow_doc("morning", schedule_trigger("at", &cron, Some(60))),
+        ),
+        marker("morning", "at", due.timestamp()),
+    ];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    let mut flow = hub.flow("morning").unwrap().definition;
+    flow.enabled = false;
+    hub.set_flow(flow).await.expect("saved");
+    settle().await;
+    assert_eq!(marker_publishes(&log, "morning", "at"), [""]);
 }

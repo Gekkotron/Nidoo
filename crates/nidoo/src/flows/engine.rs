@@ -139,13 +139,16 @@ pub(super) async fn run_with(
             }
             // Before the events: a tick that is due is not held back by a busy event stream.
             () = sleep_until_deadline(deadline), if deadline.is_some() => {
-                engine.tick();
+                // One reading for every timer, so a tick and the catch-up check cannot disagree
+                // about which side of `now` an instant falls on.
+                let now = now_in(&engine.now, engine.zone);
+                engine.tick(now);
                 engine.tick_silents();
                 engine.tick_holds();
-                engine.tick_suns();
-                engine.tick_wake_ups();
+                engine.tick_suns(now);
+                engine.tick_wake_ups(now);
                 engine.tick_off_peak();
-                engine.tick_catch_up();
+                engine.tick_catch_up(now);
             }
             event = events.recv() => match event {
                 Ok(event) => engine.handle_event(event),
@@ -671,8 +674,7 @@ impl Engine {
 
     /// Fires every schedule whose tick is due and re-arms it for the next one. A tick while the
     /// broker link is not online is recorded as skipped instead: commands could not go out.
-    fn tick(&mut self) {
-        let now = now_in(&self.now, self.zone);
+    fn tick(&mut self, now: chrono::DateTime<chrono_tz::Tz>) {
         let due: Vec<String> = self
             .schedules
             .iter()
@@ -704,8 +706,7 @@ impl Engine {
     /// Fires every sun node whose event is due and re-arms it for the next one, skipping while
     /// the broker link is not online like `tick`. Events missed while the hub was busy are
     /// never replayed: the next one is searched from now.
-    fn tick_suns(&mut self) {
-        let now = now_in(&self.now, self.zone);
+    fn tick_suns(&mut self, now: chrono::DateTime<chrono_tz::Tz>) {
         let (lat, lon) = self.hub.house_point();
         let due: Vec<String> = self
             .sun_timers
@@ -796,8 +797,7 @@ impl Engine {
     /// skipping while the broker link is not online like `tick`. A pre-ring missed while the
     /// hub was busy is never replayed: the next one is searched from the later of the missed
     /// instant and now.
-    fn tick_wake_ups(&mut self) {
-        let now = now_in(&self.now, self.zone);
+    fn tick_wake_ups(&mut self, now: chrono::DateTime<chrono_tz::Tz>) {
         let due: Vec<String> = self
             .wake_timers
             .iter()
@@ -1269,8 +1269,7 @@ impl Engine {
     }
 
     /// Runs the catch-up check once its settle time is up, if the link is still online.
-    fn tick_catch_up(&mut self) {
-        let now = now_in(&self.now, self.zone);
+    fn tick_catch_up(&mut self, now: chrono::DateTime<chrono_tz::Tz>) {
         if self.catch_up_settle.is_some_and(|at| at <= now) {
             self.catch_up_settle = None;
             if self.online() {
@@ -1455,9 +1454,6 @@ impl Engine {
     }
 }
 
-/// `eq` semantics of `compare`: the filter must be a scalar equal to the value, type included.
-/// Whether the reported `value` still satisfies a state trigger that waits on it: its `to`, its
-/// bounds, or, with neither, the value the edge brought.
 /// The catch-up window of the time trigger `node` of `flow`, in minutes; 0 when it has none.
 fn catch_up_window(flow: &Flow, node: &str) -> u32 {
     flow.nodes
@@ -1474,6 +1470,8 @@ fn caught_up(trigger: Option<&TriggerInfo>) -> Option<String> {
     }
 }
 
+/// Whether the reported `value` still satisfies a state trigger that waits on it: its `to`, its
+/// bounds, or, with neither, the value the edge brought.
 fn still_holds(params: &TriggerStateParams, edge: &Scalar, value: &Scalar) -> bool {
     if params.to.is_some() {
         filter_matches(params.to.as_ref(), value)

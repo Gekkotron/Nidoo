@@ -832,6 +832,11 @@ impl Hub {
             retain: true,
         })?;
         self.ingest_flow(&flow.id, payload.as_bytes());
+        if !flow.enabled {
+            // A disabled flow's morning is skipped for good: enabling it again seeds a fresh
+            // marker instead of catching up what was missed meanwhile.
+            self.clear_fired(&flow.id, &BTreeSet::new());
+        }
         self.flow(&flow.id)
             .ok_or_else(|| HubError::UnknownFlow(flow.id.clone()))
     }
@@ -902,14 +907,6 @@ impl Hub {
             }
             self.fired().remove(&(flow.to_owned(), node));
         }
-    }
-
-    fn fired(
-        &self,
-    ) -> std::sync::MutexGuard<'_, std::collections::BTreeMap<(String, String), i64>> {
-        self.fired
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn fired_topic(&self, flow: &str, node: &str) -> String {

@@ -261,7 +261,7 @@ pub struct Hub {
     limits: Mutex<crate::flows::LimitCounts>,
     /// The due instant (unix seconds) of the last fire of every time trigger with a catch-up
     /// window, by (flow, node); mirrors the retained `fired` markers on the broker.
-    pub(crate) fired: Mutex<std::collections::BTreeMap<(String, String), i64>>,
+    fired: Mutex<std::collections::BTreeMap<(String, String), i64>>,
     group_store: Mutex<GroupStore>,
     /// Whether the retained shutter-mark marker was seen or published.
     shutters_marked: AtomicBool,
@@ -576,6 +576,15 @@ impl Hub {
     /// The `limit` counts, taken as they are when a thread panicked while holding them.
     pub(crate) fn limits(&self) -> MutexGuard<'_, crate::flows::LimitCounts> {
         self.limits
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The catch-up markers, taken as they are when a thread panicked while holding them.
+    pub(crate) fn fired(
+        &self,
+    ) -> MutexGuard<'_, std::collections::BTreeMap<(String, String), i64>> {
+        self.fired
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
