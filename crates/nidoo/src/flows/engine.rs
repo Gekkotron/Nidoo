@@ -1321,8 +1321,11 @@ impl Engine {
         for (flow, node, due) in fires {
             let trigger = TriggerInfo {
                 entity: None,
-                field: None,
-                value: Value::String(format!("caught up: due {}", due.format("%H:%M"))),
+                field: Some(format!(
+                    "{CAUGHT_UP_PREFIX}caught up: due {}",
+                    due.format("%H:%M")
+                )),
+                value: Value::Null,
                 previous: Value::Null,
             };
             self.fire(flow, node, Some(trigger));
@@ -1462,12 +1465,17 @@ fn catch_up_window(flow: &Flow, node: &str) -> u32 {
         .map_or(0, |n| n.kind.catch_up_minutes())
 }
 
-/// What a catch-up run's trigger step says: the text its trigger carries, when it is a string.
+/// Marks a trigger's `field` as the label of a catch-up run, so `{trigger}` keeps rendering as
+/// it does for a normal run (the value stays null).
+const CAUGHT_UP_PREFIX: &str = "\u{1}catch-up\u{1}";
+
+/// What a catch-up run's trigger step says, when the run is a catch-up.
 fn caught_up(trigger: Option<&TriggerInfo>) -> Option<String> {
-    match trigger.map(|t| &t.value) {
-        Some(Value::String(text)) => Some(text.clone()),
-        _ => None,
-    }
+    trigger?
+        .field
+        .as_deref()?
+        .strip_prefix(CAUGHT_UP_PREFIX)
+        .map(str::to_owned)
 }
 
 /// Whether the reported `value` still satisfies a state trigger that waits on it: its `to`, its
@@ -3045,6 +3053,37 @@ mod tests {
         assert_eq!(outcome, StepOutcome::Ok);
         assert_eq!(detail, "average 30m = 19.0 → true");
         assert_eq!(port, ["true"]);
+    }
+
+    #[tokio::test]
+    async fn trigger_placeholder_ignores_the_catch_up_label() {
+        let engine = engine_at(48.8566, 2.3522, "Europe/Paris");
+        let normal = TriggerInfo {
+            entity: None,
+            field: None,
+            value: Value::Null,
+            previous: Value::Null,
+        };
+        let caught = TriggerInfo {
+            field: Some(format!("{CAUGHT_UP_PREFIX}caught up: due 06:15")),
+            ..normal.clone()
+        };
+        assert_eq!(
+            caught_up(Some(&caught)).as_deref(),
+            Some("caught up: due 06:15")
+        );
+        assert_eq!(caught_up(Some(&normal)), None);
+        let fill = |t: &TriggerInfo| {
+            fill_text(
+                &engine.hub,
+                &BTreeMap::new(),
+                Some(t),
+                Lang::En,
+                "went off at {trigger}",
+            )
+        };
+        assert_eq!(fill(&caught), fill(&normal));
+        assert!(!fill(&caught).contains("caught up"), "{}", fill(&caught));
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@
 use chrono::DateTime;
 use chrono_tz::Tz;
 use leptos::prelude::*;
+use nidoo_api::FlowView;
 use nidoo_core::flow::wake_up::{alarm_schedules, is_managed, next_pre_ring};
 use nidoo_core::flow::{Flow, Node, NodeKind, TriggerWakeUpParams};
 
@@ -16,6 +17,16 @@ use crate::i18n::use_lang;
 
 /// The most minutes before an alarm the trigger can start (the hub rejects more).
 pub const MAX_BEFORE_MINUTES: u32 = 240;
+
+/// The definitions of the flows the hub accepts: an invalid flow is a stub the engine never
+/// arms, so its alarm must not count.
+fn valid_definitions(views: &[FlowView]) -> Vec<Flow> {
+    views
+        .iter()
+        .filter(|f| f.invalid.is_none())
+        .map(|f| f.definition.clone())
+        .collect()
+}
 
 /// The next time the trigger starts after `now`: the alarms it follows (`only`, or every enabled
 /// wake-up alarm when empty) ring `before_minutes` later. `None` when no such alarm is left.
@@ -96,9 +107,7 @@ pub fn wake_up_sheet(node: RwSignal<Node>) -> impl IntoView {
     let next = Memo::new(move |_| {
         let (_, zone) = house.flows_config.with(|c| house_place(c.as_ref()));
         let now = now_utc().with_timezone(&zone);
-        let flows: Vec<Flow> = house
-            .flows
-            .with(|v| v.iter().map(|f| f.definition.clone()).collect());
+        let flows = house.flows.with(|v| valid_definitions(v));
         next_start(&flows, &alarms.get(), before.get(), &now)
     });
     let catch_up = Callback::new(move |value: Option<u32>| {
@@ -229,6 +238,23 @@ mod tests {
         assert_eq!(next_start(&flows, &off, 0, &at(5, 0)), None);
         // Every enabled alarm when none is picked.
         assert_eq!(next_start(&flows, &[], 0, &at(5, 0)), Some(at(7, 0)));
+    }
+
+    #[test]
+    fn invalid_flows_are_left_out_of_the_next_start() {
+        let view = |definition: Flow, invalid: Option<&str>| FlowView {
+            definition,
+            invalid: invalid.map(str::to_owned),
+            active_run: None,
+            runs: Vec::new(),
+        };
+        let views = [
+            view(alarm("wake-up-1", true, 7, 0), Some("broken")),
+            view(alarm("wake-up-2", true, 9, 0), None),
+        ];
+        let flows = valid_definitions(&views);
+        assert_eq!(flows.len(), 1);
+        assert_eq!(next_start(&flows, &[], 0, &at(5, 0)), Some(at(9, 0)));
     }
 
     #[test]

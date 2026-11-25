@@ -352,7 +352,7 @@ async fn renamed_node_seeds_without_firing() {
     assert!(done_runs(&hub, "morning").await.is_empty());
     let seeded = marker_publishes(&log, "morning", "alarm");
     assert_eq!(seeded.len(), 1, "{seeded:?}");
-    assert_eq!(marker_due(&seeded[0]), due.timestamp());
+    assert!(marker_due(&seeded[0]) >= due.timestamp());
 }
 
 #[tokio::test(start_paused = true)]
@@ -590,10 +590,9 @@ async fn disabled_then_enabled_does_not_catch_up() {
         .await
         .expect("disabled");
     settle().await;
-    assert_eq!(
-        marker_publishes(&log, "morning", "at"),
-        [""],
-        "disabling clears the marker"
+    assert!(
+        marker_publishes(&log, "morning", "at").is_empty(),
+        "disabling leaves the marker alone"
     );
     hub.set_flow_enabled("morning", true)
         .await
@@ -603,12 +602,84 @@ async fn disabled_then_enabled_does_not_catch_up() {
 
     assert!(done_runs(&hub, "morning").await.is_empty());
     let published = marker_publishes(&log, "morning", "at");
-    assert_eq!(published.len(), 2, "{published:?}");
-    assert_eq!(marker_due(&published[1]), due.timestamp());
+    assert_eq!(published.len(), 1, "{published:?}");
+    assert!(marker_due(&published[0]) >= due.timestamp());
+}
+
+/// The retained documents a broker would hold after `log`, with every marker moved `seconds`
+/// back: as if the flow had been saved or enabled that long ago.
+fn aged(initial: &[Retained], log: &Log, seconds: i64) -> Vec<Retained> {
+    retained_after(initial, log)
+        .into_iter()
+        .map(|(topic, payload)| {
+            if topic.contains("/fired/") {
+                let due = marker_due(&payload) - seconds;
+                (topic, format!(r#"{{"due":{due}}}"#))
+            } else {
+                (topic, payload)
+            }
+        })
+        .collect()
 }
 
 #[tokio::test(start_paused = true)]
-async fn saving_a_disabled_flow_clears_its_markers() {
+async fn new_flow_catches_up_first_miss() {
+    let (hub, log) = boot(&[]);
+    settle().await;
+    let (cron, due) = daily_cron_ago(25);
+    let flow =
+        serde_json::from_str(&flow_doc("fresh", schedule_trigger("at", &cron, Some(60)))).unwrap();
+    hub.set_flow(flow).await.expect("saved");
+    settle().await;
+    let published = marker_publishes(&log, "fresh", "at");
+    assert_eq!(published.len(), 1, "saving seeds the marker: {published:?}");
+    let now = Utc::now().timestamp();
+    assert!((now - 5..=now + 5).contains(&marker_due(&published[0])));
+
+    // The hub went down before the first due: restart half an hour after the save.
+    let retained = aged(&[], &log, 1800);
+    let (hub, _log) = boot(&retained);
+    settle().await;
+    advance(11).await;
+    let runs = done_runs(&hub, "fresh").await;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(
+        runs[0].steps[0].detail,
+        format!("caught up: due {}", clock(due))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn reenabled_flow_catches_up_later_miss() {
+    let (cron, due) = daily_cron_ago(25);
+    let retained = vec![
+        flow_retained(
+            "morning",
+            flow_doc("morning", schedule_trigger("at", &cron, Some(60))),
+        ),
+        marker("morning", "at", yesterday(due)),
+    ];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    hub.set_flow_enabled("morning", false)
+        .await
+        .expect("disabled");
+    hub.set_flow_enabled("morning", true)
+        .await
+        .expect("enabled");
+    settle().await;
+
+    // Enabling moved the marker to now; the hub then went down for half an hour.
+    let held = aged(&retained, &log, 1800);
+    let (hub, _log) = boot(&held);
+    settle().await;
+    advance(11).await;
+    let runs = done_runs(&hub, "morning").await;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn saving_a_disabled_flow_keeps_its_markers() {
     let (cron, due) = daily_cron_ago(25);
     let retained = vec![
         flow_retained(
@@ -623,5 +694,75 @@ async fn saving_a_disabled_flow_clears_its_markers() {
     flow.enabled = false;
     hub.set_flow(flow).await.expect("saved");
     settle().await;
-    assert_eq!(marker_publishes(&log, "morning", "at"), [""]);
+    assert!(marker_publishes(&log, "morning", "at").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn sun_without_the_option_keeps_old_behaviour() {
+    let flow = serde_json::json!({
+        "id": "sun", "name": "sun", "enabled": true, "mode": "single",
+        "nodes": [
+            { "id": "at", "type": "trigger.sun",
+              "params": { "which": "sunrise", "offset_minutes": 0 } },
+            { "id": "on", "type": "command",
+              "params": { "entity": LED_ID, "command": { "type": "turn_on" } } }
+        ],
+        "edges": [{ "from": "at", "to": "on" }]
+    })
+    .to_string();
+    let retained = vec![
+        flow_retained("sun", flow),
+        marker("sun", "at", Utc::now().timestamp() - 86_400),
+    ];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    advance(11).await;
+    assert!(done_runs(&hub, "sun").await.is_empty());
+    assert!(
+        log.lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.topic.contains("/fired/"))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn wake_up_without_the_option_keeps_old_behaviour() {
+    let (_, ring) = daily_cron_ago(10);
+    let settings = WakeUp {
+        version: 1,
+        hour: ring.hour() as u8,
+        minute: ring.minute() as u8,
+        days: vec![0, 1, 2, 3, 4, 5, 6],
+        player: "music_node_player".to_owned(),
+        ..Default::default()
+    };
+    let alarm =
+        serde_json::to_string(&wake_up::to_flow("wake-up-1", "alarm", true, &settings)).unwrap();
+    let heat = serde_json::json!({
+        "id": "heat", "name": "heat", "enabled": true, "mode": "single",
+        "nodes": [
+            { "id": "at", "type": "trigger.wake_up",
+              "params": { "before_minutes": 15, "alarms": ["wake-up-1"] } },
+            { "id": "on", "type": "command",
+              "params": { "entity": LED_ID, "command": { "type": "turn_on" } } }
+        ],
+        "edges": [{ "from": "at", "to": "on" }]
+    })
+    .to_string();
+    let retained = vec![
+        flow_retained("wake-up-1", alarm),
+        flow_retained("heat", heat),
+        marker("heat", "at", Utc::now().timestamp() - 86_400),
+    ];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    advance(11).await;
+    assert!(done_runs(&hub, "heat").await.is_empty());
+    assert!(
+        log.lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.topic.contains("/fired/"))
+    );
 }

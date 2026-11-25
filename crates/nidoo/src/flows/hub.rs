@@ -120,6 +120,9 @@ impl Hub {
         let warnings = self.flow_warnings(&flow);
         let warning = (!warnings.is_empty()).then(|| warnings.join(" "));
         let flow = self.write_flow(&flow)?;
+        // A catch-up trigger without a marker (new flow, option just turned on, flow saved
+        // disabled) starts from now, so its first missed time is caught up.
+        self.advance_markers(&flow.definition, false);
         // A trigger that is gone, renamed or without a window loses its marker, so a later one
         // with the same id starts from nothing instead of replaying an old fire.
         let keep = flow
@@ -832,10 +835,10 @@ impl Hub {
             retain: true,
         })?;
         self.ingest_flow(&flow.id, payload.as_bytes());
-        if !flow.enabled {
-            // A disabled flow's morning is skipped for good: enabling it again seeds a fresh
-            // marker instead of catching up what was missed meanwhile.
-            self.clear_fired(&flow.id, &BTreeSet::new());
+        if flow.enabled {
+            // Enabling (or saving an enabled flow) moves each marker up to now: a time skipped
+            // while the flow was off is never caught up, but one missed from now on is.
+            self.advance_markers(flow, true);
         }
         self.flow(&flow.id)
             .ok_or_else(|| HubError::UnknownFlow(flow.id.clone()))
@@ -886,6 +889,25 @@ impl Hub {
             tracing::warn!(flow, node, error = %err, "could not publish a catch-up marker");
         }
         self.fired().insert((flow.to_owned(), node.to_owned()), due);
+    }
+
+    /// Sets the marker of each catch-up trigger of `flow` to now: when `move_up`, to
+    /// `max(existing, now)`; otherwise only where none exists. Nothing is published when the
+    /// marker would not change.
+    fn advance_markers(&self, flow: &Flow, move_up: bool) {
+        let now = i64::try_from(clock::now()).unwrap_or(i64::MAX);
+        for node in &flow.nodes {
+            if node.kind.catch_up_minutes() == 0 {
+                continue;
+            }
+            let existing = self.fired_due(&flow.id, &node.id);
+            if existing.is_some_and(|due| !move_up || due >= now) {
+                continue;
+            }
+            if let Some(at) = chrono::DateTime::from_timestamp(now, 0) {
+                self.record_fired(&flow.id, &node.id, at);
+            }
+        }
     }
 
     /// Clears the markers of `flow` whose node is not in `keep`: an empty retained payload each.

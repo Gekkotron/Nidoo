@@ -70,6 +70,7 @@ pub enum Family {
     Dashboard,
     Ambiance,
     Flow,
+    FlowFired,
     FlowLabels,
     VirtualConfig,
     VirtualState,
@@ -100,6 +101,7 @@ impl Family {
         Family::Dashboard,
         Family::Ambiance,
         Family::Flow,
+        Family::FlowFired,
         Family::FlowLabels,
         Family::VirtualConfig,
         Family::VirtualState,
@@ -157,6 +159,7 @@ impl Family {
             Dashboard => "nidoo/ui/dashboards/<id>",
             Ambiance => "nidoo/ui/ambiances/<id>",
             Flow => "nidoo/automation/<flow id>",
+            FlowFired => "nidoo/automation/<flow id>/fired/<node id>",
             FlowLabels => "nidoo/flow_labels",
             VirtualConfig => {
                 "<first discovery prefix>/<switch|number|button|select>/virtual/<id>/config"
@@ -226,7 +229,11 @@ pub fn classify(topic: &str, l: &Layout) -> Option<Family> {
         return classify_ui(rest);
     }
     if let Some(id) = under(topic, &l.automation) {
-        return segment(id).then_some(Family::Flow);
+        return match id.split('/').collect::<Vec<_>>()[..] {
+            [flow] if segment(flow) => Some(Family::Flow),
+            [flow, "fired", node] if segment(flow) && segment(node) => Some(Family::FlowFired),
+            _ => None,
+        };
     }
     if let Some(rest) = under(topic, &l.push) {
         return match rest.split('/').collect::<Vec<_>>()[..] {
@@ -554,6 +561,7 @@ mod tests {
         ("nidoo/network/router/avail", Family::NetworkOther),
         ("nidoo/push/tokens/abc", Family::PushTokens),
         ("nidoo/push/history", Family::PushHistory),
+        ("nidoo/automation/morning/fired/at", Family::FlowFired),
         ("nidoo/climate/house", Family::ClimateHouse),
         (
             "nidoo/climate/zone/living/settings",

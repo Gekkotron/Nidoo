@@ -78,8 +78,9 @@ Runs live in memory only: a hub restart forgets them, the flow definitions stay 
 - **What it looks at.** For each enabled flow with a trigger that has `catch_up_minutes` above 0, the latest time that trigger should have fired within the last `catch_up_minutes`: a cron tick, a sun event plus its offset, or a wake-up alarm ring minus `before_minutes`.
 - **Fires once.** If that time is later than the trigger's last fire, the flow runs once and the run log shows `caught up: due 06:15`. Earlier missed times are never replayed.
 - **The marker.** Each fire, normal or caught up, saves the time it was due in a retained message at `<automation_prefix>/<flow>/fired/<node>`, with the payload `{"due": <unix seconds>}`. See [MQTT topics](mqtt-topics.md). The marker survives a hub restart.
-- **No marker yet.** The hub records the latest due time without firing. Turning catch-up on, or adding a new flow, never fires for the past.
-- **Markers are cleared** when a flow is disabled or deleted, when a node is removed or renamed, or when its catch-up is turned off.
+- **Marker at save and at enabling.** Saving a flow gives each catch-up trigger without a marker one at the current time, and enabling a flow (or saving it enabled) moves each marker up to the current time. So the first time missed after a flow is created, after catch-up is turned on, or after the flow is enabled again is caught up, while a time that passed while the flow was disabled is not. If a marker is still missing at check time, the hub records the latest due time without firing.
+- **Markers are cleared** when a flow is deleted, when a node is removed or renamed, or when its catch-up is turned off. Disabling a flow keeps them.
+- **Late runs and `until`.** On a late (caught-up) run, an `until` time of a [climate step](#climatehold) that has already passed today rolls to tomorrow, so prefer `minutes` with catch-up.
 - **Alarms.** `trigger.wake_up` reads the alarms at check time, so an alarm disabled since the miss is not caught up.
 - A catch-up run goes through the normal run path, so `single` and `restart` mode apply.
 
@@ -533,6 +534,7 @@ Give exactly one of `minutes` and `until`.
 - The duration counts from when the step runs, not from the ring. In the [Morning heating](#example-morning-heating) example, `before_minutes` 45 and `minutes` 180 end the hold 2 h 15 after the alarm.
 - The step uses the same hub call as the climate page, so the same checks apply (zone active, range). A whole-zone temperature hold ends that room's eco.
 - A zone id the house does not have gives a save-time warning, see [Running a climate step with several zones](#running-a-climate-step-with-several-zones).
+- On a late (caught-up) run, an `until` time that has already passed today rolls to tomorrow, so prefer `minutes` with catch-up.
 
 ## `climate.eco`
 
@@ -549,7 +551,7 @@ Puts one or more zones in eco for a set time: the same eco the climate page sets
 | `minutes` | integer, optional | `1` to `1440`. The eco lasts this long from when the step runs. |
 | `until` | string, optional | `"HH:MM"` on the house clock, as for `climate.hold`. |
 
-Give exactly one of `minutes` and `until`. The step replaces any eco the zone already had. A zone id the house does not have gives a save-time warning, see [Running a climate step with several zones](#running-a-climate-step-with-several-zones).
+Give exactly one of `minutes` and `until`. On a late (caught-up) run, an `until` time that has already passed today rolls to tomorrow, so prefer `minutes` with catch-up. The step replaces any eco the zone already had. A zone id the house does not have gives a save-time warning, see [Running a climate step with several zones](#running-a-climate-step-with-several-zones).
 
 ### Running a climate step with several zones
 

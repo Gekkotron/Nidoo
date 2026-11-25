@@ -132,7 +132,7 @@ opt-in option on every time trigger.
   covers a normal fire and a catch-up fire. The record is a small retained broker document
   per `flow/node`, kept next to the flows' own retained documents (the builder picks the
   topic). It survives a restart, unlike the in-memory run list. Removing a flow, or a node,
-  removes its markers.
+  removes its markers; a node whose catch-up is turned off loses its marker too.
 - **When it checks:**
   - once at hub start, after the retained documents (flows, markers, wake-up alarms) have
     been loaded;
@@ -146,9 +146,16 @@ opt-in option on every time trigger.
   2. If there is one and the marker is older than `d`, fire the flow once now and write `d`
      into the marker.
   3. Earlier missed instants are never replayed: a trigger fires at most once per check.
-- **No marker yet** (catch-up just turned on, or a new flow): treat it as caught up. Write
-  the latest `d`, or now, without firing. A first-ever fire missed before any marker existed
-  is not replayed.
+- **Marker at save and at enabling.** Saving a flow writes a marker at now for each catch-up
+  trigger that has none, so the first miss after a flow is created, or after catch-up is turned
+  on, is caught up. Writing a flow with `enabled` true (enabling, ambiance enables, label
+  switches, saves) sets each catch-up marker to `max(existing, now)`, so a time skipped while
+  the flow was disabled is never caught up, but one missed after enabling is. A marker is only
+  published when it changes. Disabling keeps the markers. A check that still finds no marker
+  (a fallback) writes the latest `d`, or now, without firing.
+- A late catch-up run computes `until` from the moment it runs, so an `until` already past
+  today rolls to tomorrow; `minutes` is the better choice with catch-up. `{trigger}` in a
+  catch-up run renders as in a normal schedule or sun run.
 - A catch-up run goes through the normal run path (`single` and `restart` modes apply). The
   run log names it, for example `caught up: due 06:15`.
 - `trigger.wake_up` reads the alarms at the time of the check. An alarm disabled since the

@@ -360,3 +360,31 @@ async fn hold_two_zones_off_cool() {
         assert_eq!(overrides[0].mode, Some(nidoo_climate::doc::Mode::Cool));
     }
 }
+
+#[tokio::test]
+async fn hold_with_an_off_zone_fails_with_its_reason_and_keeps_the_rest() {
+    let (hub, _rx) = test_hub().await;
+    hub.set_climate_zone(
+        "bedroom",
+        ZoneSettings {
+            state: ZoneState::Off,
+            ..ZoneSettings::default()
+        },
+    )
+    .expect("zone off");
+    let _engine = hub.start_engine();
+    let json = flow(
+        "z",
+        &[(
+            "climate.hold",
+            serde_json::json!({ "zones": ["living", "bedroom"], "setpoint": 20, "minutes": 60 }),
+        )],
+    );
+    let run = run(&hub, "z", &json).await;
+    let step = run.steps.last().expect("step");
+    assert_eq!(step.outcome, StepOutcome::Failed, "{step:?}");
+    assert!(step.detail.contains("bedroom:"), "{}", step.detail);
+    assert!(!step.detail.contains("living:"), "{}", step.detail);
+    assert_eq!(zone(&hub, "living").overrides.len(), 1, "living applied");
+    assert!(zone(&hub, "bedroom").overrides.is_empty());
+}
