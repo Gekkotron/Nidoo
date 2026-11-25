@@ -189,3 +189,53 @@ async fn no_alarm_never_fires() {
     advance(25 * 60).await;
     assert!(heating_runs(&mut events).await.is_empty());
 }
+
+#[tokio::test(start_paused = true)]
+async fn moved_earlier_inside_lead_fires_now() {
+    let hub = test_hub();
+    settle().await;
+    publish_flow(&hub, "wake-up-1", &alarm_json("wake-up-1", true, 120));
+    publish_flow(&hub, "heat", &heating_flow("heat", 45, &[]));
+    settle().await;
+    let mut events = hub.subscribe();
+    assert!(heating_runs(&mut events).await.is_empty());
+
+    // The new pre-ring is already behind us, but the ring is 20 minutes away.
+    publish_flow(&hub, "wake-up-1", &alarm_json("wake-up-1", true, 20));
+    settle().await;
+    advance(1).await;
+    assert_eq!(heating_runs(&mut events).await.len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn moved_after_prering_fired_does_not_refire() {
+    let hub = test_hub();
+    settle().await;
+    publish_flow(&hub, "wake-up-1", &alarm_json("wake-up-1", true, 60));
+    publish_flow(&hub, "heat", &heating_flow("heat", 45, &[]));
+    settle().await;
+    let mut events = hub.subscribe();
+
+    // The pre-ring fires at about 15 minutes.
+    advance(20).await;
+    assert_eq!(heating_runs(&mut events).await.len(), 1);
+
+    // The alarm moves a few minutes later, still ahead and inside the lead time.
+    publish_flow(&hub, "wake-up-1", &alarm_json("wake-up-1", true, 64));
+    settle().await;
+    advance(2).await;
+    assert!(heating_runs(&mut events).await.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_flow_inside_lead_does_not_fire() {
+    let hub = test_hub();
+    settle().await;
+    publish_flow(&hub, "wake-up-1", &alarm_json("wake-up-1", true, 20));
+    settle().await;
+    let mut events = hub.subscribe();
+    publish_flow(&hub, "heat", &heating_flow("heat", 45, &[]));
+    settle().await;
+    advance(1).await;
+    assert!(heating_runs(&mut events).await.is_empty());
+}

@@ -10,4 +10,6 @@ pub(super) struct ArmedWakeUp {
     pub at: DateTime<Tz>,
     /// What the instant was computed from; a different one means the node must be re-armed.
     pub fingerprint: String,
+    /// When the node last fired from its timer or a re-arm, carried across re-arms of the key.
+    pub last_fired: Option<DateTime<Tz>>,
 }

@@ -290,6 +290,21 @@ pub fn next_pre_ring<Tz: TimeZone>(
         .map(|ring| ring - before)
 }
 
+/// The earliest ring strictly after `now` that is at most `before_minutes` away, over the
+/// alarms: the ring a pre-ring computed from `now` would miss.
+pub fn ring_within<Tz: TimeZone>(
+    alarms: &[Schedule],
+    before_minutes: u32,
+    now: &DateTime<Tz>,
+) -> Option<DateTime<Tz>> {
+    let limit = now.clone() + TimeDelta::minutes(i64::from(before_minutes));
+    alarms
+        .iter()
+        .filter_map(|s| s.next_after(now))
+        .min()
+        .filter(|ring| *ring <= limit)
+}
+
 /// The latest pre-ring in `from..=to`, or `None` when no alarm rings in the shifted window.
 pub fn latest_pre_ring_in<Tz: TimeZone>(
     alarms: &[Schedule],
@@ -409,6 +424,21 @@ mod tests {
         // 2026-11-22 is a Sunday; the Monday 00:15 alarm pre-rings 45 min earlier.
         let got = next_pre_ring(&[sched("15 0 * * 1")], 45, &paris(2026, 11, 22, 22, 0));
         assert_eq!(got, Some(paris(2026, 11, 22, 23, 30)));
+    }
+
+    #[test]
+    fn ring_within_lead_only() {
+        let alarms = [sched("0 8 * * *"), sched("0 9 * * *")];
+        let now = paris(2026, 11, 25, 7, 30);
+        assert_eq!(
+            ring_within(&alarms, 45, &now),
+            Some(paris(2026, 11, 25, 8, 0))
+        );
+        assert_eq!(ring_within(&alarms, 20, &now), None);
+        // The boundary is inclusive, and a ring at `now` is not ahead.
+        assert!(ring_within(&alarms, 30, &now).is_some());
+        assert_eq!(ring_within(&alarms, 45, &paris(2026, 11, 25, 8, 0)), None);
+        assert_eq!(ring_within(&[], 45, &now), None);
     }
 
     #[test]

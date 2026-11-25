@@ -49,6 +49,7 @@ pub enum FlowText {
     ManualRun,
     ScheduleRun,
     SunRun,
+    WakeUpRun,
     // Card library entries.
     Schedule,
     ScheduleSub,
@@ -418,6 +419,7 @@ impl FlowText {
         FlowText::ManualRun,
         FlowText::ScheduleRun,
         FlowText::SunRun,
+        FlowText::WakeUpRun,
         FlowText::Schedule,
         FlowText::ScheduleSub,
         FlowText::SunEvent,
@@ -787,6 +789,7 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::ManualRun => ("manual", "manuel"),
         T::ScheduleRun => ("schedule", "programmation"),
         T::SunRun => ("sun", "soleil"),
+        T::WakeUpRun => ("wake-up", "réveil"),
         T::Schedule => ("Schedule", "Programmation"),
         T::ScheduleSub => (
             "At a set time, or on a repeat",

@@ -172,6 +172,7 @@ Outputs: one. The trigger carries no value, like `trigger.schedule`.
 - An alarm is a wake-up flow that parses and is enabled. A disabled alarm drops out on its own.
 - The next fire is the earliest, over the matched alarms, of each alarm's next ring minus `before_minutes`. A pre-alarm that falls on the previous day still works, and so does a daylight-saving change. If two alarms give the same instant, the flow runs once.
 - Editing an alarm (its time or its days) re-arms the trigger from now. Saving an alarm reloads the flows, so no restart is needed.
+- When a change to an armed trigger (an alarm moved, its days or the filter changed, or `before_minutes` edited) leaves an alarm ringing within `before_minutes` from now, the new pre-ring is already past, so the flow fires right away, unless it already fired within the last `before_minutes`; a new flow or a hub start never fires this way.
 - A fire while the broker link is offline is recorded as a skipped run, as for schedule and sun triggers.
 - An `if` or `switch` reachable from the trigger must name an `entity`, as for schedule and sun triggers.
 - Saving gives warnings, not errors, for an id in `alarms` that is not a wake-up flow, and when no wake-up alarm exists at all.

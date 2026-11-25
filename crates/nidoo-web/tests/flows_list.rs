@@ -611,7 +611,7 @@ async fn trigger_menu_replaces_the_chips() {
     assert_eq!(count(&host, "[role=menuitemcheckbox]"), 0);
     click(&host, ".trigger-menu__button");
     tick().await;
-    assert_eq!(count(&host, ".trigger-menu [role=menuitemcheckbox]"), 8);
+    assert_eq!(count(&host, ".trigger-menu [role=menuitemcheckbox]"), 9);
     click_text(&host, ".trigger-menu [role=menuitemcheckbox]", "Manual");
     tick().await;
     assert_eq!(texts(&host, ".flow-row__link"), ["By hand"]);

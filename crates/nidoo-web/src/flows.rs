@@ -217,6 +217,7 @@ pub fn trigger_line(
     match first.map(|n| &n.kind) {
         Some(NodeKind::TriggerSchedule(_)) => flow_text(lang, FlowText::ScheduleRun).to_owned(),
         Some(NodeKind::TriggerSun(_)) => flow_text(lang, FlowText::SunRun).to_owned(),
+        Some(NodeKind::TriggerWakeUp(_)) => flow_text(lang, FlowText::WakeUpRun).to_owned(),
         _ => String::new(),
     }
 }
@@ -642,6 +643,13 @@ mod tests {
             serde_json::from_value(serde_json::json!({"which": "sunset"})).unwrap(),
         );
         assert_eq!(trigger_line(Lang::En, &run, &timed, &none), "sun");
+        let motion = timed.nodes.iter_mut().find(|n| n.id == "motion").unwrap();
+        motion.kind = NodeKind::TriggerWakeUp(
+            serde_json::from_value(serde_json::json!({"before_minutes": 45, "alarms": []}))
+                .unwrap(),
+        );
+        assert_eq!(trigger_line(Lang::En, &run, &timed, &none), "wake-up");
+        assert_eq!(trigger_line(Lang::Fr, &run, &timed, &none), "réveil");
     }
 
     #[test]

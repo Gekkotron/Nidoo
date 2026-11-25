@@ -771,14 +771,35 @@ impl Engine {
                 );
             }
         }
+        // An existing entry whose inputs changed is re-armed; what it last fired is kept.
+        let mut carried: BTreeMap<String, Option<chrono::DateTime<chrono_tz::Tz>>> =
+            BTreeMap::new();
         self.wake_timers.retain(|key, armed| {
-            wanted
+            let keep = wanted
                 .get(key)
-                .is_some_and(|(_, _, _, fingerprint)| *fingerprint == armed.fingerprint)
+                .is_some_and(|(_, _, _, fingerprint)| *fingerprint == armed.fingerprint);
+            if !keep && wanted.contains_key(key) {
+                carried.insert(key.clone(), armed.last_fired);
+            }
+            keep
         });
+        let mut fires = Vec::new();
         for (key, (node, before, schedules, fingerprint)) in wanted {
             if self.wake_timers.contains_key(&key) {
                 continue;
+            }
+            let mut last_fired = None;
+            if let Some(previous) = carried.get(&key) {
+                last_fired = *previous;
+                // The new pre-ring may already be behind us while the ring is still ahead:
+                // fire now, unless the node already fired within its lead time.
+                let lead = chrono::TimeDelta::minutes(i64::from(before));
+                if wake_up::ring_within(&schedules, before, &now).is_some()
+                    && last_fired.is_none_or(|at| at < now - lead)
+                {
+                    fires.push((key.clone(), node.clone()));
+                    last_fired = Some(now);
+                }
             }
             if let Some(at) = wake_up::next_pre_ring(&schedules, before, &now) {
                 self.wake_timers.insert(
@@ -787,8 +808,20 @@ impl Engine {
                         node,
                         at,
                         fingerprint,
+                        last_fired,
                     },
                 );
+            }
+        }
+        if !fires.is_empty() {
+            let online = self.online();
+            for (key, node) in fires {
+                if let Some(flow) = key
+                    .split_once('/')
+                    .and_then(|(id, _)| self.flows.iter().find(|f| f.id == id).cloned())
+                {
+                    self.fire_due(flow, node, now, online);
+                }
             }
         }
     }
@@ -828,7 +861,12 @@ impl Engine {
                 wake_up::next_pre_ring(&schedules, p.before_minutes, &from)
             });
             match (next, self.wake_timers.get_mut(&key)) {
-                (Some(at), Some(armed)) => armed.at = at,
+                (Some(at), Some(armed)) => {
+                    armed.at = at;
+                    if online {
+                        armed.last_fired = Some(now);
+                    }
+                }
                 _ => {
                     self.wake_timers.remove(&key);
                 }

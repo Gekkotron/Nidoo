@@ -116,6 +116,7 @@ Params:
   moves the trigger. Editing an alarm saves a flow, and saving a flow already triggers a
   reload. Fire and re-arm work like `tick_suns`: no catch-up, and a fire while the broker link
   is offline counts as a skipped run.
+- When a change to an armed trigger (an alarm moved, its days or the filter changed, or `before_minutes` edited) leaves an alarm ringing within `before_minutes` from now, the new pre-ring is already past, so the flow fires right away, unless it already fired within the last `before_minutes`; a new flow or a hub start never fires this way. `ArmedWakeUp.last_fired` records the last fire and is carried across re-arms of the key.
 - The trigger carries no value, like `trigger.schedule`. Validation rules that apply to
   schedule and sun triggers ("an `if` reachable from it must name an entity") apply here too.
 - Save-time warnings, not errors: an id in `alarms` that is not a wake-up flow, and no
