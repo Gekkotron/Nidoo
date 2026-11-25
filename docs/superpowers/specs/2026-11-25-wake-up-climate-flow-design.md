@@ -26,6 +26,9 @@ approach B (a trigger that fires before a wake-up alarm).
 - `trigger.wake_up`: fires `before_minutes` before a wake-up alarm rings. It covers every
   enabled alarm, or only the alarms listed. It follows the alarms: moving an alarm, changing its
   days, or disabling it moves or stops the trigger with no edit to the heating flow.
+- Opt-in catch-up on `trigger.schedule`, `trigger.sun` and `trigger.wake_up`: when the hub
+  starts, or the broker link comes back, a trigger whose time was missed within its window
+  fires once.
 - `climate.hold` step: holds one or more zones at a temperature (or `off`) for a duration. This
   is the same hold the climate page and the assistant set.
 - `climate.eco` step: puts one or more zones in eco for a duration, the same eco the climate
@@ -52,8 +55,10 @@ Example the user wants to build in the editor, called "Morning heating":
   `before_minutes`.
 - Steps that end a hold or eco early (`climate.clear`). That can come later.
 - Per-device holds (`Override.entity`) from flows. Holds are whole-zone only.
-- Catch-up: a pre-alarm time missed while the hub was down is not replayed, the same as
-  `trigger.schedule`.
+- Catch-up by default. Every time trigger keeps today's behaviour (a missed time is not
+  replayed) unless its catch-up option is turned on (see "Catch-up if missed").
+- Replaying more than the latest missed time, or catching up after a flow edit (only hub
+  start and the broker link coming back count).
 - A "skip the next alarm" feature. No such feature exists today.
 
 ## Anti-goals
@@ -64,8 +69,13 @@ Example the user wants to build in the editor, called "Morning heating":
 - A heating flow that silently does nothing. Unknown alarm ids or zone ids, or no alarm at all,
   give a save-time warning. A zone that refuses (not active, off, or climate disabled) makes
   the step fail with the hub's reason in the run log.
-- The trigger firing at boot or on reload because the computed time "just passed". It arms only
-  the next future fire, like `trigger.schedule`.
+- A trigger firing on reload because the computed time "just passed". Reload arms only the
+  next future fire. Only the opt-in catch-up below may fire a past time, and only at hub start
+  or when the broker link comes back.
+- A catch-up that replays a stale morning, such as heating at 22:00 for a 7:00 alarm. The
+  window bounds it.
+- A catch-up firing twice for the same time, for example after a second restart. A marker
+  that survives a restart prevents it.
 
 ## Approaches considered
 
@@ -99,6 +109,7 @@ Params:
   in absolute time handles a pre-alarm time that falls on the previous day. A DST jump is
   covered as well, because the instant is exactly `before` ahead of the ring.
 - If two matched alarms give the same instant, the trigger fires once.
+- Optional `catch_up_minutes`: see "Catch-up if missed".
 - Arming follows `arm_suns`. On every `reload`, the engine rebuilds the wanted set, keyed
   `flow/node`. Each entry holds the trigger's params plus a fingerprint of the matched alarms'
   crons. An armed entry whose fingerprint changed is re-armed from now, so editing an alarm
@@ -109,6 +120,42 @@ Params:
   schedule and sun triggers ("an `if` reachable from it must name an entity") apply here too.
 - Save-time warnings, not errors: an id in `alarms` that is not a wake-up flow, and no
   wake-up alarm existing at all.
+
+### Catch-up if missed (`trigger.schedule`, `trigger.sun`, `trigger.wake_up`)
+
+The user asked that the hub check, when it starts, which flows should have run. This is an
+opt-in option on every time trigger.
+
+- New optional param on all three triggers: `catch_up_minutes`, an integer `0..=720`. Absent
+  or 0 means no catch-up, which is today's behaviour, so existing flows are unchanged.
+- **Marker.** Each time such a trigger fires, the hub records the instant it was *due*. This
+  covers a normal fire and a catch-up fire. The record is a small retained broker document
+  per `flow/node`, kept next to the flows' own retained documents (the builder picks the
+  topic). It survives a restart, unlike the in-memory run list. Removing a flow, or a node,
+  removes its markers.
+- **When it checks:**
+  - once at hub start, after the retained documents (flows, markers, wake-up alarms) have
+    been loaded;
+  - each time the broker link comes back online. That also covers today's "skipped: the
+    broker link is offline".
+  - It never checks on a flow reload or an edit.
+- **What it checks, for each enabled flow with a trigger where `catch_up_minutes > 0`:**
+  1. Find the *latest* instant `d` at which this trigger should have fired with
+     `now - catch_up_minutes <= d <= now`. That is the cron tick, the sun event plus its
+     offset, or the alarm ring minus `before_minutes`.
+  2. If there is one and the marker is older than `d`, fire the flow once now and write `d`
+     into the marker.
+  3. Earlier missed instants are never replayed: a trigger fires at most once per check.
+- **No marker yet** (catch-up just turned on, or a new flow): treat it as caught up. Write
+  the latest `d`, or now, without firing. A first-ever fire missed before any marker existed
+  is not replayed.
+- A catch-up run goes through the normal run path (`single` and `restart` modes apply). The
+  run log names it, for example `caught up: due 06:15`.
+- `trigger.wake_up` reads the alarms at the time of the check. An alarm disabled since the
+  miss is no longer caught up.
+- In the editor, each of the three triggers gets a "Catch up if missed, within N minutes"
+  toggle and field. A new "Before a wake-up alarm" node starts with it on at 60 min. A new
+  schedule or sun node starts with it off.
 
 ### `climate.hold` step
 
@@ -179,3 +226,12 @@ Params:
   - an alarm edited and disabled while armed;
   - a multi-zone step with one zone off;
   - `until` already past for today, which rolls to tomorrow.
+  - Catch-up:
+    - a restart inside the window fires once;
+    - a restart outside the window does not fire;
+    - a second restart does not fire again (marker);
+    - several missed ticks fire once;
+    - the broker link coming back catches up a skipped tick;
+    - no marker seeds without firing;
+    - an edit never catches up;
+    - `catch_up_minutes` absent keeps today's behaviour, across all three trigger types.
