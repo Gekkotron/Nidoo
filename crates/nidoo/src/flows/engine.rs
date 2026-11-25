@@ -21,6 +21,7 @@ use nidoo_core::flow::answer::{first_number, match_answer, not_understood};
 use nidoo_core::flow::math::{fit_to_entity, parse_formula};
 use nidoo_core::flow::sun::is_dark_with_offset;
 use nidoo_core::flow::template::{Lang, render};
+use nidoo_core::flow::wake_up;
 use nidoo_core::flow::{
     ASK_NONE_PORT, AskParams, BACKUP_FAILED_PORT, BACKUP_OK_PORT, BACKUP_PARTIAL_PORT, Flow,
     FlowMode, MathParams, Missing, Node, NodeKind, OffPeakEdge, Op, Reading, Scalar, Schedule,
@@ -38,6 +39,7 @@ use super::EngineRequest;
 use super::labels::switch_detail;
 use super::schedule::{Armed, Now, now_in, rearm, timer_clock};
 use super::sun::{ArmedSun, next_sun_fire};
+use super::wake_up_timer::ArmedWakeUp;
 use crate::assist::stt::ask::{ASK_LIMIT, AskOutcome};
 use crate::clock;
 use crate::home::OffPeakNow;
@@ -95,6 +97,7 @@ pub(super) async fn run_with(
         silent_epoch: hub.link_epoch(),
         holds: BTreeMap::new(),
         sun_timers: BTreeMap::new(),
+        wake_timers: BTreeMap::new(),
         off_peak_base: None,
         off_peak_timer: None,
         off_peak_settle: None,
@@ -131,6 +134,7 @@ pub(super) async fn run_with(
                 engine.tick_silents();
                 engine.tick_holds();
                 engine.tick_suns();
+                engine.tick_wake_ups();
                 engine.tick_off_peak();
             }
             event = events.recv() => match event {
@@ -205,6 +209,8 @@ struct Engine {
     holds: BTreeMap<String, Hold>,
     /// Armed sun nodes, keyed `"{flow}/{node}"`.
     sun_timers: BTreeMap<String, ArmedSun>,
+    /// Armed wake-up nodes, keyed `"{flow}/{node}"`.
+    wake_timers: BTreeMap<String, ArmedWakeUp>,
     /// The off-peak answer `trigger.off_peak` compares against; `None` until seeded. Seeding
     /// never fires: boot, a reconnect replay, a flow save or a settings change only set it.
     off_peak_base: Option<bool>,
@@ -316,6 +322,7 @@ impl Engine {
         self.arm_silents();
         self.keep_holds();
         self.arm_suns();
+        self.arm_wake_ups();
         self.off_peak_reload();
         // Disabled flows keep their counts: only a removed or edited node forgets them.
         let mut limits = BTreeMap::new();
@@ -636,6 +643,7 @@ impl Engine {
             .values()
             .map(|armed| armed.at.to_utc())
             .chain(self.sun_timers.values().map(|armed| armed.at.to_utc()))
+            .chain(self.wake_timers.values().map(|armed| armed.at.to_utc()))
             .chain(self.off_peak_timer.map(|at| at.to_utc()))
             .chain(self.off_peak_settle.map(|at| at.to_utc()))
             .chain(silent)
@@ -712,6 +720,112 @@ impl Engine {
             let Some(flow) = self.flows.iter().find(|f| f.id == flow_id).cloned() else {
                 continue;
             };
+            if online {
+                self.fire(flow, node, None);
+            } else {
+                self.hub
+                    .add_skipped_run_because(&flow.id, &node, "the broker link is offline");
+            }
+        }
+    }
+
+    /// The alarms a wake-up node follows and the fingerprint of what its pre-ring depends on.
+    fn wake_up_inputs(
+        &self,
+        params: &nidoo_core::flow::TriggerWakeUpParams,
+    ) -> (Vec<nidoo_core::flow::Schedule>, String) {
+        let found = wake_up::alarm_schedules(&self.flows, &params.alarms);
+        let mut parts = vec![params.before_minutes.to_string(), params.alarms.join(",")];
+        parts.extend(found.iter().map(|(id, cron, _)| format!("{id}={cron}")));
+        let schedules = found.into_iter().map(|(_, _, schedule)| schedule).collect();
+        (schedules, parts.join("|"))
+    }
+
+    /// Arms every wake-up node of an enabled flow for the next pre-ring of its alarms and
+    /// disarms the rest. A node whose alarms and lead time are unchanged keeps its instant;
+    /// otherwise it is re-armed from now. No alarm means no timer.
+    fn arm_wake_ups(&mut self) {
+        let now = now_in(&self.now, self.zone);
+        let mut wanted = BTreeMap::new();
+        for flow in &self.flows {
+            for node in flow.triggers() {
+                let NodeKind::TriggerWakeUp(params) = &node.kind else {
+                    continue;
+                };
+                let (schedules, fingerprint) = self.wake_up_inputs(params);
+                wanted.insert(
+                    format!("{}/{}", flow.id, node.id),
+                    (
+                        node.id.clone(),
+                        params.before_minutes,
+                        schedules,
+                        fingerprint,
+                    ),
+                );
+            }
+        }
+        self.wake_timers.retain(|key, armed| {
+            wanted
+                .get(key)
+                .is_some_and(|(_, _, _, fingerprint)| *fingerprint == armed.fingerprint)
+        });
+        for (key, (node, before, schedules, fingerprint)) in wanted {
+            if self.wake_timers.contains_key(&key) {
+                continue;
+            }
+            if let Some(at) = wake_up::next_pre_ring(&schedules, before, &now) {
+                self.wake_timers.insert(
+                    key,
+                    ArmedWakeUp {
+                        node,
+                        at,
+                        fingerprint,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Fires every wake-up node whose pre-ring is due and re-arms it for the next one,
+    /// skipping while the broker link is not online like `tick`. A pre-ring missed while the
+    /// hub was busy is never replayed: the next one is searched from the later of the missed
+    /// instant and now.
+    fn tick_wake_ups(&mut self) {
+        let now = now_in(&self.now, self.zone);
+        let due: Vec<String> = self
+            .wake_timers
+            .iter()
+            .filter(|(_, armed)| armed.at <= now)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let online = *self.hub.connection().borrow() == ConnectionStatus::Online;
+        for key in due {
+            let Some((flow_id, _)) = key.split_once('/') else {
+                continue;
+            };
+            let Some(flow) = self.flows.iter().find(|f| f.id == flow_id).cloned() else {
+                self.wake_timers.remove(&key);
+                continue;
+            };
+            let Some(armed) = self.wake_timers.get(&key) else {
+                continue;
+            };
+            let node = armed.node.clone();
+            let from = armed.at.max(now);
+            let params = flow.nodes.iter().find_map(|n| match &n.kind {
+                NodeKind::TriggerWakeUp(p) if n.id == node => Some(p.clone()),
+                _ => None,
+            });
+            let next = params.and_then(|p| {
+                let (schedules, _) = self.wake_up_inputs(&p);
+                wake_up::next_pre_ring(&schedules, p.before_minutes, &from)
+            });
+            match (next, self.wake_timers.get_mut(&key)) {
+                (Some(at), Some(armed)) => armed.at = at,
+                _ => {
+                    self.wake_timers.remove(&key);
+                }
+            }
             if online {
                 self.fire(flow, node, None);
             } else {
@@ -2197,6 +2311,7 @@ mod tests {
             silent_epoch: 0,
             holds: BTreeMap::new(),
             sun_timers: BTreeMap::new(),
+            wake_timers: BTreeMap::new(),
             off_peak_base: None,
             off_peak_timer: None,
             off_peak_settle: None,

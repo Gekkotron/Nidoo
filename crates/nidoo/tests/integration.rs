@@ -16,6 +16,7 @@ mod climate_hub;
 mod config;
 mod dashboards;
 mod engine_sun;
+mod engine_wake_up;
 mod flow_labels;
 mod flows;
 mod history_db;
