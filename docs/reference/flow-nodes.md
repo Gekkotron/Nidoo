@@ -74,7 +74,7 @@ Runs live in memory only: a hub restart forgets them, the flow definitions stay 
 
 `trigger.schedule`, `trigger.sun` and `trigger.wake_up` take an optional `catch_up_minutes`, from `0` to `720`. Absent or `0` means off, which is how flows behave without it. When it is on, a time the trigger missed (because the hub was down, or the broker link was offline) fires the flow once, as long as the missed time is no older than the window.
 
-- **When the hub checks.** Once at hub start, and again each time the broker link comes back online, 10 seconds after the link is up. The check covers the time the link was offline too. It never runs on a flow edit or a reload.
+- **When the hub checks.** The check runs 10 seconds after the broker link is up. That happens once at hub start, and again each time the link comes back online. The check covers the time the link was offline too. It never runs on a flow edit or a reload.
 - **What it looks at.** For each enabled flow with a trigger that has `catch_up_minutes` above 0, the latest time that trigger should have fired within the last `catch_up_minutes`: a cron tick, a sun event plus its offset, or a wake-up alarm ring minus `before_minutes`.
 - **Fires once.** If that time is later than the trigger's last fire, the flow runs once and the run log shows `caught up: due 06:15`. Earlier missed times are never replayed.
 - **The marker.** Each fire, normal or caught up, saves the time it was due in a retained message at `<automation_prefix>/<flow>/fired/<node>`, with the payload `{"due": <unix seconds>}`. See [MQTT topics](mqtt-topics.md). The marker survives a hub restart.
@@ -131,7 +131,7 @@ Starts a run at each wall-clock tick while the flow is enabled.
 | `cron` | string | Five fields: minute, hour, day of month, month, day of week. Seconds and year forms are refused. |
 | `catch_up_minutes` | integer, optional | `0` to `720`. Absent or `0` means off. See [Catch up if missed](#catch-up-if-missed). |
 
-Outputs: one. The cron runs in the home location's time zone (the system zone when none is set). The first run is at the next tick. Ticks missed while the hub was busy or down are never replayed. `GET /api/v1/schedule?cron=…` previews the next ticks.
+Outputs: one. The cron runs in the home location's time zone (the system zone when none is set). The first run is at the next tick. Ticks missed while the hub was busy or down are never replayed, unless `catch_up_minutes` is set (see [Catch up if missed](#catch-up-if-missed)). `GET /api/v1/schedule?cron=…` previews the next ticks.
 
 An `if` or a `switch` reachable from a schedule trigger (or a sun trigger) must name an `entity`, because these triggers carry no value; the exceptions are an `if` with `op: is_dark` or `op: is_off_peak`. A `time.between` reads the clock and needs none.
 
@@ -147,7 +147,7 @@ Starts a run at a solar event.
 
 Outputs: one.
 
-The hub arms the next event within the coming week, in the house zone. Events missed while the hub was busy are never replayed: the next one is searched from now. Where the sun never crosses the threshold (polar night, midnight sun) nothing is armed. While the broker link is offline when the event is due, the run is recorded as skipped.
+The hub arms the next event within the coming week, in the house zone. Events missed while the hub was busy are never replayed, unless `catch_up_minutes` is set (see [Catch up if missed](#catch-up-if-missed)); without it, the next one is searched from now. Where the sun never crosses the threshold (polar night, midnight sun) nothing is armed. While the broker link is offline when the event is due, the run is recorded as skipped.
 
 ## `trigger.wake_up`
 
@@ -532,6 +532,7 @@ Give exactly one of `minutes` and `until`.
 
 - The duration counts from when the step runs, not from the ring. In the [Morning heating](#example-morning-heating) example, `before_minutes` 45 and `minutes` 180 end the hold 2 h 15 after the alarm.
 - The step uses the same hub call as the climate page, so the same checks apply (zone active, range). A whole-zone temperature hold ends that room's eco.
+- A zone id the house does not have gives a save-time warning, see [Running a climate step with several zones](#running-a-climate-step-with-several-zones).
 
 ## `climate.eco`
 
@@ -548,7 +549,7 @@ Puts one or more zones in eco for a set time: the same eco the climate page sets
 | `minutes` | integer, optional | `1` to `1440`. The eco lasts this long from when the step runs. |
 | `until` | string, optional | `"HH:MM"` on the house clock, as for `climate.hold`. |
 
-Give exactly one of `minutes` and `until`. The step replaces any eco the zone already had.
+Give exactly one of `minutes` and `until`. The step replaces any eco the zone already had. A zone id the house does not have gives a save-time warning, see [Running a climate step with several zones](#running-a-climate-step-with-several-zones).
 
 ### Running a climate step with several zones
 
@@ -557,7 +558,7 @@ This applies to `climate.hold` and `climate.eco` alike.
 - The step applies each zone in list order. A zone that succeeds stays applied, even if a later zone fails.
 - The step succeeds only if every zone succeeded. Otherwise it fails, and its detail names each failed zone with the hub's reason, joined by `; `, for example `bedroom: zone is off`. Its successors then do not run, as with any failed step.
 - On success the detail is short, for example `living 21 °C until 10:00`.
-- Saving a flow that has a climate step while the climate engine is off gives a warning, not an error.
+- Saving gives warnings, not errors, for a climate step that names a zone the house does not have, and for a flow with a climate step while the climate engine is off.
 
 ## Example: Morning heating
 
