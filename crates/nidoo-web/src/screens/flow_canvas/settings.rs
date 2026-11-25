@@ -398,6 +398,9 @@ fn node_editor_body(
         NodeKind::FlowEnable(_) => FlowText::NodeFlowSwitch,
         NodeKind::FlowLabel(_) => FlowText::NodeFlowLabel,
         NodeKind::BackupRun(_) => FlowText::NodeBackupRun,
+        // Task 6: own labels for the wake-up trigger and the climate steps.
+        NodeKind::TriggerWakeUp(_) => FlowText::NodeAlarm,
+        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => FlowText::NodeCommand,
         NodeKind::Notify(_) => FlowText::Notify,
         NodeKind::Speak(_) => FlowText::Speak,
         NodeKind::Ask(_) => FlowText::Ask,
@@ -1381,6 +1384,10 @@ fn kind_fields(form: Form, id: String, kind: NodeKind) -> impl IntoView {
     let lang = use_lang();
     match kind {
         NodeKind::Math(_) => math_fields(form, id).into_any(),
+        // Task 6: the sheets for the wake-up trigger and the climate steps.
+        NodeKind::TriggerWakeUp(_) | NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => {
+            view! { <div></div> }.into_any()
+        }
         NodeKind::TriggerState(_) => {
             let entity_value = node_entity(form, id.clone(), |k| match k {
                 NodeKind::TriggerState(t) => Some(t.entity.clone()),

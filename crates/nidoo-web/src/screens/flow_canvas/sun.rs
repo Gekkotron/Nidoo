@@ -27,6 +27,7 @@ pub fn sun_params_from_preset(which: SunWhich, offset_minutes: Option<i32>) -> T
     TriggerSunParams {
         which,
         offset_minutes,
+        catch_up_minutes: None,
         extra: Default::default(),
     }
 }

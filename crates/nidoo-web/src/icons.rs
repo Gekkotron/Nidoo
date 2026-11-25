@@ -362,6 +362,9 @@ pub fn node_icon(kind: &NodeKind) -> &'static str {
         NodeKind::Command(_) => NODE_PLAY,
         NodeKind::FlowEnable(_) | NodeKind::FlowLabel(_) => NODE_SWITCH,
         NodeKind::BackupRun(_) => NODE_BACKUP,
+        // Task 6: own icons for the wake-up trigger and the climate steps.
+        NodeKind::TriggerWakeUp(_) => ALARM,
+        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => NODE_PLAY,
         NodeKind::Notify(_) => CHANNEL_ALARM,
         NodeKind::Speak(_) | NodeKind::Ask(_) => SPEAKER,
         NodeKind::Math(_) => NODE_MATH,

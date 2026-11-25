@@ -58,6 +58,12 @@ pub enum FlowError {
     BadBackup { node: String },
     #[error("node `{node}`: offset_minutes {offset_minutes} is outside [-720, 720]")]
     BadSunOffset { node: String, offset_minutes: i32 },
+    #[error("node `{node}`: before_minutes {minutes} is outside [0, 240]")]
+    BadWakeUpBefore { node: String, minutes: u32 },
+    #[error("node `{node}`: catch_up_minutes {minutes} is outside [0, 720]")]
+    BadCatchUp { node: String, minutes: u32 },
+    #[error("node `{node}`: {reason}")]
+    BadClimateStep { node: String, reason: String },
     #[error("node `{node}`: {reason}")]
     BadOperand { node: String, reason: String },
     #[error("node `{node}`: {reason}")]
@@ -144,6 +150,12 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
         if field_without_entity {
             return Err(FlowError::FieldWithoutEntity {
                 node: node.id.clone(),
+            });
+        }
+        if node.kind.catch_up_minutes() > 720 {
+            return Err(FlowError::BadCatchUp {
+                node: node.id.clone(),
+                minutes: node.kind.catch_up_minutes(),
             });
         }
         match &node.kind {
@@ -312,6 +324,29 @@ pub fn validate(flow: &Flow) -> Result<(), FlowError> {
                     (None, Some(_)) => return Err(bad("default needs a name".to_owned())),
                     _ => {}
                 }
+            }
+            NodeKind::TriggerWakeUp(p) => {
+                if p.before_minutes > 240 {
+                    return Err(FlowError::BadWakeUpBefore {
+                        node: node.id.clone(),
+                        minutes: p.before_minutes,
+                    });
+                }
+            }
+            NodeKind::ClimateHold(p) => {
+                check_climate_step(&node.id, &p.zones, p.minutes, p.until.as_deref())?;
+                if let Some(mode) = p.mode.as_deref()
+                    && mode != "heat"
+                    && mode != "cool"
+                {
+                    return Err(FlowError::BadClimateStep {
+                        node: node.id.clone(),
+                        reason: format!("mode `{mode}` is not heat or cool"),
+                    });
+                }
+            }
+            NodeKind::ClimateEco(p) => {
+                check_climate_step(&node.id, &p.zones, p.minutes, p.until.as_deref())?;
             }
             NodeKind::TriggerSun(p) => {
                 if !(-720..=720).contains(&p.offset()) {
@@ -630,6 +665,39 @@ fn check_math_references(flow: &Flow) -> Result<(), FlowError> {
     Ok(())
 }
 
+/// The checks `climate.hold` and `climate.eco` share: zones, and exactly one valid duration.
+fn check_climate_step(
+    node: &str,
+    zones: &[String],
+    minutes: Option<u32>,
+    until: Option<&str>,
+) -> Result<(), FlowError> {
+    let bad = |reason: &str| FlowError::BadClimateStep {
+        node: node.to_owned(),
+        reason: reason.to_owned(),
+    };
+    if zones.is_empty() {
+        return Err(bad("choose at least one zone"));
+    }
+    match (minutes, until) {
+        (Some(_), Some(_)) => Err(bad("set minutes or until, not both")),
+        (None, None) => Err(bad("set minutes or until")),
+        (Some(m), None) if !(1..=1440).contains(&m) => Err(bad("minutes must be 1 to 1440")),
+        (None, Some(t)) if !is_clock_time(t) => Err(bad("until must be a time HH:MM")),
+        _ => Ok(()),
+    }
+}
+
+/// Whether `s` is `HH:MM` with two digits each, 00:00 to 23:59.
+fn is_clock_time(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 5
+        && b[2] == b':'
+        && [0, 1, 3, 4].iter().all(|&i| b[i].is_ascii_digit())
+        && s[..2].parse::<u32>().is_ok_and(|h| h < 24)
+        && s[3..].parse::<u32>().is_ok_and(|m| m < 60)
+}
+
 const RESULT_CLASH: &str = "result cannot be combined with entity, average or missing";
 
 /// A schedule, a sun event or a manual trigger without a value has no trigger value, so an `if`
@@ -644,7 +712,9 @@ fn check_ifs_after_valueless_triggers(flow: &Flow) -> Result<(), FlowError> {
         .nodes
         .iter()
         .filter(|n| match &n.kind {
-            NodeKind::TriggerSchedule(_) | NodeKind::TriggerSun(_) => true,
+            NodeKind::TriggerSchedule(_) | NodeKind::TriggerSun(_) | NodeKind::TriggerWakeUp(_) => {
+                true
+            }
             NodeKind::TriggerManual(p) => p.value.is_none(),
             _ => false,
         })
@@ -2447,5 +2517,115 @@ mod tests {
             })
         );
         assert_eq!(command_with_number(&Command::Toggle, 1.0), None);
+    }
+
+    fn one_node_flow(json: &str) -> Flow {
+        let mut f = schedule_flow("*/10 * * * *", "act");
+        f.nodes.push(serde_json::from_str(json).unwrap());
+        f
+    }
+
+    #[test]
+    fn wake_up_before_minutes_bounds() {
+        let wake = |n: u32| {
+            decode_flow(
+                serde_json::json!([{ "id": "w", "type": "trigger.wake_up",
+                    "params": { "before_minutes": n } }]),
+                serde_json::json!([]),
+            )
+        };
+        assert_eq!(validate(&wake(240)), Ok(()));
+        assert!(matches!(
+            validate(&wake(241)),
+            Err(FlowError::BadWakeUpBefore { minutes: 241, .. })
+        ));
+    }
+
+    #[test]
+    fn catch_up_minutes_bounds() {
+        let trig = |ty: &str, params: serde_json::Value, c: u32| {
+            let mut params = params;
+            params["catch_up_minutes"] = c.into();
+            decode_flow(
+                serde_json::json!([{ "id": "t", "type": ty, "params": params }]),
+                serde_json::json!([]),
+            )
+        };
+        let cases = [
+            (
+                "trigger.schedule",
+                serde_json::json!({ "cron": "0 7 * * *" }),
+            ),
+            ("trigger.sun", serde_json::json!({ "which": "sunset" })),
+            (
+                "trigger.wake_up",
+                serde_json::json!({ "before_minutes": 30 }),
+            ),
+        ];
+        for (ty, params) in cases {
+            assert_eq!(validate(&trig(ty, params.clone(), 720)), Ok(()), "{ty}");
+            assert!(
+                matches!(
+                    validate(&trig(ty, params, 721)),
+                    Err(FlowError::BadCatchUp { minutes: 721, .. })
+                ),
+                "{ty}"
+            );
+        }
+    }
+
+    #[test]
+    fn climate_step_checks() {
+        let step = |ty: &str, params: &str| {
+            one_node_flow(&format!(r#"{{"id":"c","type":"{ty}","params":{params}}}"#))
+        };
+        let ok = r#"{"zones":["z"],"setpoint":21,"minutes":60}"#;
+        assert_eq!(validate(&step("climate.hold", ok)), Ok(()));
+        assert_eq!(
+            validate(&step("climate.eco", r#"{"zones":["z"],"until":"23:59"}"#)),
+            Ok(())
+        );
+        let bad = [
+            r#"{"zones":[],"setpoint":21,"minutes":60}"#,
+            r#"{"zones":["z"],"setpoint":21}"#,
+            r#"{"zones":["z"],"setpoint":21,"minutes":60,"until":"07:00"}"#,
+            r#"{"zones":["z"],"setpoint":21,"minutes":0}"#,
+            r#"{"zones":["z"],"setpoint":21,"minutes":1441}"#,
+            r#"{"zones":["z"],"setpoint":21,"until":"24:00"}"#,
+            r#"{"zones":["z"],"setpoint":21,"minutes":60,"mode":"fan"}"#,
+        ];
+        for params in bad {
+            assert!(
+                matches!(
+                    validate(&step("climate.hold", params)),
+                    Err(FlowError::BadClimateStep { .. })
+                ),
+                "{params}"
+            );
+        }
+        assert!(matches!(
+            validate(&step("climate.eco", r#"{"zones":[],"minutes":5}"#)),
+            Err(FlowError::BadClimateStep { .. })
+        ));
+    }
+
+    #[test]
+    fn if_without_entity_after_wake_up_is_refused() {
+        let f = decode_flow(
+            serde_json::json!([
+                { "id": "w", "type": "trigger.wake_up", "params": { "before_minutes": 30 } },
+                { "id": "i", "type": "if", "params": { "op": "eq", "value": true } },
+                { "id": "a", "type": "command",
+                  "params": { "entity": "l", "command": { "type": "turn_on" } } },
+            ]),
+            serde_json::json!([
+                { "from": "w", "to": "i" },
+                { "from": "i", "to": "a", "port": "true" },
+            ]),
+        );
+        assert_eq!(
+            validate(&f),
+            Err(FlowError::IfNeedsEntity { node: "i".into() })
+        );
     }
 }

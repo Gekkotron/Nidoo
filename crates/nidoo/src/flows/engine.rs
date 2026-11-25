@@ -1540,6 +1540,13 @@ async fn run_node(
             ),
             Vec::new(),
         ),
+        NodeKind::TriggerWakeUp(params) => (
+            StepOutcome::Ok,
+            format!("wake-up -{}m", params.before_minutes),
+            Vec::new(),
+        ),
+        // Task 4: the engine runs the climate steps.
+        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => failed("not implemented".to_owned()),
         NodeKind::FlowEnable(params) => {
             let target = params.flow.as_deref().unwrap_or(flow_id);
             if hub.flow(target).is_none() {

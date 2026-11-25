@@ -84,6 +84,11 @@ fn summary_label(lang: Lang, node: &Node) -> String {
             format!("{}: {}", flow_text(lang, FlowText::NodeFlowLabel), p.label)
         }
         NodeKind::BackupRun(_) => flow_text(lang, FlowText::NodeBackupRun).into(),
+        // Task 6: own titles for the wake-up trigger and the climate steps.
+        NodeKind::TriggerWakeUp(_) => flow_text(lang, FlowText::NodeAlarm).into(),
+        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => {
+            flow_text(lang, FlowText::NodeCommand).into()
+        }
         NodeKind::Notify(_) => flow_text(lang, FlowText::Notify).into(),
         NodeKind::Speak(_) => flow_text(lang, FlowText::Speak).into(),
         NodeKind::Ask(_) => flow_text(lang, FlowText::Ask).into(),

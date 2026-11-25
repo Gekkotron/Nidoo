@@ -165,6 +165,7 @@ pub fn to_flow(id: &str, name: &str, enabled: bool, w: &WakeUp) -> Flow {
         "trigger".to_owned(),
         NodeKind::TriggerSchedule(TriggerScheduleParams {
             cron: cron(w),
+            catch_up_minutes: None,
             extra: Default::default(),
         }),
     );

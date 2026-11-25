@@ -40,6 +40,7 @@ pub fn role(kind: &NodeKind) -> Role {
         NodeKind::TriggerState(_)
         | NodeKind::TriggerSchedule(_)
         | NodeKind::TriggerSun(_)
+        | NodeKind::TriggerWakeUp(_)
         | NodeKind::TriggerManual(_)
         | NodeKind::TriggerSignal(_)
         | NodeKind::TriggerOffPeak(_)
@@ -50,6 +51,8 @@ pub fn role(kind: &NodeKind) -> Role {
         | NodeKind::FlowEnable(_)
         | NodeKind::FlowLabel(_)
         | NodeKind::BackupRun(_)
+        | NodeKind::ClimateHold(_)
+        | NodeKind::ClimateEco(_)
         | NodeKind::Notify(_)
         | NodeKind::Speak(_)
         | NodeKind::Ask(_)
@@ -486,6 +489,11 @@ pub fn sentence(node: &Node, ctx: &Ctx) -> String {
             t::flow_label_card(lang, p.action, name, choice)
         }
         NodeKind::BackupRun(_) => flow_text(lang, FlowText::BackupRunSentence).to_owned(),
+        // Task 6: real sentences for the wake-up trigger and the climate steps.
+        NodeKind::TriggerWakeUp(_) => flow_text(lang, FlowText::NodeAlarm).to_owned(),
+        NodeKind::ClimateHold(_) | NodeKind::ClimateEco(_) => {
+            flow_text(lang, FlowText::NodeCommand).to_owned()
+        }
     }
 }
 
