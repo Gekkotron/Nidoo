@@ -1574,14 +1574,13 @@ fn speech_lang(hub: &Hub) -> Lang {
 /// time, as Unix seconds.
 fn climate_end(
     hub: &Hub,
-    now: &Now,
+    at: chrono::DateTime<chrono::Utc>,
     minutes: Option<u32>,
     until: Option<&str>,
 ) -> Result<u64, String> {
-    let at = now();
     match (minutes, until) {
         (Some(minutes), None) => Ok(at.timestamp().max(0) as u64 + u64::from(minutes) * 60),
-        (None, Some(hhmm)) => until_after(&now_in(now, hub.zone()), hhmm)
+        (None, Some(hhmm)) => until_after(&at.with_timezone(&hub.zone()), hhmm)
             .map(|end| end.timestamp().max(0) as u64)
             .ok_or_else(|| format!("bad time `{hhmm}`")),
         _ => Err("give exactly one of minutes and until".to_owned()),
@@ -1611,7 +1610,8 @@ async fn climate_hold(
     params: &ClimateHoldParams,
 ) -> (StepOutcome, String, Vec<String>) {
     let fail = |detail: String| (StepOutcome::Failed, detail, Vec::new());
-    let end = match climate_end(hub, now, params.minutes, params.until.as_deref()) {
+    let at = now();
+    let end = match climate_end(hub, at, params.minutes, params.until.as_deref()) {
         Ok(end) => end,
         Err(err) => return fail(err),
     };
@@ -1631,7 +1631,7 @@ async fn climate_hold(
         until: Some(end),
         ..Default::default()
     };
-    let at = now().timestamp().max(0) as u64;
+    let at = at.timestamp().max(0) as u64;
     let (mut done, mut failed) = (Vec::new(), Vec::new());
     for zone in &params.zones {
         let result = match request.clone().into_override(at) {
@@ -1652,11 +1652,12 @@ async fn climate_eco(
     now: &Now,
     params: &ClimateEcoParams,
 ) -> (StepOutcome, String, Vec<String>) {
-    let end = match climate_end(hub, now, params.minutes, params.until.as_deref()) {
+    let at = now();
+    let end = match climate_end(hub, at, params.minutes, params.until.as_deref()) {
         Ok(end) => end,
         Err(err) => return (StepOutcome::Failed, err, Vec::new()),
     };
-    let at = now().timestamp().max(0) as u64;
+    let at = at.timestamp().max(0) as u64;
     let (mut done, mut failed) = (Vec::new(), Vec::new());
     for zone in &params.zones {
         let result = match (nidoo_climate::view::RoomEcoRequest { until: end }).into_room_eco(at) {

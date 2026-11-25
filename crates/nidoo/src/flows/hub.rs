@@ -561,19 +561,20 @@ impl Hub {
                             "Node `{}`: no wake-up alarm exists, so it will never fire.",
                             node.id
                         ));
-                    }
-                    let unknown: Vec<&str> = params
-                        .alarms
-                        .iter()
-                        .filter(|id| !alarms.contains(id))
-                        .map(String::as_str)
-                        .collect();
-                    if !unknown.is_empty() {
-                        warnings.push(format!(
-                            "Node `{}`: unknown wake-up alarm {}.",
-                            node.id,
-                            unknown.join(", ")
-                        ));
+                    } else {
+                        let unknown: Vec<&str> = params
+                            .alarms
+                            .iter()
+                            .filter(|id| !alarms.contains(id))
+                            .map(String::as_str)
+                            .collect();
+                        if !unknown.is_empty() {
+                            warnings.push(format!(
+                                "Node `{}`: unknown wake-up alarm {}.",
+                                node.id,
+                                unknown.join(", ")
+                            ));
+                        }
                     }
                     continue;
                 }

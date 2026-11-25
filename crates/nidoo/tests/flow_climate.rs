@@ -222,17 +222,24 @@ async fn hold_ends_eco() {
     assert!(zone(&hub, "living").eco.is_none(), "the boost ends eco");
 }
 
-fn warned_flow() -> Flow {
+/// A flow with a wake-up trigger listing `alarms` and, when `zone` is set, a hold on it.
+fn warned_flow(alarms: &[&str], zone: Option<&str>) -> Flow {
+    let mut nodes = vec![serde_json::json!({
+        "id": "wake", "type": "trigger.wake_up",
+        "params": { "before_minutes": 30, "alarms": alarms }
+    })];
+    let mut edges = Vec::new();
+    if let Some(zone) = zone {
+        nodes.push(serde_json::json!({
+            "id": "hold", "type": "climate.hold",
+            "params": { "zones": [zone], "setpoint": 21, "minutes": 60 }
+        }));
+        edges.push(serde_json::json!({ "from": "wake", "to": "hold" }));
+    }
     Flow::decode(
         serde_json::json!({
             "id": "w", "name": "w", "enabled": true, "mode": "single",
-            "nodes": [
-                { "id": "wake", "type": "trigger.wake_up",
-                  "params": { "before_minutes": 30, "alarms": ["wake-up-9"] } },
-                { "id": "hold", "type": "climate.hold",
-                  "params": { "zones": ["attic"], "setpoint": 21, "minutes": 60 } }
-            ],
-            "edges": [{ "from": "wake", "to": "hold" }]
+            "nodes": nodes, "edges": edges
         })
         .to_string()
         .as_bytes(),
@@ -240,19 +247,116 @@ fn warned_flow() -> Flow {
     .expect("flow")
 }
 
+fn alarm_flow() -> String {
+    let settings = nidoo_core::flow::wake_up::WakeUp {
+        version: 1,
+        hour: 7,
+        days: vec![0, 1, 2, 3, 4, 5, 6],
+        player: "player".to_owned(),
+        ..Default::default()
+    };
+    serde_json::to_string(&nidoo_core::flow::wake_up::to_flow(
+        "wake-up-1",
+        "wake-up-1",
+        true,
+        &settings,
+    ))
+    .unwrap()
+}
+
+async fn warning(hub: &Hub, flow: Flow) -> Option<String> {
+    hub.set_flow(flow).await.expect("saved").warning
+}
+
 #[tokio::test]
-async fn save_warns_unknown_zone_and_alarm() {
+async fn save_warns_unknown_zone_and_unknown_alarm() {
     let (hub, _rx) = test_hub().await;
-    let outcome = hub.set_flow(warned_flow()).await.expect("saved");
-    let warning = outcome.warning.expect("a warning");
+    hub.ingest("nidoo/automation/wake-up-1", alarm_flow().as_bytes());
+    let warning = warning(&hub, warned_flow(&["wake-up-9"], Some("attic")))
+        .await
+        .expect("a warning");
     assert!(warning.contains("attic"), "{warning}");
     assert!(warning.contains("wake-up-9"), "{warning}");
+    assert!(!warning.contains("no wake-up alarm exists"), "{warning}");
+}
 
-    let mut hot = warned_flow();
+#[tokio::test]
+async fn save_warns_when_no_alarm_exists() {
+    let (hub, _rx) = test_hub().await;
+    let warning = warning(&hub, warned_flow(&["wake-up-9"], None))
+        .await
+        .expect("a warning");
+    assert!(warning.contains("no wake-up alarm exists"), "{warning}");
+    assert!(!warning.contains("unknown wake-up alarm"), "{warning}");
+}
+
+fn hub_without_climate() -> Arc<Hub> {
+    let mut cfg = Config::default();
+    cfg.topics.discovery_prefixes = vec!["nidoo".to_owned()];
+    let (tx, rx) = mpsc::channel(8);
+    std::mem::forget(rx);
+    let hub = Hub::new(&cfg, tx);
+    hub.set_connection(ConnectionStatus::Online);
+    hub
+}
+
+#[tokio::test]
+async fn save_warns_engine_off_only_with_a_climate_step() {
+    let hub = hub_without_climate();
+    hub.ingest("nidoo/automation/wake-up-1", alarm_flow().as_bytes());
+    let with_step = warning(&hub, warned_flow(&[], Some("living")))
+        .await
+        .expect("a warning");
+    assert!(with_step.contains("climate engine is off"), "{with_step}");
+    let without = warning(&hub, warned_flow(&[], None)).await;
+    assert!(
+        without.is_none_or(|w| !w.contains("climate engine is off")),
+        "no climate step, no engine warning"
+    );
+}
+
+#[tokio::test]
+async fn save_refuses_a_hot_setpoint() {
+    let (hub, _rx) = test_hub().await;
+    let mut hot = warned_flow(&[], Some("living"));
     hot.nodes[1].kind = serde_json::from_value(serde_json::json!({
         "type": "climate.hold",
         "params": { "zones": ["living"], "setpoint": 99, "minutes": 60 }
     }))
     .expect("kind");
     assert!(hub.set_flow(hot).await.is_err(), "99 °C is refused");
+}
+
+#[tokio::test]
+async fn hold_two_zones_off_cool() {
+    let (hub, _rx) = test_hub().await;
+    let _engine = hub.start_engine();
+    let json = flow(
+        "o",
+        &[(
+            "climate.hold",
+            serde_json::json!({
+                "zones": ["living", "bedroom"], "setpoint": "off", "mode": "cool", "minutes": 30
+            }),
+        )],
+    );
+    let run = run(&hub, "o", &json).await;
+    let step = run.steps.last().expect("step");
+    assert_eq!(step.outcome, StepOutcome::Ok, "{step:?}");
+    assert!(
+        step.detail.starts_with("living off until "),
+        "{}",
+        step.detail
+    );
+    assert!(
+        step.detail.contains(", bedroom off until "),
+        "{}",
+        step.detail
+    );
+    for id in ["living", "bedroom"] {
+        let overrides = zone(&hub, id).overrides;
+        assert_eq!(overrides.len(), 1, "{id}: {overrides:?}");
+        assert_eq!(overrides[0].setpoint, Some(Setpoint::Off));
+        assert_eq!(overrides[0].mode, Some(nidoo_climate::doc::Mode::Cool));
+    }
 }
