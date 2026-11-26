@@ -465,6 +465,7 @@ pub async fn series(
     Ok(HistorySeries {
         window: window_secs,
         points,
+        span: None,
     })
 }
 
@@ -536,7 +537,10 @@ pub async fn daily(
             days_vec.push((day_from / 1_000_000, round3(k)));
         }
     }
-    Ok(HistoryDaily { days: days_vec })
+    Ok(HistoryDaily {
+        days: days_vec,
+        span: None,
+    })
 }
 
 pub async fn today(

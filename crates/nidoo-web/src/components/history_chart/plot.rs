@@ -86,6 +86,7 @@ pub fn field_series(track: &FieldTrack) -> Option<(HistorySeries, Option<String>
             HistorySeries {
                 window: *window,
                 points: points.clone(),
+                span: None,
             },
             track.unit.clone(),
         )),
@@ -217,11 +218,13 @@ mod tests {
         let empty = HistorySeries {
             window: 3600,
             points: vec![],
+            span: None,
         };
         assert_eq!(headline_or_error(&failed, &empty), Some("boom".into()));
         let some = HistorySeries {
             window: 60,
             points: vec![(0, 1.0, 1.0, 1.0)],
+            span: None,
         };
         assert_eq!(headline_or_error(&failed, &some), None);
         assert_eq!(headline_or_error(&ready(vec![]), &empty), None);

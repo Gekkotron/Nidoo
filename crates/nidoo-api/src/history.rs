@@ -67,6 +67,38 @@ impl HistoryRange {
 pub struct HistorySeries {
     pub window: i64,
     pub points: Vec<(i64, f64, f64, f64)>,
+    /// `[start, end]` unix seconds of a date-window request; absent for a preset range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<(i64, i64)>,
+}
+
+/// How a daily kWh series is bucketed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DailyPer {
+    Hour,
+    #[default]
+    Day,
+    Month,
+}
+
+impl DailyPer {
+    pub fn parse(s: &str) -> Option<DailyPer> {
+        match s {
+            "hour" => Some(DailyPer::Hour),
+            "day" => Some(DailyPer::Day),
+            "month" => Some(DailyPer::Month),
+            _ => None,
+        }
+    }
+}
+
+/// The dates history covers: the first day with data (if any) and the house's current date,
+/// both `YYYY-MM-DD`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HistoryExtent {
+    pub first_date: Option<String>,
+    pub today: String,
 }
 
 /// `GET /history/fields?entity=&range=`: every value of one entity over `range`, one track
@@ -110,6 +142,9 @@ pub enum TrackData {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HistoryDaily {
     pub days: Vec<(i64, f64)>,
+    /// `[start, end]` unix seconds of a date-window request; absent for a preset range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<(i64, i64)>,
 }
 
 /// kWh since local midnight for the current day.
@@ -184,10 +219,51 @@ mod tests {
         let series = HistorySeries {
             window: 600,
             points: vec![(1, 2.0, 1.0, 3.0)],
+            span: None,
         };
         assert_eq!(
             serde_json::to_value(&series).unwrap(),
             json!({"window": 600, "points": [[1, 2.0, 1.0, 3.0]]})
+        );
+    }
+
+    #[test]
+    fn daily_per_parses_and_serialises() {
+        assert_eq!(DailyPer::parse("month"), Some(DailyPer::Month));
+        assert_eq!(DailyPer::parse("week"), None);
+        assert_eq!(DailyPer::default(), DailyPer::Day);
+        assert_eq!(serde_json::to_value(DailyPer::Hour).unwrap(), json!("hour"));
+    }
+
+    #[test]
+    fn series_span_is_omitted_when_none() {
+        let mut series = HistorySeries {
+            window: 600,
+            points: vec![(1, 2.0, 1.0, 3.0)],
+            span: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&series).unwrap(),
+            r#"{"window":600,"points":[[1,2.0,1.0,3.0]]}"#
+        );
+        series.span = Some((10, 20));
+        assert_eq!(
+            serde_json::to_value(&series).unwrap()["span"],
+            json!([10, 20])
+        );
+        let back: HistorySeries = serde_json::from_str(r#"{"window":600,"points":[]}"#).unwrap();
+        assert_eq!(back.span, None);
+    }
+
+    #[test]
+    fn extent_serialises_dates() {
+        let extent = HistoryExtent {
+            first_date: None,
+            today: "2026-11-26".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&extent).unwrap(),
+            r#"{"first_date":null,"today":"2026-11-26"}"#
         );
     }
 
