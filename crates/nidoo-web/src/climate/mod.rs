@@ -27,6 +27,7 @@ use nidoo_climate::doc::{
 use nidoo_climate::view::{DecisionRow, LearnStatus, ZoneView};
 use nidoo_core::model::Kind;
 
+use crate::climate::heaters_card::name_ids;
 use crate::components::toast::Toasts;
 use crate::i18n::Lang;
 use crate::i18n::climate::{
@@ -265,19 +266,33 @@ pub fn week_minute(now: u64, tz: Tz) -> (Day, u16) {
 }
 
 /// One decision as a list line: "14:05 · Schedule · Heat 21° · reason", dated when not today.
-pub fn decision_line(lang: Lang, d: &Decision, now: u64, tz: Tz) -> String {
+/// The reason names the room's devices by their `labels` (id, label).
+pub fn decision_line(
+    lang: Lang,
+    d: &Decision,
+    now: u64,
+    tz: Tz,
+    labels: &[(String, String)],
+) -> String {
     format!(
         "{} · {} · {} {} · {}",
         stamp_text(lang, d.at, now, tz),
         source_word(lang, d.source),
         mode_word(lang, d.mode),
         setpoint_text(lang, d.setpoint),
-        reason_text(lang, &d.reason)
+        name_ids(&reason_text(lang, &d.reason), labels)
     )
 }
 
-/// An older history row as a list line, dated when not today.
-pub fn row_line(lang: Lang, r: &DecisionRow, now: u64, tz: Tz) -> String {
+/// An older history row as a list line, dated when not today; its reason names the room's
+/// devices by their `labels`.
+pub fn row_line(
+    lang: Lang,
+    r: &DecisionRow,
+    now: u64,
+    tz: Tz,
+    labels: &[(String, String)],
+) -> String {
     let setpoint = r
         .setpoint
         .map_or_else(|| "—".to_owned(), |t| degrees_text(lang, t));
@@ -287,7 +302,7 @@ pub fn row_line(lang: Lang, r: &DecisionRow, now: u64, tz: Tz) -> String {
         history_source(lang, &r.source),
         state_word(lang, StateCtx::Hvac, &r.mode),
         setpoint,
-        reason_text(lang, &r.reason)
+        name_ids(&reason_text(lang, &r.reason), labels)
     )
 }
 

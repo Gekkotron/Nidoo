@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 use nidoo_climate::doc::{Heater, HeaterDrive, ZoneSettings};
+use nidoo_climate::view::ZoneView;
 
 use crate::climate::entity_field::label_with_room;
 use crate::climate::settings_sheet::{NumField, Unit};
@@ -15,19 +16,21 @@ use crate::entity_picker::EntityAddButton;
 use crate::entity_picker::needs::{is_switch, keep};
 use crate::house::House;
 use crate::i18n::climate::{ClimateText, use_climate_text};
-use crate::i18n::use_lang;
+use crate::i18n::{Lang, use_lang};
 
 /// The longest cool-down the hub accepts, in minutes.
 const MAX_COOL_DOWN: u32 = 240;
 
 /// Remove a heater and every reference to it (room default, heat blocks); a list emptied that
-/// way becomes None.
+/// way becomes None. Once the last heater is gone, every choice goes back to None: the room
+/// default and the blocks' "Heated by" are hidden then, so none may stay behind.
 pub fn remove_heater(s: &mut ZoneSettings, id: &str) {
     s.heaters.retain(|h| h.entity != id);
+    let last = s.heaters.is_empty();
     let strip = |list: &mut Option<Vec<String>>| {
         if let Some(ids) = list {
             ids.retain(|i| i != id);
-            if ids.is_empty() {
+            if ids.is_empty() || last {
                 *list = None;
             }
         }
@@ -56,6 +59,49 @@ pub fn heater_labels(
         }
     }
     all
+}
+
+/// `text` (a decision's reason) with each id of `labels` replaced by its label, in one pass:
+/// the longest id is tried first, so an id that is a prefix of another is safe, a label put in
+/// is never rewritten, and an id inside a longer word is left alone.
+pub fn name_ids(text: &str, labels: &[(String, String)]) -> String {
+    let mut by_length: Vec<&(String, String)> =
+        labels.iter().filter(|(id, _)| !id.is_empty()).collect();
+    by_length.sort_by_key(|(id, _)| std::cmp::Reverse(id.len()));
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(c) = text[at..].chars().next() {
+        let rest = &text[at..];
+        let starts_word = !text[..at].chars().next_back().is_some_and(word);
+        let found = by_length.iter().find(|(id, _)| {
+            starts_word
+                && rest.starts_with(id.as_str())
+                && !rest[id.len()..].chars().next().is_some_and(word)
+        });
+        match found {
+            Some((id, label)) => {
+                out.push_str(label);
+                at += id.len();
+            }
+            None => {
+                out.push(c);
+                at += c.len_utf8();
+            }
+        }
+    }
+    out
+}
+
+/// id -> label for every climate unit and on/off heater of the zone, as [`heater_labels`]
+/// gives them, for naming them in a decision's reason.
+pub fn zone_labels(house: House, lang: Lang, z: &ZoneView) -> Vec<(String, String)> {
+    let units: Vec<(String, String)> = z
+        .entities
+        .iter()
+        .map(|id| (id.clone(), label_with_room(house, lang, id)))
+        .collect();
+    heater_labels(&z.settings, &units, |id| label_with_room(house, lang, id))
 }
 
 /// The room default after ticking or unticking `id`: `Some(new value of heated_by)`, or `None`
@@ -350,13 +396,33 @@ mod tests {
     #[test]
     fn remove_heater_keeps_the_rest_of_a_default() {
         let mut s = ZoneSettings {
-            heaters: vec![heater("stove")],
+            heaters: vec![heater("stove"), heater("rad")],
             heated_by: ids(&["unit", "stove"]),
             ..ZoneSettings::default()
         };
         remove_heater(&mut s, "stove");
-        assert!(s.heaters.is_empty());
         assert_eq!(s.heated_by, ids(&["unit"]));
+    }
+
+    #[test]
+    fn removing_the_last_heater_clears_every_choice() {
+        // With no heater left the choices are hidden: none may stay behind.
+        let mut s = ZoneSettings {
+            heaters: vec![heater("stove")],
+            heated_by: ids(&["A", "stove"]),
+            rules: Rules {
+                heat: Some(ModeRules {
+                    base: Setpoint::Temp(19.0),
+                    blocks: vec![block(Some(&["A"]))],
+                }),
+                cool: None,
+            },
+            ..ZoneSettings::default()
+        };
+        remove_heater(&mut s, "stove");
+        assert!(s.heaters.is_empty());
+        assert_eq!(s.heated_by, None);
+        assert_eq!(s.rules.heat.as_ref().unwrap().blocks[0].heated_by, None);
     }
 
     #[test]
@@ -415,6 +481,48 @@ mod tests {
         };
         let (units, all) = (strings(&["pump"]), strings(&["pump", "stove"]));
         assert_eq!(toggled_default(&s, &units, &all, "stove"), None);
+    }
+
+    fn labels(v: &[(&str, &str)]) -> Vec<(String, String)> {
+        v.iter()
+            .map(|(id, label)| ((*id).to_owned(), (*label).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_reason_names_heaters_and_units_by_their_labels() {
+        let named = labels(&[
+            ("trv", "Valve (Bedroom)"),
+            ("trv2", "Valve (Office)"),
+            ("0x1_switch", "Stove (Garage)"),
+        ]);
+        assert_eq!(
+            name_ids(
+                "Schedule block 1: 20.0 °C; 0x1_switch cooling down until 14:20; \
+                 trv2 held until 15:00; trv unreachable",
+                &named
+            ),
+            "Schedule block 1: 20.0 °C; Stove (Garage) cooling down until 14:20; \
+             Valve (Office) held until 15:00; Valve (Bedroom) unreachable"
+        );
+    }
+
+    #[test]
+    fn naming_ids_never_rewrites_a_label_or_a_longer_word() {
+        // `trv` is a prefix of `trv2`; the label of `rad` holds `trv`; `radiant` holds `rad`.
+        let named = labels(&[
+            ("trv", "Valve"),
+            ("trv2", "Office"),
+            ("rad", "Radiator trv"),
+        ]);
+        assert_eq!(
+            name_ids("rad on; trv2 off; trv off; radiant", &named),
+            "Radiator trv on; Office off; Valve off; radiant"
+        );
+        assert_eq!(
+            name_ids("Schedule base: 17.0 °C", &[]),
+            "Schedule base: 17.0 °C"
+        );
     }
 
     #[test]

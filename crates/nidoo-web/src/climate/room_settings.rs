@@ -13,7 +13,7 @@ use nidoo_climate::view::{DecisionLog, ZoneView};
 use crate::api::climate as api;
 use crate::climate::correction_card::CorrectionCard;
 use crate::climate::entity_field::{ThermometerField, label_with_room};
-use crate::climate::heaters_card::HeatersCard;
+use crate::climate::heaters_card::{HeatersCard, zone_labels};
 use crate::climate::presence_card::PresenceCard;
 use crate::climate::{act, decision_line, learn_status_text, row_line};
 use crate::components::now::Now;
@@ -112,19 +112,22 @@ pub fn RoomSettings(
         let tz = tz.get();
         let lang = lang();
         let now = clock.get();
+        let labels = zone.with(|z| zone_labels(house, lang, z));
         log.get().map(|l| {
             let recent = l
                 .recent
                 .iter()
                 .take(RECENT)
-                .map(|d| view! { <li>{decision_line(lang, d, now, tz)}</li> })
+                .map(|d| view! { <li>{decision_line(lang, d, now, tz, &labels)}</li> })
                 .collect_view();
             let older = l
                 .older
                 .iter()
-                .map(
-                    |r| view! { <li class="climate-decisions__older">{row_line(lang, r, now, tz)}</li> },
-                )
+                .map(|r| {
+                    view! {
+                        <li class="climate-decisions__older">{row_line(lang, r, now, tz, &labels)}</li>
+                    }
+                })
                 .collect_view();
             view! { <ul class="climate-decisions__list">{recent}{older}</ul> }
         })
