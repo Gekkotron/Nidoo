@@ -8,6 +8,7 @@ use nidoo_api::ConnectionStatus;
 use nidoo_climate::doc::{
     Decision, HeaterRun, Mode, Override, OverrideOrigin, Setpoint, ZoneSettings, ZoneState,
 };
+use nidoo_climate::ledger::DRIFT_WINDOW_S;
 use nidoo_core::model::{Availability, Command, StateValue};
 
 use super::ClimateRuntime;
@@ -234,10 +235,11 @@ impl Hub {
     /// `id` was just seen turning `on`. A state the engine did not ask for (another than the
     /// one it last sent, or nothing sent at all) is a hand flip, at once: only the echo of a
     /// command to that same state is the engine's, in flight or late. Outside an active zone
-    /// deciding in heat, or on a disabled heater, it is no hand flip and is taken as the state
-    /// to start from, so it never turns into a hold later.
+    /// deciding in heat, on a disabled heater, or on a switch back online within the drift
+    /// window (it restarted as it does after a power cut), it is no hand flip and is taken as
+    /// the state to start from, so it never turns into a hold later.
     fn judge_flip(&self, zone: &str, id: &str, on: bool, now: u64) {
-        if !self.flips_are_held(zone, id) {
+        if !self.flips_are_held(zone, id) || self.back_online(id, now) {
             acknowledge(&mut self.climate_runtime(), id, on);
             return;
         }
@@ -251,7 +253,8 @@ impl Hub {
     /// last command to it, into another state than that command's, is a hand flip, even if
     /// its change was seen where it was not judged. A switch that never moved after a command
     /// (a failing command) is not, nor one whose last command has no known send time (what a
-    /// retained decision asked for, seeded at start: it may never have been sent).
+    /// retained decision asked for, seeded at start: it may never have been sent). A switch back
+    /// online within the drift window is acknowledged instead.
     fn recheck_flip(&self, zone: &str, id: &str, on: bool, now: u64) {
         let unanswered = {
             let rt = self.climate_runtime();
@@ -265,8 +268,21 @@ impl Hub {
             )
         };
         if unanswered && self.flips_are_held(zone, id) {
-            self.record_heater_hand(zone, id, on, now);
+            if self.back_online(id, now) {
+                acknowledge(&mut self.climate_runtime(), id, on);
+            } else {
+                self.record_heater_hand(zone, id, on, now);
+            }
         }
+    }
+
+    /// Whether `id` came back online within the climate units' drift window before `now`: the
+    /// state it shows then is where it restarted, not a hand flip.
+    fn back_online(&self, id: &str, now: u64) -> bool {
+        self.climate_runtime()
+            .online_since
+            .get(id)
+            .is_some_and(|since| now.saturating_sub(*since) <= DRIFT_WINDOW_S)
     }
 
     /// Whether a flip of `id` becomes a hold: an enabled heater of an active zone whose

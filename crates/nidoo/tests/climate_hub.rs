@@ -471,9 +471,20 @@ async fn a_heater_from_another_area_is_accepted() {
 #[tokio::test(start_paused = true)]
 async fn missing_heater_entity_is_skipped() {
     let (hub, _rx) = hub(true);
-    feed_daikin(&hub, 0, "living").await;
+    let daikin = feed_daikin(&hub, 0, "living").await;
+    // The unit is reachable, already heating at the base.
+    hub.ingest(
+        "daikin/192.0.2.150/ha/state",
+        br#"{"mode":"heat","target_temperature":20.0,"current_temperature":19.0}"#,
+    );
     let plug = feed_plug(&hub, "garage").await;
-    hub.set_climate_zone("living", with_heater(&plug)).unwrap();
+    let mut settings = with_heater(&plug);
+    settings.rules.heat = Some(ModeRules {
+        base: Setpoint::Temp(20.0),
+        blocks: Vec::new(),
+    });
+    settings.heated_by = Some(vec![plug.clone()]);
+    hub.set_climate_zone("living", settings).unwrap();
     // The plug's discovery is then cleared; the settings still name it.
     hub.ingest("nidoo/switch/0x00124b0024bc601e/switch/config", b"");
     let now = nidoo::clock::now();
@@ -487,6 +498,21 @@ async fn missing_heater_entity_is_skipped() {
         .and_then(|z| z.decision)
         .expect("a decision is still published");
     assert!(!decision.entities.contains_key(&plug));
+    // It counts as unreachable, and the climate unit heats in its place.
+    assert!(
+        decision.reason.contains(&format!("{plug} unreachable"))
+            && decision
+                .reason
+                .ends_with("; the climate units heat meanwhile"),
+        "{}",
+        decision.reason
+    );
+    let unit = &decision.entities[&daikin];
+    assert_eq!(
+        (unit.mode.as_str(), unit.setpoint),
+        ("heat", Some(20.0)),
+        "{decision:?}"
+    );
 }
 
 // ----- the evaluation loop -----
@@ -3075,6 +3101,35 @@ mod engine {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_heat_boost_in_the_cool_season_leaves_the_plug_alone() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        set_season(&mut rig, Season::Cool);
+        let boost = vec![Override {
+            entity: None,
+            setpoint: Some(Setpoint::Temp(22.0)),
+            mode: Some(Mode::Heat),
+            until: rig.t0 + hm(12, 0),
+            origin: OverrideOrigin::User,
+        }];
+        rig.hub.ingest_message(
+            "nidoo/climate/zone/living/override",
+            serde_json::to_string(&boost).unwrap().as_bytes(),
+            true,
+        );
+        for at in [hm(9, 0), hm(9, 1), hm(10, 0)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(rig.sim.plug, Some(false));
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.source, Source::Boost);
+        assert!(!decision.entities.contains_key(&plug), "{decision:?}");
+        assert!(decision.heaters.is_empty(), "{decision:?}");
+        // The climate unit runs the boost.
+        assert_eq!(decision.entities[&rig.id].setpoint, Some(22.0));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn leaving_heat_sends_one_off_then_nothing() {
         let (mut rig, plug) = stove_rig(false, 0).await;
         assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
@@ -3200,6 +3255,62 @@ mod engine {
         let decision = next.zone().decision.unwrap();
         assert_eq!(decision.entities[&plug], switch_target("heat", false));
         assert_eq!(decision.heaters[&plug].on_since, Some(next.t0 + hm(9, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restart_keeps_running_hold_heater_on() {
+        let (mut rig, plug) = stove_rig(false, 15).await;
+        let mut settings = stove_settings(&plug, 15);
+        settings.heaters[0].drive = HeaterDrive::Hold;
+        rig.settings(settings);
+        rig.pass(hm(8, 30)).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+
+        let mut next = restarted(&rig).await;
+        for at in [hm(9, 30), hm(9, 31), hm(9, 32)] {
+            let out = next.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(next.sim.plug, Some(true));
+        assert!(next.zone().overrides.is_empty());
+        let decision = next.zone().decision.unwrap();
+        assert_eq!(decision.entities[&plug], switch_target("heat", false));
+        assert_eq!(decision.heaters[&plug].on_since, Some(next.t0 + hm(9, 0)));
+        assert_eq!(decision.heaters[&plug].wait_until, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_heater_back_from_offline_is_no_hand_flip() {
+        let (mut rig, plug) = stove_rig(false, 15).await;
+        rig.pass(hm(10, 0)).await;
+        assert_eq!(plug_commands(&rig.pass(hm(10, 15)).await), vec!["ON"]);
+        // The plug loses power: offline, back online, and it reports off.
+        let bridge = |hub: &Hub, state: &str| {
+            hub.ingest(
+                "zigbee2mqtt/bridge/state",
+                serde_json::json!({ "state": state }).to_string().as_bytes(),
+            );
+        };
+        bridge(&rig.hub, "offline");
+        rig.hub.observe_climate(&plug, rig.t0 + hm(10, 30));
+        bridge(&rig.hub, "online");
+        rig.hub.observe_climate(&plug, rig.t0 + hm(10, 31));
+        let back = rig.t0 + hm(10, 31) + 30;
+        rig.sim.flip_plug(&rig.hub, false);
+        rig.hub.observe_heater(&plug, false, back);
+        assert!(
+            rig.zone().overrides.is_empty(),
+            "{:?}",
+            rig.zone().overrides
+        );
+        // The engine's decision applies: on again once the cool-down from the cut is over.
+        let out = rig.pass(hm(10, 32)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert!(rig.zone().overrides.is_empty());
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.heaters[&plug].wait_until, Some(back + 15 * 60));
+        let out = rig.pass(hm(10, 47)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
     }
 
     #[tokio::test(start_paused = true)]
@@ -3719,6 +3830,45 @@ mod approval {
             .await
             .unwrap();
         assert_eq!(zone(&hub).settings.rules, rules(15.0));
+    }
+
+    #[tokio::test]
+    async fn approving_drops_a_heater_removed_since_from_heated_by() {
+        let (hub, _rx) = rig().await;
+        let daikin = zone(&hub).entities[0].clone();
+        let plug = feed_plug(&hub, "garage").await;
+        hub.set_climate_zone("living", with_heater_pending(&plug))
+            .unwrap();
+        // A proposal whose blocks inherited the plug: one with the unit too, one with it alone.
+        let mut p = proposal("p-2", 17.0);
+        let blocks = &mut p.rules.heat.as_mut().unwrap().blocks;
+        blocks[0].heated_by = Some(vec![plug.clone(), daikin.clone()]);
+        blocks.push(Block {
+            days: vec![Day::Wed],
+            heated_by: Some(vec![plug.clone()]),
+            ..blocks[0].clone()
+        });
+        seed(&hub, &p);
+        // The plug then leaves the room.
+        hub.set_climate_zone("living", ZoneSettings::default())
+            .unwrap();
+        hub.approve_climate_proposal("living", None).await.unwrap();
+        let settings = zone(&hub).settings;
+        let blocks = &settings.rules.heat.as_ref().unwrap().blocks;
+        assert_eq!(blocks[0].heated_by, Some(vec![daikin]));
+        assert_eq!(blocks[1].heated_by, None);
+        // A later save of the settings is accepted.
+        hub.set_climate_zone("living", settings).unwrap();
+    }
+
+    fn with_heater_pending(entity: &str) -> ZoneSettings {
+        ZoneSettings {
+            heaters: vec![Heater {
+                entity: entity.to_owned(),
+                ..Heater::default()
+            }],
+            ..ZoneSettings::default()
+        }
     }
 
     #[tokio::test]
