@@ -381,6 +381,41 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The files of the `#[cfg(test)] mod name;` declarations in `files`: test code, never shown.
+fn test_module_files(files: &[PathBuf]) -> BTreeSet<PathBuf> {
+    let mut out = BTreeSet::new();
+    for path in files {
+        let source = std::fs::read_to_string(path).unwrap();
+        let mut cfg_test = false;
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed == "#[cfg(test)]" {
+                cfg_test = true;
+                continue;
+            }
+            if cfg_test
+                && let Some(name) = trimmed
+                    .strip_prefix("mod ")
+                    .and_then(|r| r.strip_suffix(';'))
+            {
+                let dir = path.parent().unwrap();
+                let stem = path.file_stem().unwrap();
+                // `lib.rs` and `mod.rs` keep their modules beside them, `foo.rs` in `foo/`.
+                let base = if stem == "lib" || stem == "mod" {
+                    dir.to_path_buf()
+                } else {
+                    dir.join(stem)
+                };
+                out.insert(base.join(format!("{name}.rs")));
+            }
+            if !trimmed.starts_with("#[") {
+                cfg_test = false;
+            }
+        }
+    }
+    out
+}
+
 /// `src/<path>` for a file under `src/`.
 fn rel(path: &Path) -> String {
     let base = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -421,6 +456,12 @@ fn no_bare_text_outside_the_table() {
     let allow = read_allow();
     let mut files = Vec::new();
     rust_files(&src_dir(), &mut files);
+    let tests = test_module_files(&files);
+    files.retain(|f| !tests.contains(f));
+    assert!(
+        tests.iter().all(|t| t.exists()),
+        "a test module file is missing: {tests:#?}"
+    );
 
     let mut hits: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut used_texts = BTreeSet::new();

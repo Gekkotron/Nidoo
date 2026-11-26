@@ -1,0 +1,839 @@
+use std::collections::BTreeMap;
+
+use nidoo_api::{AreaView, EntityView};
+use nidoo_core::model::{
+    AlarmMode, Capabilities, EntityCategory, EntityState, Kind, StateValue, UiOverride,
+};
+use serde_json::json;
+
+use super::*;
+
+fn ent(id: &str, name: &str, kind: Kind) -> EntityView {
+    EntityView {
+        id: id.into(),
+        device_id: None,
+        name: name.into(),
+        device_name: None,
+        label: None,
+        kind,
+        component: kind.component().to_string(),
+        protocol_kind: kind,
+        device_class: None,
+        unit: None,
+        icon: None,
+        category: EntityCategory::Primary,
+        enabled_by_default: true,
+        area: "salon".into(),
+        part_of: None,
+        capabilities: Capabilities::default(),
+        ui: UiOverride::default(),
+        state: EntityState::default(),
+    }
+}
+
+fn house(list: Vec<EntityView>) -> BTreeMap<String, EntityView> {
+    list.into_iter().map(|e| (e.id.clone(), e)).collect()
+}
+
+fn run(query: &str, entities: &BTreeMap<String, EntityView>) -> Vec<Entry> {
+    let areas: Vec<AreaView> = Vec::new();
+    let ctx = Ctx {
+        entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang: crate::i18n::Lang::En,
+    };
+    entries(query, &ctx)
+}
+
+#[test]
+fn the_kind_word_finds_entities_in_either_language() {
+    let entities = house(vec![ent("c1", "Shutter living", Kind::Cover)]);
+    let areas: Vec<AreaView> = Vec::new();
+    for (lang, query) in [
+        (crate::i18n::Lang::Fr, "cover"),
+        (crate::i18n::Lang::En, "volet"),
+    ] {
+        let ctx = Ctx {
+            entities: &entities,
+            areas: &areas,
+            flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
+            lang,
+        };
+        let got = entries(query, &ctx);
+        assert!(
+            got.iter().any(|e| e.label.contains("Shutter living")),
+            "{query}: {:?}",
+            got.iter().map(|e| e.label.clone()).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn the_action_word_finds_only_the_cards_that_do_it() {
+    let shutter = |id: &str, name: &str| {
+        let mut c = ent(id, name, Kind::Cover);
+        c.capabilities.open_close = true;
+        c
+    };
+    let entities = house(vec![
+        shutter("c1", "Volet sud"),
+        shutter("c2", "Volet nord"),
+        ent("l1", "Lampe", Kind::Light),
+    ]);
+    let areas: Vec<AreaView> = Vec::new();
+    let ctx = Ctx {
+        entities: &entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang: crate::i18n::Lang::Fr,
+    };
+    let labels =
+        |q: &str| -> Vec<String> { entries(q, &ctx).into_iter().map(|e| e.label).collect() };
+    let all = labels("ferm");
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(
+        all.iter().all(|l| fold_accents(l).contains("ferm")),
+        "{all:?}"
+    );
+    // The action word narrows an entity word: one card, the closing of the south shutter.
+    let south = labels("ferm sud");
+    assert_eq!(south.len(), 1, "{south:?}");
+    assert!(south[0].contains("Volet sud"), "{south:?}");
+}
+
+#[test]
+fn generic_cards_read_and_search_in_both_languages() {
+    let entities = BTreeMap::new();
+    let areas: Vec<AreaView> = Vec::new();
+    let ctx = |lang| Ctx {
+        entities: &entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang,
+    };
+    let fr = entries("", &ctx(crate::i18n::Lang::Fr));
+    let labels: Vec<_> = fr.iter().map(|e| e.label.as_str()).collect();
+    assert_eq!(labels[0], "Appareil");
+    assert_eq!(labels[1], "Programmation");
+    assert!(labels.contains(&"Quand il fait nuit"));
+    assert!(
+        matches!(&fr[13].kind, NodeKind::Notify(p) if p.title == "Notification"),
+        "the stored default follows the language at creation"
+    );
+    // The English word finds the card on the French UI, and the French word on the English UI.
+    let wait_fr = entries("wait", &ctx(crate::i18n::Lang::Fr));
+    assert_eq!(wait_fr.len(), 1);
+    assert_eq!(wait_fr[0].label, "Attente");
+    let wait_en = entries("attente", &ctx(crate::i18n::Lang::En));
+    assert_eq!(wait_en.len(), 1);
+    assert_eq!(wait_en[0].label, "Wait");
+}
+
+#[test]
+fn group_tag_follows_the_language() {
+    let entities = house(vec![ent("group_a", "Salon", Kind::Light)]);
+    let areas: Vec<AreaView> = Vec::new();
+    let ctx = Ctx {
+        entities: &entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang: crate::i18n::Lang::Fr,
+    };
+    let got = entries("salon", &ctx);
+    assert!(
+        got.iter().all(|e| e.label.ends_with(" (Groupe)")),
+        "{got:?}"
+    );
+    assert!(got.iter().any(|e| e.label == "Allumer Salon (Groupe)"));
+}
+
+fn count(entries: &[Entry], group: Group) -> usize {
+    entries.iter().filter(|e| e.group == group).count()
+}
+
+#[test]
+fn library_lists_pick_a_label() {
+    let entities = BTreeMap::new();
+    for query in ["label", "étiquette", "choix"] {
+        let got = run(query, &entities);
+        let card = got
+            .iter()
+            .find(|e| matches!(&e.kind, NodeKind::FlowLabel(_)))
+            .unwrap_or_else(|| panic!("{query}: {got:?}"));
+        assert_eq!(card.group, Group::Flow);
+        assert_eq!(card.label, "Pick a label");
+        assert_eq!(
+            card.sub.as_deref(),
+            Some("Pick a season, or turn a label's flows on or off")
+        );
+        assert!(
+            matches!(&card.kind, NodeKind::FlowLabel(p) if p.label.is_empty() && p.action == nidoo_core::flow::LabelAction::Pick)
+        );
+    }
+}
+
+#[test]
+fn library_lists_back_up() {
+    let entities = BTreeMap::new();
+    for query in ["back up", "sauvegarde", "ftp"] {
+        let got = run(query, &entities);
+        let card = got
+            .iter()
+            .find(|e| matches!(&e.kind, NodeKind::BackupRun(_)))
+            .unwrap_or_else(|| panic!("{query}: {got:?}"));
+        assert_eq!(card.group, Group::Flow);
+        assert_eq!(card.label, "Back up");
+        assert_eq!(
+            card.sub.as_deref(),
+            Some("Backs up the hub to the FTP server and waits for the result")
+        );
+        assert!(matches!(
+            &card.kind,
+            NodeKind::BackupRun(p) if p.timeout_minutes == 120
+        ));
+    }
+}
+
+#[test]
+fn device_card_is_an_empty_state_trigger_found_in_either_language() {
+    let entities = house(vec![]);
+    let got = run("", &entities);
+    let first = &got[0];
+    assert_eq!(first.group, Group::When);
+    assert_eq!(
+        first.sub.as_deref(),
+        Some("When a device changes or sends an event")
+    );
+    assert!(
+        matches!(&first.kind, NodeKind::TriggerState(p) if p.entity.is_empty() && p.to.is_none())
+    );
+    for q in ["device", "appareil", "event", "evenement"] {
+        assert!(
+            run(q, &entities)
+                .iter()
+                .any(|e| matches!(&e.kind, NodeKind::TriggerState(p) if p.entity.is_empty())),
+            "{q}"
+        );
+    }
+}
+
+#[test]
+fn empty_query_has_generic_entries() {
+    let entities = house(vec![ent("l1", "Lumière table", Kind::Light)]);
+    let got = run("", &entities);
+    let labels: Vec<_> = got.iter().map(|e| (e.group, e.label.as_str())).collect();
+    assert_eq!(
+        labels,
+        [
+            (Group::When, "Device"),
+            (Group::When, "Schedule"),
+            (Group::When, "Sun event"),
+            (Group::When, "Off-peak"),
+            (Group::When, "Alarm"),
+            (Group::When, "Silent for"),
+            (Group::When, "Manual"),
+            (Group::When, "Before a wake-up alarm"),
+            (Group::And, "When it's dark"),
+            (Group::And, "Is it off-peak?"),
+            (Group::And, "Switch"),
+            (Group::And, "Math"),
+            (Group::And, "Time of day"),
+            (Group::Then, "Notify"),
+            (Group::Then, "Speak"),
+            (Group::Then, "Ask"),
+            (Group::Then, "Heating hold"),
+            (Group::Then, "Room eco"),
+            (Group::Wait, "Wait"),
+            (Group::Wait, "Limit"),
+            (Group::Flow, "Disable this flow"),
+            (Group::Flow, "Enable a flow"),
+            (Group::Flow, "Pick a label"),
+            (Group::Flow, "Back up"),
+        ]
+    );
+    let subs: Vec<_> = got.iter().map(|e| e.sub.as_deref()).collect();
+    assert_eq!(
+        subs,
+        [
+            Some("When a device changes or sends an event"),
+            Some("At a set time, or on a repeat"),
+            Some("Sunrise, sunset, dusk or dawn"),
+            Some("When off-peak starts or ends"),
+            Some("When the alarm changes mode"),
+            Some("When an entity stops reporting"),
+            Some("Start by hand from the ▶ button"),
+            Some("Starts a set time before a wake-up alarm rings"),
+            Some("Between dusk and dawn"),
+            Some("Off-peak hours right now"),
+            Some("Several exits, one per rule"),
+            Some("Compute a number from your devices"),
+            Some("Inside or outside two times"),
+            Some("A push to your phone"),
+            Some("Said out loud on the speakers"),
+            Some("Asks out loud and waits for the answer"),
+            Some("Holds a temperature in rooms for a while"),
+            Some("Puts rooms in eco for a while"),
+            Some("A fixed or random delay"),
+            Some("Lets only so many runs through"),
+            Some("Stops it from running again"),
+            Some("Switches another flow on or off"),
+            Some("Pick a season, or turn a label's flows on or off"),
+            Some("Backs up the hub to the FTP server and waits for the result"),
+        ]
+    );
+    assert!(matches!(
+        &got[1].kind,
+        NodeKind::TriggerSchedule(p) if p.cron == "0 * * * *"
+    ));
+    assert!(matches!(&got[11].kind, NodeKind::Math(p) if p.name.is_empty()));
+    assert!(matches!(&got[13].kind, NodeKind::Notify(p) if p.title == "Notification"));
+    assert!(matches!(
+        &got[14].kind,
+        NodeKind::Speak(p) if p.text == "Hello" && p.room.is_none()
+    ));
+    assert!(matches!(
+        &got[15].kind,
+        NodeKind::Ask(p) if p.answers.len() == 2 && p.room.is_none()
+            && p.answers[0].label == "Yes" && p.answers[1].label == "No"
+    ));
+    assert!(matches!(&got[18].kind, NodeKind::Delay(p) if p.for_ == "5m"));
+    assert!(matches!(
+        &got[10].kind,
+        NodeKind::Switch(p) if p.otherwise && p.entity.is_none()
+            && p.rules.len() == 1 && p.rules[0].op == RuleOp::Eq
+            && p.rules[0].value == Value::Bool(true)
+    ));
+    assert!(matches!(
+        &got[12].kind,
+        NodeKind::TimeBetween(p) if p.from == "07:00" && p.to == "22:00"
+    ));
+}
+
+#[test]
+fn library_lists_silent_and_limit() {
+    let entities = BTreeMap::new();
+    let got = run("", &entities);
+    let silent = got
+        .iter()
+        .find(|e| matches!(e.kind, NodeKind::TriggerSilent(_)))
+        .expect("a silent entry");
+    assert_eq!(silent.group, Group::When);
+    assert_eq!(silent.label, "Silent for");
+    assert!(matches!(
+        &silent.kind,
+        NodeKind::TriggerSilent(p) if p.entity.is_empty() && p.for_ == "50m"
+    ));
+    let limit = got
+        .iter()
+        .find(|e| matches!(e.kind, NodeKind::Limit(_)))
+        .expect("a limit entry");
+    assert_eq!(limit.group, Group::Wait);
+    assert_eq!(limit.label, "Limit");
+    assert!(matches!(
+        &limit.kind,
+        NodeKind::Limit(p) if p.max == 4 && p.per == "24h"
+    ));
+    // Either language's word finds the cards.
+    assert_eq!(run("silencieux", &entities).len(), 1);
+    assert_eq!(run("limite", &entities).len(), 1);
+}
+
+#[test]
+fn manual_card_is_found_by_its_names_in_either_language() {
+    let entities = BTreeMap::new();
+    for query in ["manual", "inject", "button", "manuel", "bouton"] {
+        let got = run(query, &entities);
+        assert_eq!(got.len(), 1, "{query}: {got:?}");
+        assert_eq!(got[0].group, Group::When);
+        assert!(matches!(&got[0].kind, NodeKind::TriggerManual(p) if p.value.is_none()));
+    }
+    let empty = run("", &entities);
+    assert!(
+        empty
+            .iter()
+            .any(|e| e.group == Group::When && matches!(e.kind, NodeKind::TriggerManual(_)))
+    );
+}
+
+#[test]
+fn library_lists_switch_and_time() {
+    let entities = BTreeMap::new();
+    let areas: Vec<AreaView> = Vec::new();
+    let ctx = |lang| Ctx {
+        entities: &entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang,
+    };
+    let fr = entries("", &ctx(crate::i18n::Lang::Fr));
+    let labels: Vec<_> = fr.iter().map(|e| e.label.as_str()).collect();
+    assert!(labels.contains(&"Commuter") && labels.contains(&"Plage horaire"));
+    let sub = |label: &str| {
+        fr.iter()
+            .find(|e| e.label == label)
+            .and_then(|e| e.sub.clone())
+    };
+    assert_eq!(
+        sub("Commuter").as_deref(),
+        Some("Plusieurs sorties, une par règle")
+    );
+    assert_eq!(
+        sub("Plage horaire").as_deref(),
+        Some("Dans ou hors d'une plage horaire")
+    );
+    // Either language's word finds the card.
+    let found = entries("plage", &ctx(crate::i18n::Lang::En));
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "Time of day");
+    assert_eq!(
+        entries("commuter", &ctx(crate::i18n::Lang::En))[0].label,
+        "Switch"
+    );
+}
+
+#[test]
+fn an_entity_gets_a_switch_card_next_to_its_if() {
+    let entities = house(vec![ent("l1", "Lumière table", Kind::Light)]);
+    let got = run("table", &entities);
+    let switch = got
+        .iter()
+        .find(|e| matches!(&e.kind, NodeKind::Switch(_)))
+        .expect("a switch entry");
+    assert_eq!(switch.group, Group::And);
+    assert_eq!(switch.label, "Switch on Lumière table");
+    assert!(matches!(
+        &switch.kind,
+        NodeKind::Switch(p) if p.entity.as_deref() == Some("l1") && p.otherwise && p.rules.len() == 1
+    ));
+}
+
+#[test]
+fn entity_entries_carry_the_subline() {
+    let entities = house(vec![ent("l1", "Lumière table", Kind::Light)]);
+    let areas = vec![AreaView {
+        id: "salon".into(),
+        name: "Salon".into(),
+        icon: None,
+        order: None,
+        entity_count: 1,
+        primary_count: 1,
+        group_names: Default::default(),
+        group_favorites: Default::default(),
+    }];
+    let ctx = Ctx {
+        entities: &entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang: crate::i18n::Lang::En,
+    };
+    let got = entries("table", &ctx);
+    let entity: Vec<_> = got.iter().filter(|e| e.label.contains("Lumière")).collect();
+    assert!(!entity.is_empty());
+    for e in entity {
+        assert_eq!(e.sub.as_deref(), Some("Salon"), "{}", e.label);
+    }
+}
+
+#[test]
+fn picker_offers_lock_controls() {
+    let mut lock = ent("k1", "Front door", Kind::Generic);
+    lock.component = "lock".into();
+    lock.capabilities.generic = Some(nidoo_core::types::GenericCaps {
+        controls: vec!["locked".into(), "open".into()],
+        ..Default::default()
+    });
+    let cmds: Vec<Command> = entity_actions(&lock)
+        .into_iter()
+        .map(|a| a.command)
+        .collect();
+    assert!(cmds.contains(&Command::Control {
+        control: "locked".into(),
+        value: Some(json!(true))
+    }));
+    assert!(cmds.contains(&Command::Control {
+        control: "open".into(),
+        value: None
+    }));
+}
+
+#[test]
+fn picker_offers_alarm_disarm_and_announced_modes() {
+    let mut panel = ent("a1", "Alarm", Kind::AlarmPanel);
+    panel.capabilities.alarm_modes = [AlarmMode::Away, AlarmMode::Night].into();
+    assert_eq!(
+        entity_actions(&panel)
+            .into_iter()
+            .map(|a| a.command)
+            .collect::<Vec<_>>(),
+        vec![
+            Command::Disarm { code: None },
+            Command::Arm {
+                mode: AlarmMode::Away,
+                code: None
+            },
+            Command::Arm {
+                mode: AlarmMode::Night,
+                code: None
+            },
+        ]
+    );
+    panel.capabilities.alarm_modes.clear();
+    // Discovery fills the modes; a panel that announces none offers only Disarm.
+    assert_eq!(entity_actions(&panel).len(), 1);
+}
+
+#[test]
+fn alarm_cards_read_in_both_languages() {
+    let mut panel = ent("a1", "Alarme", Kind::AlarmPanel);
+    panel.capabilities.alarm_modes = [AlarmMode::Away].into();
+    let entities = house(vec![panel]);
+    let areas: Vec<AreaView> = Vec::new();
+    for (lang, want) in [
+        (
+            crate::i18n::Lang::En,
+            ["Disarm Alarme", "Arm Alarme (away)"],
+        ),
+        (
+            crate::i18n::Lang::Fr,
+            ["Désactiver Alarme", "Activer Alarme (absent)"],
+        ),
+    ] {
+        let ctx = Ctx {
+            entities: &entities,
+            areas: &areas,
+            flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
+            lang,
+        };
+        let labels: Vec<String> = entries("alarme", &ctx)
+            .into_iter()
+            .filter(|e| e.group == Group::Then)
+            .map(|e| e.label)
+            .collect();
+        assert_eq!(labels, want);
+    }
+}
+
+#[test]
+fn library_lists_the_alarm_card_in_both_languages() {
+    let areas: Vec<AreaView> = Vec::new();
+    let entities = BTreeMap::new();
+    for (lang, query, label) in [
+        (crate::i18n::Lang::En, "alarm", "Alarm"),
+        (crate::i18n::Lang::Fr, "alarme", "Alarme"),
+        (crate::i18n::Lang::En, "alarme", "Alarm"),
+    ] {
+        let ctx = Ctx {
+            entities: &entities,
+            areas: &areas,
+            flows: &[],
+            labels: &crate::flow_text::NO_LABELS,
+            lang,
+        };
+        let found = entries(query, &ctx)
+            .into_iter()
+            .find(|e| matches!(e.kind, NodeKind::TriggerAlarm(_)))
+            .expect("alarm card");
+        assert_eq!(found.group, Group::When);
+        assert_eq!(found.label, label);
+    }
+}
+
+#[test]
+fn picker_offers_remote_signals() {
+    let mut remote = ent("r1", "Remote", Kind::Generic);
+    remote.component = "device_automation".into();
+    remote.capabilities.generic = Some(nidoo_core::types::GenericCaps {
+        signals: vec!["on".into(), "off".into()],
+        ..Default::default()
+    });
+    let got = run("remote", &house(vec![remote]));
+    let signals: Vec<Option<String>> = got
+        .iter()
+        .filter_map(|e| match &e.kind {
+            NodeKind::TriggerSignal(p) => Some(p.signal.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(signals, [Some("on".into()), Some("off".into()), None]);
+}
+
+#[test]
+fn door_search_offers_one_when_entry_per_value() {
+    let mut door = ent("d1", "Front door", Kind::BinarySensor);
+    door.device_class = Some("door".into());
+    let got = run("front", &house(vec![door]));
+    let when: Vec<(String, Option<Value>)> = got
+        .iter()
+        .filter(|e| e.group == Group::When)
+        .filter_map(|e| match &e.kind {
+            NodeKind::TriggerState(p) => Some((e.label.clone(), p.to.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(when[0], ("When Front door changes".into(), None));
+    assert_eq!(when[1].1, Some(json!(true)));
+    assert_eq!(when[2].1, Some(json!(false)));
+    assert_eq!(when.len(), 3);
+}
+
+#[test]
+fn table_query_lists_light_entries() {
+    let mut light = ent("l1", "Lumière table", Kind::Light);
+    light.state.value = StateValue::OnOff(true);
+    let entities = house(vec![light, ent("l2", "Bedroom", Kind::Light)]);
+    let got = run("table", &entities);
+    assert_eq!(count(&got, Group::When), 1);
+    // An `if` and a switch on the entity.
+    assert_eq!(count(&got, Group::And), 2);
+    assert_eq!(count(&got, Group::Then), 3);
+    let label = |g| got.iter().find(|e| e.group == g).unwrap().label.clone();
+    assert_eq!(label(Group::When), "When Lumière table changes");
+    assert_eq!(label(Group::And), "Lumière table is on?");
+    let then: Vec<_> = got
+        .iter()
+        .filter(|e| e.group == Group::Then)
+        .map(|e| e.label.as_str())
+        .collect();
+    assert_eq!(
+        then,
+        [
+            "Turn on Lumière table",
+            "Turn off Lumière table",
+            "Toggle Lumière table"
+        ]
+    );
+    let groups: Vec<_> = got.iter().map(|e| e.group).collect();
+    assert!(groups.windows(2).all(|w| w[0] <= w[1]));
+}
+
+#[test]
+fn accent_insensitive() {
+    let entities = house(vec![ent("l1", "Lumière", Kind::Light)]);
+    assert_eq!(count(&run("lumiere", &entities), Group::When), 1);
+    assert_eq!(count(&run("LUMIÈRE", &entities), Group::When), 1);
+}
+
+#[test]
+fn device_name_and_words_match() {
+    let weather = |id: &str, name: &str| {
+        let mut e = ent(id, name, Kind::Sensor);
+        e.device_name = Some("Weather".into());
+        e
+    };
+    let entities = house(vec![
+        weather("w1", "Weather Temperature"),
+        weather("w2", "Weather Rain next hour"),
+        ent("l1", "Lumière", Kind::Light),
+    ]);
+    assert_eq!(count(&run("weather", &entities), Group::When), 2);
+    let rain = run("weather rain", &entities);
+    assert_eq!(count(&rain, Group::When), 1);
+    assert_eq!(
+        rain.iter().find(|e| e.group == Group::When).unwrap().label,
+        "When Rain next hour changes"
+    );
+}
+
+#[test]
+fn lists_every_matching_entity() {
+    let list = (0..12)
+        .map(|i| ent(&format!("l{i}"), &format!("Lampe {i:02}"), Kind::Light))
+        .collect();
+    let got = run("lampe", &house(list));
+    assert_eq!(count(&got, Group::When), 12);
+    assert_eq!(count(&got, Group::Then), 36);
+}
+
+#[test]
+fn room_name_matches() {
+    let mut bedroom = ent("c1", "Shutter", Kind::Cover);
+    bedroom.area = "bedroom".into();
+    let entities = house(vec![bedroom, ent("c2", "Volet nord", Kind::Cover)]);
+    let areas = vec![AreaView {
+        id: "bedroom".into(),
+        name: "Chambre".into(),
+        icon: None,
+        order: None,
+        entity_count: 1,
+        primary_count: 1,
+        group_names: Default::default(),
+        group_favorites: Default::default(),
+    }];
+    let ctx = Ctx {
+        entities: &entities,
+        areas: &areas,
+        flows: &[],
+        labels: &crate::flow_text::NO_LABELS,
+        lang: crate::i18n::Lang::En,
+    };
+    let got = entries("chambre volet", &ctx);
+    assert_eq!(count(&got, Group::When), 1);
+    assert!(got.iter().all(|e| !e.label.contains("Volet nord")));
+}
+
+#[test]
+fn sorts_ignoring_case_and_accents() {
+    let entities = house(vec![
+        ent("l1", "lampe b", Kind::Light),
+        ent("l2", "Lampe C", Kind::Light),
+        ent("l3", "Lampé a", Kind::Light),
+    ]);
+    let order: Vec<_> = run("lampe", &entities)
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            NodeKind::TriggerState(p) => Some(p.entity),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["l3", "l1", "l2"]);
+}
+
+#[test]
+fn group_entries_carry_the_group_tag() {
+    let entities = house(vec![
+        ent("group_living", "Living lights", Kind::Light),
+        ent("l1", "Living lamp", Kind::Light),
+    ]);
+    let got = run("living", &entities);
+    let tagged = |e: &Entry| e.label.ends_with(" (Group)");
+    let group_entries: Vec<_> = got
+        .iter()
+        .filter(|e| e.label.contains("Living lights"))
+        .collect();
+    assert!(!group_entries.is_empty() && group_entries.iter().all(|e| tagged(e)));
+    assert!(
+        got.iter()
+            .filter(|e| e.label.contains("Living lamp"))
+            .all(|e| !tagged(e))
+    );
+}
+
+#[test]
+fn sensor_has_no_actions() {
+    let entities = house(vec![ent("s1", "Entrée", Kind::Sensor)]);
+    let got = run("entree", &entities);
+    assert_eq!(count(&got, Group::When), 1);
+    assert_eq!(count(&got, Group::And), 2);
+    assert_eq!(count(&got, Group::Then), 0);
+}
+
+#[test]
+fn hidden_entities_found_but_not_diagnostic_disabled_or_folded() {
+    // Hidden is a dashboard choice: a hidden light is still one a flow drives.
+    let mut hidden = ent("l1", "Lumière canapé", Kind::Light);
+    hidden.ui.hidden = true;
+    let mut diagnostic = ent("l2", "Lumière diag", Kind::Light);
+    diagnostic.category = EntityCategory::Diagnostic;
+    let mut disabled = ent("l3", "Lumière off", Kind::Light);
+    disabled.enabled_by_default = false;
+    let mut folded = ent("l4", "Lumière part", Kind::Light);
+    folded.part_of = Some("l1".into());
+    let entities = house(vec![hidden, diagnostic, disabled, folded]);
+    let got = run("lumiere", &entities);
+    assert!(!got.is_empty());
+    assert!(
+        got.iter().all(|e| e.label.contains("Lumière canapé")),
+        "{got:?}"
+    );
+}
+
+#[test]
+fn generic_entries_filter_by_query() {
+    let got = run("wai", &BTreeMap::new());
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].group, Group::Wait);
+}
+
+#[test]
+fn number_and_climate_defaults() {
+    let mut n = ent("n1", "Seuil", Kind::Number);
+    n.state.value = StateValue::Number(42.0);
+    let entities = house(vec![n, ent("c1", "Clim", Kind::Climate)]);
+    let got = run("seuil", &entities);
+    let NodeKind::Command(p) = &got.last().unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(p.command, Command::SetNumber { value: 42.0 });
+    let got = run("clim", &entities);
+    let NodeKind::Command(p) = &got.last().unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(p.command, Command::SetTemperature { temperature: 20.0 });
+}
+
+#[test]
+fn picker_offers_three_new_cards() {
+    let got = run("", &BTreeMap::new());
+    let wake = got
+        .iter()
+        .find_map(|e| match &e.kind {
+            NodeKind::TriggerWakeUp(p) => Some((e.group, p.clone())),
+            _ => None,
+        })
+        .expect("a wake-up card");
+    assert_eq!(wake.0, Group::When);
+    assert_eq!(wake.1.before_minutes, 45);
+    assert_eq!(wake.1.catch_up_minutes, Some(60));
+    let hold = got
+        .iter()
+        .find_map(|e| match &e.kind {
+            NodeKind::ClimateHold(p) => Some((e.group, p.clone())),
+            _ => None,
+        })
+        .expect("a heating hold card");
+    assert_eq!(hold.0, Group::Then);
+    assert_eq!(
+        hold.1.setpoint,
+        nidoo_core::flow::ClimateSetpoint::Temp(20.0)
+    );
+    assert_eq!((hold.1.minutes, hold.1.until), (Some(120), None));
+    let eco = got
+        .iter()
+        .find_map(|e| match &e.kind {
+            NodeKind::ClimateEco(p) => Some((e.group, p.clone())),
+            _ => None,
+        })
+        .expect("a room eco card");
+    assert_eq!(eco.0, Group::Then);
+    assert_eq!(
+        (eco.1.minutes, eco.1.until.as_deref()),
+        (None, Some("18:00"))
+    );
+    // Found by its words, in either language.
+    for q in ["wake", "réveil", "heating", "chauffage", "eco"] {
+        assert!(!run(q, &BTreeMap::new()).is_empty(), "no card for {q:?}");
+    }
+}
+
+#[test]
+fn picker_schedule_and_sun_cards_start_without_catch_up() {
+    let got = run("", &BTreeMap::new());
+    let mut seen = 0;
+    for e in &got {
+        if matches!(
+            e.kind,
+            NodeKind::TriggerSchedule(_) | NodeKind::TriggerSun(_)
+        ) {
+            seen += 1;
+            assert_eq!(e.kind.catch_up_minutes(), 0);
+        }
+    }
+    assert_eq!(seen, 2);
+    assert!(got.iter().any(|e| matches!(
+        &e.kind,
+        NodeKind::TriggerSchedule(p) if p.catch_up_minutes.is_none()
+    )));
+    assert!(got.iter().any(|e| matches!(
+        &e.kind,
+        NodeKind::TriggerSun(p) if p.catch_up_minutes.is_none()
+    )));
+}
