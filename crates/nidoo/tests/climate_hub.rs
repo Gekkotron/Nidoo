@@ -497,11 +497,16 @@ mod engine {
 
     use chrono::TimeZone;
     use nidoo_climate::doc::{
-        Decision, DeviceTarget, HouseSettings, Mode, Override, OverrideOrigin, Source,
+        Decision, DeviceTarget, HeaterDrive, HouseSettings, Mode, Override, OverrideOrigin, Season,
+        Source,
     };
     use nidoo_climate::view::PresenceView;
 
     use super::*;
+
+    /// The recorded plug's command and state topics.
+    const PLUG_SET: &str = "zigbee2mqtt/rooms/garage/watering_stove/set";
+    const PLUG_STATE: &str = "zigbee2mqtt/rooms/garage/watering_stove";
 
     /// What the simulated Daikins hold: mode, target and current temperature per unit.
     struct Sim {
@@ -511,6 +516,10 @@ mod engine {
         units: BTreeMap<u8, (String, f64, f64)>,
         /// Fan mode per unit, reported only for the units that have one.
         fans: BTreeMap<u8, String>,
+        /// The plug's state, once a test uses it.
+        plug: Option<bool>,
+        /// The plug applies its commands and reports its new state.
+        plug_echo: bool,
     }
 
     impl Sim {
@@ -520,7 +529,26 @@ mod engine {
                 drop_link: false,
                 units: BTreeMap::new(),
                 fans: BTreeMap::new(),
+                plug: None,
+                plug_echo: true,
             }
+        }
+
+        /// Reports the plug's state on its state topic.
+        fn report_plug(&self, hub: &Hub) {
+            if let Some(on) = self.plug {
+                let state = if on { "ON" } else { "OFF" };
+                hub.ingest(
+                    PLUG_STATE,
+                    serde_json::json!({ "state": state }).to_string().as_bytes(),
+                );
+            }
+        }
+
+        /// Sets the plug's state from outside the engine (by hand) and reports it.
+        fn flip_plug(&mut self, hub: &Hub, on: bool) {
+            self.plug = Some(on);
+            self.report_plug(hub);
         }
 
         /// Sets the state of unit `n` and reports it on its state topic.
@@ -548,6 +576,12 @@ mod engine {
             // The broker hands the push history back to the hub.
             if p.topic == "nidoo/push/history" {
                 hub.ingest_message(&p.topic, p.payload.as_bytes(), false);
+                return;
+            }
+            if p.topic == PLUG_SET {
+                if self.plug_echo {
+                    self.flip_plug(hub, p.payload == "ON");
+                }
                 return;
             }
             let Some(rest) = p.topic.strip_prefix("daikin/192.0.2.15") else {
@@ -2860,6 +2894,459 @@ mod engine {
         rig.pass(1000).await;
         assert_eq!(source(&rig), Source::Override);
         assert_eq!(rig.zone().overrides.len(), 1);
+    }
+
+    // ----- on/off heaters: commands, clocks, hand flips, last off -----
+
+    /// What was published to the plug's command topic, in order.
+    fn plug_commands(out: &[Publish]) -> Vec<String> {
+        out.iter()
+            .filter(|p| p.topic == PLUG_SET)
+            .map(|p| p.payload.clone())
+            .collect()
+    }
+
+    /// Seconds from midnight to `h:m`.
+    fn hm(h: u64, m: u64) -> u64 {
+        h * 3600 + m * 60
+    }
+
+    /// Monday 2026-11-02 at midnight, house time (Paris).
+    fn monday_midnight() -> u64 {
+        chrono_tz::Europe::Paris
+            .with_ymd_and_hms(2026, 11, 2, 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp() as u64
+    }
+
+    /// Living heated by its climate unit at 17 °C, and by the plug alone (a thermostat
+    /// heater, cool-down `min_off_min`) from 09:00 to 18:00 at 21 °C. The room reads 20 °C,
+    /// so the plug is wanted on through the block.
+    fn stove_settings(plug: &str, min_off_min: u32) -> ZoneSettings {
+        let mut settings = heat_rules(17.0);
+        settings.heaters = vec![Heater {
+            entity: plug.to_owned(),
+            drive: HeaterDrive::Thermostat,
+            min_off_min,
+            ..Heater::default()
+        }];
+        settings.rules.heat.as_mut().unwrap().blocks.push(Block {
+            days: Day::ALL.to_vec(),
+            from: HhMm(9 * 60),
+            to: HhMm(18 * 60),
+            setpoint: Setpoint::Temp(21.0),
+            evidence: None,
+            heated_by: Some(vec![plug.to_owned()]),
+        });
+        settings
+    }
+
+    /// A Paris rig whose clock starts on a Monday at midnight, with the plug (starting `on`)
+    /// heating living per [`stove_settings`]. Returns the rig and the plug's entity id.
+    async fn stove_rig(on: bool, min_off_min: u32) -> (Rig, String) {
+        let mut rig = Rig::new(Some("Europe/Paris")).await;
+        let plug = feed_plug(&rig.hub, "garage").await;
+        rig.sim.flip_plug(&rig.hub, on);
+        rig.settings(stove_settings(&plug, min_off_min));
+        rig.t0 = monday_midnight();
+        (rig, plug)
+    }
+
+    /// A new hub, as after a restart, that got what the broker retains from `rig`'s: the
+    /// house, the zone's documents and the devices' states.
+    async fn restarted(rig: &Rig) -> Rig {
+        let mut next = Rig::new(Some("Europe/Paris")).await;
+        feed_plug(&next.hub, "garage").await;
+        next.t0 = rig.t0;
+        next.sim.units = rig.sim.units.clone();
+        next.sim.plug = rig.sim.plug;
+        next.sim.report(&next.hub, 0);
+        next.sim.report_plug(&next.hub);
+        let house = rig.hub.climate_view().unwrap().house;
+        next.hub.ingest_message(
+            "nidoo/climate/house",
+            serde_json::to_string(&house).unwrap().as_bytes(),
+            true,
+        );
+        let zone = rig.zone();
+        let retained = [
+            (
+                "settings",
+                Some(serde_json::to_string(&zone.settings).unwrap()),
+            ),
+            (
+                "decision",
+                zone.decision.map(|d| serde_json::to_string(&d).unwrap()),
+            ),
+            (
+                "override",
+                (!zone.overrides.is_empty())
+                    .then(|| serde_json::to_string(&zone.overrides).unwrap()),
+            ),
+        ];
+        for (doc, payload) in retained {
+            if let Some(payload) = payload {
+                next.hub.ingest_message(
+                    &format!("nidoo/climate/zone/living/{doc}"),
+                    payload.as_bytes(),
+                    true,
+                );
+            }
+        }
+        drain(&mut next.rx);
+        next
+    }
+
+    fn set_season(rig: &mut Rig, season: Season) {
+        rig.hub
+            .set_climate_house(HouseSettings {
+                season,
+                ..HouseSettings::default()
+            })
+            .unwrap();
+        drain(&mut rig.rx);
+    }
+
+    fn switch_target(mode: &str, held: bool) -> DeviceTarget {
+        DeviceTarget {
+            setpoint: None,
+            mode: mode.to_owned(),
+            held,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stove_block_switches_the_plug_on_and_off() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        // Before the block the plug is wanted off, and it is: nothing to send.
+        let out = rig.pass(hm(8, 0)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert_eq!(
+            rig.zone().decision.unwrap().entities[&plug],
+            switch_target("off", false)
+        );
+
+        let out = rig.pass(hm(9, 0)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+        assert_eq!(rig.sim.plug, Some(true));
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.entities[&plug], switch_target("heat", false));
+        assert!(decision.applied);
+        // The retained decision carries the clock the switch-on started.
+        assert_eq!(decision.heaters[&plug].on_since, Some(rig.t0 + hm(9, 0)));
+        assert_eq!(decision.heaters[&plug].off_since, None);
+
+        // On through the block: nothing more.
+        for at in [hm(9, 1), hm(12, 0), hm(17, 59)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+
+        let out = rig.pass(hm(18, 0)).await;
+        assert_eq!(plug_commands(&out), vec!["OFF"], "{out:?}");
+        assert_eq!(rig.sim.plug, Some(false));
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.entities[&plug], switch_target("off", false));
+        assert_eq!(decision.heaters[&plug].off_since, Some(rig.t0 + hm(18, 0)));
+        assert_eq!(decision.heaters[&plug].on_since, None);
+        let out = rig.pass(hm(18, 1)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_is_published_to_the_plug_in_cool_mode() {
+        let (mut rig, plug) = stove_rig(true, 0).await;
+        set_season(&mut rig, Season::Cool);
+        for at in [hm(9, 0), hm(9, 1), hm(18, 0)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(rig.sim.plug, Some(true));
+        let decision = rig.zone().decision.unwrap();
+        assert!(!decision.entities.contains_key(&plug), "{decision:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaving_heat_sends_one_off_then_nothing() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+
+        set_season(&mut rig, Season::Cool);
+        let out = rig.pass(hm(10, 0)).await;
+        assert_eq!(plug_commands(&out), vec!["OFF"], "{out:?}");
+        assert_eq!(rig.sim.plug, Some(false));
+        assert!(!rig.zone().decision.unwrap().entities.contains_key(&plug));
+
+        // Switched back on by hand in the cool season: no hold, and the engine leaves it on.
+        rig.sim.flip_plug(&rig.hub, true);
+        rig.hub.observe_heater(&plug, true, rig.t0 + hm(10, 5));
+        assert!(rig.zone().overrides.is_empty());
+        for at in [hm(10, 10), hm(10, 11), hm(10, 12)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+
+        // A restart in the cool season sends no second off.
+        let mut next = restarted(&rig).await;
+        for at in [hm(10, 20), hm(10, 21), hm(10, 22)] {
+            let out = next.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(next.sim.plug, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn leaving_heat_leaves_a_hand_held_heater_alone() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert!(plug_commands(&rig.pass(hm(8, 0)).await).is_empty());
+
+        // Switched on by hand before the block: held on until the block starts.
+        let at = rig.t0 + hm(8, 10);
+        rig.sim.flip_plug(&rig.hub, true);
+        rig.hub.observe_heater(&plug, true, at);
+        assert_eq!(
+            rig.zone().overrides,
+            vec![Override {
+                entity: Some(plug.clone()),
+                setpoint: None,
+                mode: Some(Mode::Heat),
+                until: rig.t0 + hm(9, 0),
+                origin: OverrideOrigin::Hand,
+            }]
+        );
+        let out = rig.pass(hm(8, 11)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert_eq!(
+            rig.zone().decision.unwrap().entities[&plug],
+            switch_target("heat", true)
+        );
+
+        set_season(&mut rig, Season::Cool);
+        for at in [hm(8, 20), hm(8, 21)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(rig.sim.plug, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn disabling_a_heater_sends_nothing() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+
+        let mut settings = stove_settings(&plug, 0);
+        settings.heaters[0].enabled = false;
+        rig.settings(settings);
+        for at in [hm(9, 5), hm(9, 6), hm(18, 0)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(rig.sim.plug, Some(true));
+        let decision = rig.zone().decision.unwrap();
+        assert!(!decision.entities.contains_key(&plug), "{decision:?}");
+
+        // Disabled and then out of the heat season: still nothing.
+        set_season(&mut rig, Season::Cool);
+        let out = rig.pass(hm(18, 5)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restart_inside_cooldown_does_not_switch_on() {
+        let (mut rig, plug) = stove_rig(true, 15).await;
+        // 08:55, before the block: the engine switches the plug off.
+        assert_eq!(plug_commands(&rig.pass(hm(8, 55)).await), vec!["OFF"]);
+        assert_eq!(
+            rig.zone().decision.unwrap().heaters[&plug].off_since,
+            Some(rig.t0 + hm(8, 55))
+        );
+
+        // The hub restarts inside the block, five minutes later.
+        let mut next = restarted(&rig).await;
+        for at in [hm(9, 0), hm(9, 5), hm(9, 9)] {
+            let out = next.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        let decision = next.zone().decision.unwrap();
+        assert_eq!(
+            decision.heaters[&plug].wait_until,
+            Some(next.t0 + hm(9, 10))
+        );
+        assert!(next.zone().overrides.is_empty());
+        let out = next.pass(hm(9, 10)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restart_keeps_running_heater_on() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+
+        let mut next = restarted(&rig).await;
+        for at in [hm(9, 30), hm(9, 31), hm(9, 32)] {
+            let out = next.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(next.sim.plug, Some(true));
+        assert!(next.zone().overrides.is_empty());
+        let decision = next.zone().decision.unwrap();
+        assert_eq!(decision.entities[&plug], switch_target("heat", false));
+        assert_eq!(decision.heaters[&plug].on_since, Some(next.t0 + hm(9, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fresh_hub_counts_an_off_heater_as_off_since_now() {
+        let (mut rig, plug) = stove_rig(false, 15).await;
+        // The first pass ever, inside the block: the plug is off, since when nobody knows.
+        let out = rig.pass(hm(10, 0)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.heaters[&plug].off_since, Some(rig.t0 + hm(10, 0)));
+        assert_eq!(
+            decision.heaters[&plug].wait_until,
+            Some(rig.t0 + hm(10, 15))
+        );
+        let out = rig.pass(hm(10, 14)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        let out = rig.pass(hm(10, 15)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hand_off_becomes_a_hold_and_starts_the_cool_down() {
+        let (mut rig, plug) = stove_rig(true, 15).await;
+        let mut settings = stove_settings(&plug, 15);
+        settings.manual_hold_max_min = 10;
+        rig.settings(settings);
+        // Inside the block and already on: nothing to send.
+        let out = rig.pass(hm(10, 0)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+
+        // Switched off by hand at 10:05.
+        let at = rig.t0 + hm(10, 5);
+        rig.sim.flip_plug(&rig.hub, false);
+        rig.hub.observe_heater(&plug, false, at);
+        assert_eq!(
+            rig.zone().overrides,
+            vec![Override {
+                entity: Some(plug.clone()),
+                setpoint: Some(Setpoint::Off),
+                mode: None,
+                until: at + 10 * 60,
+                origin: OverrideOrigin::Hand,
+            }]
+        );
+
+        // Held: the engine does not switch it back on.
+        let out = rig.pass(hm(10, 6)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.entities[&plug], switch_target("off", true));
+        assert_eq!(decision.heaters[&plug].off_since, Some(at));
+
+        // The hold ends at 10:15; the cool-down runs until 10:20.
+        let out = rig.pass(hm(10, 16)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert!(rig.zone().overrides.is_empty());
+        assert_eq!(
+            rig.zone().decision.unwrap().heaters[&plug].wait_until,
+            Some(at + 15 * 60)
+        );
+        let out = rig.pass(hm(10, 20)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_held_switch_is_never_commanded() {
+        let (mut rig, plug) = stove_rig(true, 0).await;
+        // A hold that says off while the plug is on (the hold doc arrived from elsewhere).
+        let hold = vec![Override {
+            entity: Some(plug.clone()),
+            setpoint: Some(Setpoint::Off),
+            mode: None,
+            until: rig.t0 + hm(12, 0),
+            origin: OverrideOrigin::Hand,
+        }];
+        rig.hub.ingest_message(
+            "nidoo/climate/zone/living/override",
+            serde_json::to_string(&hold).unwrap().as_bytes(),
+            true,
+        );
+        for at in [hm(10, 0), hm(10, 1), hm(10, 2)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(
+            rig.zone().decision.unwrap().entities[&plug],
+            switch_target("off", true)
+        );
+        assert_eq!(rig.sim.plug, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn engine_echo_is_not_a_hand_change() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+        // The loop gets to the echo's event after the pass.
+        rig.hub.observe_heater(&plug, true, rig.t0 + hm(9, 0) + 1);
+        assert!(rig.zone().overrides.is_empty());
+        assert!(plug_commands(&rig.pass(hm(9, 1)).await).is_empty());
+
+        // An off that timed out and lands minutes later is the engine's too.
+        rig.sim.plug_echo = false;
+        assert_eq!(plug_commands(&rig.pass(hm(18, 0)).await), vec!["OFF"]);
+        assert_eq!(rig.sim.plug, Some(true));
+        rig.sim.flip_plug(&rig.hub, false);
+        rig.hub.observe_heater(&plug, false, rig.t0 + hm(18, 5));
+        assert!(rig.zone().overrides.is_empty());
+
+        // Someone switching it on after that is a hand change.
+        rig.sim.flip_plug(&rig.hub, true);
+        rig.hub.observe_heater(&plug, true, rig.t0 + hm(18, 10));
+        let overrides = rig.zone().overrides;
+        assert_eq!(overrides.len(), 1, "{overrides:?}");
+        assert_eq!(overrides[0].mode, Some(Mode::Heat));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failing_plug_commands_pause_like_a_unit() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        load_push(&rig.hub).await;
+        rig.sim.plug_echo = false;
+        // The block hands the room to the plug: the unit goes off, the plug never answers.
+        let out = rig.pass(hm(9, 0)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+        assert_eq!(
+            commands(&out),
+            vec![("/ha/mode/set".to_owned(), "off".to_owned())]
+        );
+        for at in [hm(9, 0) + 61, hm(9, 0) + 122] {
+            let out = rig.pass(at).await;
+            assert_eq!(plug_commands(&out), vec!["ON"], "at {at}: {out:?}");
+        }
+        let alert_id = format!("climate-command-{plug}");
+        let raised = alert(&rig.hub, &alert_id).expect("alert after 3 failures");
+        assert!(!raised.resolved);
+
+        // Paused: nothing sent to it, the decision counts it unreachable and the unit heats.
+        let out = rig.pass(hm(9, 0) + 183).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert_eq!(
+            commands(&out),
+            vec![
+                ("/ha/mode/set".to_owned(), "heat".to_owned()),
+                ("/ha/temperature/set".to_owned(), "21".to_owned()),
+            ],
+            "{out:?}"
+        );
+        let decision = rig.zone().decision.unwrap();
+        assert!(
+            decision.reason.contains("unreachable"),
+            "{}",
+            decision.reason
+        );
+        assert!(!decision.entities.contains_key(&plug));
     }
 }
 

@@ -511,7 +511,15 @@ pub(crate) fn zone_inputs_owned(hub: &Hub, zone: &str, now: u64) -> Option<Owned
             })
             .collect()
     };
-    let heaters = zone_heaters(hub, &settings, &HeaterClocks::new());
+    let clocks = hub.climate_runtime().heater_clocks.clone();
+    let mut heaters = zone_heaters(hub, &settings, &clocks);
+    // A heater whose commands keep failing cannot heat: the decision counts it unreachable,
+    // so the climate units may fill in while it is paused.
+    for heater in &mut heaters {
+        if hub.command_paused(&heater.id, now) {
+            heater.available = false;
+        }
+    }
     let stale_after_s = u64::from(house.stale_after_min) * 60;
     let sensor = room_sensor(
         hub,

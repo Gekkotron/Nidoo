@@ -2,13 +2,14 @@
 
 pub(crate) mod alerts;
 pub(crate) mod engine;
+pub(crate) mod heater_io;
 pub(crate) mod hub;
 pub(crate) mod inputs;
 pub(crate) mod learning;
 pub(crate) mod proposals;
 pub mod store;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 
 use nidoo_climate::decide::SafetyMemory;
@@ -20,6 +21,8 @@ use nidoo_climate::view::LearnStatus;
 use nidoo_core::model::Availability;
 
 pub use store::{Applied, ClimateStore, ZoneDocs};
+
+use inputs::HeaterClocks;
 
 /// Group entities are published by the hub itself; they are never a zone's device.
 pub(crate) const GROUP_PREFIX: &str = "group_";
@@ -115,4 +118,12 @@ pub(crate) struct ClimateRuntime {
     pub skipped_areas: HashSet<String>,
     /// Safety alert id -> when it last resolved; it is not raised again for a while.
     pub safety_resolved_at: HashMap<String, u64>,
+    /// On/off heater -> when it was last seen switching off and on. The source of truth while
+    /// the hub runs; the decisions only carry a copy, so they survive a restart.
+    pub heater_clocks: HeaterClocks,
+    /// On/off heater -> the state the engine last asked for (or took from a hand flip) and
+    /// when it last sent a command (`0`: never since start).
+    pub heater_sent: BTreeMap<String, (bool, u64)>,
+    /// Zones whose heater clocks were seeded from their retained decision.
+    pub heater_seeded: HashSet<String>,
 }
