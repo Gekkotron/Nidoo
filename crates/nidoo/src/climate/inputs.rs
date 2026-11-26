@@ -74,6 +74,7 @@ impl OwnedZoneInputs {
             holiday: self.holiday,
             overrides: &self.overrides,
             devices: &self.devices,
+            unit_ids: &self.entity_ids,
             local_now: self.local_now,
             now: self.now,
             safety_memory: self.safety_memory.as_ref(),

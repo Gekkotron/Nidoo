@@ -121,6 +121,8 @@ struct Plan<'a> {
     unknown: Vec<String>,
     steps: Vec<Step<'a>>,
     unit_chosen: bool,
+    /// Chosen climate units the zone lists that are unreachable: nothing heats in their place.
+    units_down: Vec<String>,
     /// A chosen heater wants to heat and cannot (cooling down or unreachable).
     cannot_heat: bool,
     /// Some reachable heater is on.
@@ -135,6 +137,7 @@ impl Plan<'_> {
         };
         self.cannot_heat
             && !self.unit_chosen
+            && self.units_down.is_empty()
             && inp.settings.fill_in
             && inp.devices.iter().any(|u| {
                 hand_hold(inp, &u.id).is_none() && device_target(sp, Mode::Heat, &u.caps).is_some()
@@ -151,8 +154,8 @@ pub(crate) fn units_rest(inp: &ZoneInputs, d: &Decision) -> bool {
 }
 
 /// Rewrite `d` for a zone with on/off heaters: who heats, the switches' targets, the reason.
-/// No-op unless `d.mode == Some(Mode::Heat)`, the zone is not off, and the zone has an
-/// enabled heater or a `heated_by` anywhere.
+/// No-op unless `d.mode == Some(Mode::Heat)`, the zone is not off, the season is heat (or the
+/// decision is frost protection), and the zone has an enabled heater or a `heated_by` anywhere.
 pub(crate) fn apply(inp: &ZoneInputs, d: &mut Decision) {
     let Some(p) = plan(inp, d) else {
         return;
@@ -208,7 +211,10 @@ pub(crate) fn apply(inp: &ZoneInputs, d: &mut Decision) {
         }
         d.heaters.insert(id.to_string(), run);
     }
-    if p.cannot_heat && !p.unit_chosen {
+    for id in &p.units_down {
+        notes.push_str(&format!("; {id} unreachable"));
+    }
+    if (p.cannot_heat || !p.units_down.is_empty()) && !p.unit_chosen {
         if fills_in && let Some(Setpoint::Temp(t)) = d.setpoint {
             // The units heat as they would without the heaters, correction included.
             let sp = Setpoint::Temp(t + d.adjust.unwrap_or(0.0));
@@ -234,6 +240,12 @@ fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
     if d.mode != Some(Mode::Heat) || s.state == ZoneState::Off {
         return None;
     }
+    let frost = d.source == Source::Safety && d.cause == Some(SafetyCause::Frost);
+    // Outside the heat season only frost protection drives an on/off heater: a heat boost or
+    // override then runs on the climate units alone (a plug may drive something else then).
+    if inp.mode != Some(Mode::Heat) && !frost {
+        return None;
+    }
     let heat = s.rules.get(Mode::Heat);
     let named = s.heated_by.is_some()
         || heat.is_some_and(|r| r.blocks.iter().any(|b| b.heated_by.is_some()));
@@ -243,6 +255,12 @@ fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
     let mut unknown = Vec::new();
     let who = who(inp, d, &mut unknown)?;
     let unit_chosen = inp.devices.iter().any(|u| who.has(&u.id));
+    let units_down: Vec<String> = who
+        .ids
+        .iter()
+        .filter(|id| s.heater(id).is_none() && !inp.devices.iter().any(|u| u.id == **id))
+        .cloned()
+        .collect();
     let target = match d.setpoint {
         Some(Setpoint::Temp(t)) => Some(t),
         _ => None,
@@ -257,9 +275,7 @@ fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
     let safety_off = d.source == Source::Safety && d.cause != Some(SafetyCause::Frost);
     // Frost outside the heat season: a hold heater's plug may drive something else then, so it
     // gets nothing at all.
-    let frost_off_season = d.source == Source::Safety
-        && d.cause == Some(SafetyCause::Frost)
-        && inp.mode != Some(Mode::Heat);
+    let frost_off_season = frost && inp.mode != Some(Mode::Heat);
     for h in s.heaters.iter().filter(|h| h.enabled) {
         if frost_off_season && h.drive == HeaterDrive::Hold {
             continue;
@@ -326,6 +342,7 @@ fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
         unknown,
         steps,
         unit_chosen,
+        units_down,
         cannot_heat,
         running,
     })
@@ -385,8 +402,9 @@ fn who(inp: &ZoneInputs, d: &Decision, unknown: &mut Vec<String>) -> Option<Who>
     })
 }
 
-/// The ids of `list` that can heat: an enabled heater of the zone or one of its climate units.
-/// A disabled heater is dropped; anything else is added to `unknown`. `None` when none is left.
+/// The ids of `list` that can heat: an enabled heater of the zone or one of its climate units,
+/// reachable or not (an unreachable one stays chosen, so nothing else heats in its place). A
+/// disabled heater is dropped; anything else is added to `unknown`. `None` when none is left.
 fn known(
     inp: &ZoneInputs,
     list: Option<&[String]>,
@@ -397,7 +415,9 @@ fn known(
         match inp.settings.heater(id) {
             Some(h) if h.enabled => kept.push(id.clone()),
             Some(_) => {}
-            None if inp.devices.iter().any(|u| u.id == *id) => kept.push(id.clone()),
+            None if inp.devices.iter().any(|u| u.id == *id) || inp.unit_ids.contains(id) => {
+                kept.push(id.clone());
+            }
             None if !unknown.contains(id) => unknown.push(id.clone()),
             None => {}
         }

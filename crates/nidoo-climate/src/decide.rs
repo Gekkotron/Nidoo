@@ -76,6 +76,8 @@ pub struct ZoneInputs<'a> {
     pub holiday: bool,
     pub overrides: &'a [Override],
     pub devices: &'a [Device],
+    /// Every climate unit the zone lists, reachable or not (`devices` holds the reachable ones).
+    pub unit_ids: &'a [String],
     pub local_now: NaiveDateTime,
     pub now: u64,
     pub safety_memory: Option<&'a SafetyMemory>,
@@ -904,6 +906,8 @@ mod tests {
         feedback: Option<FeedbackState>,
         room_empty: bool,
         heaters: Vec<HeaterDevice>,
+        /// The climate units the zone lists; `None`: the ids of `devices`.
+        units: Option<Vec<String>>,
         local: NaiveDateTime,
     }
 
@@ -925,6 +929,7 @@ mod tests {
                 feedback: None,
                 room_empty: false,
                 heaters: vec![],
+                units: None,
                 local: local(),
             }
         }
@@ -972,6 +977,10 @@ mod tests {
         }
 
         fn run(&self) -> Decision {
+            let units = self
+                .units
+                .clone()
+                .unwrap_or_else(|| self.devices.iter().map(|d| d.id.clone()).collect());
             decide(&ZoneInputs {
                 zone: "z",
                 settings: &self.settings,
@@ -983,6 +992,7 @@ mod tests {
                 holiday: self.holiday,
                 overrides: &self.overrides,
                 devices: &self.devices,
+                unit_ids: &units,
                 local_now: self.local,
                 now: NOW,
                 safety_memory: self.memory.as_ref(),
@@ -2700,6 +2710,64 @@ mod tests {
         assert_eq!(
             d.reason,
             "Schedule block 1: 20.0 °C; ignoring unknown heater gone"
+        );
+    }
+
+    #[test]
+    fn a_heat_boost_out_of_season_leaves_heaters_out() {
+        for mode in [Some(Mode::Cool), None] {
+            let mut c = Case::new()
+                .heater(stove(), off())
+                .heater(rad(), off())
+                .heat_block_by(9, 18, 20.0, &["stove", "rad"]);
+            c.mode = mode;
+            c.overrides = vec![Override {
+                mode: Some(Mode::Heat),
+                ..zone_ov(22.0, NOW + 3600)
+            }];
+            let d = c.run();
+            assert_eq!(d.source, Source::Boost, "{mode:?}");
+            assert_eq!(d.mode, Some(Mode::Heat));
+            assert!(!d.entities.contains_key("stove"), "{mode:?}: {d:?}");
+            assert!(!d.entities.contains_key("rad"), "{mode:?}: {d:?}");
+            assert!(d.heaters.is_empty(), "{mode:?}: {d:?}");
+            // The climate units run the boost as they always did.
+            assert_eq!(d.entities["trv"], target(Some(22.0), "heat", false));
+            assert_eq!(d.reason, "Boost to 22.0 °C until 11:00");
+        }
+    }
+
+    #[test]
+    fn an_unreachable_unit_named_in_heated_by_is_not_replaced() {
+        let mut c = Case::new()
+            .heater(stove(), off())
+            .heated_by(&["stove"])
+            .heat_block_by(9, 18, 20.0, &["trv"]);
+        // The zone lists the unit; it is offline, so the hub hands no device for it.
+        c.units = Some(vec!["trv".into()]);
+        c.devices = vec![];
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert!(!d.entities.contains_key("trv"));
+        assert!(d.reason.contains("trv unreachable"), "{}", d.reason);
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; trv unreachable; nothing heats the room"
+        );
+    }
+
+    #[test]
+    fn an_enabled_heater_the_hub_does_not_see_is_unreachable() {
+        // Listed and enabled, but no switch for it (its entity is gone).
+        let mut c = Case::new().heat_block_by(9, 18, 20.0, &["stove"]);
+        c.settings.heaters.push(stove());
+        let d = c.run();
+        assert!(!d.entities.contains_key("stove"));
+        assert_eq!(d.heaters["stove"], HeaterRun::default());
+        assert_eq!(d.entities["trv"], target(Some(20.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; stove unreachable; the climate units heat meanwhile"
         );
     }
 

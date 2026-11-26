@@ -644,7 +644,8 @@ pub struct ZoneSettings {
     /// The heaters and units that heat the room by default; `None` means every unit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heated_by: Option<Vec<String>>,
-    /// Let the schedule fill in around the heaters' blocks.
+    /// The climate units heat, at the same target, while a chosen on/off heater cannot run
+    /// (cooling down, unreachable).
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub fill_in: bool,
 }
