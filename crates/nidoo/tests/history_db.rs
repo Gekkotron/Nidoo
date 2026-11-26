@@ -1258,3 +1258,214 @@ async fn fields_tracks_a_vacuum_over_time_db() {
         }
     }
 }
+
+/// UTC midnight of `y-m-d` in microseconds.
+fn utc_midnight(y: i32, m: u32, d: u32) -> i64 {
+    chrono::NaiveDate::from_ymd_opt(y, m, d)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp_micros()
+}
+
+fn ymd(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
+
+/// A counter rising 1.0 per hour: one reading on every hour from 2024-12-31 23:00 (value 0)
+/// to 2025-03-01 00:00. Each hour bucket after the first then rises by exactly 1.
+fn hourly_counter(id: &str) -> Rows {
+    let t0 = utc_midnight(2025, 1, 1) - HOUR;
+    let end = utc_midnight(2025, 3, 1);
+    let values = (0..)
+        .map(|k| (k, t0 + k * HOUR))
+        .take_while(|(_, at)| *at <= end)
+        .map(|(k, at)| value_row(id, at, k as f64))
+        .collect();
+    Rows {
+        values,
+        availability: vec![],
+    }
+}
+
+#[tokio::test]
+async fn series_window_month_uses_5h_steps() {
+    use nidoo::history::window::DateWindow;
+    let Some(tdb) = fresh_db().await else { return };
+    let now = utc_midnight(2025, 2, 15);
+    let first = utc_midnight(2025, 1, 1);
+    let values = (0..31 * 24)
+        .map(|k| value_row("a", first + k * HOUR, k as f64))
+        .collect();
+    tdb.db
+        .insert(&Rows {
+            values,
+            availability: vec![],
+        })
+        .await
+        .unwrap();
+    rollup_once(&tdb.db, now, i64::MAX).await.unwrap();
+
+    let history = nidoo::history::History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    let w = DateWindow {
+        from: ymd(2025, 1, 1),
+        to: ymd(2025, 1, 30),
+        upto: None,
+    };
+    let series = nidoo::history::query::series_window(&history, "a", &w, now)
+        .await
+        .expect("series");
+
+    let start = first / 1_000_000;
+    let end = utc_midnight(2025, 1, 31) / 1_000_000;
+    assert_eq!(series.window, 18_000);
+    assert_eq!(series.span, Some((start, end)));
+    assert_eq!(series.points.first().map(|p| p.0), Some(start));
+    assert_eq!(series.points.len(), 30 * 24 / 5);
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn series_window_empty_is_ok() {
+    use nidoo::history::window::DateWindow;
+    let Some(tdb) = fresh_db().await else { return };
+    let now = utc_midnight(2025, 4, 1);
+    tdb.db
+        .insert(&Rows {
+            values: vec![value_row("a", utc_midnight(2025, 3, 1), 5.0)],
+            availability: vec![],
+        })
+        .await
+        .unwrap();
+    rollup_once(&tdb.db, now, i64::MAX).await.unwrap();
+
+    let history = nidoo::history::History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    let w = DateWindow {
+        from: ymd(2025, 1, 1),
+        to: ymd(2025, 1, 2),
+        upto: None,
+    };
+    let series = nidoo::history::query::series_window(&history, "a", &w, now)
+        .await
+        .expect("a recorded entity with nothing in the window is ok");
+    assert!(series.points.is_empty(), "{series:?}");
+
+    let ghost = nidoo::history::query::series_window(&history, "ghost", &w, now).await;
+    assert!(matches!(
+        ghost,
+        Err(nidoo::history::HistoryError::NotRecorded)
+    ));
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn daily_window_per_month_sums_counter() {
+    use nidoo::history::window::DateWindow;
+    use nidoo_core::history::buckets::EnergyKind;
+    let Some(tdb) = fresh_db().await else { return };
+    let now = utc_midnight(2025, 6, 1);
+    tdb.db.insert(&hourly_counter("a")).await.unwrap();
+    rollup_once(&tdb.db, now, i64::MAX).await.unwrap();
+
+    let history = nidoo::history::History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    let w = DateWindow {
+        from: ymd(2025, 1, 1),
+        to: ymd(2025, 2, 28),
+        upto: None,
+    };
+    let daily = nidoo::history::query::daily_window(
+        &history,
+        "a",
+        &w,
+        nidoo_api::DailyPer::Month,
+        EnergyKind::Counter,
+        now,
+    )
+    .await
+    .expect("daily");
+    assert_eq!(
+        daily.days,
+        vec![
+            (utc_midnight(2025, 1, 1) / 1_000_000, 744.0),
+            (utc_midnight(2025, 2, 1) / 1_000_000, 672.0),
+        ]
+    );
+    assert_eq!(
+        daily.span,
+        Some((
+            utc_midnight(2025, 1, 1) / 1_000_000,
+            utc_midnight(2025, 3, 1) / 1_000_000
+        ))
+    );
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn daily_window_upto_cuts_partial_month() {
+    use nidoo::history::window::DateWindow;
+    use nidoo_core::history::buckets::EnergyKind;
+    let Some(tdb) = fresh_db().await else { return };
+    let now = utc_midnight(2025, 6, 1);
+    tdb.db.insert(&hourly_counter("a")).await.unwrap();
+    rollup_once(&tdb.db, now, i64::MAX).await.unwrap();
+
+    let history = nidoo::history::History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    // 40 days after 2025-01-01 is 2025-02-10: all of January and 9 days of February.
+    let w = DateWindow {
+        from: ymd(2025, 1, 1),
+        to: ymd(2025, 12, 31),
+        upto: Some(40 * 86_400),
+    };
+    let daily = nidoo::history::query::daily_window(
+        &history,
+        "a",
+        &w,
+        nidoo_api::DailyPer::Month,
+        EnergyKind::Counter,
+        now,
+    )
+    .await
+    .expect("daily");
+    assert_eq!(
+        daily.days,
+        vec![
+            (utc_midnight(2025, 1, 1) / 1_000_000, 744.0),
+            (utc_midnight(2025, 2, 1) / 1_000_000, 216.0),
+        ]
+    );
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn extent_reports_first_date_and_today() {
+    let Some(tdb) = fresh_db().await else { return };
+    let first = utc_midnight(2025, 3, 10) + 12 * HOUR;
+    tdb.db
+        .insert(&Rows {
+            values: vec![value_row("a", first, 1.0)],
+            availability: vec![],
+        })
+        .await
+        .unwrap();
+
+    let history = nidoo::history::History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    let now = utc_midnight(2026, 11, 26) + 9 * HOUR;
+    let extent = nidoo::history::query::extent(&history, "a", now)
+        .await
+        .expect("extent");
+    assert_eq!(extent.first_date.as_deref(), Some("2025-03-10"));
+    assert_eq!(extent.today, "2026-11-26");
+
+    let ghost = nidoo::history::query::extent(&history, "ghost", now).await;
+    assert!(matches!(
+        ghost,
+        Err(nidoo::history::HistoryError::NotRecorded)
+    ));
+
+    tdb.drop_db().await;
+}
