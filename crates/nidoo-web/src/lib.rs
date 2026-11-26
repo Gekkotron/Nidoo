@@ -30,6 +30,7 @@ pub mod flow_viewport;
 pub mod flows;
 pub mod format;
 pub mod groups;
+pub mod history_compare;
 pub mod history_period;
 pub mod home_header;
 pub mod house;
