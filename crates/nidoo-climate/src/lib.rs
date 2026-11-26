@@ -6,6 +6,7 @@ pub mod decide;
 pub mod doc;
 pub mod eco;
 pub mod feedback;
+pub mod heaters;
 pub mod learn;
 pub mod ledger;
 pub mod presence;
