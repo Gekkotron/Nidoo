@@ -17,3 +17,6 @@ schemars = { workspace = true, optional = true }
 
 [features]
 schemars = ["dep:schemars"]
+
+[dev-dependencies]
+chrono-tz = "0.10"

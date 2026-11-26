@@ -22,6 +22,7 @@ The table lists every topic the hub reads or writes, with its default prefix. "I
 | `nidoo/ui/dashboards/<id>` | in, out | yes | A dashboard definition; empty removes it | `[topics] ui_prefix` | yes |
 | `nidoo/ui/ambiances/<id>` | in, out | yes | An ambiance definition; empty deletes it | `[topics] ui_prefix` | yes |
 | `nidoo/automation/<flow id>` | in, out | yes | A [flow](flow-nodes.md) document; empty removes it | `[topics] automation_prefix` | yes |
+| `nidoo/automation/<flow id>/fired/<node id>` | in, out | yes | `{"due": <unix seconds>}`: the time a trigger with [catch-up](flow-nodes.md#catch-up-if-missed) was last due. Cleared when its flow or node goes, or its catch-up is turned off | `[topics] automation_prefix` | no |
 | `nidoo/flow_labels` | in, out | yes | The [flow label catalog](flow-nodes.md#flow-labels) (`{"labels": […], "choices": […]}`), written by the hub only | `[topics] flow_labels` | yes |
 | `<first discovery prefix>/<switch\|number\|button\|select>/virtual/<id>/config` | out | yes | Discovery of a virtual entity | `[topics] discovery_prefixes` (first entry) | yes |
 | `<first discovery prefix>/virtual/<id>` | in, out | yes for a switch, number or select; no for a button | `ON` / `OFF`, a number, an option name, or `PRESS`; the state and the command topic | `[topics] discovery_prefixes` (first entry) | no |

@@ -152,6 +152,9 @@ pub enum NodeKind {
     /// Starts a run at a solar event (sunrise, sunset, dusk or dawn), with an optional offset.
     #[serde(rename = "trigger.sun")]
     TriggerSun(TriggerSunParams),
+    /// Starts a run a set number of minutes before the next enabled wake-up alarm.
+    #[serde(rename = "trigger.wake_up")]
+    TriggerWakeUp(TriggerWakeUpParams),
     /// Starts a run when its card is pressed, optionally carrying a fixed value.
     #[serde(rename = "trigger.manual")]
     TriggerManual(TriggerManualParams),
@@ -189,6 +192,12 @@ pub enum NodeKind {
     /// continues on `ok` or `failed`.
     #[serde(rename = "backup.run")]
     BackupRun(BackupRunParams),
+    /// Holds the setpoint of climate zones for a while, then lets the schedule take over again.
+    #[serde(rename = "climate.hold")]
+    ClimateHold(ClimateHoldParams),
+    /// Puts climate zones in eco for a while, then lets the schedule take over again.
+    #[serde(rename = "climate.eco")]
+    ClimateEco(ClimateEcoParams),
     /// Sends a phone push notification.
     #[serde(rename = "notify")]
     Notify(NotifyParams),
@@ -217,6 +226,7 @@ impl NodeKind {
             NodeKind::TriggerState(_) => "trigger.state",
             NodeKind::TriggerSchedule(_) => "trigger.schedule",
             NodeKind::TriggerSun(_) => "trigger.sun",
+            NodeKind::TriggerWakeUp(_) => "trigger.wake_up",
             NodeKind::TriggerManual(_) => "trigger.manual",
             NodeKind::TriggerSignal(_) => "trigger.signal",
             NodeKind::TriggerOffPeak(_) => "trigger.off_peak",
@@ -229,6 +239,8 @@ impl NodeKind {
             NodeKind::FlowEnable(_) => "flow.enable",
             NodeKind::FlowLabel(_) => "flow.label",
             NodeKind::BackupRun(_) => "backup.run",
+            NodeKind::ClimateHold(_) => "climate.hold",
+            NodeKind::ClimateEco(_) => "climate.eco",
             NodeKind::Notify(_) => "notify",
             NodeKind::Speak(_) => "speak",
             NodeKind::Ask(_) => "ask",
@@ -245,12 +257,25 @@ impl NodeKind {
             NodeKind::TriggerState(_)
                 | NodeKind::TriggerSchedule(_)
                 | NodeKind::TriggerSun(_)
+                | NodeKind::TriggerWakeUp(_)
                 | NodeKind::TriggerManual(_)
                 | NodeKind::TriggerSignal(_)
                 | NodeKind::TriggerOffPeak(_)
                 | NodeKind::TriggerAlarm(_)
                 | NodeKind::TriggerSilent(_)
         )
+    }
+
+    /// The catch-up window in minutes of a schedule, sun or wake-up trigger; 0 for every other
+    /// kind and when absent.
+    pub fn catch_up_minutes(&self) -> u32 {
+        match self {
+            NodeKind::TriggerSchedule(p) => p.catch_up_minutes,
+            NodeKind::TriggerSun(p) => p.catch_up_minutes,
+            NodeKind::TriggerWakeUp(p) => p.catch_up_minutes,
+            _ => None,
+        }
+        .unwrap_or(0)
     }
 
     /// The named output ports: `true` and `false` for `if`; `1` to `n` (then `otherwise` when
@@ -348,6 +373,10 @@ pub struct TriggerSignalParams {
 pub struct TriggerScheduleParams {
     /// Five-field cron expression: minute hour day-of-month month day-of-week.
     pub cron: String,
+    /// Minutes after a missed fire during which a late hub start still runs the flow; absent or
+    /// 0 means never catch up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catch_up_minutes: Option<u32>,
     #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
 }
@@ -384,6 +413,10 @@ pub struct TriggerSunParams {
     /// Minutes added to the event time (negative fires earlier); absent means 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset_minutes: Option<i32>,
+    /// Minutes after a missed fire during which a late hub start still runs the flow; absent or
+    /// 0 means never catch up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catch_up_minutes: Option<u32>,
     #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
 }
@@ -393,6 +426,106 @@ impl TriggerSunParams {
     pub fn offset(&self) -> i32 {
         self.offset_minutes.unwrap_or(0)
     }
+}
+
+/// Params of `trigger.wake_up`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct TriggerWakeUpParams {
+    /// Minutes before the alarm time to fire (0 to 240).
+    pub before_minutes: u32,
+    /// Only these wake-up alarms (by id); empty means any enabled wake-up alarm.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alarms: Vec<String>,
+    /// Minutes after a missed fire during which a late hub start still runs the flow; absent or
+    /// 0 means never catch up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catch_up_minutes: Option<u32>,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// A target temperature in degrees Celsius, or `Off`. JSON: a number or the string `"off"`
+/// (the same as `nidoo_climate::doc::Setpoint`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClimateSetpoint {
+    Temp(f64),
+    Off,
+}
+
+impl Serialize for ClimateSetpoint {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ClimateSetpoint::Temp(t) => s.serialize_f64(*t),
+            ClimateSetpoint::Off => s.serialize_str("off"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ClimateSetpoint {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Num(f64),
+            Str(String),
+        }
+        match Repr::deserialize(d)? {
+            Repr::Num(t) => Ok(ClimateSetpoint::Temp(t)),
+            Repr::Str(s) if s == "off" => Ok(ClimateSetpoint::Off),
+            Repr::Str(s) => Err(serde::de::Error::custom(format!(
+                "expected a number or \"off\", got {s:?}"
+            ))),
+        }
+    }
+}
+
+#[cfg(feature = "schemars")]
+impl schemars::JsonSchema for ClimateSetpoint {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ClimateSetpoint".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "oneOf": [{ "type": "number" }, { "const": "off" }] })
+    }
+}
+
+/// Params of `climate.hold`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct ClimateHoldParams {
+    /// Climate zone ids; at least one.
+    pub zones: Vec<String>,
+    /// The temperature to hold in °C, or `"off"`.
+    pub setpoint: ClimateSetpoint,
+    /// `heat` or `cool`; absent keeps the zone's current mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Hold for this many minutes (1 to 1440). Exactly one of `minutes` and `until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<u32>,
+    /// Hold until this local time (`HH:MM`, 00:00 to 23:59).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Params of `climate.eco`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct ClimateEcoParams {
+    /// Climate zone ids; at least one.
+    pub zones: Vec<String>,
+    /// Stay in eco for this many minutes (1 to 1440). Exactly one of `minutes` and `until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minutes: Option<u32>,
+    /// Stay in eco until this local time (`HH:MM`, 00:00 to 23:59).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Value>,
 }
 
 /// Which change of the off-peak state a `trigger.off_peak` fires on.
@@ -1590,5 +1723,40 @@ mod tests {
         assert_eq!(back["params"]["timeout_minutes"], 120);
         let again: Node = serde_json::from_value(back).unwrap();
         assert_eq!(again, node);
+    }
+
+    #[test]
+    fn wake_up_trigger_round_trips() {
+        let json = r#"{"id":"t","type":"trigger.wake_up","params":{"before_minutes":45,"alarms":["wake-up-1"],"catch_up_minutes":60}}"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        assert!(node.kind.is_trigger());
+        assert_eq!(node.kind.type_name(), "trigger.wake_up");
+        assert_eq!(node.kind.catch_up_minutes(), 60);
+        let back: Node = serde_json::from_str(&serde_json::to_string(&node).unwrap()).unwrap();
+        assert_eq!(back, node);
+    }
+
+    #[test]
+    fn climate_hold_off_parses() {
+        let parse = |sp: &str| {
+            serde_json::from_str::<Node>(&format!(
+                r#"{{"id":"h","type":"climate.hold","params":{{"zones":["z"],"setpoint":{sp},"minutes":30}}}}"#
+            ))
+        };
+        let kind = |sp: &str| match parse(sp).unwrap().kind {
+            NodeKind::ClimateHold(p) => p.setpoint,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(kind("\"off\""), ClimateSetpoint::Off);
+        assert_eq!(kind("21.5"), ClimateSetpoint::Temp(21.5));
+        assert!(parse("\"warm\"").is_err());
+    }
+
+    #[test]
+    fn catch_up_absent_is_zero() {
+        let json = r#"{"id":"s","type":"trigger.schedule","params":{"cron":"0 7 * * *"}}"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        assert_eq!(node.kind.catch_up_minutes(), 0);
+        assert_eq!(serde_json::to_string(&node).unwrap(), json);
     }
 }

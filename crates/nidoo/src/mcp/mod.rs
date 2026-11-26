@@ -197,6 +197,16 @@ fn instructions() -> String {
          optional `offset_minutes` in [-720, 720] moves dusk by that much and dawn by the \
          opposite (`-30`: dark 30 minutes earlier in the evening and until 30 minutes later in \
          the morning). \
+         Wake-up: `trigger.wake_up` (`before_minutes` 0 to 240, optional `alarms` list of wake-up \
+         alarm flow ids, every enabled alarm when absent) fires that long before a wake-up alarm \
+         rings and follows the alarms when they move. Climate steps: `climate.hold` (`zones`, \
+         `setpoint` in °C or `off`, exactly one of `minutes` or `until` `HH:MM`, optional `mode` \
+         `heat` or `cool`) holds zones at a temperature, and `climate.eco` (`zones`, exactly one of \
+         `minutes` or `until`) puts them in eco. A climate step applies its zones in list order; \
+         the step fails if any zone fails, and the detail names each failed zone. `trigger.schedule`, \
+         `trigger.sun` and `trigger.wake_up` take an optional `catch_up_minutes` (0 to 720, off when \
+         absent): when the hub starts or the broker link comes back, a missed time within that window \
+         fires the flow once. \
          Off-peak: `trigger.off_peak` with `edge` `start` or `end` fires when off-peak starts \
          or ends (trigger value `\"start\"` / `\"end\"`), and `if` with `op: is_off_peak` (no \
          operand) is true during off-peak. Off-peak comes from the home settings' \
@@ -358,6 +368,15 @@ mod tests {
         assert!(instr.contains("trigger.sun"));
         assert!(instr.contains("is_dark"));
         assert!(instr.contains("Paris"));
+    }
+
+    #[test]
+    fn mcp_instructions_mention_wake_up_and_climate_steps() {
+        let instr = instructions();
+        assert!(instr.contains("trigger.wake_up"));
+        assert!(instr.contains("climate.hold"));
+        assert!(instr.contains("climate.eco"));
+        assert!(instr.contains("catch_up_minutes"));
     }
 
     #[test]

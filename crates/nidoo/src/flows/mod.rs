@@ -8,6 +8,7 @@ pub mod readings;
 pub mod schedule;
 mod store;
 mod sun;
+mod wake_up_timer;
 
 pub use schedule::house_zone;
 pub use store::{FlowStore, StoreApplied};

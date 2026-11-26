@@ -8,6 +8,7 @@ use nidoo_api::FlowsConfigView;
 use nidoo_core::flow::sun::sun_events;
 use nidoo_core::flow::{Node, NodeKind, SunWhich, TriggerSunParams};
 
+use super::catch_up::CatchUpField;
 use crate::flow_text::sun_summary;
 use crate::i18n::flows::{FlowText, sun_name, use_flow_text};
 use crate::i18n::format::{date_short, parse_decimal, time, weekday_short};
@@ -27,6 +28,7 @@ pub fn sun_params_from_preset(which: SunWhich, offset_minutes: Option<i32>) -> T
     TriggerSunParams {
         which,
         offset_minutes,
+        catch_up_minutes: None,
         extra: Default::default(),
     }
 }
@@ -101,7 +103,7 @@ pub(crate) fn house_place(cfg: Option<&FlowsConfigView>) -> ((f64, f64), Tz) {
     (point, zone)
 }
 
-fn now_utc() -> DateTime<Utc> {
+pub(super) fn now_utc() -> DateTime<Utc> {
     Utc.timestamp_millis_opt(js_sys::Date::now() as i64)
         .single()
         .unwrap_or_default()
@@ -121,7 +123,7 @@ pub fn FallbackBadge(cfg: Signal<Option<FlowsConfigView>>) -> impl IntoView {
 }
 
 /// A next fire as "Mon Oct 24, 07:30" / "lun. 24 oct., 07:30", in the house zone.
-fn fire_text(lang: Lang, at: DateTime<Tz>) -> String {
+pub(super) fn fire_text(lang: Lang, at: DateTime<Tz>) -> String {
     format!(
         "{} {}, {}",
         weekday_short(lang, at.weekday()),
@@ -214,6 +216,14 @@ pub fn sun_sheet(node: RwSignal<Node>, cfg: Signal<Option<FlowsConfigView>>) -> 
         (Timing::Before, FlowText::TimingBefore),
         (Timing::After, FlowText::TimingAfter),
     ];
+    let catch_up = Callback::new(move |value: Option<u32>| {
+        node.update(|n| {
+            if let NodeKind::TriggerSun(ref mut p) = n.kind {
+                p.catch_up_minutes = value;
+            }
+        });
+    });
+    let initial_catch_up = params().catch_up_minutes;
     let fires = Memo::new(move |_| {
         let ((lat, lon), zone) = cfg.with(|c| house_place(c.as_ref()));
         next_three_fires(lat, lon, zone, which.get(), offset.get(), now_utc())
@@ -295,6 +305,7 @@ pub fn sun_sheet(node: RwSignal<Node>, cfg: Signal<Option<FlowsConfigView>>) -> 
                 }}
             </ul>
         </div>
+        <CatchUpField initial=initial_catch_up write=catch_up />
     }
 }
 

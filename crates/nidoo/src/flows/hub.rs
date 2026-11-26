@@ -13,9 +13,10 @@ use nidoo_api::{
 };
 use nidoo_core::command::{Publish, map_command};
 use nidoo_core::flow::template::parse;
+use nidoo_core::flow::wake_up;
 use nidoo_core::flow::{
-    Flow, FlowMode, LabelAction, LabelError, NodeKind, Reading, Scalar, field_scalar, fields,
-    headline_scalar, math_names, uses_sun_or_is_dark, validate,
+    ClimateSetpoint, Flow, FlowMode, LabelAction, LabelError, NodeKind, Reading, Scalar,
+    field_scalar, fields, headline_scalar, math_names, uses_sun_or_is_dark, validate,
 };
 use nidoo_core::model::{Command, Kind, UNASSIGNED_AREA};
 use nidoo_core::types::{Placement, type_def};
@@ -116,13 +117,27 @@ impl Hub {
         self.check_labels(&mut flow)?;
         self.check_area(&mut flow)?;
         self.check_speak_rooms(&mut flow)?;
-        let warning = (self.fallback_active() && uses_sun_or_is_dark(&flow))
-            .then(|| PARIS_FALLBACK_WARNING.to_owned());
+        let warnings = self.flow_warnings(&flow);
+        let warning = (!warnings.is_empty()).then(|| warnings.join(" "));
         let flow = self.write_flow(&flow)?;
+        // A catch-up trigger without a marker (new flow, option just turned on, flow saved
+        // disabled) starts from now, so its first missed time is caught up.
+        self.advance_markers(&flow.definition, false);
+        // A trigger that is gone, renamed or without a window loses its marker, so a later one
+        // with the same id starts from nothing instead of replaying an old fire.
+        let keep = flow
+            .definition
+            .nodes
+            .iter()
+            .filter(|node| node.kind.catch_up_minutes() > 0)
+            .map(|node| node.id.clone())
+            .collect();
+        self.clear_fired(&flow.definition.id, &keep);
         Ok(FlowWriteOutcome { flow, warning })
     }
 
-    /// Removes a flow, valid or not: publishes an empty retained payload and applies it.
+    /// Removes a flow, valid or not: publishes an empty retained payload and applies it. Its
+    /// catch-up markers go with it.
     pub async fn delete_flow(&self, id: &str) -> Result<(), HubError> {
         if !self.flow_store().exists(id) {
             return Err(HubError::UnknownFlow(id.to_owned()));
@@ -134,6 +149,7 @@ impl Hub {
             retain: true,
         })?;
         self.ingest_flow(id, b"");
+        self.clear_fired(id, &BTreeSet::new());
         Ok(())
     }
 
@@ -528,11 +544,93 @@ impl Hub {
         Ok(())
     }
 
+    /// What is worth telling the person who just saved `flow`, without refusing it: the Paris
+    /// fallback under a sun flow, climate zones and wake-up alarms that do not exist (yet).
+    fn flow_warnings(&self, flow: &Flow) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.fallback_active() && uses_sun_or_is_dark(flow) {
+            warnings.push(PARIS_FALLBACK_WARNING.to_owned());
+        }
+        let climate_on = self.climate_enabled();
+        let known_zones = if climate_on {
+            self.climate_zone_ids()
+        } else {
+            Vec::new()
+        };
+        let mut said_off = false;
+        let mut alarms: Option<Vec<String>> = None;
+        for node in &flow.nodes {
+            let zones = match &node.kind {
+                NodeKind::ClimateHold(params) => &params.zones,
+                NodeKind::ClimateEco(params) => &params.zones,
+                NodeKind::TriggerWakeUp(params) => {
+                    let alarms = alarms.get_or_insert_with(|| {
+                        self.flow_definitions()
+                            .into_iter()
+                            .filter(wake_up::is_managed)
+                            .map(|f| f.id)
+                            .collect()
+                    });
+                    if alarms.is_empty() {
+                        warnings.push(format!(
+                            "Node `{}`: no wake-up alarm exists, so it will never fire.",
+                            node.id
+                        ));
+                    } else {
+                        let unknown: Vec<&str> = params
+                            .alarms
+                            .iter()
+                            .filter(|id| !alarms.contains(id))
+                            .map(String::as_str)
+                            .collect();
+                        if !unknown.is_empty() {
+                            warnings.push(format!(
+                                "Node `{}`: unknown wake-up alarm {}.",
+                                node.id,
+                                unknown.join(", ")
+                            ));
+                        }
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            if !climate_on {
+                if !std::mem::replace(&mut said_off, true) {
+                    warnings
+                        .push("The climate engine is off, so climate steps will fail.".to_owned());
+                }
+                continue;
+            }
+            let unknown: Vec<&str> = zones
+                .iter()
+                .filter(|zone| !known_zones.contains(zone))
+                .map(String::as_str)
+                .collect();
+            if !unknown.is_empty() {
+                warnings.push(format!(
+                    "Node `{}`: unknown climate zone {}.",
+                    node.id,
+                    unknown.join(", ")
+                ));
+            }
+        }
+        warnings
+    }
+
     /// Checks every entity a node names exists and every command maps; publishes nothing.
     fn check_house(&self, flow: &Flow) -> Result<(), HubError> {
         let reg = self.read();
         let results = math_names(flow);
         for node in &flow.nodes {
+            if let NodeKind::ClimateHold(params) = &node.kind
+                && let ClimateSetpoint::Temp(t) = params.setpoint
+            {
+                nidoo_climate::doc::check_setpoint(&nidoo_climate::doc::Setpoint::Temp(t))
+                    .map_err(|e| {
+                        HubError::InvalidFlow(format!("node `{}`: hold setpoint: {e}", node.id))
+                    })?;
+            }
             if let NodeKind::Math(params) = &node.kind {
                 if reg.entity(&params.name).is_some() {
                     return Err(HubError::InvalidFlow(format!(
@@ -615,6 +713,9 @@ impl Hub {
                 | NodeKind::TimeBetween(_)
                 | NodeKind::TriggerSchedule(_)
                 | NodeKind::TriggerSun(_)
+                | NodeKind::TriggerWakeUp(_)
+                | NodeKind::ClimateHold(_)
+                | NodeKind::ClimateEco(_)
                 | NodeKind::TriggerOffPeak(_)
                 | NodeKind::TriggerAlarm(_)
                 | NodeKind::TriggerManual(_)
@@ -734,12 +835,106 @@ impl Hub {
             retain: true,
         })?;
         self.ingest_flow(&flow.id, payload.as_bytes());
+        if flow.enabled {
+            // Enabling (or saving an enabled flow) moves each marker up to now: a time skipped
+            // while the flow was off is never caught up, but one missed from now on is.
+            self.advance_markers(flow, true);
+        }
         self.flow(&flow.id)
             .ok_or_else(|| HubError::UnknownFlow(flow.id.clone()))
     }
 }
 
 impl Hub {
+    /// Applies a retained `fired` marker from the broker: `{"due": <unix seconds>}`, or an empty
+    /// payload when it was cleared. A marker never moves back: an older echo of our own write
+    /// must not undo a newer one.
+    pub(crate) fn ingest_fired(&self, flow: &str, node: &str, payload: &[u8]) {
+        let key = (flow.to_owned(), node.to_owned());
+        let mut fired = self.fired();
+        if payload.is_empty() {
+            fired.remove(&key);
+            return;
+        }
+        match serde_json::from_slice::<serde_json::Value>(payload)
+            .ok()
+            .and_then(|v| v.get("due")?.as_i64())
+        {
+            Some(due) => {
+                let slot = fired.entry(key).or_insert(due);
+                *slot = (*slot).max(due);
+            }
+            None => tracing::warn!(flow, node, "invalid catch-up marker ignored"),
+        }
+    }
+
+    /// When the time trigger `node` of `flow` last fired (the instant it was due, unix seconds),
+    /// if a marker is known.
+    pub(crate) fn fired_due(&self, flow: &str, node: &str) -> Option<i64> {
+        self.fired()
+            .get(&(flow.to_owned(), node.to_owned()))
+            .copied()
+    }
+
+    /// Records that the time trigger `node` of `flow` fired for the instant `due`: a retained
+    /// marker that survives a restart, and the local copy.
+    pub(crate) fn record_fired(&self, flow: &str, node: &str, due: chrono::DateTime<chrono::Utc>) {
+        let due = due.timestamp();
+        let published = self.publish(Publish {
+            topic: self.fired_topic(flow, node),
+            payload: serde_json::json!({ "due": due }).to_string(),
+            retain: true,
+        });
+        if let Err(err) = published {
+            tracing::warn!(flow, node, error = %err, "could not publish a catch-up marker");
+        }
+        self.fired().insert((flow.to_owned(), node.to_owned()), due);
+    }
+
+    /// Sets the marker of each catch-up trigger of `flow` to now: when `move_up`, to
+    /// `max(existing, now)`; otherwise only where none exists. Nothing is published when the
+    /// marker would not change.
+    fn advance_markers(&self, flow: &Flow, move_up: bool) {
+        let now = i64::try_from(clock::now()).unwrap_or(i64::MAX);
+        for node in &flow.nodes {
+            if node.kind.catch_up_minutes() == 0 {
+                continue;
+            }
+            let existing = self.fired_due(&flow.id, &node.id);
+            if existing.is_some_and(|due| !move_up || due >= now) {
+                continue;
+            }
+            if let Some(at) = chrono::DateTime::from_timestamp(now, 0) {
+                self.record_fired(&flow.id, &node.id, at);
+            }
+        }
+    }
+
+    /// Clears the markers of `flow` whose node is not in `keep`: an empty retained payload each.
+    fn clear_fired(&self, flow: &str, keep: &BTreeSet<String>) {
+        let stale: Vec<String> = self
+            .fired()
+            .keys()
+            .filter(|(f, node)| f == flow && !keep.contains(node))
+            .map(|(_, node)| node.clone())
+            .collect();
+        for node in stale {
+            let cleared = self.publish(Publish {
+                topic: self.fired_topic(flow, &node),
+                payload: String::new(),
+                retain: true,
+            });
+            if let Err(err) = cleared {
+                tracing::warn!(flow, node = %node, error = %err, "could not clear a catch-up marker");
+            }
+            self.fired().remove(&(flow.to_owned(), node));
+        }
+    }
+
+    fn fired_topic(&self, flow: &str, node: &str) -> String {
+        format!("{}/fired/{node}", self.flow_topic(flow))
+    }
+
     /// Lets a run through the `limit` node `node` of `flow` when fewer than `max` runs passed it
     /// in the last `per`, and records the pass: `Ok` holds the passes in the window, this one
     /// included. Over the limit nothing is recorded and `Err` holds the passes in the window.

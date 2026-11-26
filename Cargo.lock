@@ -3483,6 +3483,7 @@ name = "nidoo-core"
 version = "0.1.4"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "croner",
  "minijinja",
  "schemars",
