@@ -1967,6 +1967,48 @@ async fn history_bad_params_are_400() {
 }
 
 #[tokio::test]
+async fn history_window_params_are_400() {
+    let server = Server::start().await;
+    let (history, _rx) = nidoo::history::History::detached(8, chrono_tz::UTC);
+    server.hub.set_history(history);
+
+    for path in [
+        "series?entity=x&range=24h&from=2025-11-01&to=2025-11-30",
+        "series?entity=x&from=2025-11-01",
+        "series?entity=x&from=2025-11-30&to=2025-11-01",
+        "daily?entity=x&kind=counter&days=7&from=2025-11-01&to=2025-11-30",
+        "daily?entity=x&kind=counter&from=2025-11-01&to=2025-11-03&per=hour",
+        "daily?entity=x&kind=counter&days=7&per=month",
+        "fields?entity=x&from=2020-01-01&to=2021-12-31",
+    ] {
+        let res = server.get(&format!("/api/v1/history/{path}")).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{path}");
+        let body: Value = res.json().await.expect("json");
+        assert_eq!(body, json!({"error": "bad_request"}), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn history_window_checks_run_before_the_database() {
+    let server = Server::start().await;
+    let res = server
+        .get("/api/v1/history/series?entity=x&from=2025-11-30&to=2025-11-01")
+        .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn history_extent_without_history_is_503() {
+    let server = Server::start().await;
+    let res = server.get("/api/v1/history/extent?entity=x").await;
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = res.json().await.expect("json");
+    assert_eq!(body, json!({"error": "history_unavailable"}));
+    let res = server.get("/api/v1/history/extent").await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn main_control_patch_rejects_unknown_control() {
     let mut server = Server::start().await;
     server.online();
