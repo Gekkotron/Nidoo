@@ -4,10 +4,11 @@
 use super::encode_id;
 use crate::i18n::current_lang;
 use crate::i18n::errors::{WebError, web_error_text};
+use chrono::NaiveDate;
 use gloo_net::http::Request;
 use nidoo_api::{
-    EnergyKind, GridDay, HistoryDaily, HistoryFields, HistoryRange, HistorySeries, HistoryToday,
-    LastChange,
+    DailyPer, EnergyKind, GridDay, HistoryDaily, HistoryExtent, HistoryFields, HistoryRange,
+    HistorySeries, HistoryToday, LastChange,
 };
 
 /// Why a history call failed: variant per status class the hub returns.
@@ -68,6 +69,70 @@ pub(crate) fn daily_url(entity: &str, days: u16, kind: EnergyKind) -> String {
         days,
         kind_wire(kind)
     )
+}
+
+/// A house-local date window (`from`..=`to`), optionally cut `upto` seconds into its last day.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WindowReq {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub upto: Option<i64>,
+}
+
+/// `&from=..&to=..` (dates as `YYYY-MM-DD`), without `upto`.
+fn window_dates(w: &WindowReq) -> String {
+    format!("&from={}&to={}", w.from, w.to)
+}
+
+fn upto_param(w: &WindowReq) -> String {
+    w.upto.map(|u| format!("&upto={u}")).unwrap_or_default()
+}
+
+/// Serde wire name of a daily bucket size (`hour`, `day` or `month`).
+fn per_wire(per: DailyPer) -> &'static str {
+    match per {
+        DailyPer::Hour => "hour",
+        DailyPer::Day => "day",
+        DailyPer::Month => "month",
+    }
+}
+
+pub(crate) fn series_window_url(entity: &str, w: &WindowReq) -> String {
+    format!(
+        "/api/v1/history/series?entity={}{}{}",
+        encode_id(entity),
+        window_dates(w),
+        upto_param(w)
+    )
+}
+
+pub(crate) fn fields_window_url(entity: &str, w: &WindowReq) -> String {
+    format!(
+        "/api/v1/history/fields?entity={}{}{}",
+        encode_id(entity),
+        window_dates(w),
+        upto_param(w)
+    )
+}
+
+pub(crate) fn daily_window_url(
+    entity: &str,
+    w: &WindowReq,
+    per: DailyPer,
+    kind: EnergyKind,
+) -> String {
+    format!(
+        "/api/v1/history/daily?entity={}{}&per={}{}&kind={}",
+        encode_id(entity),
+        window_dates(w),
+        per_wire(per),
+        upto_param(w),
+        kind_wire(kind)
+    )
+}
+
+pub(crate) fn extent_url(entity: &str) -> String {
+    format!("/api/v1/history/extent?entity={}", encode_id(entity))
 }
 
 pub(crate) fn today_url(entity: &str, kind: EnergyKind) -> String {
@@ -167,6 +232,34 @@ pub async fn fetch_daily(
     kind: EnergyKind,
 ) -> Result<HistoryDaily, HistoryApiError> {
     fetch(&daily_url(entity, days, kind)).await
+}
+
+pub async fn fetch_series_window(
+    entity: &str,
+    w: &WindowReq,
+) -> Result<HistorySeries, HistoryApiError> {
+    fetch(&series_window_url(entity, w)).await
+}
+
+pub async fn fetch_fields_window(
+    entity: &str,
+    w: &WindowReq,
+) -> Result<HistoryFields, HistoryApiError> {
+    fetch(&fields_window_url(entity, w)).await
+}
+
+pub async fn fetch_daily_window(
+    entity: &str,
+    w: &WindowReq,
+    per: DailyPer,
+    kind: EnergyKind,
+) -> Result<HistoryDaily, HistoryApiError> {
+    fetch(&daily_window_url(entity, w, per, kind)).await
+}
+
+/// First recorded day and today (house-local) for `entity`.
+pub async fn fetch_extent(entity: &str) -> Result<HistoryExtent, HistoryApiError> {
+    fetch(&extent_url(entity)).await
 }
 
 pub async fn fetch_today(entity: &str, kind: EnergyKind) -> Result<HistoryToday, HistoryApiError> {
@@ -306,5 +399,55 @@ mod tests {
     fn chunk_ids_empty_input() {
         let ids: Vec<String> = Vec::new();
         assert!(chunk_ids(&ids, 50).is_empty());
+    }
+
+    fn window(upto: Option<i64>) -> WindowReq {
+        WindowReq {
+            from: chrono::NaiveDate::from_ymd_opt(2025, 11, 1).unwrap(),
+            to: chrono::NaiveDate::from_ymd_opt(2025, 11, 30).unwrap(),
+            upto,
+        }
+    }
+
+    #[test]
+    fn series_window_url_has_dates() {
+        assert_eq!(
+            series_window_url("sensor.t", &window(None)),
+            "/api/v1/history/series?entity=sensor.t&from=2025-11-01&to=2025-11-30"
+        );
+        assert!(series_window_url("sensor.t", &window(Some(3600))).ends_with("&upto=3600"));
+    }
+
+    #[test]
+    fn fields_window_url_has_dates() {
+        assert_eq!(
+            fields_window_url("sensor.t", &window(Some(60))),
+            "/api/v1/history/fields?entity=sensor.t&from=2025-11-01&to=2025-11-30&upto=60"
+        );
+    }
+
+    #[test]
+    fn daily_window_url_has_per() {
+        let w = WindowReq {
+            from: chrono::NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            to: chrono::NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+            upto: None,
+        };
+        assert_eq!(
+            daily_window_url("counter.a", &w, DailyPer::Month, EnergyKind::Counter),
+            "/api/v1/history/daily?entity=counter.a&from=2025-01-01&to=2025-12-31&per=month&kind=counter"
+        );
+        assert!(
+            daily_window_url("x", &window(Some(5)), DailyPer::Hour, EnergyKind::Power)
+                .ends_with("&per=hour&upto=5&kind=power")
+        );
+    }
+
+    #[test]
+    fn extent_url_is_plain() {
+        assert_eq!(
+            extent_url("sensor.t"),
+            "/api/v1/history/extent?entity=sensor.t"
+        );
     }
 }
