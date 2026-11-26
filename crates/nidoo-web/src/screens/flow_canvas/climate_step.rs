@@ -228,10 +228,10 @@ pub fn climate_step_sheet(node: RwSignal<Node>) -> impl IntoView {
             <div class="node-editor__field">
                 <span class="node-editor__label">{move || t(FlowText::ClimateSetpoint)}</span>
                 <Show when=move || setpoint.get() != ClimateSetpoint::Off>
-                    <div class="segmented" role="group">
+                    <div class="node-editor__stepper" role="group">
                         <button
                             type="button"
-                            class="chip segmented__option"
+                            class="chip"
                             aria-label="-"
                             on:click={move |_| {
                                 set_setpoint(ClimateSetpoint::Temp(stepped(degrees(), -SETPOINT_STEP)))
@@ -250,7 +250,7 @@ pub fn climate_step_sheet(node: RwSignal<Node>) -> impl IntoView {
                         />
                         <button
                             type="button"
-                            class="chip segmented__option"
+                            class="chip"
                             aria-label="+"
                             on:click={move |_| {
                                 set_setpoint(ClimateSetpoint::Temp(stepped(degrees(), SETPOINT_STEP)))
