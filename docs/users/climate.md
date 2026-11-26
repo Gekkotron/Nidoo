@@ -82,7 +82,7 @@ In a heat block, the **Heated by** row, after **Off**, picks the heaters for tha
 
 What the hub does with on/off heaters:
 
-- **Season and room state.** Outside the heating season, with the season off, or with the room off, the hub sends an on/off heater nothing at all, not even **off**. Frost protection is the one exception: it still switches **Thermostat** heaters on, after their cool-down, in any season. When a room stops heating, the hub sends one **off** to each heater it had switched on itself, and does not retry if that command is lost. A heater held by hand, or a disabled one, gets nothing.
+- **Season and room state.** Outside the heating season, with the season off, or with the room off, the hub sends an on/off heater nothing at all, not even **off**. A boost or zone override in heat outside the heating season runs on the climate units only. Frost protection is the one exception to the season: it still switches **Thermostat** heaters on, after their cool-down, in any season. A room that is switched off never runs frost protection, so its heaters get nothing either way. When a room stops heating, the hub sends one **off** to each heater it had switched on itself, and does not retry if that command is lost. A heater held by hand, or a disabled one, gets nothing.
 - **Cool-down.** Switching off is never held back by the cool-down. Switching on waits for it. This holds for the schedule, a boost, a hand hold ending, frost, and after a hub restart. A heater the hub has never seen counts as switched off when the hub starts.
 - **Gaps.** If the next block that names a **Stays on** heater starts within its cool-down, the heater stays on through the gap.
 - **Eco, away and holiday.** A **Stays on** heater is off. If the room's default heater is only **Stays on** heaters, the climate units hold the eco temperature instead.
@@ -90,7 +90,7 @@ What the hub does with on/off heaters:
 - **Overheat and no reading.** An overheating room, or a room with no usable temperature reading, switches every on/off heater off, even one switched on by hand.
 - **Hand changes.** Switching a heater by hand holds it until the room's next schedule change, at most the room's hand-hold limit (`manual_hold_max_min`, 240 minutes by default). A hand **off** starts the cool-down. After a hub restart the switch's live state is taken as it is, and no hold is created.
 - **Thermometer correction** does not move while only on/off heaters heat the room. It starts again from 0 when a climate unit heats.
-- **Missing devices.** A heater whose device is gone or disabled is ignored. The room default applies, then the climate units.
+- **Missing devices.** A heater whose device is gone counts as unreachable: the climate units take over if the room allows it (the checkbox above), else nothing heats the room and the reason says so. Only a disabled heater is skipped: a block or default that names it falls back to the room default, then to the climate units. A climate unit named in **Heated by** or the default that is unreachable is not replaced by another heater: nothing else is switched on in its place, and the reason says the unit is unreachable.
 - **Limits.** Heaters are for heating only: cooling is unchanged, and a room with no climate unit has no heaters. The thermostat band is 0.3 °C under the target and is not a setting. The hub cannot tell whether a heater really heats: it has no power or flame check.
 
 For API clients, the zone settings take `heaters` (a list of `entity`, `drive` as `thermostat` or `hold`, `enabled`, `min_off_min` and `min_on_min`, the minimum run of a thermostat heater, 0 to 120 minutes, which safety ignores), `heated_by` (the room default, where `null` means the climate units) and `fill_in`. A schedule block takes `heated_by`, a list of entity ids; leave it out for the room default. It is valid only on a heat block, and an empty list is refused. A heater must be a `switch` entity, not a group, listed once; a switch may heat one room only. A `heated_by` may only name the room's heaters and climate units. A save that breaks a rule is refused with a message. The decision's `heaters` gives each heater's `off_since`, `on_since` and `wait_until`, and a switch in the decision's `entities` has mode `heat` (on) or `off`.
@@ -112,13 +112,13 @@ A temperature set by hand on a device holds until the zone's next scheduled chan
 
 - **Schedule block**: the block's **Heated by**, or the **Default heater** when the block has none.
 - **Base temperature**: the **Default heater**.
-- **Boost or zone override**: what the schedule would choose right now.
+- **Boost or zone override**: what the schedule would choose right now. Outside the heating season, a boost or override in heat uses the climate units only.
 - **Room set back while empty**: the block it lowers.
 - **Eco, away or holiday**: the **Default heater**, without any **Stays on** heater.
 - **Frost**: every climate unit and every **Thermostat** heater.
 - **Overheat**: no heater; every on/off heater is off.
 - **Stale reading**: the climate units, as the safety rule above says; every on/off heater is off.
-- **Pending zone**: every on/off heater is off, except **Thermostat** heaters under frost protection.
+- **Pending zone**: the hub commands on/off heaters only for safety (frost, overheat, a stale reading) and to switch them off when safety ends. Otherwise it sends them nothing: a heater switched on by hand in a pending room stays as it is.
 
 A device that is not chosen is turned off.
 
