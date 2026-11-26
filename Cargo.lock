@@ -3370,7 +3370,7 @@ checksum = "60993920e071b0c9b66f14e2b32740a4e27ffc82854dcd72035887f336a09a28"
 
 [[package]]
 name = "nidoo"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "age",
  "anyhow",
@@ -3437,7 +3437,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-alarm"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "schemars",
  "serde",
@@ -3446,7 +3446,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-api"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nidoo-core",
  "schemars",
@@ -3456,7 +3456,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-assist"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "nidoo-api",
  "nidoo-assist",
@@ -3469,7 +3469,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-climate"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "nidoo-core",
@@ -3480,7 +3480,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3494,14 +3494,14 @@ dependencies = [
 
 [[package]]
 name = "nidoo-frigate"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "nidoo-push"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "axum",
  "futures-util",
@@ -3519,7 +3519,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-satellite"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -3543,7 +3543,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-solcast"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "axum",
  "chrono",
@@ -3557,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-sound"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "axum",
@@ -3588,7 +3588,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-voice"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "getrandom 0.2.17",
  "hmac 0.12.1",
@@ -3598,7 +3598,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-watchdog"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -3608,7 +3608,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-web"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "chrono-tz",
