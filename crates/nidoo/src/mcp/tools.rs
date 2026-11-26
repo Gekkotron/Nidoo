@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nidoo_api::{
-    CommandResponse, DeviceView, EntityView, GridDay, GroupView, HomeSettings, NetworkWatchView,
-    SupervisorView, SystemView, WeatherView,
+    CommandResponse, DailyPer, DeviceView, EntityView, GridDay, GroupView, HomeSettings,
+    NetworkWatchView, SupervisorView, SystemView, WeatherView,
 };
 use nidoo_core::flow::{notify_channel_error, notify_severity_error};
 use nidoo_core::model::{AreasDocument, SwitchType};
@@ -28,7 +28,9 @@ use super::params::{
     SetSettingsParams, SetVirtualParams, SpeakParams, Spoken,
 };
 use super::{NidooMcp, ToolError};
+use crate::history::HistoryError;
 use crate::history::query as history_query;
+use crate::history::window::{WindowUse, check_limits, parse_window};
 use crate::setup::settings::{ApiError, read_section, write_section};
 use nidoo_api::search::{EntityMatcher, Query};
 
@@ -448,9 +450,14 @@ impl NidooMcp {
     /// value the entity reports over `range`, one track each: its headline word and fields such
     /// as a vacuum's battery and fan speed), `daily`
     /// (kWh per day over `days` with `kind`), `today` (kWh since local midnight with
-    /// `kind`), or `last_change` (when the entity last changed). The reply is always a
-    /// one-field object: the field matches `what`. 503 `history_unavailable` when
-    /// `[history] url` is not set; 404 `not_recorded` when the entity has no rows.
+    /// `kind`), `last_change` (when the entity last changed), or `extent` (the first recorded
+    /// day and the house's today). `series`, `fields` and `daily` take either the preset
+    /// (`range` / `days`) or a house-local date window `from`/`to` (`YYYY-MM-DD`), never both;
+    /// a `daily` window is bucketed `per` `hour`, `day` (the default) or `month`. For a long
+    /// window use `daily` with `per = month`, or a series; windows are house-local dates, `to`
+    /// inclusive. The reply is always a one-field object: the field matches `what`. 503
+    /// `history_unavailable` when `[history] url` is not set; 404 `not_recorded` when the
+    /// entity has no rows.
     #[tool(name = "get_history", annotations(read_only_hint = true))]
     async fn get_history(
         &self,
@@ -461,42 +468,86 @@ impl NidooMcp {
             .history()
             .ok_or_else(|| ToolError("history_unavailable: `[history] url` is not set".into()))?;
         let now = crate::clock::now_micros();
+        let history_err = |e: HistoryError| ToolError(format!("{}: {e}", e.code()));
+        let bad = |msg: &str| ToolError(format!("bad_request: {msg}"));
+        let window = parse_window(
+            params.from.as_deref(),
+            params.to.as_deref(),
+            params.upto.map(|u| u.to_string()).as_deref(),
+        )
+        .map_err(history_err)?;
+        if window.is_none() && params.per.is_some() && params.what == HistoryWhat::Daily {
+            return Err(bad("`per` needs a `from`/`to` window"));
+        }
         match params.what {
             HistoryWhat::Series => {
-                let range = params
-                    .range
-                    .ok_or_else(|| ToolError("series requires `range`".into()))?;
-                let series = history_query::series(history, &params.entity, range, now)
-                    .await
-                    .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+                let series = match (&window, params.range) {
+                    (Some(_), Some(_)) => {
+                        return Err(bad("give `range` or `from`/`to`, not both"));
+                    }
+                    (Some(w), None) => {
+                        check_limits(w, WindowUse::Series).map_err(history_err)?;
+                        history_query::series_window(history, &params.entity, w, now).await
+                    }
+                    (None, Some(range)) => {
+                        history_query::series(history, &params.entity, range, now).await
+                    }
+                    (None, None) => {
+                        return Err(bad("series requires `range` or `from`/`to`"));
+                    }
+                }
+                .map_err(history_err)?;
                 Ok(Json(HistoryAnswer {
                     series: Some(series),
                     ..HistoryAnswer::default()
                 }))
             }
             HistoryWhat::Fields => {
-                let range = params
-                    .range
-                    .ok_or_else(|| ToolError("fields requires `range`".into()))?;
-                let entity = self.hub.entity_for_history(&params.entity)?;
-                let fields = history_query::fields(history, &entity, range, now)
-                    .await
-                    .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+                let fields = match (&window, params.range) {
+                    (Some(_), Some(_)) => {
+                        return Err(bad("give `range` or `from`/`to`, not both"));
+                    }
+                    (Some(w), None) => {
+                        check_limits(w, WindowUse::Fields).map_err(history_err)?;
+                        let entity = self.hub.entity_for_history(&params.entity)?;
+                        history_query::fields_window(history, &entity, w, now).await
+                    }
+                    (None, Some(range)) => {
+                        let entity = self.hub.entity_for_history(&params.entity)?;
+                        history_query::fields(history, &entity, range, now).await
+                    }
+                    (None, None) => {
+                        return Err(bad("fields requires `range` or `from`/`to`"));
+                    }
+                }
+                .map_err(history_err)?;
                 Ok(Json(HistoryAnswer {
                     fields: Some(fields),
                     ..HistoryAnswer::default()
                 }))
             }
             HistoryWhat::Daily => {
-                let days = params
-                    .days
-                    .ok_or_else(|| ToolError("daily requires `days`".into()))?;
                 let kind = params
                     .kind
                     .ok_or_else(|| ToolError("daily requires `kind`".into()))?;
-                let daily = history_query::daily(history, &params.entity, days, kind, now)
-                    .await
-                    .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+                let daily = match (&window, params.days) {
+                    (Some(_), Some(_)) => {
+                        return Err(bad("give `days` or `from`/`to`, not both"));
+                    }
+                    (Some(w), None) => {
+                        let per = params.per.unwrap_or(DailyPer::Day);
+                        check_limits(w, WindowUse::Daily(per)).map_err(history_err)?;
+                        history_query::daily_window(history, &params.entity, w, per, kind, now)
+                            .await
+                    }
+                    (None, Some(days)) => {
+                        history_query::daily(history, &params.entity, days, kind, now).await
+                    }
+                    (None, None) => {
+                        return Err(bad("daily requires `days` or `from`/`to`"));
+                    }
+                }
+                .map_err(history_err)?;
                 Ok(Json(HistoryAnswer {
                     daily: Some(daily),
                     ..HistoryAnswer::default()
@@ -508,7 +559,7 @@ impl NidooMcp {
                     .ok_or_else(|| ToolError("today requires `kind`".into()))?;
                 let today = history_query::today(history, &params.entity, kind, now)
                     .await
-                    .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+                    .map_err(history_err)?;
                 Ok(Json(HistoryAnswer {
                     today: Some(today),
                     ..HistoryAnswer::default()
@@ -518,9 +569,18 @@ impl NidooMcp {
                 let ids = std::slice::from_ref(&params.entity);
                 let mut items = history_query::last_change(history, ids)
                     .await
-                    .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+                    .map_err(history_err)?;
                 Ok(Json(HistoryAnswer {
                     last_change: items.items.pop(),
+                    ..HistoryAnswer::default()
+                }))
+            }
+            HistoryWhat::Extent => {
+                let extent = history_query::extent(history, &params.entity, now)
+                    .await
+                    .map_err(history_err)?;
+                Ok(Json(HistoryAnswer {
+                    extent: Some(extent),
                     ..HistoryAnswer::default()
                 }))
             }
