@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use nidoo_api::{EntityView, HistoryRange};
 use nidoo_core::dashboard::DashboardHistoryRange;
 
-use crate::components::history_chart::HistoryChart;
+use crate::components::history_chart::{ChartWindow, HistoryChart};
 use crate::format::entity_title;
 use crate::house::House;
 use crate::screens::history_detail::{flavor_for_unit, power_pair_of};
@@ -33,7 +33,7 @@ pub fn HistoryWidget(entity: EntityView, range: DashboardHistoryRange) -> impl I
             <span class="widget-history__title">{move || entity_title(lang(), &title_entity)}</span>
             <HistoryChart
                 entity_id=entity.id.clone()
-                range=chart_range(range)
+                window=ChartWindow::Preset(chart_range(range))
                 flavor=flavor
                 kind=format!("{:?}", entity.kind)
                 unit=entity.unit.clone()

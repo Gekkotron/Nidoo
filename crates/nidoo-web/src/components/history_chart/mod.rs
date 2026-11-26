@@ -6,6 +6,8 @@ pub mod periods;
 pub mod plot;
 pub mod selection;
 pub mod view;
+pub mod window;
 
 pub use format::paris_offset;
 pub use view::{Flavor, HistoryChart};
+pub use window::ChartWindow;

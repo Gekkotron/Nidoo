@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use leptos::html;
 use leptos::prelude::*;
 use nidoo_api::{
-    EnergyKind, FieldTrack, HistoryDaily, HistoryFields, HistoryRange, HistorySeries, TrackData,
+    DailyPer, EnergyKind, FieldTrack, HistoryDaily, HistoryFields, HistoryRange, HistorySeries,
+    TrackData,
 };
 use nidoo_core::flow::Scalar;
 use nidoo_core::model::Kind;
@@ -22,8 +23,16 @@ use super::geom::{
 use super::periods::{Band, band_near, legend, periods, scalar_text, value_at, word_in};
 use super::plot::{FieldsState, Plot, field_series, headline_or_error, percent_scale, plot_for};
 use super::selection::{chip_label, chips, parse_show, show_param, toggle};
-use crate::api::history::{HistoryApiError, fetch_daily, fetch_fields, fetch_series};
+pub use super::window::ChartWindow;
+use super::window::{
+    compare_request, domain, has_fields, local_today, refetches, runs_today, window_range,
+};
+use crate::api::history::{
+    HistoryApiError, WindowReq, fetch_daily, fetch_daily_window, fetch_fields, fetch_fields_window,
+    fetch_series, fetch_series_window,
+};
 use crate::components::now::Now;
+use crate::history_period::{Unit, per_for};
 use crate::house::House;
 use crate::i18n::format as fmt;
 use crate::i18n::history::{
@@ -65,7 +74,7 @@ fn daily_days_for(range: HistoryRange) -> u16 {
 }
 
 /// What a fetch was made for: entity, range, flavor, power pair and the Retry count.
-type FetchInputs = (String, HistoryRange, Flavor, Option<String>, u32);
+type FetchInputs = (String, ChartWindow, Flavor, Option<String>, u32);
 
 /// Seconds between two refetches of a chart left open: a minute for the day ranges, whose
 /// latest points move every minute, ten for the longer ones.
@@ -79,7 +88,7 @@ pub fn refresh_period_s(range: HistoryRange) -> u64 {
 #[component]
 pub fn HistoryChart(
     #[prop(into)] entity_id: Signal<String>,
-    #[prop(into)] range: Signal<HistoryRange>,
+    #[prop(into)] window: Signal<ChartWindow>,
     #[prop(into)] flavor: Signal<Flavor>,
     #[prop(into)] kind: Signal<String>,
     #[prop(into)] unit: Signal<Option<String>>,
@@ -100,6 +109,9 @@ pub fn HistoryChart(
 ) -> impl IntoView {
     let wants_fields = on_show.is_some();
     let state = RwSignal::new(State::Loading);
+    // The compared window's reply (`State::Series` or `State::Bars`); `None` when there is no
+    // comparison or its reply failed or was empty. Not drawn yet.
+    let compared = RwSignal::new(None::<State>);
     let fields = RwSignal::new(FieldsState::Loading);
     let latest: Rc<Cell<u32>> = Rc::new(Cell::new(0));
     let retry_bump = RwSignal::new(0u32);
@@ -107,7 +119,18 @@ pub fn HistoryChart(
     // The shared clock, cut to this range's refresh period: an open chart refetches each time
     // it moves on. Off the app (no clock) the chart never refreshes.
     let now = use_context::<Now>();
-    let tick = Memo::new(move |_| now.map(|n| n.0.get() / refresh_period_s(range.get())));
+    // A past date window never changes, so its tick stays put.
+    let tick = Memo::new(move |_| {
+        let w = window.get();
+        now.map(|n| {
+            let secs = n.0.get();
+            if refetches(&w, local_today(secs as i64)) {
+                secs / refresh_period_s(window_range(&w))
+            } else {
+                0
+            }
+        })
+    });
 
     // Fetch effect — refires on any input change (or Retry), and on each tick. A tick alone is
     // a refresh: the chart stays up while it loads.
@@ -116,7 +139,7 @@ pub fn HistoryChart(
         Effect::new(move |prev: Option<FetchInputs>| {
             let inputs = (
                 entity_id.get(),
-                range.get(),
+                window.get(),
                 flavor.get(),
                 power_pair.get(),
                 retry_bump.get(),
@@ -125,7 +148,7 @@ pub fn HistoryChart(
             let refresh = prev.as_ref() == Some(&inputs);
             let my_req = latest.get() + 1;
             latest.set(my_req);
-            let with_fields = wants_fields && inputs.2 == Flavor::Series;
+            let with_fields = wants_fields && inputs.2 == Flavor::Series && has_fields(&inputs.1);
             if !refresh {
                 state.set(State::Loading);
                 fields.set(if with_fields {
@@ -133,13 +156,17 @@ pub fn HistoryChart(
                 } else {
                     FieldsState::Ready(no_fields())
                 });
+                compared.set(None);
             }
 
-            let (id, r, f, pp, _) = inputs.clone();
+            let (id, w, f, pp, _) = inputs.clone();
             if with_fields {
-                let (id, latest_check) = (id.clone(), latest.clone());
+                let (id, latest_check, w) = (id.clone(), latest.clone(), w.clone());
                 leptos::task::spawn_local(async move {
-                    let outcome = fetch_fields(&id, r).await;
+                    let outcome = match &w {
+                        ChartWindow::Preset(r) => fetch_fields(&id, *r).await,
+                        ChartWindow::Dates { shown, .. } => fetch_fields_window(&id, shown).await,
+                    };
                     if is_stale(my_req, latest_check.get()) {
                         return;
                     }
@@ -165,20 +192,59 @@ pub fn HistoryChart(
                     }
                 });
             }
+            let range = window_range(&w);
+            let plan = plan_fetch(&id, &w, f, pp.as_deref());
+            // Set against an earlier period: what to fetch it as, and whether the shown period
+            // is still running (then the shown reply says how far in to cut it).
+            let comparison = match &w {
+                ChartWindow::Dates {
+                    shown,
+                    unit,
+                    compare: Some(cmp),
+                } => Some((
+                    *cmp,
+                    *unit,
+                    runs_today(shown, local_today((crate::energy::now_ms() / 1000) as i64)),
+                )),
+                _ => None,
+            };
+            let latest_check = latest.clone();
+            let fetch_compared = move |req: WindowReq, unit: Unit| {
+                let (id, pp, latest_check) = (id.clone(), pp.clone(), latest_check.clone());
+                async move {
+                    let plan = compared_plan(&id, unit, req, f, pp.as_deref());
+                    let outcome = fetch_plan(plan, range).await;
+                    if !is_stale(my_req, latest_check.get()) {
+                        compared.set(compared_state(outcome));
+                    }
+                }
+            };
             let latest_check = latest.clone();
             leptos::task::spawn_local(async move {
-                let outcome = fetch_for(&id, r, f, pp.as_deref()).await;
-                if is_stale(my_req, latest_check.get()) {
-                    return;
-                }
-                match outcome {
-                    FetchResult::Series(Ok(s)) => state.set(State::Series(s)),
-                    FetchResult::Daily(Ok(d)) => state.set(State::Bars(d)),
-                    FetchResult::Series(Err(e)) | FetchResult::Daily(Err(e)) => {
-                        // A failed refresh keeps what is drawn; one that superseded the first
-                        // fetch still has to end the shimmer.
-                        if !refresh || state.with_untracked(|s| matches!(s, State::Loading)) {
-                            state.set(map_error(e));
+                match comparison {
+                    // Running: the compared window waits for the shown reply's span.
+                    Some((cmp, unit, true)) => {
+                        let outcome = fetch_plan(plan, range).await;
+                        if is_stale(my_req, latest_check.get()) {
+                            return;
+                        }
+                        let span = outcome.span();
+                        apply_shown(state, outcome, refresh);
+                        let req = span.map_or(cmp, |span| compare_request(span, true, cmp));
+                        fetch_compared(req, unit).await;
+                    }
+                    // Not running: both at once.
+                    Some((cmp, unit, false)) => {
+                        leptos::task::spawn_local(fetch_compared(cmp, unit));
+                        let outcome = fetch_plan(plan, range).await;
+                        if !is_stale(my_req, latest_check.get()) {
+                            apply_shown(state, outcome, refresh);
+                        }
+                    }
+                    None => {
+                        let outcome = fetch_plan(plan, range).await;
+                        if !is_stale(my_req, latest_check.get()) {
+                            apply_shown(state, outcome, refresh);
                         }
                     }
                 }
@@ -191,7 +257,12 @@ pub fn HistoryChart(
     let house = use_context::<House>();
     let drawn_unit = Memo::new(move |_| {
         let id = entity_id.get();
-        let plan = plan_fetch(&id, range.get(), flavor.get(), power_pair.get().as_deref());
+        let plan = plan_fetch(
+            &id,
+            &window.get(),
+            flavor.get(),
+            power_pair.get().as_deref(),
+        );
         drawn_unit(&plan, &id, unit.get(), |other| {
             house.and_then(|h| {
                 h.entities
@@ -203,14 +274,15 @@ pub fn HistoryChart(
     // Each render reads `state` and `fields` and composes the right view.
     let kind_rx = kind;
     let unit_rx = drawn_unit;
-    let range_rx = range;
     let lang = use_lang();
     view! {
         <div class="history-chart">
             {move || {
                 // Read here, so a language flip redraws the labels without a refetch.
                 let lang = lang();
-                let range = range_rx.get();
+                let win = window.get();
+                let range = window_range(&win);
+                let now_s = (crate::energy::now_ms() / 1000) as i64;
                 let fields_now = fields.get();
                 let entity_kind = field_kind.map_or(Kind::Generic, |k| k.get());
                 let tracks = match &fields_now {
@@ -219,6 +291,15 @@ pub fn HistoryChart(
                 };
                 let chip_list = chips(&tracks);
                 let sel = parse_show(show.get().as_deref(), &chip_list);
+                // The x domain of a field plot: the fields reply's own axis.
+                let fdomain = domain(
+                    &win,
+                    match &fields_now {
+                        FieldsState::Ready(f) if f.to > f.from => Some((f.from, f.to)),
+                        _ => None,
+                    },
+                    now_s,
+                );
                 let plot = plot_for(flavor.get(), &fields_now, &sel, &chip_list);
                 let row = match on_show {
                     Some(on_show)
@@ -256,23 +337,23 @@ pub fn HistoryChart(
                         view! { <div class="history-chart__shimmer" aria-busy="true"></div> }.into_any()
                     }
                     Plot::Field { track, overlay } => {
-                        let overlay = overlay_of(lang, entity_kind, &tracks, overlay, range);
+                        let overlay = overlay_of(lang, entity_kind, &tracks, overlay, fdomain);
                         match tracks.get(track).and_then(field_series) {
                             Some((s, unit)) => {
                                 let fixed = percent_scale(unit.as_deref());
-                                render_series(lang, s, range, field_series_kind(), unit, overlay, fixed).into_any()
+                                render_series(lang, s, range, fdomain, field_series_kind(), unit, overlay, fixed).into_any()
                             }
-                            None => render_words(lang, range, overlay).into_any(),
+                            None => render_words(lang, range, fdomain, overlay).into_any(),
                         }
                     }
                     Plot::Words { track } => {
-                        let overlay = overlay_of(lang, entity_kind, &tracks, Some(track), range);
-                        render_words(lang, range, overlay).into_any()
+                        let overlay = overlay_of(lang, entity_kind, &tracks, Some(track), fdomain);
+                        render_words(lang, range, fdomain, overlay).into_any()
                     }
                     Plot::Bars | Plot::Headline { .. } => {
                         let overlay = match plot {
                             Plot::Headline { overlay } => {
-                                overlay_of(lang, entity_kind, &tracks, overlay, range)
+                                overlay_of(lang, entity_kind, &tracks, overlay, fdomain)
                             }
                             _ => None,
                         };
@@ -289,9 +370,12 @@ pub fn HistoryChart(
                         State::Error(msg) => error_block(lang, &msg, retry_bump).into_any(),
                         State::Series(s) => match headline_or_error(&fields_now, &s) {
                             Some(msg) => error_block(lang, &msg, retry_bump).into_any(),
-                            None => render_series(lang, s, range, kind_rx.get(), unit_rx.get(), overlay, None).into_any(),
+                            None => {
+                                let dom = domain(&win, s.span, now_s);
+                                render_series(lang, s, range, dom, kind_rx.get(), unit_rx.get(), overlay, None).into_any()
+                            }
                         },
-                        State::Bars(d) => render_bars(lang, d, range).into_any(),
+                        State::Bars(d) => render_bars(lang, d, range, bar_per(&win, flavor.get())).into_any(),
                         }
                     }
                 };
@@ -398,16 +482,15 @@ impl Overlay {
     }
 }
 
-/// The overlay of track `idx` of the fields reply, over the window ending now.
+/// The overlay of track `idx` of the fields reply, over the x domain `from..to`.
 fn overlay_of(
     lang: Lang,
     kind: Kind,
     tracks: &[FieldTrack],
     idx: Option<usize>,
-    range: HistoryRange,
+    (from, to): (i64, i64),
 ) -> Option<Overlay> {
-    let now = (crate::energy::now_ms() / 1000) as i64;
-    Overlay::new(lang, kind, tracks.get(idx?)?, now - range.span_secs(), now)
+    Overlay::new(lang, kind, tracks.get(idx?)?, from, to)
 }
 
 /// The shaded periods behind the plot: only the coloured ones; the baseline stays plain.
@@ -462,8 +545,12 @@ fn period_key(overlay: &Overlay) -> impl IntoView + use<> {
 }
 
 /// The plot box of a word value shown alone: its periods, the x axis and the legend.
-fn render_words(lang: Lang, range: HistoryRange, overlay: Option<Overlay>) -> impl IntoView {
-    let now = (crate::energy::now_ms() / 1000) as i64;
+fn render_words(
+    lang: Lang,
+    range: HistoryRange,
+    (_, now): (i64, i64),
+    overlay: Option<Overlay>,
+) -> impl IntoView {
     let xticks = tick_labels(lang, range, now);
     let layer = overlay.as_ref().map(|o| periods_layer(o, false));
     let key = overlay.as_ref().map(period_key);
@@ -528,8 +615,19 @@ enum FetchResult {
     Daily(Result<HistoryDaily, HistoryApiError>),
 }
 
+impl FetchResult {
+    /// The unix `[start, end]` of a successful date-window reply.
+    fn span(&self) -> Option<(i64, i64)> {
+        match self {
+            FetchResult::Series(Ok(s)) => s.span,
+            FetchResult::Daily(Ok(d)) => d.span,
+            _ => None,
+        }
+    }
+}
+
 /// Which endpoint to call, with its arguments; pure routing decision for the current chart
-/// state. Extracted from `fetch_for` so it is natively testable — the Review Focus items
+/// state. Extracted from `fetch_plan` so it is natively testable — the Review Focus items
 /// (text-entity 404, counter without power pair on 24h) are branches here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchPlan {
@@ -537,25 +635,59 @@ pub enum FetchPlan {
     Series(String),
     /// Call `/history/daily?entity={0}&days={1}&kind=counter`.
     Daily(String, u16),
+    /// Call `/history/series` over a date window.
+    SeriesWindow(String, WindowReq),
+    /// Call `/history/daily` over a date window, bucketed per hour, day or month.
+    DailyWindow(String, WindowReq, DailyPer),
 }
 
-/// Decide which endpoint to fetch for the current `(flavor, range, power_pair)` triple.
+/// Decide which endpoint to fetch for the current `(flavor, window, power_pair)` triple.
 pub fn plan_fetch(
     entity: &str,
-    range: HistoryRange,
+    window: &ChartWindow,
     flavor: Flavor,
     power_pair: Option<&str>,
 ) -> FetchPlan {
-    match (flavor, range) {
-        (Flavor::Series, _) => FetchPlan::Series(entity.to_owned()),
-        (Flavor::Counter, HistoryRange::Hour | HistoryRange::SixHours | HistoryRange::Day) => {
-            match power_pair {
-                Some(pid) => FetchPlan::Series(pid.to_owned()),
-                None => FetchPlan::Daily(entity.to_owned(), 1),
-            }
+    match (window, flavor) {
+        (ChartWindow::Dates { shown, .. }, Flavor::Series) => {
+            FetchPlan::SeriesWindow(entity.to_owned(), *shown)
         }
-        (Flavor::Counter, _) => FetchPlan::Daily(entity.to_owned(), daily_days_for(range)),
+        (ChartWindow::Dates { shown, unit, .. }, Flavor::Counter) => {
+            let span = crate::history_period::Span {
+                from: shown.from,
+                to: shown.to,
+            };
+            FetchPlan::DailyWindow(entity.to_owned(), *shown, per_for(*unit, span))
+        }
+        (ChartWindow::Preset(_), Flavor::Series) => FetchPlan::Series(entity.to_owned()),
+        (
+            ChartWindow::Preset(HistoryRange::Hour | HistoryRange::SixHours | HistoryRange::Day),
+            Flavor::Counter,
+        ) => match power_pair {
+            Some(pid) => FetchPlan::Series(pid.to_owned()),
+            None => FetchPlan::Daily(entity.to_owned(), 1),
+        },
+        (ChartWindow::Preset(r), Flavor::Counter) => {
+            FetchPlan::Daily(entity.to_owned(), daily_days_for(*r))
+        }
     }
+}
+
+/// How the compared window is fetched: as a date window of the same unit, with no comparison of
+/// its own.
+fn compared_plan(
+    entity: &str,
+    unit: Unit,
+    req: WindowReq,
+    flavor: Flavor,
+    power_pair: Option<&str>,
+) -> FetchPlan {
+    let w = ChartWindow::Dates {
+        shown: req,
+        unit,
+        compare: None,
+    };
+    plan_fetch(entity, &w, flavor, power_pair)
 }
 
 /// The unit of the line `plan` draws for `entity`: `unit` for the entity's own series, else the
@@ -572,17 +704,57 @@ pub fn drawn_unit(
     }
 }
 
-async fn fetch_for(
-    entity: &str,
-    range: HistoryRange,
-    flavor: Flavor,
-    power_pair: Option<&str>,
-) -> FetchResult {
-    match plan_fetch(entity, range, flavor, power_pair) {
+/// Run `plan`; `range` is the preset a plain `Series` plan is for.
+async fn fetch_plan(plan: FetchPlan, range: HistoryRange) -> FetchResult {
+    match plan {
         FetchPlan::Series(id) => FetchResult::Series(fetch_series(&id, range).await),
         FetchPlan::Daily(id, days) => {
             FetchResult::Daily(fetch_daily(&id, days, EnergyKind::Counter).await)
         }
+        FetchPlan::SeriesWindow(id, w) => FetchResult::Series(fetch_series_window(&id, &w).await),
+        FetchPlan::DailyWindow(id, w, per) => {
+            FetchResult::Daily(fetch_daily_window(&id, &w, per, EnergyKind::Counter).await)
+        }
+    }
+}
+
+/// Put the shown reply on screen. A failed refresh keeps what is drawn; one that superseded the
+/// first fetch still has to end the shimmer.
+fn apply_shown(state: RwSignal<State>, outcome: FetchResult, refresh: bool) {
+    match outcome {
+        FetchResult::Series(Ok(s)) => state.set(State::Series(s)),
+        FetchResult::Daily(Ok(d)) => state.set(State::Bars(d)),
+        FetchResult::Series(Err(e)) | FetchResult::Daily(Err(e)) => {
+            if !refresh || state.with_untracked(|s| matches!(s, State::Loading)) {
+                state.set(map_error(e));
+            }
+        }
+    }
+}
+
+/// The compared reply as chart state; a failed or empty one is no comparison at all.
+fn compared_state(outcome: FetchResult) -> Option<State> {
+    match outcome {
+        FetchResult::Series(Ok(s)) if !s.points.is_empty() => Some(State::Series(s)),
+        FetchResult::Daily(Ok(d)) if !d.days.is_empty() => Some(State::Bars(d)),
+        _ => None,
+    }
+}
+
+/// How the bars of a window are bucketed: per the date window's unit, else per day.
+fn bar_per(window: &ChartWindow, flavor: Flavor) -> DailyPer {
+    match plan_fetch("", window, flavor, None) {
+        FetchPlan::DailyWindow(_, _, per) => per,
+        _ => DailyPer::Day,
+    }
+}
+
+/// What a bar's tooltip names: its hour, its day or its month.
+fn bar_label(lang: Lang, per: DailyPer, t: i64) -> String {
+    match per {
+        DailyPer::Hour => tooltip_time(lang, HistoryRange::Day, t, t),
+        DailyPer::Day => tooltip_day(lang, t),
+        DailyPer::Month => tooltip_time(lang, HistoryRange::Year, t, t),
     }
 }
 
@@ -695,19 +867,20 @@ fn gradient_markup(id: &str) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_series(
     lang: Lang,
     s: HistorySeries,
     range: HistoryRange,
+    (t_start, now): (i64, i64),
     kind: String,
     unit: Option<String>,
     overlay: Option<Overlay>,
     fixed: Option<YScale>,
 ) -> impl IntoView {
     let discrete = state_axis_labels(lang, None, &kind).is_some();
-    // The x-axis is the whole range ending now, so short history sits at the right edge.
-    let now = (crate::energy::now_ms() / 1000) as i64;
-    let t_start = now - range.span_secs();
+    // The x-axis is the whole domain: a preset ends now, so short history sits at the right
+    // edge; a date window is the whole period.
     let base = y_scale(&s.points);
     let (min_v, max_v) = series_min_max(&s.points);
     // Round ticks around the data itself; a flat line keeps the padded extent.
@@ -881,7 +1054,7 @@ fn y_axis(
     (labels, nice.ticks.iter().map(|&v| at(v)).collect())
 }
 
-fn render_bars(lang: Lang, d: HistoryDaily, range: HistoryRange) -> impl IntoView {
+fn render_bars(lang: Lang, d: HistoryDaily, range: HistoryRange, per: DailyPer) -> impl IntoView {
     let bars = daily_bars(&d.days, VIEW_W, VIEW_H);
     let total: f64 = d.days.iter().map(|d| d.1).sum();
     let n = bars.len();
@@ -919,7 +1092,7 @@ fn render_bars(lang: Lang, d: HistoryDaily, range: HistoryRange) -> impl IntoVie
                 class:history-chart__tip--left=move || x_at().is_some_and(tooltip_flips)
                 style=move || x_at().map(|x| format!("left: {}", pct(x))).unwrap_or_default()>
                 {move || hover.get().and_then(|i| days.with_value(|d| d.get(i).copied())).map(|(t, kwh_v)| view! {
-                    <span class="history-chart__tip-time">{tooltip_day(lang, t)}</span>
+                    <span class="history-chart__tip-time">{bar_label(lang, per, t)}</span>
                     <strong class="history-chart__tip-value">{kwh(lang, kwh_v)}</strong>
                 })}
             </div>

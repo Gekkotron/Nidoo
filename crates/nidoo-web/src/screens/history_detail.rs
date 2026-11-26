@@ -9,7 +9,7 @@ use nidoo_api::{EntityView, HistoryRange};
 use nidoo_core::energy::{EnergyMeters, EnergyUnits};
 use nidoo_core::model::Kind;
 
-use crate::components::history_chart::{Flavor, HistoryChart};
+use crate::components::history_chart::{ChartWindow, Flavor, HistoryChart};
 use crate::energy::{energy_entities, energy_entity};
 use crate::format::{area_name, shown_name, title_suffix, type_word, wrap_id};
 use crate::house::House;
@@ -218,7 +218,7 @@ pub fn HistoryDetailScreen() -> impl IntoView {
                             </div>
                             <HistoryChart
                                 entity_id=Signal::derive(move || id.get())
-                                range=Signal::derive(move || range.get())
+                                window=Signal::derive(move || ChartWindow::Preset(range.get()))
                                 flavor=Signal::derive(move || flavor_sig.get())
                                 kind=Signal::derive(move || kind_str.get())
                                 unit=Signal::derive(move || unit_opt.get())

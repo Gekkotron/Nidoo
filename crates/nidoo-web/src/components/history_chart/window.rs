@@ -1,0 +1,110 @@
+//! What a `HistoryChart` is asked to draw, and the pure rules around a date window: the
+//! presentation range its labels borrow, the compared window's request, the refresh rule and
+//! the x domain.
+
+use chrono::NaiveDate;
+use nidoo_api::HistoryRange;
+
+use crate::api::history::WindowReq;
+use crate::history_period::Unit;
+
+/// The stretch of time a chart draws.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChartWindow {
+    /// The last `HistoryRange` ending now (dashboard widgets, the legacy chips).
+    Preset(HistoryRange),
+    /// A date window, optionally set against the same period of an earlier year.
+    Dates {
+        shown: WindowReq,
+        unit: Unit,
+        compare: Option<WindowReq>,
+    },
+}
+
+/// Days a window covers, both ends included.
+pub fn window_days(w: &WindowReq) -> i64 {
+    (w.to - w.from).num_days() + 1
+}
+
+/// Whether `today` falls inside the window.
+pub fn runs_today(w: &WindowReq, today: NaiveDate) -> bool {
+    w.from <= today && today <= w.to
+}
+
+/// The preset range whose labels and bucket style a date window borrows.
+pub fn present_range(unit: Unit, shown: &WindowReq) -> HistoryRange {
+    match unit {
+        Unit::Day | Unit::Hour1 | Unit::Hour6 => HistoryRange::Day,
+        Unit::Week => HistoryRange::Week,
+        Unit::Month => HistoryRange::Month,
+        Unit::Year => HistoryRange::Year,
+        Unit::Custom => match window_days(shown) {
+            ..=1 => HistoryRange::Day,
+            2..=8 => HistoryRange::Week,
+            9..=32 => HistoryRange::Month,
+            _ => HistoryRange::Year,
+        },
+    }
+}
+
+/// The compared window's request: while the shown period is still running it is cut as far into
+/// its own last day as the shown one has got (`span` is the shown reply's unix `[start, end]`).
+pub fn compare_request(shown_span: (i64, i64), running: bool, cmp: WindowReq) -> WindowReq {
+    WindowReq {
+        upto: running.then(|| shown_span.1 - shown_span.0),
+        ..cmp
+    }
+}
+
+/// Whether an open chart refetches on its refresh tick: presets always; a date window only
+/// while it holds today (a past period never changes).
+pub fn refetches(window: &ChartWindow, today: NaiveDate) -> bool {
+    match window {
+        ChartWindow::Preset(_) => true,
+        ChartWindow::Dates { shown, .. } => runs_today(shown, today),
+    }
+}
+
+/// The x domain of a date window: the whole period from the reply's start, so a running month
+/// leaves the days to come empty. `span` is the reply's unix `[start, end]`.
+pub fn x_domain(shown: &WindowReq, span: (i64, i64)) -> (i64, i64) {
+    (span.0, span.0 + window_days(shown) * 86_400)
+}
+
+/// The x domain of any window at unix second `now`; a date window with no reply span yet falls
+/// back to the days ending now.
+pub fn domain(window: &ChartWindow, span: Option<(i64, i64)>, now: i64) -> (i64, i64) {
+    match window {
+        ChartWindow::Preset(r) => (now - r.span_secs(), now),
+        ChartWindow::Dates { shown, .. } => match span {
+            Some(span) => x_domain(shown, span),
+            None => (now - window_days(shown) * 86_400, now),
+        },
+    }
+}
+
+/// The range a window is worded and bucketed as.
+pub fn window_range(window: &ChartWindow) -> HistoryRange {
+    match window {
+        ChartWindow::Preset(r) => *r,
+        ChartWindow::Dates { shown, unit, .. } => present_range(*unit, shown),
+    }
+}
+
+/// The longest date window whose value chips are fetched: a fields reply over more is too big.
+const FIELDS_MAX_DAYS: i64 = 400;
+
+/// Whether the chart fetches the value chips for this window.
+pub fn has_fields(window: &ChartWindow) -> bool {
+    match window {
+        ChartWindow::Preset(_) => true,
+        ChartWindow::Dates { shown, .. } => window_days(shown) <= FIELDS_MAX_DAYS,
+    }
+}
+
+/// The house-local date at unix second `now`.
+pub fn local_today(now: i64) -> NaiveDate {
+    let local = now + i64::from(super::format::paris_offset(now));
+    NaiveDate::from_num_days_from_ce_opt(719_163 + local.div_euclid(86_400) as i32)
+        .unwrap_or(NaiveDate::MIN)
+}
