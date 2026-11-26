@@ -25,7 +25,7 @@ The project is generic ([feedback: project must be generic]): no room names, top
 - Shutters as a climate lever (design 2).
 - The comfort ↔ cost slider and energy prices (design 3).
 - Learned layers / ML: occupancy prediction, preheat timing (design 4, only if a replay over history shows they beat the rules).
-- Heaters driven through a plain `switch` (smart plug, pilot wire) where the hub would run the thermostat loop itself. v1 drives only `climate` entities, which regulate themselves.
+- Heaters driven through a plain `switch` (smart plug, pilot wire) where the hub would run the thermostat loop itself. v1 drives only `climate` entities, which regulate themselves. (lifted for heating by `2026-11-26-climate-onoff-heaters-design.md`)
 - `water_heater` entities.
 - Per-room occupancy in decisions. Room motion and occupancy are only evidence for the learner.
 - A flow node that sets an override with its own expiry. Flows that command a climate entity are treated as hand changes (§7).
@@ -286,7 +286,7 @@ No app change is needed: the app already shows push action buttons and sends the
 
 - Hand change hold: until the next scheduled change, max 4 h, per zone.
 - Zone states `off` / `pending` / `active`; `off` stops even safety; safety acts in `pending` zones from the moment the feature is enabled.
-- Only `climate` entities are driven in v1 (no plug-driven heaters, no water heaters).
+- Only `climate` entities are driven in v1 (no plug-driven heaters, no water heaters). (lifted for heating by `2026-11-26-climate-onoff-heaters-design.md`)
 - House-level presence only; room motion is learner evidence, not a decision input.
 - `auto` season from the outdoor 24 h mean with 16 °C / 24 °C thresholds, `heat` without an outdoor sensor.
 - Safety defaults: frost 7 °C, overheat 30 °C, overcool 16 °C, stale after 60 min.

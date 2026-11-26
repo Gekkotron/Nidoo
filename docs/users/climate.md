@@ -31,6 +31,7 @@ An **Active** room shows the same card on **Home** too, at the top of its room, 
 
 The **⚙** on the card opens the room's settings:
 
+- **Heaters** (see [Heaters](#heaters)): the room's on/off heaters, each with its drive and cool-down, then **Default heater** and the **The climate units take over while a heater cannot run** checkbox.
 - **Room thermometer**: Automatic (the room's own temperature sensor when it has one, else the mean of its climate devices' readings) or a sensor you pick.
 - **Thermometer correction**: the switch, a one-line summary of the step, tolerance and interval, and its seven numbers folded under **Advanced settings** (see [Thermometer correction](#thermometer-correction)).
 - **Room presence** (see [Room presence](#room-presence)).
@@ -39,7 +40,7 @@ The **⚙** on the card opens the room's settings:
 
 Below the card:
 
-- **This week**: the approved schedule as a week calendar, with a base temperature and coloured blocks. **Create schedule** starts one when there is none, **Edit schedule** changes it, and you tap an empty spot to add a block.
+- **This week**: the approved schedule as a week calendar, with a base temperature and coloured blocks. **Create schedule** starts one when there is none, **Edit schedule** changes it, and you tap an empty spot to add a block. In a heat block, the **Heated by** row picks which heaters heat it (see [Heaters](#heaters)).
 - **Proposed schedule**: what the learner found, with **Approve**, **Reject** and, after you edit it, **Approve edited**.
 
 The **⚙** in the page header opens **Settings**, the house document (see below). Banners explain when learning is off or [History](history.md) is not set up.
@@ -62,6 +63,38 @@ Each area with a climate device is a zone. A zone is in one of three states:
 - `pending`: waiting for its first approved schedule. A pending zone acts only on safety.
 - `active`: running its schedule and overrides.
 
+## Heaters
+
+Some rooms heat with more than the climate unit: an electric radiator on a relay, or a stove on a smart plug. These are **on/off heaters**. Any switch can be one, from any area: the stove's plug can sit in the garage and still heat the living room. The engine switches them with the schedule.
+
+Add them in the room's settings, under **Heaters**, above **Room thermometer**. **Add a heater…** lists the switches of the house. The room's climate units are listed above them, read only. Each heater has:
+
+- A drive. **Thermostat** suits a radiator: the heater is on when the room is 0.3 °C or more under the target, and off once the target is reached. **Stays on** suits a stove: the heater is on for as long as it is chosen, whatever the temperature.
+- **Cool-down**, in minutes from 0 to 240. Once the heater is off, it is not switched on again before the cool-down has passed. A stove might use 15.
+- A switch to enable it. A disabled heater is left alone entirely.
+- **✕** removes it.
+
+**Default heater** chooses what heats the room when a schedule block, or the base temperature, does not choose. Its chips are the climate units and the heaters. A chip with ✓ is chosen, and any mix is allowed.
+
+The checkbox **The climate units take over while a heater cannot run** (`fill_in`) covers a heater that is cooling down or unreachable. The room's climate units then heat to the same target until it can. They stop once the heater runs again. A **Stays on** heater never triggers this, however cold the room gets: the hub knows a switch's on or off state and whether it is reachable, but not whether a stove has gone out.
+
+In a heat block, the **Heated by** row, after **Off**, picks the heaters for that block: **Room default**, or one chip per device. The row appears only in heat blocks, and only when the room has an on/off heater. The week view shows the names under the block's temperature.
+
+What the hub does with on/off heaters:
+
+- **Season and room state.** Outside the heating season, with the season off, or with the room off, the hub sends an on/off heater nothing at all, not even **off**. When a room stops heating, the hub sends one **off** to each heater it had switched on itself, and does not retry if that command is lost. A heater held by hand, or a disabled one, gets nothing.
+- **Cool-down.** Switching off is never delayed. Switching on waits for the cool-down. This holds for the schedule, a boost, a hand hold ending, frost, and after a hub restart. A heater the hub has never seen counts as switched off when the hub starts.
+- **Gaps.** If the next block that names a **Stays on** heater starts within its cool-down, the heater stays on through the gap.
+- **Eco, away and holiday.** A **Stays on** heater is off. If the room's default heater is only **Stays on** heaters, the climate units hold the eco temperature instead.
+- **Frost.** Frost protection switches **Thermostat** heaters on, after their cool-down. **Stays on** heaters are not used for frost. Outside the heating season, a **Stays on** heater gets nothing at all.
+- **Overheat and no reading.** An overheating room, or a room with no usable temperature reading, switches every on/off heater off, even one switched on by hand.
+- **Hand changes.** Switching a heater by hand holds it until the room's next schedule change, at most the room's hand-hold limit (`manual_hold_max_min`, 240 minutes by default). A hand **off** starts the cool-down. After a hub restart the switch's live state is taken as it is, and no hold is created.
+- **Thermometer correction** does not move while only on/off heaters heat the room. It starts again from 0 when a climate unit heats.
+- **Missing devices.** A heater whose device is gone or disabled is ignored. The room default applies, then the climate units.
+- **Limits.** Heaters are for heating only: cooling is unchanged, and a room with no climate unit has no heaters. The thermostat band is 0.3 °C under the target and is not a setting. The hub cannot tell whether a heater really heats: it has no power or flame check.
+
+For API clients, the zone settings take `heaters` (a list of `entity`, `drive` as `thermostat` or `hold`, `enabled`, `min_off_min` and `min_on_min`, the minimum run of a thermostat heater, 0 to 120 minutes, which safety ignores), `heated_by` (the room default, where `null` means the climate units) and `fill_in`. A schedule block takes `heated_by`, a list of entity ids; leave it out for the room default. It is valid only on a heat block, and an empty list is refused. The decision's `heaters` gives each heater's `off_since`, `on_since` and `wait_until`, and a switch in the decision's `entities` has mode `heat` (on) or `off`.
+
 ## How a zone is decided
 
 The engine decides per zone from a priority tree, and every decision carries its `source` (`safety`, `override`, `boost`, `holiday`, `eco`, `away`, `empty`, `schedule` or `idle`) and a `reason`:
@@ -74,6 +107,20 @@ The engine decides per zone from a priority tree, and every decision carries its
 Per-device overrides (hand changes) sit on top of the rules and hold their device whatever the zone does. An override the device cannot run (cool on a heat-only valve) holds it as it is, and the reason says "held as it is".
 
 A temperature set by hand on a device holds until the zone's next scheduled change, at most `manual_hold_max_min` minutes (240 by default). Only an active zone watches for hand changes: what is set by hand while a zone is off is not held when it is switched back on, and the schedule applies.
+
+**Who heats** depends on the source. The room's on/off heaters (see [Heaters](#heaters)) take part only in heat, and only in an active or pending zone:
+
+- **Schedule block**: the block's **Heated by**, or the **Default heater** when the block has none.
+- **Base temperature**: the **Default heater**.
+- **Boost or zone override**: what the schedule would choose right now.
+- **Room set back while empty**: the block it lowers.
+- **Eco, away or holiday**: the **Default heater**, without any **Stays on** heater.
+- **Frost**: every climate unit and every **Thermostat** heater.
+- **Overheat**: no heater; every on/off heater is off.
+- **Stale reading**: the climate units, as the safety rule above says; every on/off heater is off.
+- **Pending zone**: every on/off heater is off.
+
+A device that is not chosen is turned off.
 
 The engine keeps deciding when history is off; only the learner pauses.
 
@@ -123,5 +170,7 @@ The decision's source is `empty`, shown as **Empty room** under **Recent decisio
 ## The learner and proposals
 
 The learner builds a weekly schedule from the devices' target history (time held in eco, away, a room set back as empty, holiday, safety or an override is not evidence) in the history database and proposes it with the evidence behind it. Once a schedule is approved, a part of it changes only where enough days (**Agreement needed**) held the same other value there: hand changes that vary from day to day keep the approved block, and days with no data keep theirs. Nothing applies until it is approved, through REST, MCP or the push button. The hub remembers a fingerprint of each rejected rule set. A room in eco is not learned until its eco ends (its learning state reads `eco`, "Learning paused while in eco"), so no new proposal arrives for it meanwhile; a proposal made before the eco stays. Requires [History](history.md).
+
+The learner never proposes **Heated by**, and when it revises a schedule it keeps the one you chose.
 
 The approval routes and the rest of the climate API are in the [HTTP API](../reference/http-api.md); the MCP tools are in [MCP tools](../reference/mcp-tools.md).
