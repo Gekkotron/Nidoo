@@ -604,11 +604,11 @@ impl Hub {
         } else {
             Outcome::default()
         };
-        // The zone stopped switching its heaters: one last off to those it had on.
-        let leaving_heat =
-            !may_command || state == ZoneState::Off || decision.mode != Some(Mode::Heat);
-        if leaving_heat && let Some(previous) = &previous {
-            self.release_heaters(zone, previous, now).await;
+        // A heater this pass no longer drives (season, zone off or pending, an out-of-season
+        // boost, an idle decision): one last off to each one the previous decision had on.
+        if let Some(previous) = &previous {
+            let driven = may_command.then_some(&decision);
+            self.release_heaters(zone, previous, driven, now).await;
         }
         self.copy_heater_clocks(&mut decision);
         decision.applied = match state {

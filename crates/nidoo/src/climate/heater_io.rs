@@ -1,6 +1,6 @@
 //! On/off heaters on the hub side: switch them as the decision says, keep each one's on/off
 //! clocks, tell a switch flipped by hand from the engine's own echo, and send one last off
-//! when a zone stops heating with them.
+//! to a heater it had on once a pass no longer drives it.
 
 use std::sync::Arc;
 
@@ -70,22 +70,24 @@ impl Hub {
         outcome
     }
 
-    /// The zone stopped deciding in heat: one off to each heater the previous decision had on
-    /// and unheld, that is still on.
+    /// One last off to each heater the previous decision had on (an unheld `heat` target) that
+    /// this pass no longer drives: `driven`, the decision this pass commands (`None` when it
+    /// commands nothing), has no entry for it. Only a heater still listed and enabled in the
+    /// settings (a heater disabled or removed since is the user's now) and that still shows on
+    /// (an unreachable one cannot be sent anything). Sent once: the next pass's previous
+    /// decision no longer has it on. A heater `driven` has an entry for is left to
+    /// `command_heaters`.
     pub(crate) async fn release_heaters(
         self: &Arc<Self>,
         zone: &str,
         previous: &Decision,
+        driven: Option<&Decision>,
         now: u64,
     ) {
-        if previous.mode != Some(Mode::Heat) {
-            return;
-        }
         let settings = self.zone_settings(zone);
         let ids: Vec<String> = settings
             .heaters
             .iter()
-            // A heater disabled since is the user's now.
             .filter(|heater| heater.enabled)
             .filter(|heater| {
                 previous
@@ -93,13 +95,15 @@ impl Hub {
                     .get(&heater.entity)
                     .is_some_and(|target| target.mode == "heat" && !target.held)
             })
+            .filter(|heater| driven.is_none_or(|d| !d.entities.contains_key(&heater.entity)))
             .filter(|heater| self.switch_state(&heater.entity) == Some(true))
             .map(|heater| heater.entity.clone())
             .collect();
         for id in ids {
-            // Switching off is always allowed: not held back by a recent command.
+            // Switching off is always allowed: not held back by a recent command. A heater
+            // paused after failures is refused by `claim_command`, and nothing is counted.
             if self.switch_heater(&id, false, now, false).await {
-                tracing::info!(zone, entity = %id, "heater switched off on leaving heat");
+                tracing::info!(zone, entity = %id, "heater switched off: no longer driven");
             }
         }
     }

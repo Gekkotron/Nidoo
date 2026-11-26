@@ -3130,6 +3130,87 @@ mod engine {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_boost_spanning_the_season_change_sends_one_off() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        let boost = vec![Override {
+            entity: None,
+            setpoint: Some(Setpoint::Temp(22.0)),
+            mode: Some(Mode::Heat),
+            until: rig.t0 + hm(12, 0),
+            origin: OverrideOrigin::User,
+        }];
+        rig.hub.ingest_message(
+            "nidoo/climate/zone/living/override",
+            serde_json::to_string(&boost).unwrap().as_bytes(),
+            true,
+        );
+        // In season the boost runs on what the block chooses: the plug.
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+        assert_eq!(rig.zone().decision.unwrap().source, Source::Boost);
+
+        // The season turns to cool while the boost runs: one off, then nothing.
+        set_season(&mut rig, Season::Cool);
+        let out = rig.pass(hm(9, 30)).await;
+        assert_eq!(plug_commands(&out), vec!["OFF"], "{out:?}");
+        assert_eq!(rig.sim.plug, Some(false));
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.source, Source::Boost);
+        assert!(!decision.entities.contains_key(&plug), "{decision:?}");
+        for at in [hm(9, 31), hm(10, 0), hm(12, 0), hm(12, 1)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unreachable_heater_gets_no_last_off() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+        let bridge = |hub: &Hub, state: &str| {
+            hub.ingest(
+                "zigbee2mqtt/bridge/state",
+                serde_json::json!({ "state": state }).to_string().as_bytes(),
+            );
+        };
+        // Offline inside its block: out of the decision, and nothing is sent to it.
+        bridge(&rig.hub, "offline");
+        rig.hub.observe_climate(&plug, rig.t0 + hm(9, 4));
+        let out = rig.pass(hm(9, 5)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        let decision = rig.zone().decision.unwrap();
+        assert!(!decision.entities.contains_key(&plug), "{decision:?}");
+        // Back, still on: the decision drives it again, with nothing to send.
+        bridge(&rig.hub, "online");
+        rig.hub.observe_climate(&plug, rig.t0 + hm(9, 9));
+        let out = rig.pass(hm(9, 10)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert_eq!(rig.sim.plug, Some(true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_heat_decision_sends_one_off() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+        // The heat rules go: the zone stays active in the heat season, with nothing to run.
+        let mut settings = stove_settings(&plug, 0);
+        settings.rules = Rules::default();
+        rig.settings(settings);
+        let out = rig.pass(hm(9, 5)).await;
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(
+            (decision.source, decision.mode),
+            (Source::Idle, Some(Mode::Heat))
+        );
+        assert!(!decision.entities.contains_key(&plug), "{decision:?}");
+        assert_eq!(plug_commands(&out), vec!["OFF"], "{out:?}");
+        assert_eq!(rig.sim.plug, Some(false));
+        for at in [hm(9, 6), hm(9, 7)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn leaving_heat_sends_one_off_then_nothing() {
         let (mut rig, plug) = stove_rig(false, 0).await;
         assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
