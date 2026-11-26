@@ -866,3 +866,39 @@ fn empty_slots_do_not_change_what_is_learned() {
     assert_eq!((b.from, b.to), (HhMm(540), HhMm(1230)));
     assert_eq!(b.setpoint, Setpoint::Temp(19.0));
 }
+
+fn with_heated_by(mut m: ModeRules, ids: &[&str]) -> ModeRules {
+    m.blocks[0].heated_by = Some(ids.iter().map(|s| s.to_string()).collect());
+    m
+}
+
+#[test]
+fn fingerprint_without_heated_by_is_pinned() {
+    assert_eq!(fingerprint(&heat(weekday_rules())), "8cf183a932341177");
+}
+
+#[test]
+fn fingerprint_ignores_heated_by() {
+    let a = heat(weekday_rules());
+    let b = heat(with_heated_by(weekday_rules(), &["stove"]));
+    assert_eq!(fingerprint(&a), fingerprint(&b));
+}
+
+#[test]
+fn rules_differing_only_by_heated_by_do_not_differ() {
+    let a = weekday_rules();
+    let b = with_heated_by(weekday_rules(), &["stove"]);
+    assert!(!differs(&a, &b));
+}
+
+#[test]
+fn relearned_unchanged_block_keeps_heated_by() {
+    let h = history(28, standard_day);
+    let c = caps();
+    let approved = with_heated_by(weekday_rules(), &["stove"]);
+    let mut inp = input(&h, &[], &c, 28);
+    inp.approved = Some(&approved);
+    let learned = rules_of(learn(&inp));
+    assert_eq!(learned.blocks.len(), 1, "{learned:?}");
+    assert_eq!(learned.blocks[0].heated_by, Some(vec!["stove".to_string()]));
+}

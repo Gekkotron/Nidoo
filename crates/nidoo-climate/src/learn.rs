@@ -485,7 +485,29 @@ fn revise(
         })
         .collect();
     blocks.sort_by_key(|b| (b.days[0], b.from));
+    inherit_heated_by(&mut blocks, &approved.blocks);
     ModeRules { base, blocks }
+}
+
+/// Each learned block takes `heated_by` from the approved block it overlaps most (minutes on
+/// shared days, summed over days; a tie goes to the earlier approved block). The learner never
+/// observes who heats a room, so it only carries the approved choice over. No overlap, nothing.
+fn inherit_heated_by(new: &mut [Block], approved: &[Block]) {
+    let overlap = |a: &Block, b: &Block| -> u32 {
+        let shared = a.days.iter().filter(|d| b.days.contains(d)).count() as u32;
+        let minutes = a.to.0.min(b.to.0).saturating_sub(a.from.0.max(b.from.0));
+        shared * u32::from(minutes)
+    };
+    for block in new {
+        let mut best: Option<(u32, &Block)> = None;
+        for a in approved {
+            let o = overlap(block, a);
+            if o > 0 && best.is_none_or(|(m, _)| o > m) {
+                best = Some((o, a));
+            }
+        }
+        block.heated_by = best.and_then(|(_, a)| a.heated_by.clone());
+    }
 }
 
 /// Two setpoints within 0.5 °C of each other, or both off.
@@ -934,7 +956,7 @@ fn diff_mode(old: Option<&ModeRules>, new: &ModeRules, out: &mut Vec<String>) {
 // Fingerprint
 // ---------------------------------------------------------------------------------------------
 
-/// FNV-1a 64-bit over the rules' JSON without evidence, as 16 lowercase hex digits.
+/// FNV-1a 64-bit over the rules' JSON without evidence and `heated_by`, as 16 lowercase hex digits.
 pub fn fingerprint(rules: &Rules) -> String {
     let mut bare = rules.clone();
     for m in [bare.heat.as_mut(), bare.cool.as_mut()]
@@ -943,6 +965,7 @@ pub fn fingerprint(rules: &Rules) -> String {
     {
         for b in &mut m.blocks {
             b.evidence = None;
+            b.heated_by = None;
         }
     }
     let json = serde_json::to_string(&bare).expect("Rules serialize");
@@ -1115,5 +1138,78 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!((runs[0].start, runs[0].len), (0, SLOTS));
         assert_eq!(runs[0].value, Slot::Temp(17.0));
+    }
+}
+
+#[cfg(test)]
+mod heated_by_tests {
+    use super::*;
+
+    fn blk(days: &[Day], from: u16, to: u16, by: Option<&[&str]>) -> Block {
+        Block {
+            days: days.to_vec(),
+            from: HhMm(from),
+            to: HhMm(to),
+            setpoint: Setpoint::Temp(20.0),
+            evidence: None,
+            heated_by: by.map(|v| v.iter().map(|s| s.to_string()).collect()),
+        }
+    }
+
+    const WD: [Day; 5] = [Day::Mon, Day::Tue, Day::Wed, Day::Thu, Day::Fri];
+
+    #[test]
+    fn revised_block_inherits_from_the_approved_block_it_overlaps_most() {
+        let approved = [
+            blk(&WD, 540, 1080, Some(&["stove"])),
+            blk(&WD, 1080, 1320, Some(&["rad"])),
+        ];
+        let mut new = [blk(&WD, 600, 1140, None)];
+        inherit_heated_by(&mut new, &approved);
+        assert_eq!(new[0].heated_by, Some(vec!["stove".to_string()]));
+    }
+
+    #[test]
+    fn revised_block_with_no_overlap_inherits_nothing() {
+        let approved = [blk(&WD, 540, 1080, Some(&["stove"]))];
+        let mut late = [blk(&WD, 1080, 1200, None)];
+        inherit_heated_by(&mut late, &approved);
+        assert_eq!(late[0].heated_by, None);
+        let mut weekend = [blk(&[Day::Sat], 540, 1080, None)];
+        inherit_heated_by(&mut weekend, &approved);
+        assert_eq!(weekend[0].heated_by, None);
+    }
+
+    #[test]
+    fn overlap_sums_over_shared_days_and_ties_go_to_the_earlier_block() {
+        // Weekdays: 5 days x 60 min = 300 beats Saturday's 120 min.
+        let approved = [
+            blk(&[Day::Sat], 540, 660, Some(&["sat"])),
+            blk(&WD, 540, 600, Some(&["wk"])),
+        ];
+        let mut new = [blk(
+            &[Day::Sat, Day::Mon, Day::Tue, Day::Wed, Day::Thu, Day::Fri],
+            540,
+            660,
+            None,
+        )];
+        inherit_heated_by(&mut new, &approved);
+        assert_eq!(new[0].heated_by, Some(vec!["wk".to_string()]));
+        // Tie: equal overlap goes to the earlier approved block.
+        let tie = [
+            blk(&[Day::Mon], 540, 600, Some(&["first"])),
+            blk(&[Day::Tue], 540, 600, Some(&["second"])),
+        ];
+        let mut n = [blk(&[Day::Mon, Day::Tue], 540, 600, None)];
+        inherit_heated_by(&mut n, &tie);
+        assert_eq!(n[0].heated_by, Some(vec!["first".to_string()]));
+    }
+
+    #[test]
+    fn an_approved_block_without_heated_by_gives_none() {
+        let approved = [blk(&WD, 540, 1080, None)];
+        let mut new = [blk(&WD, 540, 1080, None)];
+        inherit_heated_by(&mut new, &approved);
+        assert_eq!(new[0].heated_by, None);
     }
 }
