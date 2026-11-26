@@ -1469,3 +1469,56 @@ async fn extent_reports_first_date_and_today() {
 
     tdb.drop_db().await;
 }
+
+#[tokio::test]
+async fn daily_window_upto_mid_hour_counts_only_the_part() {
+    use nidoo::history::window::DateWindow;
+    use nidoo_core::history::buckets::EnergyKind;
+    let Some(tdb) = fresh_db().await else { return };
+    let now = utc_midnight(2025, 6, 1);
+    // Rising 1.0 per hour, read every 10 minutes (so each step is 1/6).
+    let t0 = utc_midnight(2025, 1, 1) - HOUR;
+    let end = utc_midnight(2025, 3, 1);
+    let step = HOUR / 6;
+    let values = (0..)
+        .map(|k| (k, t0 + k * step))
+        .take_while(|(_, at)| *at <= end)
+        .map(|(k, at)| value_row("a", at, k as f64 / 6.0))
+        .collect();
+    tdb.db
+        .insert(&Rows {
+            values,
+            availability: vec![],
+        })
+        .await
+        .unwrap();
+    rollup_once(&tdb.db, now, i64::MAX).await.unwrap();
+
+    let history = nidoo::history::History::with_db(tdb.db.clone(), chrono_tz::UTC);
+    // Cut at 2025-02-01 00:30: only the readings at 00:00, 00:10 and 00:20 count, each
+    // rising 1/6 from the one before: 0.5, not the whole hour's 1.0.
+    let w = DateWindow {
+        from: ymd(2025, 1, 1),
+        to: ymd(2025, 12, 31),
+        upto: Some(31 * 86_400 + 1_800),
+    };
+    let daily = nidoo::history::query::daily_window(
+        &history,
+        "a",
+        &w,
+        nidoo_api::DailyPer::Month,
+        EnergyKind::Counter,
+        now,
+    )
+    .await
+    .expect("daily");
+    assert_eq!(
+        daily.days,
+        vec![
+            (utc_midnight(2025, 1, 1) / 1_000_000, 744.0),
+            (utc_midnight(2025, 2, 1) / 1_000_000, 0.5),
+        ]
+    );
+
+    tdb.drop_db().await;
+}

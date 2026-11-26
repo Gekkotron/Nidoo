@@ -372,8 +372,14 @@ pub(crate) async fn hours(
 ) -> Result<Vec<Bucket>, HistoryError> {
     let db = h.db()?;
     let done_until = db.done_until().await.map_err(unavailable)?;
-    let live_start = done_until.unwrap_or(from).max(from);
-    let stored_end = live_start.min(now);
+    let mut live_start = done_until.unwrap_or(from).max(from);
+    let mut stored_end = live_start.min(now);
+    if stored_end < live_start && stored_end % HOUR != 0 {
+        // The span ends mid-hour inside the stored part: that hour's stored row covers all
+        // of it, so roll it from raw samples cut at `now` instead.
+        stored_end = hour_floor(stored_end).max(from);
+        live_start = stored_end;
+    }
 
     let stored = if from < stored_end {
         db.hourly(entity, from, stored_end)
@@ -417,6 +423,29 @@ pub(crate) async fn hours(
     Ok(fill(carry_at_from, &all, from, now, HOUR))
 }
 
+/// Buckets of `window` from raw samples over `[start, end)`, quiet ones filled with the carry
+/// at `start`.
+async fn raw_series(
+    db: &super::db::Db,
+    entity: &str,
+    start: Micros,
+    end: Micros,
+    window: Micros,
+) -> Result<Vec<Bucket>, HistoryError> {
+    let carry = series_carry_at(db, entity, start)
+        .await
+        .map_err(unavailable)?;
+    let samples: Vec<Sample> = db
+        .samples(start, end, Some(entity))
+        .await
+        .map_err(unavailable)?
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect();
+    let raw = rollup(carry, &samples, start, end, window);
+    Ok(fill(carry, &raw, start, end, window))
+}
+
 /// `(t, mean, min, max)` per bucket, `t` in unix seconds.
 fn points_of(buckets: &[Bucket]) -> Vec<(i64, f64, f64, f64)> {
     buckets
@@ -450,18 +479,7 @@ pub async fn series(
 
     let buckets = match range {
         HistoryRange::Hour | HistoryRange::SixHours | HistoryRange::Day => {
-            let carry = series_carry_at(db, entity, start)
-                .await
-                .map_err(unavailable)?;
-            let samples: Vec<Sample> = db
-                .samples(start, now, Some(entity))
-                .await
-                .map_err(unavailable)?
-                .into_iter()
-                .map(|(_, s)| s)
-                .collect();
-            let raw = rollup(carry, &samples, start, now, window);
-            fill(carry, &raw, start, now, window)
+            raw_series(db, entity, start, now, window).await?
         }
         _ => {
             let bs = hours(h, entity, start, now).await?;
@@ -579,26 +597,15 @@ pub async fn series_window(
     w: &DateWindow,
     now: Micros,
 ) -> Result<HistorySeries, HistoryError> {
-    let db = h.db()?;
     let r = resolve(h.zone(), w, now)?;
+    let db = h.db()?;
     if !db.is_recorded(entity).await.map_err(unavailable)? {
         return Err(HistoryError::NotRecorded);
     }
     let window_secs = step_secs(days(w));
     let window = window_secs * 1_000_000;
     let buckets = if days(w) <= 1 {
-        let carry = series_carry_at(db, entity, r.start)
-            .await
-            .map_err(unavailable)?;
-        let samples: Vec<Sample> = db
-            .samples(r.start, r.end, Some(entity))
-            .await
-            .map_err(unavailable)?
-            .into_iter()
-            .map(|(_, s)| s)
-            .collect();
-        let raw = rollup(carry, &samples, r.start, r.end, window);
-        fill(carry, &raw, r.start, r.end, window)
+        raw_series(db, entity, r.start, r.end, window).await?
     } else {
         let bs = hours(h, entity, r.start, r.end).await?;
         merge_from(&bs, r.start, window)
