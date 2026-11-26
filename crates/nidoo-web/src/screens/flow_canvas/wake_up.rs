@@ -113,7 +113,9 @@ pub fn wake_up_sheet(node: RwSignal<Node>) -> impl IntoView {
     let catch_up = Callback::new(move |value: Option<u32>| {
         write(&|p| p.catch_up_minutes = value);
     });
-    let initial_catch_up = params().catch_up_minutes;
+    // Untracked: a tracked read here would subscribe the editor around the sheet to this
+    // node, which then rebuilds the sheet from the old draft on every edit.
+    let initial_catch_up = untrack(params).catch_up_minutes;
 
     view! {
         <label class="node-editor__field">

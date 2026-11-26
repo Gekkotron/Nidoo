@@ -9852,6 +9852,24 @@ dialog.popup::backdrop {
   gap: 8px;
 }
 
+/* A − / + stepper around a number field: one row, the field taking what is left. */
+.node-editor__stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-editor__stepper .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.node-editor__stepper .chip {
+  flex: 0 0 auto;
+  min-width: 44px;
+  justify-content: center;
+}
+
 /* Settings → System: an uptime card, then a grid of tiles, then the push switch. */
 .system {
   display: flex;

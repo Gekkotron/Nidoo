@@ -223,7 +223,9 @@ pub fn sun_sheet(node: RwSignal<Node>, cfg: Signal<Option<FlowsConfigView>>) -> 
             }
         });
     });
-    let initial_catch_up = params().catch_up_minutes;
+    // Untracked: a tracked read here would subscribe the editor around the sheet to this
+    // node, which then rebuilds the sheet from the old draft on every edit.
+    let initial_catch_up = untrack(params).catch_up_minutes;
     let fires = Memo::new(move |_| {
         let ((lat, lon), zone) = cfg.with(|c| house_place(c.as_ref()));
         next_three_fires(lat, lon, zone, which.get(), offset.get(), now_utc())
