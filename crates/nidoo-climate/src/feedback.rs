@@ -676,6 +676,7 @@ mod tests {
             entities: BTreeMap::new(),
             eco_restore: BTreeMap::new(),
             adjust,
+            heaters: BTreeMap::new(),
         }
     }
 

@@ -214,6 +214,7 @@ mod tests {
             entities: Default::default(),
             eco_restore: Default::default(),
             adjust: None,
+            heaters: std::collections::BTreeMap::new(),
         }
     }
 

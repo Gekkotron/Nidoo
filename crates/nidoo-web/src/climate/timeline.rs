@@ -277,6 +277,7 @@ pub fn add_block(rules: &ModeRules, day: Day, minute: u16) -> Option<(ModeRules,
         to: HhMm(to),
         setpoint,
         evidence: None,
+        heated_by: None,
     });
     let index = out.blocks.len() - 1;
     Some((out, index))
@@ -874,6 +875,7 @@ mod tests {
             to: HhMm::parse(to).unwrap(),
             setpoint: Setpoint::Temp(t),
             evidence: None,
+            heated_by: None,
         }
     }
 

@@ -193,6 +193,7 @@ fn base_decision(inp: &ZoneInputs, source: Source, reason: String) -> Decision {
         entities: BTreeMap::new(),
         eco_restore: BTreeMap::new(),
         adjust: None,
+        heaters: BTreeMap::new(),
     }
 }
 
@@ -864,6 +865,7 @@ mod tests {
                 to: HhMm(1320),
                 setpoint: Setpoint::Temp(20.5),
                 evidence: None,
+                heated_by: None,
             }],
         }
     }

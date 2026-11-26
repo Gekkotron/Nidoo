@@ -115,6 +115,7 @@ fn block(days: &[Day], from: u16, to: u16, sp: f64) -> Block {
         to: HhMm(to),
         setpoint: Setpoint::Temp(sp),
         evidence: None,
+        heated_by: None,
     }
 }
 

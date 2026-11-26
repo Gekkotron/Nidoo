@@ -1153,6 +1153,7 @@ fn no_safety(zone: &str) -> Decision {
         entities: Default::default(),
         eco_restore: Default::default(),
         adjust: None,
+        heaters: BTreeMap::new(),
     }
 }
 
@@ -1536,6 +1537,7 @@ mod tests {
                     to: HhMm(to),
                     setpoint: Setpoint::Temp(20.0),
                     evidence: None,
+                    heated_by: None,
                 }],
             }),
             cool: None,

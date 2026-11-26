@@ -153,6 +153,7 @@ mod tests {
             to: HhMm(to),
             setpoint: Setpoint::Temp(t),
             evidence: None,
+            heated_by: None,
         }
     }
 

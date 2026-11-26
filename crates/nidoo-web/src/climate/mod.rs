@@ -490,6 +490,7 @@ mod tests {
             applied: true,
             at: 0,
             entities: Default::default(),
+            heaters: std::collections::BTreeMap::new(),
         });
         z
     }
@@ -682,6 +683,7 @@ mod tests {
             to: HhMm::parse(to).unwrap(),
             setpoint: Setpoint::Temp(21.0),
             evidence: None,
+            heated_by: None,
         }
     }
 

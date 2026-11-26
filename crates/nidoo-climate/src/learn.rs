@@ -343,6 +343,7 @@ pub fn learn(input: &LearnInput) -> LearnOutcome {
                 to: HhMm(((run.start + run.len) as u16) * SLOT_MIN as u16),
                 setpoint,
                 evidence: Some(Evidence { agree, of: total }),
+                heated_by: None,
             };
             merge_block(&mut blocks, block);
         }
@@ -479,6 +480,7 @@ fn revise(
                 to,
                 setpoint,
                 evidence,
+                heated_by: None,
             }
         })
         .collect();

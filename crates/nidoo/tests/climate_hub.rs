@@ -263,6 +263,7 @@ async fn set_zone_rejects_invalid_rules() {
         to: HhMm(to),
         setpoint: Setpoint::Temp(20.0),
         evidence: None,
+        heated_by: None,
     };
     let overlapping = ZoneSettings {
         rules: Rules {
@@ -837,6 +838,7 @@ mod engine {
                     held: false,
                 },
             )]),
+            heaters: BTreeMap::new(),
         };
         rig.hub.ingest_message(
             "nidoo/climate/zone/living/decision",
@@ -892,6 +894,7 @@ mod engine {
                 applied: true,
                 at,
                 entities,
+                heaters: BTreeMap::new(),
             };
             rig.hub.ingest_message(
                 &format!("nidoo/climate/zone/{zone}/decision"),
@@ -1053,6 +1056,7 @@ mod engine {
                     held: false,
                 },
             )]),
+            heaters: BTreeMap::new(),
         };
         rig.hub.ingest_message(
             "nidoo/climate/zone/living/decision",
@@ -1453,6 +1457,7 @@ mod engine {
                         to: HhMm(1380),
                         setpoint: Setpoint::Temp(18.0),
                         evidence: None,
+                        heated_by: None,
                     }],
                 }),
                 ..Rules::default()
@@ -2185,6 +2190,7 @@ mod engine {
             applied: false,
             at: rig.t0,
             entities: BTreeMap::new(),
+            heaters: BTreeMap::new(),
         };
         rig.hub.ingest_message(
             "nidoo/climate/zone/living/decision",
@@ -2305,6 +2311,7 @@ mod engine {
             to: HhMm(1440),
             setpoint: Setpoint::Temp(19.0),
             evidence: None,
+            heated_by: None,
         });
         settings.presence.enabled = true;
         settings.presence.sensors = vec![sensor.clone()];
@@ -2464,6 +2471,7 @@ mod engine {
             to: HhMm(1440),
             setpoint: Setpoint::Temp(19.0),
             evidence: None,
+            heated_by: None,
         });
         settings.feedback.enabled = true;
         rig.settings(settings);
@@ -2550,6 +2558,7 @@ mod engine {
                     held: false,
                 },
             )]),
+            heaters: BTreeMap::new(),
         };
         rig.hub.ingest_message(
             "nidoo/climate/zone/living/decision",
@@ -2775,6 +2784,7 @@ mod approval {
                     to: HhMm(600),
                     setpoint: Setpoint::Temp(20.0),
                     evidence: None,
+                    heated_by: None,
                 }],
             }),
             cool: None,
@@ -2940,6 +2950,7 @@ mod approval {
             to: HhMm(to),
             setpoint: Setpoint::Temp(20.0),
             evidence: None,
+            heated_by: None,
         };
         let overlapping = Rules {
             heat: Some(ModeRules {
