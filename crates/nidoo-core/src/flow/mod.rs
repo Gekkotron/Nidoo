@@ -2,6 +2,7 @@
 //! Pure data and helpers, no I/O, so the hub, the API and the web canvas share one definition.
 
 pub mod answer;
+pub mod climate;
 mod clock;
 mod duration;
 mod field;
@@ -33,13 +34,14 @@ pub use math::{
 };
 pub use model::{
     ASK_MAX_ANSWERS, ASK_NONE_PORT, AlarmModeFilter, AskAnswer, AskParams, BACKUP_FAILED_PORT,
-    BACKUP_OK_PORT, BACKUP_PARTIAL_PORT, BackupRunParams, BackupTarget, CommandParams, DelayParams,
-    Edge, Flow, FlowEnableParams, FlowLabelParams, FlowMode, IfParams, LimitParams,
-    MAX_AVERAGE_SECS, MAX_LIMIT, MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind,
-    NotifyParams, OffPeakEdge, Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams,
-    SwitchRule, TimeBetweenParams, TriggerAlarmParams, TriggerManualParams, TriggerOffPeakParams,
-    TriggerScheduleParams, TriggerSignalParams, TriggerSilentParams, TriggerStateParams,
-    TriggerSunParams, command_with_number, math_names, uses_sun_or_is_dark,
+    BACKUP_OK_PORT, BACKUP_PARTIAL_PORT, BackupRunParams, BackupTarget, ClimateEcoParams,
+    ClimateHoldParams, ClimateSetpoint, CommandParams, DelayParams, Edge, Flow, FlowEnableParams,
+    FlowLabelParams, FlowMode, IfParams, LimitParams, MAX_AVERAGE_SECS, MAX_LIMIT,
+    MAX_SWITCH_RULES, MathInput, MathParams, Missing, Node, NodeKind, NotifyParams, OffPeakEdge,
+    Op, Position, RuleOp, SpeakParams, SunWhich, SwitchParams, SwitchRule, TimeBetweenParams,
+    TriggerAlarmParams, TriggerManualParams, TriggerOffPeakParams, TriggerScheduleParams,
+    TriggerSignalParams, TriggerSilentParams, TriggerStateParams, TriggerSunParams,
+    TriggerWakeUpParams, command_with_number, math_names, uses_sun_or_is_dark,
 };
 pub use scalar::{CompareError, Scalar, compare};
 pub use schedule::{Schedule, ScheduleError};

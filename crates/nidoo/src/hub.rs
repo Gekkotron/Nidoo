@@ -259,6 +259,9 @@ pub struct Hub {
     /// The passes of every `limit` node still inside its window, by (flow, node). Runs execute
     /// in tasks that only hold the hub, so the counts live here, not in the engine.
     limits: Mutex<crate::flows::LimitCounts>,
+    /// The due instant (unix seconds) of the last fire of every time trigger with a catch-up
+    /// window, by (flow, node); mirrors the retained `fired` markers on the broker.
+    fired: Mutex<std::collections::BTreeMap<(String, String), i64>>,
     group_store: Mutex<GroupStore>,
     /// Whether the retained shutter-mark marker was seen or published.
     shutters_marked: AtomicBool,
@@ -443,6 +446,7 @@ impl Hub {
             flow_store: Mutex::new(FlowStore::new(cfg.automation.runs_kept)),
             recent_readings: Mutex::new(Default::default()),
             limits: Mutex::new(Default::default()),
+            fired: Mutex::new(Default::default()),
             group_store: Mutex::new(GroupStore::default()),
             shutters_marked: AtomicBool::new(false),
             groups_enabled: cfg.groups.enabled,
@@ -576,6 +580,15 @@ impl Hub {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// The catch-up markers, taken as they are when a thread panicked while holding them.
+    pub(crate) fn fired(
+        &self,
+    ) -> MutexGuard<'_, std::collections::BTreeMap<(String, String), i64>> {
+        self.fired
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn recent_readings(&self) -> MutexGuard<'_, crate::flows::readings::RecentReadings> {
         self.recent_readings
             .lock()
@@ -645,6 +658,10 @@ impl Hub {
         }
         if let Some(id) = self.ambiance_id_of(topic) {
             self.ingest_ambiance(id, payload);
+            return Vec::new();
+        }
+        if let Some((flow, node)) = self.fired_of(topic) {
+            self.ingest_fired(flow, node, payload);
             return Vec::new();
         }
         if let Some(id) = self.flow_id_of(topic) {
@@ -2342,6 +2359,17 @@ impl Hub {
             .strip_prefix(self.automation_prefix.as_str())?
             .strip_prefix('/')?;
         (!id.is_empty() && !id.contains('/')).then_some(id)
+    }
+
+    /// The flow and node ids when `topic` is exactly `<automation_prefix>/<flow>/fired/<node>`,
+    /// the retained marker of a time trigger's last fire.
+    fn fired_of<'a>(&self, topic: &'a str) -> Option<(&'a str, &'a str)> {
+        let rest = topic
+            .strip_prefix(self.automation_prefix.as_str())?
+            .strip_prefix('/')?;
+        let (flow, rest) = rest.split_once('/')?;
+        let node = rest.strip_prefix("fired/")?;
+        (!flow.is_empty() && !node.is_empty() && !node.contains('/')).then_some((flow, node))
     }
 
     pub(crate) fn dashboard_store(&self) -> MutexGuard<'_, DashboardStore> {

@@ -5,6 +5,8 @@
 //! select, drag, connect, cut, delete, duplicate, tidy and undo, then Save sends it with
 //! `PUT /api/v1/flows/{id}`.
 
+mod catch_up;
+mod climate_step;
 mod drawer;
 mod graph;
 mod labels_field;
@@ -17,6 +19,7 @@ mod template_field;
 mod toolbar;
 mod value_field;
 mod viewport;
+mod wake_up;
 
 use std::collections::BTreeMap;
 

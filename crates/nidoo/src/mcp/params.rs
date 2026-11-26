@@ -207,6 +207,18 @@ pub struct SetFlowParams {
     ///   value for it), at a flow save or enable and when the broker link returns, and is frozen
     ///   while the link is down (a link that reconnects more often than `for` keeps restarting
     ///   it). Refused on buttons and signal entities. The trigger value is `for`.
+    /// - `trigger.wake_up` starts a run a set time before a wake-up alarm rings. params:
+    ///   `before_minutes` (0 to 240; 0 fires at the ring), optional `alarms` (a list of alarm
+    ///   flow ids; absent or empty means every enabled alarm). It follows the alarms when they
+    ///   move or are disabled. It carries no value.
+    /// - `catch_up_minutes` (optional, on `trigger.schedule`, `trigger.sun` and `trigger.wake_up`,
+    ///   0 to 720; absent or 0 is off): when the hub starts or the broker link comes back, a
+    ///   time missed within that many minutes fires the flow once.
+    /// - `climate.hold` holds climate zones at a setpoint. params: `zones` (a non-empty list of
+    ///   zone ids), `setpoint` (a number in °C, or `"off"`), exactly one of `minutes` (1 to
+    ///   1440, counted from when the step runs) or `until` (`"HH:MM"`, the next time the house
+    ///   clock reaches it), and optional `mode` (`heat` or `cool`). Zones apply in list order;
+    ///   the step fails if any zone fails, naming each one.
     /// - `limit` lets a run through at most `max` times (1 to 100) in any rolling `per` window
     ///   (a duration, `1m` to `168h`); beyond that the run ends at this node. Every run that
     ///   reaches it counts, cancelled and manual runs included, so place it right before the
@@ -261,6 +273,10 @@ pub struct SetFlowParams {
     ///   accepted. Division by zero, a result that is not finite, an unknown input or a result
     ///   not computed in this run fails the run. Results last for one run only. It has no ports:
     ///   its edge carries no `port`.
+    /// - `climate.eco` puts climate zones in eco, the same eco the climate page sets. params:
+    ///   `zones` (a non-empty list of zone ids) and exactly one of `minutes` (1 to 1440) or
+    ///   `until` (`"HH:MM"`). It replaces any eco the zone already had. Zones apply in list
+    ///   order, and the step fails if any zone fails, naming each one.
     ///
     /// Math results also feed `if` and `switch` (`result`, above) and `notify` text: `{name}`
     /// prints a result, `{name:2}` rounds it, as for entity values.
@@ -492,6 +508,11 @@ mod tests {
             "value_from",
             "result",
             "save_to",
+            "trigger.wake_up",
+            "before_minutes",
+            "climate.hold",
+            "climate.eco",
+            "catch_up_minutes",
         ] {
             assert!(description.contains(needle), "`{needle}` is missing");
         }

@@ -315,6 +315,7 @@ fn upstream_triggers<'a>(flow: &'a Flow, node_id: &str) -> Vec<&'a NodeKind> {
                     kind @ (NodeKind::TriggerState(_)
                     | NodeKind::TriggerSchedule(_)
                     | NodeKind::TriggerSun(_)
+                    | NodeKind::TriggerWakeUp(_)
                     | NodeKind::TriggerManual(_)
                     | NodeKind::TriggerSignal(_)
                     | NodeKind::TriggerAlarm(_)),

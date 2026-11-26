@@ -49,6 +49,7 @@ pub enum FlowText {
     ManualRun,
     ScheduleRun,
     SunRun,
+    WakeUpRun,
     // Card library entries.
     Schedule,
     ScheduleSub,
@@ -223,6 +224,30 @@ pub enum FlowText {
     NodeBackupRun,
     NodeBackupRunSub,
     BackupRunSentence,
+    NodeWakeUp,
+    NodeWakeUpSub,
+    NodeClimateHold,
+    NodeClimateHoldSub,
+    NodeClimateEco,
+    NodeClimateEcoSub,
+    WakeUpMinutesBefore,
+    WakeUpAlarms,
+    WakeUpAllAlarms,
+    WakeUpNoAlarms,
+    WakeUpNextStart,
+    WakeUpNoNextStart,
+    ClimateZones,
+    ClimateNoZones,
+    ClimateZoneGone,
+    ZonesPlaceholder,
+    ClimateSetpoint,
+    ClimateSetpointOff,
+    ClimateDuration,
+    ClimateForMinutes,
+    ClimateUntilTime,
+    CatchUp,
+    CatchUpMinutes,
+    CatchUpHelp,
     BackupTimeout,
     BackupOk,
     BackupFailed,
@@ -394,6 +419,7 @@ impl FlowText {
         FlowText::ManualRun,
         FlowText::ScheduleRun,
         FlowText::SunRun,
+        FlowText::WakeUpRun,
         FlowText::Schedule,
         FlowText::ScheduleSub,
         FlowText::SunEvent,
@@ -565,6 +591,30 @@ impl FlowText {
         FlowText::NodeBackupRun,
         FlowText::NodeBackupRunSub,
         FlowText::BackupRunSentence,
+        FlowText::NodeWakeUp,
+        FlowText::NodeWakeUpSub,
+        FlowText::NodeClimateHold,
+        FlowText::NodeClimateHoldSub,
+        FlowText::NodeClimateEco,
+        FlowText::NodeClimateEcoSub,
+        FlowText::WakeUpMinutesBefore,
+        FlowText::WakeUpAlarms,
+        FlowText::WakeUpAllAlarms,
+        FlowText::WakeUpNoAlarms,
+        FlowText::WakeUpNextStart,
+        FlowText::WakeUpNoNextStart,
+        FlowText::ClimateZones,
+        FlowText::ClimateNoZones,
+        FlowText::ClimateZoneGone,
+        FlowText::ZonesPlaceholder,
+        FlowText::ClimateSetpoint,
+        FlowText::ClimateSetpointOff,
+        FlowText::ClimateDuration,
+        FlowText::ClimateForMinutes,
+        FlowText::ClimateUntilTime,
+        FlowText::CatchUp,
+        FlowText::CatchUpMinutes,
+        FlowText::CatchUpHelp,
         FlowText::BackupTimeout,
         FlowText::BackupOk,
         FlowText::BackupFailed,
@@ -739,6 +789,7 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::ManualRun => ("manual", "manuel"),
         T::ScheduleRun => ("schedule", "programmation"),
         T::SunRun => ("sun", "soleil"),
+        T::WakeUpRun => ("wake-up", "réveil"),
         T::Schedule => ("Schedule", "Programmation"),
         T::ScheduleSub => (
             "At a set time, or on a repeat",
@@ -1002,6 +1053,45 @@ pub fn flow_text(lang: Lang, k: FlowText) -> &'static str {
         T::BackupRunSentence => (
             "Back up to the FTP server",
             "Sauvegarder sur le serveur FTP",
+        ),
+        T::NodeWakeUp => ("Before a wake-up alarm", "Avant un réveil"),
+        T::NodeWakeUpSub => (
+            "Starts a set time before a wake-up alarm rings",
+            "Démarre un moment avant la sonnerie d'un réveil",
+        ),
+        T::NodeClimateHold => ("Heating hold", "Maintien du chauffage"),
+        T::NodeClimateHoldSub => (
+            "Holds a temperature in rooms for a while",
+            "Maintient une température dans des pièces un moment",
+        ),
+        T::NodeClimateEco => ("Room eco", "Éco d'une pièce"),
+        T::NodeClimateEcoSub => (
+            "Puts rooms in eco for a while",
+            "Met des pièces en éco un moment",
+        ),
+        T::WakeUpMinutesBefore => ("Minutes before the alarm", "Minutes avant le réveil"),
+        T::WakeUpAlarms => ("Alarms", "Réveils"),
+        T::WakeUpAllAlarms => ("All alarms", "Tous les réveils"),
+        T::WakeUpNoAlarms => ("No wake-up alarm yet", "Aucun réveil pour l'instant"),
+        T::WakeUpNextStart => ("Next start", "Prochain départ"),
+        T::WakeUpNoNextStart => ("No upcoming alarm", "Aucun réveil à venir"),
+        T::ClimateZones => ("Rooms", "Pièces"),
+        T::ClimateNoZones => (
+            "No room has a heating zone",
+            "Aucune pièce n'a de zone de chauffage",
+        ),
+        T::ClimateZoneGone => ("no longer a zone", "n'est plus une zone"),
+        T::ZonesPlaceholder => ("rooms\u{2026}", "pièces\u{2026}"),
+        T::ClimateSetpoint => ("Temperature (°C)", "Température (°C)"),
+        T::ClimateSetpointOff => ("Switch off", "Éteindre"),
+        T::ClimateDuration => ("For how long", "Pendant combien de temps"),
+        T::ClimateForMinutes => ("For some minutes", "Quelques minutes"),
+        T::ClimateUntilTime => ("Until a time", "Jusqu'à une heure"),
+        T::CatchUp => ("Catch up if missed", "Rattraper si manqué"),
+        T::CatchUpMinutes => ("Within (minutes)", "Dans les (minutes)"),
+        T::CatchUpHelp => (
+            "If the hub was off at the time, it still runs the flow when it starts within this window.",
+            "Si le hub était éteint à l'heure dite, il lance quand même l'automatisation s'il démarre dans ce délai.",
         ),
         T::BackupTimeout => ("Give up after (minutes)", "Abandonner après (minutes)"),
         T::BackupOk => ("Backed up", "Sauvegardé"),
@@ -1793,6 +1883,69 @@ pub fn in_colour(lang: Lang, colour: FlowText) -> String {
 /// " with breathe" / " avec breathe"; the effect is the device's own word, never translated.
 pub fn with_effect(lang: Lang, effect: &str) -> String {
     pick(lang, format!(" with {effect}"), format!(" avec {effect}"))
+}
+
+/// The catch-up tail of a trigger sentence: ", catches up within 60 min" / ", rattrape dans les 60 min".
+pub fn catch_up_suffix(lang: Lang, minutes: u32) -> String {
+    pick(
+        lang,
+        format!(", catches up within {minutes}{NBSP}min"),
+        format!(", rattrape dans les {minutes}{NBSP}min"),
+    )
+}
+
+/// The wake-up trigger: "45 min before a wake-up alarm", "45 min before Weekdays" (several
+/// alarms joined by commas) / "45 min avant un réveil". Zero minutes reads "When a wake-up alarm
+/// rings" / "At Weekdays".
+pub fn wake_up_sentence(lang: Lang, before_minutes: u32, alarms: &[String]) -> String {
+    let named = alarms.join(", ");
+    let n = before_minutes;
+    match (lang, n, alarms.is_empty()) {
+        (Lang::En, 0, true) => "When a wake-up alarm rings".to_owned(),
+        (Lang::Fr, 0, true) => "Quand un réveil sonne".to_owned(),
+        (Lang::En, 0, false) => format!("At {named}"),
+        (Lang::Fr, 0, false) => format!("À {named}"),
+        (Lang::En, _, true) => format!("{n}{NBSP}min before a wake-up alarm"),
+        (Lang::Fr, _, true) => format!("{n}{NBSP}min avant un réveil"),
+        (Lang::En, _, false) => format!("{n}{NBSP}min before {named}"),
+        (Lang::Fr, _, false) => format!("{n}{NBSP}min avant {named}"),
+    }
+}
+
+/// How long a climate step lasts: "for 3 h" or "until 10:00" / "pendant 3 h" or "jusqu'à 10:00".
+/// `duration` is the worded length; empty when the step has neither (a draft).
+pub fn climate_span(lang: Lang, duration: Option<&str>, until: Option<&str>) -> String {
+    match (duration, until) {
+        (Some(d), _) => pick(lang, format!("for {d}"), format!("pendant {d}")),
+        (None, Some(u)) => pick(lang, format!("until {u}"), format!("jusqu'à {u}")),
+        (None, None) => String::new(),
+    }
+}
+
+/// "Hold Living room at 21 °C for 3 h" / "Maintenir Salon à 21 °C pendant 3 h". `temperature` is
+/// `None` for a hold that switches the rooms off. `span` comes from [`climate_span`].
+pub fn climate_hold(lang: Lang, zones: &str, temperature: Option<&str>, span: &str) -> String {
+    let head = match (lang, temperature) {
+        (Lang::En, Some(t)) => format!("Hold {zones} at {t}"),
+        (Lang::Fr, Some(t)) => format!("Maintenir {zones} à {t}"),
+        (Lang::En, None) => format!("Hold {zones} off"),
+        (Lang::Fr, None) => format!("Maintenir {zones} éteint"),
+    };
+    if span.is_empty() {
+        head
+    } else {
+        format!("{head} {span}")
+    }
+}
+
+/// "Eco in Bedroom, Office until 18:00" / "Éco dans Chambre, Bureau jusqu'à 18:00".
+pub fn climate_eco(lang: Lang, zones: &str, span: &str) -> String {
+    let head = pick(lang, format!("Eco in {zones}"), format!("Éco dans {zones}"));
+    if span.is_empty() {
+        head
+    } else {
+        format!("{head} {span}")
+    }
 }
 
 /// "Enable Heating" / "Activer Heating"; `target` is a flow name or [`FlowText::ThisFlow`].
