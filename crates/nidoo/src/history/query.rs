@@ -50,7 +50,7 @@ pub fn day_starts(zone: Tz, now: Micros, days: u32) -> Vec<Micros> {
 }
 
 /// Local midnight of `date` in `zone`, the earliest instant when midnight is ambiguous.
-fn local_midnight(zone: Tz, date: NaiveDate) -> Micros {
+pub(crate) fn local_midnight(zone: Tz, date: NaiveDate) -> Micros {
     let naive = date
         .and_hms_opt(0, 0, 0)
         .expect("00:00:00 is always a valid clock time");
