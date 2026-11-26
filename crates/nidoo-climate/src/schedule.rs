@@ -31,9 +31,21 @@ impl ModeRules {
     pub fn next_change(&self, local: NaiveDateTime) -> Option<NaiveDateTime> {
         let key = |t| (self.at(t).0, self.heated_by_at(t));
         let current = key(local);
+        self.edges(local, local + Duration::days(SEARCH_DAYS), SEARCH_DAYS)?
+            .into_iter()
+            .find(|c| key(*c) != current)
+    }
+
+    /// The sorted, distinct block edges in `(local, limit]`, taken from `local`'s day and the
+    /// `days` days after it.
+    fn edges(
+        &self,
+        local: NaiveDateTime,
+        limit: NaiveDateTime,
+        days: i64,
+    ) -> Option<Vec<NaiveDateTime>> {
         let midnight = local.date().and_hms_opt(0, 0, 0)?;
-        let limit = local + Duration::days(SEARCH_DAYS);
-        let mut candidates: Vec<NaiveDateTime> = (0..=SEARCH_DAYS)
+        let mut edges: Vec<NaiveDateTime> = (0..=days)
             .flat_map(|d| {
                 let day_start = midnight + Duration::days(d);
                 self.blocks.iter().flat_map(move |b| {
@@ -42,9 +54,9 @@ impl ModeRules {
             })
             .filter(|c| *c > local && *c <= limit)
             .collect();
-        candidates.sort();
-        candidates.dedup();
-        candidates.into_iter().find(|c| key(*c) != current)
+        edges.sort();
+        edges.dedup();
+        Some(edges)
     }
 
     /// Whether `id` is named at `local`: the block in force lists it, or `default_names` is set
@@ -66,21 +78,9 @@ impl ModeRules {
         local: NaiveDateTime,
         within_min: u32,
     ) -> Option<NaiveDateTime> {
-        let midnight = local.date().and_hms_opt(0, 0, 0)?;
         let limit = local + Duration::minutes(i64::from(within_min));
         let days = i64::from(within_min) / (24 * 60) + 1;
-        let mut candidates: Vec<NaiveDateTime> = (0..=days)
-            .flat_map(|d| {
-                let day_start = midnight + Duration::days(d);
-                self.blocks.iter().flat_map(move |b| {
-                    [b.from.0, b.to.0].map(|m| day_start + Duration::minutes(i64::from(m)))
-                })
-            })
-            .filter(|c| *c > local && *c <= limit)
-            .collect();
-        candidates.sort();
-        candidates.dedup();
-        candidates.into_iter().find(|c| {
+        self.edges(local, limit, days)?.into_iter().find(|c| {
             self.names(id, default_names, *c)
                 && !self.names(id, default_names, *c - Duration::minutes(1))
         })
@@ -513,6 +513,18 @@ mod tests {
             assert_eq!(r.next_start_of("ac", false, at(12, 0), 15), None);
             // default_names: the base after 14:00 counts for a heater in the room default
             assert_eq!(r.next_start_of("ac", true, at(13, 55), 15), Some(at(14, 0)));
+        }
+
+        #[test]
+        fn next_start_of_ignores_a_touching_block_that_continues_the_same_heater() {
+            let r = rules(
+                15.0,
+                vec![
+                    named(9, 12, 20.0, &["stove"]),
+                    named(12, 14, 20.0, &["stove"]),
+                ],
+            );
+            assert_eq!(r.next_start_of("stove", false, at(11, 55), 15), None);
         }
     }
 }
