@@ -1381,8 +1381,10 @@ mod tests {
 
     #[test]
     fn heaters_validate() {
-        let mut s = ZoneSettings::default();
-        s.heaters = vec![heater("sw"), heater("sw")];
+        let mut s = ZoneSettings {
+            heaters: vec![heater("sw"), heater("sw")],
+            ..ZoneSettings::default()
+        };
         assert!(s.validate().unwrap_err().contains("twice"));
         s.heaters = vec![Heater {
             min_off_min: 241,
@@ -1400,9 +1402,11 @@ mod tests {
 
     #[test]
     fn heated_by_validates_against_heaters_and_units() {
-        let mut s = ZoneSettings::default();
-        s.heaters = vec![heater("stove")];
-        s.heated_by = Some(vec!["stove".into(), "ac".into()]);
+        let mut s = ZoneSettings {
+            heaters: vec![heater("stove")],
+            heated_by: Some(vec!["stove".into(), "ac".into()]),
+            ..ZoneSettings::default()
+        };
         assert!(s.validate_heated_by(&["ac".into()]).is_ok());
         s.heated_by = Some(vec![]);
         assert!(
