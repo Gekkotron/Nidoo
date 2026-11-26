@@ -17,6 +17,7 @@ fn block(days: &[Day], from: &str, to: &str, t: f64) -> Block {
         to: HhMm::parse(to).unwrap(),
         setpoint: Setpoint::Temp(t),
         evidence: None,
+        heated_by: None,
     }
 }
 

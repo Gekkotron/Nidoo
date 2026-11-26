@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use nidoo_api::EntityView;
-use nidoo_core::model::Kind;
+use nidoo_core::model::{EntityCategory, Kind};
 
 use super::Keep;
 
@@ -37,6 +37,11 @@ pub fn is_room_presence(e: &EntityView) -> bool {
 pub fn is_on_off(e: &EntityView) -> bool {
     matches!(e.kind, Kind::Switch | Kind::BinarySensor)
         || (e.id.starts_with("virtual_") && e.kind == Kind::Switch)
+}
+
+/// Whether `e` can be an on/off heater: a primary switch, not a group.
+pub fn is_switch(e: &EntityView) -> bool {
+    e.kind == Kind::Switch && e.category == EntityCategory::Primary && !e.id.starts_with("group_")
 }
 
 /// Whether `e` can be a siren: a switch, or a generic entity with a `power` control.
@@ -75,7 +80,7 @@ pub fn is_commandable(e: &EntityView) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use nidoo_core::model::{Capabilities, EntityCategory, EntityState, UiOverride};
+    use nidoo_core::model::{Capabilities, EntityState, UiOverride};
     use nidoo_core::types::GenericCaps;
 
     use super::*;
@@ -167,6 +172,22 @@ mod tests {
         )));
         assert!(is_presence(&tracker()));
         assert!(is_tracker(&tracker()));
+    }
+
+    #[test]
+    fn is_switch_keeps_switches_only() {
+        assert!(is_switch(&ent("stove", Kind::Switch, None, "switch")));
+        assert!(!is_switch(&ent("l", Kind::Light, None, "light")));
+        assert!(!is_switch(&ent(
+            "b",
+            Kind::BinarySensor,
+            None,
+            "binary_sensor"
+        )));
+        assert!(!is_switch(&ent("group_all", Kind::Switch, None, "switch")));
+        let mut config = ent("cfg", Kind::Switch, None, "switch");
+        config.category = EntityCategory::Config;
+        assert!(!is_switch(&config));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::i18n::climate::{ClimateText, automatic_with, climate_text};
 use crate::i18n::use_lang;
 
 /// The label of `id` followed by its room, or the id itself when the house no longer has it.
-fn label_with_room(house: House, lang: Lang, id: &str) -> String {
+pub(crate) fn label_with_room(house: House, lang: Lang, id: &str) -> String {
     house.entities.with(|m| match m.get(id) {
         Some(e) => match house.areas.with(|a| room_name(a, &e.area)) {
             Some(room) => format!("{} ({room})", list_label(lang, e)),

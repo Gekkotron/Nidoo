@@ -10830,3 +10830,28 @@ dialog.popup::backdrop {
 .history-chart__tip-word {
   font-weight: 600;
 }
+
+/* The heaters card (climate/heaters_card.rs): one row per unit or heater. */
+.climate-heater {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.climate-heater__name {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.climate-heaters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.climate-heaters__fill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
