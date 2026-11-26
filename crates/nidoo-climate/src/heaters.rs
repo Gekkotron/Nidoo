@@ -253,7 +253,17 @@ fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
     };
     let mut steps = Vec::new();
     let (mut cannot_heat, mut running) = (false, false);
+    // Overheat and stale-reading safety: every heater off, whatever a hand hold says.
+    let safety_off = d.source == Source::Safety && d.cause != Some(SafetyCause::Frost);
+    // Frost outside the heat season: a hold heater's plug may drive something else then, so it
+    // gets nothing at all.
+    let frost_off_season = d.source == Source::Safety
+        && d.cause == Some(SafetyCause::Frost)
+        && inp.mode != Some(Mode::Heat);
     for h in s.heaters.iter().filter(|h| h.enabled) {
+        if frost_off_season && h.drive == HeaterDrive::Hold {
+            continue;
+        }
         let id = h.entity.as_str();
         let dev = inp
             .heaters
@@ -268,8 +278,16 @@ fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
                 on_since: None,
             });
         let chosen = who.has(id);
-        let hold = hand_hold(inp, id)
-            .filter(|o| o.setpoint == Some(Setpoint::Off) || o.mode == Some(Mode::Heat));
+        let hold = hand_hold(inp, id).filter(|o| {
+            if safety_off {
+                return false;
+            }
+            if o.setpoint == Some(Setpoint::Off) {
+                return true;
+            }
+            // A thermostat heater with no usable reading is off, even when turned on by hand.
+            o.mode == Some(Mode::Heat) && (h.drive == HeaterDrive::Hold || reading.is_some())
+        });
         let want = match hold {
             Some(o) if o.setpoint == Some(Setpoint::Off) => Want::Off,
             Some(_) => on_after_cool_down(h, &dev, inp.now),

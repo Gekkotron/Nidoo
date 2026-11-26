@@ -2580,6 +2580,79 @@ mod tests {
     }
 
     #[test]
+    fn overheat_beats_a_hand_hold_on_a_switch() {
+        for ov in [
+            switch_ov("stove", None, Some(Mode::Heat)),
+            switch_ov("stove", Some(Setpoint::Off), None),
+        ] {
+            let mut c = Case::new()
+                .heater(stove(), on())
+                .heat_block_by(9, 18, 20.0, &["stove"])
+                .reading(fresh(31.0));
+            c.overrides = vec![ov];
+            let d = c.run();
+            assert_eq!(d.cause, Some(SafetyCause::Overheat));
+            assert_eq!(d.entities["stove"], target(None, "off", false));
+            assert_eq!(d.reason, "Overheat protection: 31.0 °C > 30.0 °C");
+        }
+    }
+
+    #[test]
+    fn stale_reading_beats_a_hand_hold_on_a_thermostat_heater() {
+        let mut c = Case::new()
+            .heater(rad(), on())
+            .heated_by(&["rad"])
+            .reading(Reading::Stale { last: Some(15.0) });
+        c.overrides = vec![switch_ov("rad", None, Some(Mode::Heat))];
+        let d = c.run();
+        assert_eq!(d.cause, Some(SafetyCause::Stale));
+        assert_eq!(d.entities["rad"], target(None, "off", false));
+        assert!(!d.reason.contains("held"), "{}", d.reason);
+    }
+
+    #[test]
+    fn frost_keeps_a_hand_hold_off_and_the_cool_down() {
+        let mut c = Case::new().heater(rad(), on()).reading(fresh(5.0));
+        c.overrides = vec![switch_ov("rad", Some(Setpoint::Off), None)];
+        let d = c.run();
+        assert_eq!(d.cause, Some(SafetyCause::Frost));
+        assert_eq!(d.entities["rad"], target(None, "off", true));
+        assert_eq!(d.entities["trv"], target(Some(21.0), "heat", false));
+
+        let slow_rad = Heater {
+            min_off_min: 15,
+            ..rad()
+        };
+        let mut c = Case::new()
+            .heater(slow_rad, off_since(NOW - 300))
+            .reading(fresh(5.0));
+        c.overrides = vec![switch_ov("rad", None, Some(Mode::Heat))];
+        let d = c.run();
+        assert_eq!(d.entities["rad"], target(None, "off", true));
+        assert_eq!(d.heaters["rad"].wait_until, Some(NOW + 600));
+    }
+
+    #[test]
+    fn frost_out_of_season_leaves_hold_heaters_out() {
+        for mode in [Some(Mode::Cool), None] {
+            let mut c = Case::new()
+                .heater(rad(), off())
+                .heater(stove(), on())
+                .reading(fresh(5.0));
+            c.mode = mode;
+            let d = c.run();
+            assert_eq!(d.cause, Some(SafetyCause::Frost));
+            assert_eq!(d.entities["rad"], target(None, "heat", false));
+            assert!(!d.entities.contains_key("stove"));
+            assert!(!d.heaters.contains_key("stove"));
+            assert_eq!(d.heaters["rad"], HeaterRun::default());
+        }
+        // In season the stove is told off.
+        let d = Case::new().heater(stove(), on()).reading(fresh(5.0)).run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+    }
+
+    #[test]
     fn hand_on_holds_but_respects_cool_down() {
         // Base time: the stove is not chosen, the hand turned it on.
         let mut c = Case::new()
