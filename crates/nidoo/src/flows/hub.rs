@@ -120,9 +120,10 @@ impl Hub {
         let warnings = self.flow_warnings(&flow);
         let warning = (!warnings.is_empty()).then(|| warnings.join(" "));
         let flow = self.write_flow(&flow)?;
-        // A catch-up trigger without a marker (new flow, option just turned on, flow saved
-        // disabled) starts from now, so its first missed time is caught up.
-        self.advance_markers(&flow.definition, false);
+        // Saving an enabled flow moves each marker up to now: an edited time already past
+        // today is not replayed. Saved disabled, only a missing marker (new flow, option just
+        // turned on) starts from now, so its first missed time is caught up.
+        self.advance_markers(&flow.definition, flow.definition.enabled);
         // A trigger that is gone, renamed or without a window loses its marker, so a later one
         // with the same id starts from nothing instead of replaying an old fire.
         let keep = flow
@@ -828,6 +829,9 @@ impl Hub {
     /// Publishes the definition retained and applies it locally (the broker's echo is then a
     /// no-op); the registry lock is not held while publishing.
     pub(crate) fn write_flow(&self, flow: &Flow) -> Result<FlowView, HubError> {
+        let was_enabled = self
+            .flow(&flow.id)
+            .is_some_and(|view| view.definition.enabled);
         let payload = flow.encode();
         self.publish(Publish {
             topic: self.flow_topic(&flow.id),
@@ -835,9 +839,10 @@ impl Hub {
             retain: true,
         })?;
         self.ingest_flow(&flow.id, payload.as_bytes());
-        if flow.enabled {
-            // Enabling (or saving an enabled flow) moves each marker up to now: a time skipped
-            // while the flow was off is never caught up, but one missed from now on is.
+        if flow.enabled && !was_enabled {
+            // Enabling moves each marker up to now: a time skipped while the flow was off is
+            // never caught up, but one missed from now on is. Other writes of an enabled flow
+            // (room, labels) leave the markers alone, so they cannot swallow a pending catch-up.
             self.advance_markers(flow, true);
         }
         self.flow(&flow.id)
