@@ -138,7 +138,7 @@ The climate engine is in beta. These nine tools answer `climate disabled` while 
 | `climate_status` | The house settings and every zone with its reading, decision and why (`source`, `reason`), overrides, pending proposal and learner state. |
 | `get_climate_zone` | One zone as `climate_status` shows it, with its last 20 decisions. Args: `zone`. |
 | `set_climate_settings` | Replaces the house settings. Read them with `climate_status` first and send the whole document back. Args: `settings`. |
-| `set_climate_zone` | Replaces a zone's settings (`state` `off`, `pending` or `active`, targets, rules). New non-empty rules count as approved. A device another zone lists in `entities` is refused. Args: `zone`, `settings`. |
+| `set_climate_zone` | Replaces a zone's settings (`state` `off`, `pending` or `active`, targets, rules). New non-empty rules count as approved. A device another zone lists in `entities` is refused. Takes `heaters` and `heated_by`; a switch another zone lists as a heater is refused. Args: `zone`, `settings`. |
 | `approve_climate_proposal` | Approves the pending proposal; its rules, or `rules` when you edit them, become the zone's schedule. Refused when there is none. Args: `zone`, optional `rules`. |
 | `reject_climate_proposal` | Rejects the pending proposal; the same proposal is not made again for a week. Args: `zone`. |
 | `set_climate_override` | Holds a temperature and/or a mode on a zone. Args: `zone`, `setpoint` and/or `mode`, and exactly one of `minutes` and `until` (unix seconds). Safety still acts. |
