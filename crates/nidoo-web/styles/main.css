@@ -8249,6 +8249,7 @@ dialog.popup::backdrop {
 }
 
 .climate-timeline__temp,
+.climate-timeline__heaters,
 .climate-timeline__times {
   overflow: hidden;
   white-space: nowrap;
@@ -8259,6 +8260,18 @@ dialog.popup::backdrop {
 .climate-timeline__temp {
   padding-top: 6px;
   font: 700 16px/18px var(--font-display);
+}
+
+.climate-timeline__heaters {
+  font: var(--type-label);
+  font-size: 11px;
+}
+
+.climate-timeline__heated {
+  display: flex;
+  flex-direction: column;
+  grid-column: 1 / -1;
+  gap: 6px;
 }
 
 .climate-timeline__times {
@@ -8386,7 +8399,8 @@ dialog.popup::backdrop {
   gap: 6px;
 }
 
-.climate-timeline__days .chip {
+.climate-timeline__days .chip,
+.climate-timeline__heated .chip {
   min-height: 32px;
   padding: 0 10px;
 }

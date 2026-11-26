@@ -2,7 +2,8 @@
 
 use leptos::prelude::*;
 use leptos::task::tick;
-use nidoo_climate::doc::{Block, Day, Evidence, HhMm, ModeRules, Setpoint};
+use nidoo_climate::doc::{Block, Day, Evidence, HhMm, ModeRules, Rules, Setpoint};
+use nidoo_web::climate::proposal::RulesTimeline;
 use nidoo_web::climate::timeline::WeekTimeline;
 use nidoo_web::i18n::Lang;
 use wasm_bindgen::JsCast;
@@ -511,5 +512,188 @@ async fn pressing_a_handle_without_dragging_opens_the_block() {
             .unwrap()
             .is_some(),
         "the block's editor opens"
+    );
+}
+
+fn heaters() -> Vec<(String, String)> {
+    vec![
+        ("heat_pump".to_string(), "Heat pump".to_string()),
+        ("stove".to_string(), "Stove".to_string()),
+    ]
+}
+
+/// A [`WeekTimeline`] given `heaters`.
+async fn mount_heaters(rules: RwSignal<ModeRules>, heaters: Vec<(String, String)>) -> Element {
+    install_layout();
+    let document = web_sys::window().unwrap().document().unwrap();
+    let host = document.create_element("div").unwrap();
+    host.set_attribute("style", "width: 700px").unwrap();
+    document.body().unwrap().append_child(&host).unwrap();
+    let mounted = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
+        provide_context(RwSignal::new(Lang::En));
+        view! {
+            <WeekTimeline
+                rules=rules.into()
+                editable=true
+                on_change=Callback::new(move |next| rules.set(next))
+                heaters=Signal::from(heaters.clone())
+            />
+        }
+    });
+    std::mem::forget(mounted);
+    tick().await;
+    host
+}
+
+fn open_first_block(host: &Element) {
+    let bar: HtmlElement = host
+        .query_selector(".climate-timeline__bar")
+        .unwrap()
+        .expect("a bar")
+        .unchecked_into();
+    bar.click();
+}
+
+fn heated_chips(host: &Element) -> Vec<HtmlElement> {
+    let chips = host
+        .query_selector_all(".climate-timeline__heated .chip")
+        .unwrap();
+    (0..chips.length())
+        .filter_map(|i| chips.item(i))
+        .map(|n| n.unchecked_into::<HtmlElement>())
+        .collect()
+}
+
+#[wasm_bindgen_test]
+async fn heated_by_row_is_hidden_without_heaters() {
+    let rules = RwSignal::new(ModeRules {
+        base: Setpoint::Temp(15.5),
+        blocks: vec![block(&[Day::Mon], "06:00", "08:00", 19.0)],
+    });
+    let host = mount_heaters(rules, Vec::new()).await;
+    open_first_block(&host);
+    tick().await;
+    assert!(
+        host.query_selector(".climate-timeline__editor")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        host.query_selector(".climate-timeline__heated")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[wasm_bindgen_test]
+async fn heated_by_row_is_hidden_in_cool_rules() {
+    install_layout();
+    let rules = RwSignal::new(Rules {
+        heat: None,
+        cool: Some(ModeRules {
+            base: Setpoint::Temp(25.0),
+            blocks: vec![block(&[Day::Mon], "06:00", "08:00", 24.0)],
+        }),
+    });
+    let document = web_sys::window().unwrap().document().unwrap();
+    let host = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&host).unwrap();
+    let mounted = leptos::mount::mount_to(host.clone().unchecked_into(), move || {
+        provide_context(RwSignal::new(Lang::En));
+        view! {
+            <RulesTimeline
+                rules=rules.into()
+                editable=Signal::from(true)
+                on_change=Callback::new(move |next| rules.set(next))
+                now=Signal::from((Day::Mon, 0u16))
+                heaters=Signal::from(heaters())
+            />
+        }
+    });
+    std::mem::forget(mounted);
+    tick().await;
+    open_first_block(&host);
+    tick().await;
+    assert!(
+        host.query_selector(".climate-timeline__editor")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        host.query_selector(".climate-timeline__heated")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[wasm_bindgen_test]
+async fn heated_by_chips_pick_heaters_and_the_room_default() {
+    let rules = RwSignal::new(ModeRules {
+        base: Setpoint::Temp(15.5),
+        blocks: vec![block(&[Day::Mon], "06:00", "08:00", 19.0)],
+    });
+    let host = mount_heaters(rules, heaters()).await;
+    open_first_block(&host);
+    tick().await;
+    let chips = heated_chips(&host);
+    let labels: Vec<_> = chips.iter().map(|c| c.text_content().unwrap()).collect();
+    assert_eq!(labels, ["Room default", "Heat pump", "Stove"]);
+    assert_eq!(
+        chips[0].get_attribute("aria-pressed").as_deref(),
+        Some("true")
+    );
+
+    chips[2].click();
+    tick().await;
+    assert_eq!(
+        rules.with_untracked(|r| r.blocks[0].heated_by.clone()),
+        Some(vec!["stove".to_string()])
+    );
+    let chips = heated_chips(&host);
+    assert_eq!(
+        chips[2].get_attribute("aria-pressed").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        chips[0].get_attribute("aria-pressed").as_deref(),
+        Some("false")
+    );
+
+    chips[1].click();
+    tick().await;
+    assert_eq!(
+        rules.with_untracked(|r| r.blocks[0].heated_by.clone()),
+        Some(vec!["stove".to_string(), "heat_pump".to_string()])
+    );
+
+    heated_chips(&host)[0].click();
+    tick().await;
+    assert_eq!(
+        rules.with_untracked(|r| r.blocks[0].heated_by.clone()),
+        None
+    );
+}
+
+#[wasm_bindgen_test]
+async fn week_view_names_the_heaters_of_a_block() {
+    let mut by_stove = block(&[Day::Mon], "06:00", "08:00", 19.0);
+    by_stove.heated_by = Some(vec!["stove".to_string()]);
+    let plain = block(&[Day::Tue], "06:00", "08:00", 19.0);
+    let rules = RwSignal::new(ModeRules {
+        base: Setpoint::Temp(15.5),
+        blocks: vec![by_stove, plain],
+    });
+    let host = mount_heaters(rules, heaters()).await;
+    let monday = col(&host, Day::Mon);
+    let label = monday
+        .query_selector(".climate-timeline__heaters")
+        .unwrap()
+        .expect("Monday's label");
+    assert_eq!(label.text_content().as_deref(), Some("Stove"));
+    assert!(
+        col(&host, Day::Tue)
+            .query_selector(".climate-timeline__heaters")
+            .unwrap()
+            .is_none()
     );
 }
