@@ -6,7 +6,9 @@ use std::sync::Arc;
 use nidoo::config::Config;
 use nidoo::hub::{Hub, HubError};
 use nidoo_api::{ConnectionStatus, WsEvent};
-use nidoo_climate::doc::{Block, Day, HhMm, ModeRules, Rules, Setpoint, ZoneSettings, ZoneState};
+use nidoo_climate::doc::{
+    Block, Day, Heater, HhMm, ModeRules, Rules, Setpoint, ZoneSettings, ZoneState,
+};
 use nidoo_core::command::Publish;
 use tokio::sync::mpsc;
 
@@ -52,6 +54,15 @@ async fn place(hub: &Hub, prefix: &str, area: &str) -> String {
     patch.insert("area".to_owned(), serde_json::Value::from(area));
     hub.set_override(&id, &patch).await.expect("area override");
     id
+}
+
+/// The recorded plug placed in `area` by override; returns its entity id.
+async fn feed_plug(hub: &Hub, area: &str) -> String {
+    hub.ingest(
+        "nidoo/switch/0x00124b0024bc601e/switch/config",
+        &fixture("switch__0x00124b0024bc601e__switch.json"),
+    );
+    place(hub, "0x00124b0024bc601e", area).await
 }
 
 fn drain(rx: &mut mpsc::Receiver<Publish>) -> Vec<Publish> {
@@ -384,6 +395,98 @@ async fn an_area_id_that_cannot_be_a_topic_level_is_not_a_zone() {
         .map(|z| z.zone)
         .collect();
     assert_eq!(zones, vec!["living".to_owned()]);
+}
+
+// ----- on/off heaters -----
+
+fn with_heater(entity: &str) -> ZoneSettings {
+    ZoneSettings {
+        heaters: vec![Heater {
+            entity: entity.to_owned(),
+            ..Heater::default()
+        }],
+        ..active()
+    }
+}
+
+fn rejected(result: Result<(), HubError>) -> String {
+    match result {
+        Err(HubError::Rejected(message)) => message,
+        other => panic!("expected a rejection, got {other:?}"),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn saving_a_non_switch_heater_is_rejected() {
+    let (hub, _rx) = hub(true);
+    let daikin = feed_daikin(&hub, 0, "living").await;
+    let message = rejected(hub.set_climate_zone("living", with_heater(&daikin)));
+    assert!(message.contains("is not a switch"), "{message}");
+    let message = rejected(hub.set_climate_zone("living", with_heater("switch.nowhere")));
+    assert!(message.contains("is not a switch"), "{message}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_heater_cannot_heat_two_zones() {
+    let (hub, _rx) = hub(true);
+    feed_daikin(&hub, 0, "living").await;
+    feed_daikin(&hub, 1, "bedroom").await;
+    let plug = feed_plug(&hub, "garage").await;
+    hub.set_climate_zone("living", with_heater(&plug)).unwrap();
+    let message = rejected(hub.set_climate_zone("bedroom", with_heater(&plug)));
+    assert!(message.contains("already heats living"), "{message}");
+    // The owner may save its own settings again.
+    hub.set_climate_zone("living", with_heater(&plug)).unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_block_naming_an_unknown_heater_is_rejected() {
+    let (hub, _rx) = hub(true);
+    feed_daikin(&hub, 0, "living").await;
+    let plug = feed_plug(&hub, "garage").await;
+    let mut settings = with_heater(&plug);
+    settings.rules.heat = Some(ModeRules {
+        base: Setpoint::Temp(19.0),
+        blocks: vec![Block {
+            days: vec![Day::Mon],
+            from: HhMm(360),
+            to: HhMm(420),
+            setpoint: Setpoint::Temp(21.0),
+            evidence: None,
+            heated_by: Some(vec!["switch.nowhere".to_owned()]),
+        }],
+    });
+    let message = rejected(hub.set_climate_zone("living", settings));
+    assert!(message.contains("heat block 0"), "{message}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_heater_from_another_area_is_accepted() {
+    let (hub, _rx) = hub(true);
+    feed_daikin(&hub, 0, "living").await;
+    let plug = feed_plug(&hub, "garage").await;
+    hub.set_climate_zone("living", with_heater(&plug)).unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn missing_heater_entity_is_skipped() {
+    let (hub, _rx) = hub(true);
+    feed_daikin(&hub, 0, "living").await;
+    let plug = feed_plug(&hub, "garage").await;
+    hub.set_climate_zone("living", with_heater(&plug)).unwrap();
+    // The plug's discovery is then cleared; the settings still name it.
+    hub.ingest("nidoo/switch/0x00124b0024bc601e/switch/config", b"");
+    let now = nidoo::clock::now();
+    hub.evaluate_climate(now).await;
+    let decision = hub
+        .climate_view()
+        .unwrap()
+        .zones
+        .into_iter()
+        .find(|z| z.zone == "living")
+        .and_then(|z| z.decision)
+        .expect("a decision is still published");
+    assert!(!decision.entities.contains_key(&plug));
 }
 
 // ----- the evaluation loop -----
