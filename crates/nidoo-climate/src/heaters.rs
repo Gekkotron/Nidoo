@@ -100,29 +100,67 @@ struct Who {
     schedule: bool,
 }
 
+impl Who {
+    fn has(&self, id: &str) -> bool {
+        self.ids.iter().any(|i| i == id)
+    }
+}
+
+/// What one enabled heater does in this decision.
+struct Step<'a> {
+    heater: &'a Heater,
+    dev: HeaterDevice,
+    chosen: bool,
+    hold: Option<&'a Override>,
+    want: Want,
+}
+
+/// The post-pass worked out from the decision's source, mode and setpoint, before any change.
+struct Plan<'a> {
+    who: Who,
+    unknown: Vec<String>,
+    steps: Vec<Step<'a>>,
+    unit_chosen: bool,
+    /// A chosen heater wants to heat and cannot (cooling down or unreachable).
+    cannot_heat: bool,
+    /// Some reachable heater is on.
+    running: bool,
+}
+
+impl Plan<'_> {
+    /// The climate units heat in place of a chosen heater that cannot.
+    fn fills_in(&self, inp: &ZoneInputs, d: &Decision) -> bool {
+        let Some(sp @ Setpoint::Temp(_)) = d.setpoint else {
+            return false;
+        };
+        self.cannot_heat
+            && !self.unit_chosen
+            && inp.settings.fill_in
+            && inp.devices.iter().any(|u| {
+                hand_hold(inp, &u.id).is_none() && device_target(sp, Mode::Heat, &u.caps).is_some()
+            })
+    }
+}
+
+/// No climate unit heats under this decision: the post-pass turns them all off (none chosen,
+/// none filling in), so the room is driven by its on/off heaters. The thermometer correction
+/// does not apply then: an offset learned while another heater drives the room is wrong for
+/// the units.
+pub(crate) fn units_rest(inp: &ZoneInputs, d: &Decision) -> bool {
+    plan(inp, d).is_some_and(|p| p.who.units_follow && !p.unit_chosen && !p.fills_in(inp, d))
+}
+
 /// Rewrite `d` for a zone with on/off heaters: who heats, the switches' targets, the reason.
 /// No-op unless `d.mode == Some(Mode::Heat)`, the zone is not off, and the zone has an
 /// enabled heater or a `heated_by` anywhere.
 pub(crate) fn apply(inp: &ZoneInputs, d: &mut Decision) {
-    let s = inp.settings;
-    if d.mode != Some(Mode::Heat) || s.state == ZoneState::Off {
-        return;
-    }
-    let heat = s.rules.get(Mode::Heat);
-    let named = s.heated_by.is_some()
-        || heat.is_some_and(|r| r.blocks.iter().any(|b| b.heated_by.is_some()));
-    if !named && !s.heaters.iter().any(|h| h.enabled) {
-        return;
-    }
-    let mut unknown = Vec::new();
-    let Some(who) = who(inp, d, &mut unknown) else {
+    let Some(p) = plan(inp, d) else {
         return;
     };
-    let chosen = |id: &str| who.ids.iter().any(|i| i == id);
-    let unit_chosen = inp.devices.iter().any(|u| chosen(&u.id));
-    if who.units_follow {
+    let fills_in = p.fills_in(inp, d);
+    if p.who.units_follow {
         for u in inp.devices {
-            if chosen(&u.id) || hand_hold(inp, &u.id).is_some() {
+            if p.who.has(&u.id) || hand_hold(inp, &u.id).is_some() {
                 continue;
             }
             match device_target(Setpoint::Off, Mode::Heat, &u.caps) {
@@ -131,7 +169,80 @@ pub(crate) fn apply(inp: &ZoneInputs, d: &mut Decision) {
             };
         }
     }
+    let mut notes: String = p
+        .unknown
+        .iter()
+        .map(|id| format!("; ignoring unknown heater {id}"))
+        .collect();
+    for st in &p.steps {
+        let id = st.heater.entity.as_str();
+        let mut run = HeaterRun {
+            off_since: st.dev.off_since,
+            on_since: st.dev.on_since,
+            wait_until: None,
+        };
+        if st.dev.available {
+            match st.want {
+                Want::On if !st.chosen && st.hold.is_none() => {
+                    notes.push_str(&format!("; {id} stays on until its next block"));
+                }
+                Want::Wait(t) => {
+                    run.wait_until = Some(t);
+                    notes.push_str(&format!("; {id} cooling down until {}", clock(inp, t)));
+                }
+                Want::On | Want::Off => {}
+            }
+            if let Some(o) = st.hold {
+                notes.push_str(&format!("; {id} held until {}", clock(inp, o.until)));
+            }
+            d.entities.insert(
+                id.to_string(),
+                DeviceTarget {
+                    setpoint: None,
+                    mode: if st.want == Want::On { "heat" } else { "off" }.to_string(),
+                    held: st.hold.is_some(),
+                },
+            );
+        } else if st.chosen {
+            notes.push_str(&format!("; {id} unreachable"));
+        }
+        d.heaters.insert(id.to_string(), run);
+    }
+    if p.cannot_heat && !p.unit_chosen {
+        if fills_in && let Some(Setpoint::Temp(t)) = d.setpoint {
+            // The units heat as they would without the heaters, correction included.
+            let sp = Setpoint::Temp(t + d.adjust.unwrap_or(0.0));
+            for u in inp.devices {
+                if hand_hold(inp, &u.id).is_some() {
+                    continue;
+                }
+                if let Some(target) = device_target(sp, Mode::Heat, &u.caps) {
+                    d.entities.insert(u.id.clone(), target);
+                }
+            }
+            notes.push_str("; the climate units heat meanwhile");
+        } else if !p.running {
+            notes.push_str("; nothing heats the room");
+        }
+    }
+    d.reason.push_str(&notes);
+}
 
+/// Work out the post-pass for `d`, or `None` when it leaves the decision as it is.
+fn plan<'a>(inp: &'a ZoneInputs, d: &Decision) -> Option<Plan<'a>> {
+    let s = inp.settings;
+    if d.mode != Some(Mode::Heat) || s.state == ZoneState::Off {
+        return None;
+    }
+    let heat = s.rules.get(Mode::Heat);
+    let named = s.heated_by.is_some()
+        || heat.is_some_and(|r| r.blocks.iter().any(|b| b.heated_by.is_some()));
+    if !named && !s.heaters.iter().any(|h| h.enabled) {
+        return None;
+    }
+    let mut unknown = Vec::new();
+    let who = who(inp, d, &mut unknown)?;
+    let unit_chosen = inp.devices.iter().any(|u| who.has(&u.id));
     let target = match d.setpoint {
         Some(Setpoint::Temp(t)) => Some(t),
         _ => None,
@@ -140,32 +251,31 @@ pub(crate) fn apply(inp: &ZoneInputs, d: &mut Decision) {
         Reading::Fresh { value, .. } => Some(value),
         Reading::Stale { .. } | Reading::Missing => None,
     };
-    let mut notes: String = unknown
-        .iter()
-        .map(|id| format!("; ignoring unknown heater {id}"))
-        .collect();
-    // A chosen heater wants to heat and cannot; some heater is on.
-    let mut cannot_heat = false;
-    let mut running = false;
+    let mut steps = Vec::new();
+    let (mut cannot_heat, mut running) = (false, false);
     for h in s.heaters.iter().filter(|h| h.enabled) {
         let id = h.entity.as_str();
-        let unseen = HeaterDevice {
-            id: h.entity.clone(),
-            on: None,
-            available: false,
-            off_since: None,
-            on_since: None,
-        };
-        let dev = inp.heaters.iter().find(|x| x.id == id).unwrap_or(&unseen);
-        let is_chosen = chosen(id);
+        let dev = inp
+            .heaters
+            .iter()
+            .find(|x| x.id == id)
+            .cloned()
+            .unwrap_or_else(|| HeaterDevice {
+                id: h.entity.clone(),
+                on: None,
+                available: false,
+                off_since: None,
+                on_since: None,
+            });
+        let chosen = who.has(id);
         let hold = hand_hold(inp, id)
             .filter(|o| o.setpoint == Some(Setpoint::Off) || o.mode == Some(Mode::Heat));
         let want = match hold {
             Some(o) if o.setpoint == Some(Setpoint::Off) => Want::Off,
-            Some(_) => on_after_cool_down(h, dev, inp.now),
+            Some(_) => on_after_cool_down(h, &dev, inp.now),
             None => {
                 let bridge = who.schedule
-                    && !is_chosen
+                    && !chosen
                     && h.drive == HeaterDrive::Hold
                     && dev.on == Some(true)
                     && heat.is_some_and(|r| {
@@ -176,69 +286,31 @@ pub(crate) fn apply(inp: &ZoneInputs, d: &mut Decision) {
                         r.next_start_of(id, default_names, inp.local_now, h.min_off_min)
                             .is_some()
                     });
-                drive(h, dev, is_chosen, target, reading, bridge, inp.now)
+                drive(h, &dev, chosen, target, reading, bridge, inp.now)
             }
-        };
-        let mut run = HeaterRun {
-            off_since: dev.off_since,
-            on_since: dev.on_since,
-            wait_until: None,
         };
         if dev.available {
-            match want {
-                Want::On => {
-                    running = true;
-                    if !is_chosen && hold.is_none() {
-                        notes.push_str(&format!("; {id} stays on until its next block"));
-                    }
-                }
-                Want::Wait(t) => {
-                    run.wait_until = Some(t);
-                    cannot_heat |= is_chosen;
-                    notes.push_str(&format!("; {id} cooling down until {}", clock(inp, t)));
-                }
-                Want::Off => {}
-            }
-            if let Some(o) = hold {
-                notes.push_str(&format!("; {id} held until {}", clock(inp, o.until)));
-            }
-            d.entities.insert(
-                h.entity.clone(),
-                DeviceTarget {
-                    setpoint: None,
-                    mode: if want == Want::On { "heat" } else { "off" }.to_string(),
-                    held: hold.is_some(),
-                },
-            );
-        } else if is_chosen {
-            cannot_heat |= want != Want::Off;
-            notes.push_str(&format!("; {id} unreachable"));
+            running |= want == Want::On;
+            cannot_heat |= chosen && matches!(want, Want::Wait(_));
+        } else {
+            cannot_heat |= chosen && want != Want::Off;
         }
-        d.heaters.insert(h.entity.clone(), run);
+        steps.push(Step {
+            heater: h,
+            dev,
+            chosen,
+            hold,
+            want,
+        });
     }
-
-    if cannot_heat && !unit_chosen {
-        let mut filled = false;
-        if s.fill_in
-            && let Some(sp @ Setpoint::Temp(_)) = d.setpoint
-        {
-            for u in inp.devices {
-                if hand_hold(inp, &u.id).is_some() {
-                    continue;
-                }
-                if let Some(t) = device_target(sp, Mode::Heat, &u.caps) {
-                    d.entities.insert(u.id.clone(), t);
-                    filled = true;
-                }
-            }
-        }
-        if filled {
-            notes.push_str("; the climate units heat meanwhile");
-        } else if !running {
-            notes.push_str("; nothing heats the room");
-        }
-    }
-    d.reason.push_str(&notes);
+    Some(Plan {
+        who,
+        unknown,
+        steps,
+        unit_chosen,
+        cannot_heat,
+        running,
+    })
 }
 
 /// The chosen set for the decision's source (spec "Who heats"); `None` leaves it untouched.
@@ -269,6 +341,10 @@ fn who(inp: &ZoneInputs, d: &Decision, unknown: &mut Vec<String>) -> Option<Who>
         Source::Eco | Source::Away | Source::Holiday => {
             let mut ids = known(inp, s.heated_by.as_deref(), unknown).unwrap_or_else(units);
             ids.retain(|id| s.heater(id).is_none_or(|h| h.drive != HeaterDrive::Hold));
+            if ids.is_empty() {
+                // Only hold heaters in the default: the climate units hold the eco target.
+                ids = units();
+            }
             Who {
                 ids,
                 units_follow: true,

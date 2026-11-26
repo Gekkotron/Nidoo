@@ -715,7 +715,7 @@ fn rules(inp: &ZoneInputs) -> Decision {
 /// The room-thermometer correction (spec §6): shift the unheld devices' setpoint by the offset.
 fn apply_correction(inp: &ZoneInputs, d: &mut Decision, mode: Mode, target: f64) {
     let fb = &inp.settings.feedback;
-    if !fb.enabled {
+    if !fb.enabled || heaters::units_rest(inp, d) {
         return;
     }
     let unheld = || {
@@ -2329,6 +2329,17 @@ mod tests {
     }
 
     #[test]
+    fn eco_with_only_a_hold_default_lets_the_units_heat() {
+        let mut c = Case::new().heater(stove(), on()).heated_by(&["stove"]);
+        c.home = false;
+        let d = c.run();
+        assert_eq!(d.source, Source::Away);
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(Some(16.0), "heat", false));
+        assert_eq!(d.reason, "Nobody home: eco 16.0 °C");
+    }
+
+    #[test]
     fn frost_turns_thermostat_heaters_on_not_hold() {
         let d = Case::new()
             .heater(rad(), off())
@@ -2633,6 +2644,53 @@ mod tests {
         assert!(!d.entities.contains_key("stove"));
         assert!(d.heaters.is_empty());
         assert_eq!(d.reason, "Schedule block 1: 20.0 °C");
+    }
+
+    #[test]
+    fn no_correction_while_only_heaters_heat() {
+        // A previous offset of -1.0; the thermometer is over the band, but the stove drives
+        // the room and the unit is off: no step, no offset, no note.
+        let mut c =
+            corrected(19.6, 30)
+                .heater(stove(), on())
+                .heat_block_by(9, 18, 19.0, &["stove"]);
+        let previous = FeedbackState {
+            target: 19.0,
+            offset: -1.0,
+            since: NOW - 7200,
+            last_step_at: Some(NOW - 7200),
+            reached: true,
+        };
+        c.feedback = Some(previous);
+        let d = c.run();
+        assert_eq!(d.adjust, None);
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.reason, "Schedule block 1: 19.0 °C");
+        // The hub's state goes back to 0 instead of stepping on.
+        let kept = FeedbackState::after(
+            c.feedback.as_ref(),
+            &d,
+            &c.settings.feedback,
+            c.thermometer,
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(kept.offset, 0.0);
+
+        // The stove cooling down: the unit fills in, corrected as it would be without heaters.
+        let d = corrected(19.6, 30)
+            .heater(stove(), off_since(NOW - 300))
+            .heat_block_by(9, 18, 19.0, &["stove"])
+            .run();
+        assert_eq!(d.adjust, Some(-0.5));
+        assert_eq!(d.entities["trv"], target(Some(18.5), "heat", false));
+        assert!(
+            d.reason.contains("above 19.5 °C: AC 18.5 °C")
+                && d.reason.ends_with("; the climate units heat meanwhile"),
+            "{}",
+            d.reason
+        );
     }
 
     #[test]
