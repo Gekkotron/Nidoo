@@ -171,6 +171,7 @@ mod tests {
                 .collect(),
             eco_restore: BTreeMap::new(),
             adjust: None,
+            heaters: BTreeMap::new(),
         }
     }
 

@@ -3,7 +3,8 @@
 use leptos::prelude::*;
 use leptos::task::tick;
 use nidoo_climate::doc::{
-    Block, Day, Decision, HhMm, Mode, ModeRules, Rules, Setpoint, Source, ZoneSettings, ZoneState,
+    Block, Day, Decision, Heater, HhMm, Mode, ModeRules, Rules, Setpoint, Source, ZoneSettings,
+    ZoneState,
 };
 use nidoo_climate::view::{LearnStatus, ZoneView};
 use nidoo_web::climate::eco_pill::EcoPill;
@@ -189,6 +190,7 @@ fn zone(id: &str, name: &str, state: ZoneState, setpoint: Option<f64>) -> ZoneVi
             entities: Default::default(),
             eco_restore: Default::default(),
             adjust: None,
+            heaters: Default::default(),
         }),
         overrides: vec![],
         eco: None,
@@ -286,6 +288,7 @@ async fn refetch_keeps_the_draft_and_the_open_editor() {
                 to: HhMm::parse("09:00").unwrap(),
                 setpoint: Setpoint::Temp(19.0),
                 evidence: None,
+                heated_by: None,
             }],
         }),
         cool: None,
@@ -814,6 +817,47 @@ async fn the_gear_opens_the_room_settings() {
             .is_some()
     );
     assert_eq!(requests_to(&stub, "GET", DECISIONS_URL), 1);
+}
+
+#[wasm_bindgen_test]
+async fn the_room_settings_list_the_heaters() {
+    let stub = FetchStub::install();
+    reply_decisions(&stub);
+    let mut with_heater = zone("living-room", "Living room", ZoneState::Active, Some(19.0));
+    with_heater.settings.heaters = vec![Heater {
+        entity: "switch.stove".into(),
+        ..Heater::default()
+    }];
+    let host = mount_panel(RwSignal::new(with_heater)).await;
+    let text = open_room_settings(&host)
+        .await
+        .text_content()
+        .unwrap_or_default();
+    assert!(text.contains("Heaters"), "{text}");
+    // The house does not know the switch, so the row shows its id.
+    assert!(text.contains("switch.stove"), "{text}");
+    assert!(text.contains("Default heater"), "{text}");
+    assert!(text.contains("Add a heater…"), "{text}");
+}
+
+#[wasm_bindgen_test]
+async fn a_room_without_heaters_offers_to_add_one() {
+    let stub = FetchStub::install();
+    reply_decisions(&stub);
+    let current = RwSignal::new(zone(
+        "living-room",
+        "Living room",
+        ZoneState::Active,
+        Some(19.0),
+    ));
+    let host = mount_panel(current).await;
+    let text = open_room_settings(&host)
+        .await
+        .text_content()
+        .unwrap_or_default();
+    assert!(text.contains("Heaters"), "{text}");
+    assert!(text.contains("Add a heater…"), "{text}");
+    assert!(!text.contains("Default heater"), "{text}");
 }
 
 #[wasm_bindgen_test]

@@ -268,6 +268,7 @@ pub fn zone(
             entities: BTreeMap::new(),
             eco_restore: BTreeMap::new(),
             adjust: None,
+            heaters: BTreeMap::new(),
         }),
         overrides: Vec::new(),
         eco: None,

@@ -8,11 +8,15 @@ use chrono_tz::Tz;
 use leptos::prelude::*;
 use nidoo_climate::view::ZoneView;
 
+use crate::climate::entity_field::label_with_room;
+use crate::climate::heaters_card::heater_labels;
 use crate::climate::proposal::{ProposalPanel, RulesPanel};
 use crate::climate::room_card::RoomCard;
 use crate::climate::room_settings::RoomSettings;
 use crate::climate::week_minute;
 use crate::components::now::Now;
+use crate::house::House;
+use crate::i18n::use_lang;
 
 #[component]
 pub fn RoomPanel(
@@ -28,6 +32,24 @@ pub fn RoomPanel(
     let clock = expect_context::<Now>().0;
     // A memo, so the calendars redraw their now line only when the minute or the day changes.
     let now = Memo::new(move |_| week_minute(clock.get(), tz.get()));
+    // The room's on/off heaters and climate units, for the schedule's "Heated by"; empty (no
+    // choice shown) while the room has no on/off heater.
+    let house = expect_context::<House>();
+    let lang = use_lang();
+    let heaters = Signal::derive(move || {
+        let lang = lang();
+        zone.with(|z| {
+            if z.settings.heaters.is_empty() {
+                return Vec::new();
+            }
+            let units: Vec<(String, String)> = z
+                .entities
+                .iter()
+                .map(|id| (id.clone(), label_with_room(house, lang, id)))
+                .collect();
+            heater_labels(&z.settings, &units, |id| label_with_room(house, lang, id))
+        })
+    });
     let settings_open = RwSignal::new(false);
     let shown = shown.unwrap_or_else(|| Signal::from(true));
 
@@ -45,7 +67,7 @@ pub fn RoomPanel(
             zone.with_untracked(|z| {
                 z.proposal.clone().map(|p| {
                     let approved = Signal::derive(move || zone.with(|z| z.settings.rules.clone()));
-                    view! { <ProposalPanel zone=z.zone.clone() proposal=p approved=approved on_changed=on_changed now=now.into() /> }
+                    view! { <ProposalPanel zone=z.zone.clone() proposal=p approved=approved on_changed=on_changed now=now.into() heaters=heaters /> }
                 })
             })
         })
@@ -61,7 +83,7 @@ pub fn RoomPanel(
                 on_settings=Callback::new(move |()| settings_open.set(true))
             />
             <div class="card climate-week">
-                <RulesPanel zone=zone on_changed=on_changed now=now.into() />
+                <RulesPanel zone=zone on_changed=on_changed now=now.into() heaters=heaters />
                 <p class="climate-legend">
                     <span><i class="climate-legend__swatch climate-temp--low"></i>"≤ 16°"</span>
                     <span><i class="climate-legend__swatch climate-temp--mid"></i>"17 – 19°"</span>

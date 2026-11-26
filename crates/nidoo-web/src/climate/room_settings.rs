@@ -7,18 +7,20 @@
 use chrono_tz::Tz;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use nidoo_climate::doc::ZoneState;
+use nidoo_climate::doc::{ZoneSettings, ZoneState};
 use nidoo_climate::view::{DecisionLog, ZoneView};
 
 use crate::api::climate as api;
 use crate::climate::correction_card::CorrectionCard;
-use crate::climate::entity_field::ThermometerField;
+use crate::climate::entity_field::{ThermometerField, label_with_room};
+use crate::climate::heaters_card::{HeatersCard, zone_labels};
 use crate::climate::presence_card::PresenceCard;
 use crate::climate::{act, decision_line, learn_status_text, row_line};
 use crate::components::now::Now;
 use crate::components::popup::Popup;
 use crate::components::toast::Toasts;
-use crate::i18n::climate::{ClimateText, use_climate_text};
+use crate::house::House;
+use crate::i18n::climate::{ClimateText, could_not_save, use_climate_text};
 use crate::i18n::use_lang;
 
 /// How many recent decisions the list shows before the older rows.
@@ -57,6 +59,31 @@ pub fn RoomSettings(
         });
     });
 
+    // The heaters card: validate, then save the whole settings; a refusal shows the hub's message.
+    let house = expect_context::<House>();
+    let units = Signal::derive(move || {
+        let lang = lang();
+        zone.with(|z| {
+            z.entities
+                .iter()
+                .map(|id| (id.clone(), label_with_room(house, lang, id)))
+                .collect::<Vec<_>>()
+        })
+    });
+    let set_heaters = Callback::new(move |next: ZoneSettings| {
+        if let Err(e) = next.validate() {
+            toasts.push(could_not_save(untrack(lang), &e));
+            return;
+        }
+        let id = zone.with_untracked(|z| z.zone.clone());
+        spawn_local(async move {
+            match api::put_zone(&id, &next).await {
+                Ok(()) => on_changed.run(()),
+                Err(e) => toasts.push(could_not_save(untrack(lang), &e.error)),
+            }
+        });
+    });
+
     let learn_line = move || zone.with(|z| learn_status_text(lang(), &z.learn));
     let can_learn = Memo::new(move |_| zone.with(|z| z.settings.state != ZoneState::Off));
     let learn = move |_| {
@@ -85,19 +112,22 @@ pub fn RoomSettings(
         let tz = tz.get();
         let lang = lang();
         let now = clock.get();
+        let labels = zone.with(|z| zone_labels(house, lang, z));
         log.get().map(|l| {
             let recent = l
                 .recent
                 .iter()
                 .take(RECENT)
-                .map(|d| view! { <li>{decision_line(lang, d, now, tz)}</li> })
+                .map(|d| view! { <li>{decision_line(lang, d, now, tz, &labels)}</li> })
                 .collect_view();
             let older = l
                 .older
                 .iter()
-                .map(
-                    |r| view! { <li class="climate-decisions__older">{row_line(lang, r, now, tz)}</li> },
-                )
+                .map(|r| {
+                    view! {
+                        <li class="climate-decisions__older">{row_line(lang, r, now, tz, &labels)}</li>
+                    }
+                })
                 .collect_view();
             view! { <ul class="climate-decisions__list">{recent}{older}</ul> }
         })
@@ -106,6 +136,13 @@ pub fn RoomSettings(
     view! {
         <Popup open=open title=title>
             <div class="climate-room-settings">
+                <section class="climate-room-settings__section">
+                    <HeatersCard
+                        settings=Signal::derive(move || zone.with(|z| z.settings.clone()))
+                        units=units
+                        on_change=set_heaters
+                    />
+                </section>
                 <section class="climate-room-settings__section">
                     <ThermometerField
                         value=Signal::derive(move || zone.with(|z| z.settings.sensor.clone()))

@@ -232,6 +232,20 @@ impl Hub {
                 )));
             }
         }
+        let heater_claims = self.heater_claims();
+        for heater in &settings.heaters {
+            let id = &heater.entity;
+            if !self
+                .read()
+                .entity(id)
+                .is_some_and(|e| e.kind == Kind::Switch)
+            {
+                return Err(HubError::Rejected(format!("{id} is not a switch")));
+            }
+            if let Some(owner) = heater_claims.get(id).filter(|owner| *owner != zone) {
+                return Err(HubError::Rejected(format!("{id} already heats {owner}")));
+            }
+        }
         let known = zone != UNASSIGNED_AREA
             && self
                 .read()
@@ -241,6 +255,10 @@ impl Hub {
         if !known {
             return Err(HubError::UnknownArea(zone.to_owned()));
         }
+        let units = inputs::zone_entity_ids(self, zone, &settings);
+        settings
+            .validate_heated_by(&units)
+            .map_err(HubError::Rejected)?;
         let current = self.zone_settings(zone);
         // New correction settings restart it from the schedule's own target.
         if settings.feedback != current.feedback {
@@ -425,6 +443,21 @@ impl Hub {
         claims
     }
 
+    /// Entity id -> zone, for every heater of every zone. A heater listed by two zones (only
+    /// possible through documents published around the hub) belongs to the first by id.
+    pub(crate) fn heater_claims(&self) -> BTreeMap<String, String> {
+        let store = self.climate_store();
+        let mut claims = BTreeMap::new();
+        for (zone, docs) in &store.zones {
+            for heater in &docs.settings.heaters {
+                claims
+                    .entry(heater.entity.clone())
+                    .or_insert_with(|| zone.clone());
+            }
+        }
+        claims
+    }
+
     fn history_configured(&self) -> bool {
         self.history().is_some()
     }
@@ -541,6 +574,7 @@ mod tests {
             entities: BTreeMap::new(),
             eco_restore: BTreeMap::new(),
             adjust: None,
+            heaters: BTreeMap::new(),
         }
     }
 

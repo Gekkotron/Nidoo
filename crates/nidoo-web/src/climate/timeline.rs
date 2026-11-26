@@ -251,6 +251,34 @@ pub fn toggle_day(rules: &ModeRules, block: usize, day: Day) -> ModeRules {
     out
 }
 
+/// Ticks or unticks `id` on `rules.blocks[block]`; an emptied list becomes `None` (the room
+/// default). An unknown block returns the rules unchanged.
+pub fn toggle_heated_by(rules: &ModeRules, block: usize, id: &str) -> ModeRules {
+    let mut out = rules.clone();
+    if let Some(b) = out.blocks.get_mut(block) {
+        let mut ids = b.heated_by.take().unwrap_or_default();
+        if let Some(at) = ids.iter().position(|i| i == id) {
+            ids.remove(at);
+        } else {
+            ids.push(id.to_owned());
+        }
+        b.heated_by = (!ids.is_empty()).then_some(ids);
+    }
+    out
+}
+
+/// The heaters a block names as "Stove + Heat pump", in the order of `heaters` and skipping ids
+/// it does not know; `None` for the room default or when no named id is known.
+pub fn heated_by_label(block: &Block, heaters: &[(String, String)]) -> Option<String> {
+    let ids = block.heated_by.as_ref()?;
+    let names: Vec<&str> = heaters
+        .iter()
+        .filter(|(id, _)| ids.contains(id))
+        .map(|(_, label)| label.as_str())
+        .collect();
+    (!names.is_empty()).then(|| names.join(" + "))
+}
+
 /// A new block on `day` from the 15-minute step at `minute`, two hours long or up to the next
 /// block that day, at the base + 2 °C (19 °C when the base is off). Returns the rules and the
 /// new block's index, or `None` when a block on that day already holds `minute`.
@@ -277,6 +305,7 @@ pub fn add_block(rules: &ModeRules, day: Day, minute: u16) -> Option<(ModeRules,
         to: HhMm(to),
         setpoint,
         evidence: None,
+        heated_by: None,
     });
     let index = out.blocks.len() - 1;
     Some((out, index))
@@ -385,6 +414,8 @@ fn Bar(
     peek: RwSignal<Option<PeekKey>>,
     /// The index `peek` names in the current rules.
     peeked: Memo<Option<usize>>,
+    /// The heaters' labels, to name them under the temperature.
+    heaters: Signal<Vec<(String, String)>>,
 ) -> impl IntoView {
     let lang = use_lang();
     let covers = Memo::new(move |_| {
@@ -408,6 +439,13 @@ fn Bar(
                     None => setpoint,
                 }
             })
+        })
+    };
+    let heated = move || {
+        rules.with(|r| {
+            r.blocks
+                .get(block)
+                .and_then(|b| heaters.with(|h| heated_by_label(b, h)))
         })
     };
     let times = move || {
@@ -462,6 +500,9 @@ fn Bar(
                 }
             >
                 <span class="climate-timeline__temp">{text}</span>
+                {move || {
+                    heated().map(|label| view! { <span class="climate-timeline__heaters">{label}</span> })
+                }}
                 <span class="climate-timeline__times">{times}</span>
                 {editable
                     .then(|| {
@@ -502,6 +543,7 @@ fn BlockEditor(
     rules: Signal<ModeRules>,
     on_change: Callback<ModeRules>,
     selected: RwSignal<Option<usize>>,
+    heaters: Signal<Vec<(String, String)>>,
 ) -> impl IntoView {
     let lang = use_lang();
     let t = use_climate_text();
@@ -577,6 +619,69 @@ fn BlockEditor(
             }
         })
         .collect_view();
+    // "Room default" plus one chip per heater, only when the room has an on/off heater.
+    let default_on =
+        move || rules.with(|r| r.blocks.get(block).is_some_and(|b| b.heated_by.is_none()));
+    let heater_chips = move || {
+        heaters
+            .get()
+            .into_iter()
+            .map(|(id, label)| {
+                let on = {
+                    let id = id.clone();
+                    move || {
+                        rules.with(|r| {
+                            r.blocks
+                                .get(block)
+                                .and_then(|b| b.heated_by.as_ref())
+                                .is_some_and(|ids| ids.contains(&id))
+                        })
+                    }
+                };
+                view! {
+                    <button
+                        type="button"
+                        class="chip"
+                        class:chip--selected=on.clone()
+                        aria-pressed=move || on().to_string()
+                        on:click=move |_| {
+                            on_change.run(toggle_heated_by(&rules.get_untracked(), block, &id));
+                        }
+                    >
+                        {label}
+                    </button>
+                }
+            })
+            .collect_view()
+    };
+    let heated_row = move || {
+        (!heaters.with(|h| h.is_empty()))
+            .then(|| {
+                view! {
+                    <div class="climate-timeline__heated">
+                        <span class="climate-field__label">{move || t(ClimateText::HeatedBy)}</span>
+                        <div class="climate-timeline__days" role="group" aria-label=move || t(ClimateText::HeatedBy)>
+                            <button
+                                type="button"
+                                class="chip"
+                                class:chip--selected=default_on
+                                aria-pressed=move || default_on().to_string()
+                                on:click=move |_| {
+                                    let mut next = rules.get_untracked();
+                                    if let Some(b) = next.blocks.get_mut(block) {
+                                        b.heated_by = None;
+                                    }
+                                    on_change.run(next);
+                                }
+                            >
+                                {move || t(ClimateText::RoomDefault)}
+                            </button>
+                            {heater_chips}
+                        </div>
+                    </div>
+                }
+            })
+    };
     view! {
         <div class="climate-timeline__editor card">
             <div class="climate-timeline__days" role="group" aria-label=move || t(ClimateText::Days)>
@@ -641,6 +746,7 @@ fn BlockEditor(
                 />
                 <span>{move || text(Key::ModeOff)}</span>
             </label>
+            {heated_row}
             <div class="climate-timeline__editor-actions">
                 <button
                     type="button"
@@ -668,6 +774,9 @@ pub fn WeekTimeline(
     editable: bool,
     on_change: Callback<ModeRules>,
     #[prop(optional, into)] now: Option<Signal<(Day, u16)>>,
+    /// The on/off heaters a block can name (id, label); empty hides the choice and the labels.
+    #[prop(optional, into)]
+    heaters: Signal<Vec<(String, String)>>,
 ) -> impl IntoView {
     let lang = use_lang();
     let t = use_climate_text();
@@ -767,6 +876,7 @@ pub fn WeekTimeline(
                             selected=selected
                             peek=peek
                             peeked=peeked
+                            heaters=heaters
                         />
                     </For>
                     {now_line}
@@ -854,7 +964,13 @@ pub fn WeekTimeline(
                     .filter(|_| editable)
                     .map(|block| {
                         view! {
-                            <BlockEditor block=block rules=rules on_change=on_change selected=selected />
+                            <BlockEditor
+                                block=block
+                                rules=rules
+                                on_change=on_change
+                                selected=selected
+                                heaters=heaters
+                            />
                         }
                     })
             }}
@@ -874,6 +990,7 @@ mod tests {
             to: HhMm::parse(to).unwrap(),
             setpoint: Setpoint::Temp(t),
             evidence: None,
+            heated_by: None,
         }
     }
 
@@ -1129,6 +1246,48 @@ mod tests {
         for r in [sunday, tue_off, fri] {
             valid(&r);
         }
+    }
+
+    fn one_block() -> ModeRules {
+        mode(vec![block(&[Day::Mon], "06:00", "08:00", 19.0)])
+    }
+
+    fn heaters() -> Vec<(String, String)> {
+        vec![
+            ("heat_pump".to_string(), "Heat pump".to_string()),
+            ("stove".to_string(), "Stove".to_string()),
+        ]
+    }
+
+    #[test]
+    fn toggle_heated_by_adds_then_removes() {
+        let r = toggle_heated_by(&one_block(), 0, "stove");
+        assert_eq!(r.blocks[0].heated_by, Some(vec!["stove".to_string()]));
+        let both = toggle_heated_by(&r, 0, "heat_pump");
+        assert_eq!(
+            both.blocks[0].heated_by,
+            Some(vec!["stove".to_string(), "heat_pump".to_string()])
+        );
+        assert_eq!(toggle_heated_by(&r, 0, "stove").blocks[0].heated_by, None);
+        assert_eq!(toggle_heated_by(&r, 3, "stove"), r, "unknown block");
+        valid(&both);
+    }
+
+    #[test]
+    fn heated_by_label_joins_names_and_skips_unknown_ids() {
+        let mut b = block(&[Day::Mon], "06:00", "08:00", 19.0);
+        assert_eq!(heated_by_label(&b, &heaters()), None);
+        b.heated_by = Some(vec!["stove".into()]);
+        assert_eq!(heated_by_label(&b, &heaters()).as_deref(), Some("Stove"));
+        // The order of the heaters list, not of the block.
+        b.heated_by = Some(vec!["stove".into(), "heat_pump".into(), "gone".into()]);
+        assert_eq!(
+            heated_by_label(&b, &heaters()).as_deref(),
+            Some("Heat pump + Stove")
+        );
+        b.heated_by = Some(vec!["gone".into()]);
+        assert_eq!(heated_by_label(&b, &heaters()), None);
+        assert_eq!(heated_by_label(&b, &[]), None);
     }
 
     #[test]

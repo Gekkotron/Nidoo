@@ -37,11 +37,14 @@ fn with_mode(rules: &Rules, mode: Mode, next: ModeRules) -> Rules {
 
 /// A timeline of `rules`, one tab per mode when both exist.
 #[component]
-fn RulesTimeline(
+pub fn RulesTimeline(
     rules: Signal<Rules>,
     editable: Signal<bool>,
     on_change: Callback<Rules>,
     now: Signal<(Day, u16)>,
+    /// The on/off heaters of the room (id, label); only heat rules use them. Empty hides them.
+    #[prop(optional, into)]
+    heaters: Signal<Vec<(String, String)>>,
 ) -> impl IntoView {
     let lang = use_lang();
     let t = use_text();
@@ -84,8 +87,14 @@ fn RulesTimeline(
         let change = Callback::new(move |next: ModeRules| {
             on_change.run(with_mode(&rules.get_untracked(), m, next));
         });
+        // Heaters apply to heat rules only.
+        let heaters = if m == Mode::Heat {
+            heaters
+        } else {
+            Signal::default()
+        };
         rules.with_untracked(|r| r.get(m).is_some()).then(
-            || view! { <WeekTimeline rules=current editable=editable on_change=change now=now /> },
+            || view! { <WeekTimeline rules=current editable=editable on_change=change now=now heaters=heaters /> },
         )
     };
     view! {
@@ -111,6 +120,9 @@ pub fn ProposalPanel(
     on_changed: Callback<()>,
     /// Today and the minute of the day in the house time zone.
     now: Signal<(Day, u16)>,
+    /// The room's on/off heaters (id, label), empty when it has none.
+    #[prop(optional, into)]
+    heaters: Signal<Vec<(String, String)>>,
 ) -> impl IntoView {
     let toasts = expect_context::<Toasts>();
     let t = use_climate_text();
@@ -210,6 +222,7 @@ pub fn ProposalPanel(
                 editable=editing.into()
                 on_change=Callback::new(move |next| edited.set(next))
                 now=now
+                heaters=heaters
             />
             {move || editing.get().then(&changes_view)}
             <div class="climate-proposal__actions">
@@ -262,6 +275,9 @@ pub fn RulesPanel(
     on_changed: Callback<()>,
     /// Today and the minute of the day in the house time zone.
     now: Signal<(Day, u16)>,
+    /// The room's on/off heaters (id, label), empty when it has none.
+    #[prop(optional, into)]
+    heaters: Signal<Vec<(String, String)>>,
 ) -> impl IntoView {
     let toasts = expect_context::<Toasts>();
     let t = use_climate_text();
@@ -337,6 +353,7 @@ pub fn RulesPanel(
                     editable=editing.into()
                     on_change=Callback::new(move |next| draft.set(next))
                     now=now
+                    heaters=heaters
                 />
                 <div class="climate-proposal__actions">
                     {move || {

@@ -175,6 +175,10 @@ pub struct Block {
     pub setpoint: Setpoint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Evidence>,
+    /// Heat blocks only: the heaters and units that heat the room in this block. `None` follows
+    /// the room's `heated_by`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heated_by: Option<Vec<String>>,
 }
 
 /// The schedule of one mode: a base setpoint and the blocks that override it.
@@ -212,6 +216,9 @@ impl ModeRules {
                 return Err(format!("{at}: to must be at most 24:00"));
             }
             check_setpoint(&b.setpoint).map_err(|e| format!("{at}: {e}"))?;
+            if label == "cool" && b.heated_by.is_some() {
+                return Err(format!("{at}: heated_by only applies to heat blocks"));
+            }
             for (j, o) in self.blocks.iter().enumerate().take(i) {
                 let shared = b.days.iter().any(|d| o.days.contains(d));
                 if shared && b.from < o.to && o.from < b.to {
@@ -555,6 +562,67 @@ impl PresenceSettings {
     }
 }
 
+/// How the engine drives an on/off heater.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub enum HeaterDrive {
+    /// Switch on below the target minus the band, off at the target.
+    #[default]
+    Thermostat,
+    /// Hold the heater on while the room is in a heating block.
+    Hold,
+}
+
+/// An on/off switch heater driven by the engine.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct Heater {
+    pub entity: String,
+    pub drive: HeaterDrive,
+    pub enabled: bool,
+    /// Minimum minutes off before switching on again (0..=240).
+    pub min_off_min: u32,
+    /// Minimum minutes on before switching off again (0..=120).
+    pub min_on_min: u32,
+}
+
+impl Default for Heater {
+    fn default() -> Self {
+        Self {
+            entity: String::new(),
+            drive: HeaterDrive::default(),
+            enabled: true,
+            min_off_min: 0,
+            min_on_min: 0,
+        }
+    }
+}
+
+/// What the engine remembers of one heater between passes (Unix seconds).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+pub struct HeaterRun {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_since: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_since: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_until: Option<u64>,
+}
+
+/// A thermostat heater switches on at `target - THERMOSTAT_BAND` and off at `target`.
+pub const THERMOSTAT_BAND: f64 = 0.3;
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
 /// Settings of one zone (`<prefix>/zone/<zone>/settings`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -570,6 +638,16 @@ pub struct ZoneSettings {
     pub approved_at: Option<u64>,
     pub approved_proposal: Option<String>,
     pub rejected: Vec<Rejection>,
+    /// On/off switch heaters of the zone.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub heaters: Vec<Heater>,
+    /// The heaters and units that heat the room by default; `None` means every unit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heated_by: Option<Vec<String>>,
+    /// The climate units heat, at the same target, while a chosen on/off heater cannot run
+    /// (cooling down, unreachable).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub fill_in: bool,
 }
 
 impl Default for ZoneSettings {
@@ -585,6 +663,9 @@ impl Default for ZoneSettings {
             approved_at: None,
             approved_proposal: None,
             rejected: Vec::new(),
+            heaters: Vec::new(),
+            heated_by: None,
+            fill_in: true,
         }
     }
 }
@@ -596,7 +677,58 @@ impl ZoneSettings {
         }
         self.feedback.validate()?;
         self.presence.validate()?;
+        for (i, h) in self.heaters.iter().enumerate() {
+            if h.entity.starts_with("group_") {
+                return Err(format!("heater {}: a group cannot be a heater", h.entity));
+            }
+            if self.heaters[..i].iter().any(|o| o.entity == h.entity) {
+                return Err(format!("heater {} listed twice", h.entity));
+            }
+            if h.min_off_min > 240 {
+                return Err(format!(
+                    "heater {}: min_off_min must be at most 240",
+                    h.entity
+                ));
+            }
+            if h.min_on_min > 120 {
+                return Err(format!(
+                    "heater {}: min_on_min must be at most 120",
+                    h.entity
+                ));
+            }
+        }
         self.rules.validate()
+    }
+
+    /// The heater with this entity id, enabled or not.
+    pub fn heater(&self, id: &str) -> Option<&Heater> {
+        self.heaters.iter().find(|h| h.entity == id)
+    }
+
+    /// Checks the room's `heated_by` and every heat block's against this zone's heaters and the
+    /// given unit entity ids.
+    pub fn validate_heated_by(&self, units: &[String]) -> Result<(), String> {
+        let known = |id: &String| self.heater(id).is_some() || units.contains(id);
+        let check = |at: &str, ids: &[String]| -> Result<(), String> {
+            if ids.is_empty() {
+                return Err(format!("{at}: heated_by is empty"));
+            }
+            match ids.iter().find(|id| !known(id)) {
+                Some(id) => Err(format!("{at}: unknown heater {id}")),
+                None => Ok(()),
+            }
+        };
+        if let Some(ids) = &self.heated_by {
+            check("room", ids)?;
+        }
+        if let Some(heat) = &self.rules.heat {
+            for (i, b) in heat.blocks.iter().enumerate() {
+                if let Some(ids) = &b.heated_by {
+                    check(&format!("heat block {i}"), ids)?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -689,6 +821,9 @@ pub struct Decision {
     /// The offset applied to the zone's unheld devices; `None` when 0 or inactive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adjust: Option<f64>,
+    /// Heater entity -> what the engine remembers of it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub heaters: BTreeMap<String, HeaterRun>,
 }
 
 impl Decision {
@@ -707,6 +842,7 @@ impl Decision {
             && self.entities == other.entities
             && self.eco_restore == other.eco_restore
             && self.adjust == other.adjust
+            && self.heaters == other.heaters
     }
 }
 
@@ -821,6 +957,7 @@ mod tests {
             to: HhMm(to),
             setpoint: Setpoint::Temp(sp),
             evidence: None,
+            heated_by: None,
         }
     }
 
@@ -956,6 +1093,7 @@ mod tests {
             entities: BTreeMap::new(),
             eco_restore: BTreeMap::new(),
             adjust: None,
+            heaters: BTreeMap::new(),
         }
     }
 
@@ -1173,6 +1311,7 @@ mod tests {
             entities: BTreeMap::new(),
             eco_restore: BTreeMap::new(),
             adjust: None,
+            heaters: BTreeMap::new(),
         };
         let s = serde_json::to_string(&d).unwrap();
         assert!(!s.contains("eco_restore"), "{s}");
@@ -1200,5 +1339,91 @@ mod tests {
         };
         let s = serde_json::to_string(&e).unwrap();
         assert_eq!(serde_json::from_str::<RoomEco>(&s).unwrap(), e);
+    }
+
+    fn heater(id: &str) -> Heater {
+        Heater {
+            entity: id.into(),
+            ..Heater::default()
+        }
+    }
+
+    fn rules_with_block_heated_by(ids: &[&str]) -> ModeRules {
+        ModeRules {
+            base: Setpoint::Temp(17.0),
+            blocks: vec![Block {
+                heated_by: Some(ids.iter().map(|s| s.to_string()).collect()),
+                ..block(&[Day::Mon], 540, 600, 20.0)
+            }],
+        }
+    }
+
+    #[test]
+    fn old_zone_document_round_trips_unchanged() {
+        let json = serde_json::to_string(&ZoneSettings::default()).unwrap();
+        assert!(
+            !json.contains("heaters") && !json.contains("heated_by") && !json.contains("fill_in")
+        );
+        let block: Block =
+            serde_json::from_str(r#"{"days":["mon"],"from":"09:00","to":"10:00","setpoint":20.0}"#)
+                .unwrap();
+        assert_eq!(block.heated_by, None);
+        assert!(!serde_json::to_string(&block).unwrap().contains("heated_by"));
+    }
+
+    #[test]
+    fn heater_defaults() {
+        let h: Heater = serde_json::from_str(r#"{"entity":"sw"}"#).unwrap();
+        assert_eq!(
+            (h.drive, h.enabled, h.min_off_min, h.min_on_min),
+            (HeaterDrive::Thermostat, true, 0, 0)
+        );
+    }
+
+    #[test]
+    fn heaters_validate() {
+        let mut s = ZoneSettings {
+            heaters: vec![heater("sw"), heater("sw")],
+            ..ZoneSettings::default()
+        };
+        assert!(s.validate().unwrap_err().contains("twice"));
+        s.heaters = vec![Heater {
+            min_off_min: 241,
+            ..heater("sw")
+        }];
+        assert!(s.validate().unwrap_err().contains("min_off_min"));
+        s.heaters = vec![Heater {
+            min_on_min: 121,
+            ..heater("sw")
+        }];
+        assert!(s.validate().unwrap_err().contains("min_on_min"));
+        s.heaters = vec![heater("group_x")];
+        assert!(s.validate().unwrap_err().contains("group"));
+    }
+
+    #[test]
+    fn heated_by_validates_against_heaters_and_units() {
+        let mut s = ZoneSettings {
+            heaters: vec![heater("stove")],
+            heated_by: Some(vec!["stove".into(), "ac".into()]),
+            ..ZoneSettings::default()
+        };
+        assert!(s.validate_heated_by(&["ac".into()]).is_ok());
+        s.heated_by = Some(vec![]);
+        assert!(
+            s.validate_heated_by(&["ac".into()])
+                .unwrap_err()
+                .contains("empty")
+        );
+        s.heated_by = None;
+        s.rules.heat = Some(rules_with_block_heated_by(&["gone"]));
+        assert!(
+            s.validate_heated_by(&["ac".into()])
+                .unwrap_err()
+                .contains("heat block 0")
+        );
+        s.rules.heat = None;
+        s.rules.cool = Some(rules_with_block_heated_by(&["stove"]));
+        assert!(s.validate().unwrap_err().contains("cool block 0"));
     }
 }

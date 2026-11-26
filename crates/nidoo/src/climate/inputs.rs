@@ -1,13 +1,16 @@
 //! What the engine reads for one zone: devices, room reading, presence, holiday and outdoor
 //! temperature, gathered from the registry, the retained documents and the runtime state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::NaiveDateTime;
 use chrono_tz::Tz;
 use nidoo_climate::decide::{Device, DeviceCaps, SafetyMemory, ZoneInputs};
-use nidoo_climate::doc::{HouseSettings, Mode, Override, RoomEco, SafetyCause, ZoneSettings};
+use nidoo_climate::doc::{
+    HeaterRun, HouseSettings, Mode, Override, RoomEco, SafetyCause, ZoneSettings,
+};
 use nidoo_climate::feedback::{FeedbackState, UNKNOWN_AGE_S};
+use nidoo_climate::heaters::HeaterDevice;
 use nidoo_climate::presence::{PresenceState, Sensed, track};
 use nidoo_climate::schedule::{Reading, ReadingSource, room_reading, season_mode};
 use nidoo_climate::view::ThermometerReading;
@@ -23,6 +26,9 @@ const DEFAULT_STEP: f64 = 0.5;
 /// How long the history mean of the outdoor sensor is reused.
 pub(crate) const OUTDOOR_CACHE_S: u64 = 600;
 
+/// What the engine remembers of each on/off heater between passes, by entity id.
+pub(crate) type HeaterClocks = BTreeMap<String, HeaterRun>;
+
 /// [`ZoneInputs`] with everything owned, so the registry lock is long gone when `decide` runs.
 pub(crate) struct OwnedZoneInputs {
     pub zone: String,
@@ -36,6 +42,8 @@ pub(crate) struct OwnedZoneInputs {
     pub overrides: Vec<Override>,
     /// The devices the engine may command: reachable, with a known state.
     pub devices: Vec<Device>,
+    /// The zone's on/off heaters as they are now.
+    pub heaters: Vec<HeaterDevice>,
     /// Every climate entity the zone lists, reachable or not.
     pub entity_ids: Vec<String>,
     pub local_now: NaiveDateTime,
@@ -66,6 +74,7 @@ impl OwnedZoneInputs {
             holiday: self.holiday,
             overrides: &self.overrides,
             devices: &self.devices,
+            unit_ids: &self.entity_ids,
             local_now: self.local_now,
             now: self.now,
             safety_memory: self.safety_memory.as_ref(),
@@ -74,6 +83,7 @@ impl OwnedZoneInputs {
             thermometer: self.thermometer,
             feedback: self.feedback.as_ref(),
             room_empty: self.presence.is_some_and(|p| p.is_empty()),
+            heaters: &self.heaters,
         }
     }
 }
@@ -123,6 +133,38 @@ pub(crate) fn zone_entity_ids(hub: &Hub, zone: &str, settings: &ZoneSettings) ->
             zone_devices(zone, settings, &area, &claims)
         }
     }
+}
+
+/// The zone's on/off heaters as they are now, enabled or not; one whose entity is missing or
+/// not a switch is skipped. `clocks` supplies the off and on times the engine remembers.
+pub(crate) fn zone_heaters(
+    hub: &Hub,
+    settings: &ZoneSettings,
+    clocks: &HeaterClocks,
+) -> Vec<HeaterDevice> {
+    let reg = hub.read();
+    settings
+        .heaters
+        .iter()
+        .filter(|heater| {
+            reg.entity(&heater.entity)
+                .is_some_and(|e| e.kind == Kind::Switch)
+        })
+        .map(|heater| {
+            let state = reg.state(&heater.entity);
+            let run = clocks.get(&heater.entity);
+            HeaterDevice {
+                id: heater.entity.clone(),
+                on: state.and_then(|s| match s.value {
+                    StateValue::OnOff(on) => Some(on),
+                    _ => None,
+                }),
+                available: state.is_some_and(|s| s.availability != Availability::Offline),
+                off_since: run.and_then(|r| r.off_since),
+                on_since: run.and_then(|r| r.on_since),
+            }
+        })
+        .collect()
 }
 
 /// The numeric value of a sensor-like state: a number, a numeric text, or a climate's reading.
@@ -470,6 +512,15 @@ pub(crate) fn zone_inputs_owned(hub: &Hub, zone: &str, now: u64) -> Option<Owned
             })
             .collect()
     };
+    let clocks = hub.climate_runtime().heater_clocks.clone();
+    let mut heaters = zone_heaters(hub, &settings, &clocks);
+    // A heater whose commands keep failing cannot heat: the decision counts it unreachable,
+    // so the climate units may fill in while it is paused.
+    for heater in &mut heaters {
+        if hub.command_paused(&heater.id, now) {
+            heater.available = false;
+        }
+    }
     let stale_after_s = u64::from(house.stale_after_min) * 60;
     let sensor = room_sensor(
         hub,
@@ -515,6 +566,7 @@ pub(crate) fn zone_inputs_owned(hub: &Hub, zone: &str, now: u64) -> Option<Owned
         holiday,
         overrides,
         devices,
+        heaters,
         entity_ids,
         local_now: local_time(hub.zone(), now),
         now,

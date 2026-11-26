@@ -8,12 +8,14 @@ use nidoo_climate::view::ZoneView;
 
 use crate::api::climate as api;
 use crate::climate::eco_pill::EcoPill;
+use crate::climate::heaters_card::{name_ids, zone_labels};
 use crate::climate::target_stepper::TargetStepper;
 use crate::climate::{
     act, age_text, degrees_text, mode_word, setpoint_text, source_word, until_text,
 };
 use crate::components::now::Now;
 use crate::components::toast::Toasts;
+use crate::house::House;
 use crate::i18n::Lang;
 use crate::i18n::climate::{ClimateText, hold_until, now_with_age, reason_text, use_climate_text};
 use crate::i18n::use_lang;
@@ -99,13 +101,16 @@ pub fn RoomCard(
             None => t(ClimateText::Target).to_owned(),
         })
     };
+    // The engine's reason, naming the room's devices by their labels rather than their ids.
+    let house = expect_context::<House>();
     let why = move || {
+        let lang = lang();
         zone.with(|z| match z.decision.as_ref() {
-            Some(d) if d.reason.is_empty() => source_word(lang(), d.source).to_owned(),
+            Some(d) if d.reason.is_empty() => source_word(lang, d.source).to_owned(),
             Some(d) => format!(
                 "{} · {}",
-                source_word(lang(), d.source),
-                reason_text(lang(), &d.reason)
+                source_word(lang, d.source),
+                name_ids(&reason_text(lang, &d.reason), &zone_labels(house, lang, z))
             ),
             None => t(ClimateText::NoDecision).to_owned(),
         })

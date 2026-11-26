@@ -516,6 +516,7 @@ mod tests {
                     to: HhMm(1320),
                     setpoint: Setpoint::Temp(t),
                     evidence: None,
+                    heated_by: None,
                 })
                 .into_iter()
                 .collect(),

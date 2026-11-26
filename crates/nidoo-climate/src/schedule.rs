@@ -20,13 +20,32 @@ impl ModeRules {
             .map_or((self.base, None), |(i, b)| (b.setpoint, Some(i)))
     }
 
-    /// The next instant strictly after `local` (within 8 days) where the setpoint changes, or
-    /// `None` if it stays constant.
+    /// The block's `heated_by` at `local`, `None` for the base or a block that names nobody.
+    pub fn heated_by_at(&self, local: NaiveDateTime) -> Option<&[String]> {
+        let (_, index) = self.at(local);
+        self.blocks.get(index?)?.heated_by.as_deref()
+    }
+
+    /// The next instant strictly after `local` (within 8 days) where the setpoint or the
+    /// `heated_by` changes, or `None` if both stay constant.
     pub fn next_change(&self, local: NaiveDateTime) -> Option<NaiveDateTime> {
-        let current = self.at(local).0;
+        let key = |t| (self.at(t).0, self.heated_by_at(t));
+        let current = key(local);
+        self.edges(local, local + Duration::days(SEARCH_DAYS), SEARCH_DAYS)?
+            .into_iter()
+            .find(|c| key(*c) != current)
+    }
+
+    /// The sorted, distinct block edges in `(local, limit]`, taken from `local`'s day and the
+    /// `days` days after it.
+    fn edges(
+        &self,
+        local: NaiveDateTime,
+        limit: NaiveDateTime,
+        days: i64,
+    ) -> Option<Vec<NaiveDateTime>> {
         let midnight = local.date().and_hms_opt(0, 0, 0)?;
-        let limit = local + Duration::days(SEARCH_DAYS);
-        let mut candidates: Vec<NaiveDateTime> = (0..=SEARCH_DAYS)
+        let mut edges: Vec<NaiveDateTime> = (0..=days)
             .flat_map(|d| {
                 let day_start = midnight + Duration::days(d);
                 self.blocks.iter().flat_map(move |b| {
@@ -35,9 +54,36 @@ impl ModeRules {
             })
             .filter(|c| *c > local && *c <= limit)
             .collect();
-        candidates.sort();
-        candidates.dedup();
-        candidates.into_iter().find(|c| self.at(*c).0 != current)
+        edges.sort();
+        edges.dedup();
+        Some(edges)
+    }
+
+    /// Whether `id` is named at `local`: the block in force lists it, or `default_names` is set
+    /// and the instant is base time or in a block whose `heated_by` is `None`.
+    fn names(&self, id: &str, default_names: bool, local: NaiveDateTime) -> bool {
+        match self.heated_by_at(local) {
+            Some(ids) => ids.iter().any(|i| i == id),
+            None => default_names,
+        }
+    }
+
+    /// The next instant strictly after `local`, within `within_min` minutes, where a block
+    /// naming `id` starts: `id` is named there and was not named one minute earlier.
+    /// `default_names` says whether base time and unnamed blocks count as naming `id`.
+    pub fn next_start_of(
+        &self,
+        id: &str,
+        default_names: bool,
+        local: NaiveDateTime,
+        within_min: u32,
+    ) -> Option<NaiveDateTime> {
+        let limit = local + Duration::minutes(i64::from(within_min));
+        let days = i64::from(within_min) / (24 * 60) + 1;
+        self.edges(local, limit, days)?.into_iter().find(|c| {
+            self.names(id, default_names, *c)
+                && !self.names(id, default_names, *c - Duration::minutes(1))
+        })
     }
 }
 
@@ -153,6 +199,7 @@ mod tests {
             to: HhMm(to),
             setpoint: Setpoint::Temp(t),
             evidence: None,
+            heated_by: None,
         }
     }
 
@@ -402,5 +449,82 @@ mod tests {
     #[test]
     fn reading_missing() {
         assert_eq!(room_reading(None, &[], 3600, 0), Reading::Missing);
+    }
+
+    mod heated_by {
+        use super::*;
+
+        fn at(h: u32, m: u32) -> NaiveDateTime {
+            dt("2026-11-23 00:00") + Duration::minutes(i64::from(h * 60 + m)) // Monday
+        }
+
+        fn rules(base: f64, blocks: Vec<Block>) -> ModeRules {
+            ModeRules {
+                base: Setpoint::Temp(base),
+                blocks,
+            }
+        }
+
+        fn plain(from_h: u16, to_h: u16, t: f64) -> Block {
+            block(&[Day::Mon], from_h * 60, to_h * 60, t)
+        }
+
+        fn named_hm(from: (u16, u16), to: (u16, u16), t: f64, ids: &[&str]) -> Block {
+            Block {
+                heated_by: Some(ids.iter().map(|s| s.to_string()).collect()),
+                ..block(&[Day::Mon], from.0 * 60 + from.1, to.0 * 60 + to.1, t)
+            }
+        }
+
+        fn named(from_h: u16, to_h: u16, t: f64, ids: &[&str]) -> Block {
+            named_hm((from_h, 0), (to_h, 0), t, ids)
+        }
+
+        #[test]
+        fn next_change_counts_a_heated_by_edge() {
+            let r = rules(
+                15.0,
+                vec![named(9, 12, 20.0, &["stove"]), plain(12, 18, 20.0)],
+            );
+            assert_eq!(r.next_change(at(10, 0)), Some(at(12, 0)));
+        }
+
+        #[test]
+        fn heated_by_at_reads_the_block() {
+            let r = rules(15.0, vec![named(9, 12, 20.0, &["stove"])]);
+            assert_eq!(r.heated_by_at(at(10, 0)), Some(&["stove".to_string()][..]));
+            assert_eq!(r.heated_by_at(at(13, 0)), None);
+        }
+
+        #[test]
+        fn next_start_of_finds_a_block_within_the_window() {
+            let r = rules(
+                15.0,
+                vec![
+                    named(9, 12, 20.0, &["stove"]),
+                    named_hm((12, 10), (14, 0), 20.0, &["stove"]),
+                ],
+            );
+            assert_eq!(
+                r.next_start_of("stove", false, at(12, 0), 15),
+                Some(at(12, 10))
+            );
+            assert_eq!(r.next_start_of("stove", false, at(12, 0), 5), None);
+            assert_eq!(r.next_start_of("ac", false, at(12, 0), 15), None);
+            // default_names: the base after 14:00 counts for a heater in the room default
+            assert_eq!(r.next_start_of("ac", true, at(13, 55), 15), Some(at(14, 0)));
+        }
+
+        #[test]
+        fn next_start_of_ignores_a_touching_block_that_continues_the_same_heater() {
+            let r = rules(
+                15.0,
+                vec![
+                    named(9, 12, 20.0, &["stove"]),
+                    named(12, 14, 20.0, &["stove"]),
+                ],
+            );
+            assert_eq!(r.next_start_of("stove", false, at(11, 55), 15), None);
+        }
     }
 }

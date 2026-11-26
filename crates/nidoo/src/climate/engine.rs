@@ -59,25 +59,26 @@ const GAP_STEPS: i64 = 4;
 
 /// What commanding a zone achieved.
 #[derive(Default)]
-struct Outcome {
-    needed: usize,
-    accepted: usize,
+pub(crate) struct Outcome {
+    pub(crate) needed: usize,
+    pub(crate) accepted: usize,
 }
 
 /// Clears an entity's in-flight mark when dropped, so a cancelled pass cannot leave it set.
-/// A command abandoned while armed may already be published, so it is remembered as
-/// unconfirmed: the device echoing it later is not a hand change.
-struct InflightGuard<'a> {
-    hub: &'a Hub,
-    id: &'a str,
-    intended: &'a DeviceTarget,
-    now: u64,
-    armed: bool,
+/// A climate command abandoned while armed may already be published, so it is remembered as
+/// unconfirmed: the device echoing it later is not a hand change. A switch has no `intended`:
+/// what it was sent is already in `heater_sent`.
+pub(super) struct InflightGuard<'a> {
+    pub(super) hub: &'a Hub,
+    pub(super) id: &'a str,
+    pub(super) intended: Option<&'a DeviceTarget>,
+    pub(super) now: u64,
+    pub(super) armed: bool,
 }
 
 impl InflightGuard<'_> {
     /// The command finished, so dropping the guard is no abandonment.
-    fn disarm(&mut self) {
+    pub(super) fn disarm(&mut self) {
         self.armed = false;
     }
 }
@@ -86,9 +87,11 @@ impl Drop for InflightGuard<'_> {
     fn drop(&mut self) {
         let mut rt = self.hub.climate_runtime();
         rt.inflight.remove(self.id);
-        if self.armed {
+        if self.armed
+            && let Some(intended) = self.intended
+        {
             rt.unconfirmed
-                .insert(self.id.to_owned(), (self.intended.clone(), self.now));
+                .insert(self.id.to_owned(), (intended.clone(), self.now));
         }
     }
 }
@@ -96,6 +99,12 @@ impl Drop for InflightGuard<'_> {
 impl Outcome {
     fn complete(&self) -> bool {
         self.needed == self.accepted
+    }
+
+    /// Adds what another set of commands achieved.
+    fn add(&mut self, other: &Outcome) {
+        self.needed += other.needed;
+        self.accepted += other.accepted;
     }
 }
 
@@ -116,10 +125,12 @@ impl Hub {
 
     /// One full pass over every zone at `now` (Unix seconds).
     pub async fn evaluate_climate(self: &Arc<Self>, now: u64) {
+        let started = tokio::time::Instant::now();
         let Some(climate) = &self.climate else {
             return;
         };
         let _pass = climate.pass.lock().await;
+        self.climate_runtime().pass_clock = Some((now, started));
         self.ensure_seeded();
         self.sweep_once(now);
         self.refresh_outdoor(now).await;
@@ -132,10 +143,12 @@ impl Hub {
     /// Evaluates one zone at `now`, serialised with the full passes. What an approval does so
     /// the new rules apply at once.
     pub(crate) async fn evaluate_climate_zone(self: &Arc<Self>, zone: &str, now: u64) {
+        let started = tokio::time::Instant::now();
         let Some(climate) = &self.climate else {
             return;
         };
         let _pass = climate.pass.lock().await;
+        self.climate_runtime().pass_clock = Some((now, started));
         self.ensure_seeded();
         self.refresh_house(now);
         self.evaluate_zone(zone, now).await;
@@ -248,6 +261,11 @@ impl Hub {
                         let now = clock::now();
                         self.observe_presence(&id, &state, now);
                         self.observe_climate(&id, now);
+                        if let StateValue::OnOff(on) = state.value
+                            && state.availability != Availability::Offline
+                        {
+                            self.observe_heater(&id, on, now);
+                        }
                         due.get_or_insert(tokio::time::Instant::now() + DEBOUNCE);
                     }
                     Ok(WsEvent::ClimateChanged { .. }) | Err(RecvError::Lagged(_)) => {
@@ -474,6 +492,7 @@ impl Hub {
                 house.outdoor_entity.as_deref(),
             ));
             watched.extend(entity_ids);
+            watched.extend(settings.heaters.iter().map(|h| h.entity.clone()));
         }
         let outdoor = outdoor_mean(self, now);
         // After a restart: a house the retained decisions already show away stays away, so the
@@ -508,6 +527,7 @@ impl Hub {
                 self.observe_climate(&id, now);
             }
         }
+        self.sync_heaters(zone, &settings, now);
         let Some(mut inp) = zone_inputs_owned(self, zone, now) else {
             return;
         };
@@ -526,7 +546,7 @@ impl Hub {
             inp.overrides = self.update_overrides(zone, |list| list.retain(|o| !is_boost(o)));
             tracing::info!(zone, "house left: boost ended");
         }
-        inp.previous_cause = previous.and_then(|d| d.cause);
+        inp.previous_cause = previous.as_ref().and_then(|d| d.cause);
         let mut decision = decide(&inp.borrowed());
         {
             let kept = FeedbackState::after(
@@ -578,10 +598,19 @@ impl Hub {
             ZoneState::Off => false,
         };
         let outcome = if may_command {
-            self.command_zone(&inp, &decision, now).await
+            let mut outcome = self.command_zone(&inp, &decision, now).await;
+            outcome.add(&self.command_heaters(zone, &decision, now).await);
+            outcome
         } else {
             Outcome::default()
         };
+        // A heater this pass no longer drives (season, zone off or pending, an out-of-season
+        // boost, an idle decision): one last off to each one the previous decision had on.
+        if let Some(previous) = &previous {
+            let driven = may_command.then_some(&decision);
+            self.release_heaters(zone, previous, driven, now).await;
+        }
+        self.copy_heater_clocks(&mut decision);
         decision.applied = match state {
             ZoneState::Active => outcome.complete(),
             ZoneState::Pending => may_command && outcome.needed > 0 && outcome.complete(),
@@ -626,6 +655,8 @@ impl Hub {
                 rt.unconfirmed.remove(id);
                 rt.availability.remove(id);
                 rt.online_since.remove(id);
+                rt.heater_clocks.remove(id);
+                rt.heater_sent.remove(id);
             }
             alerts::resolve(self, &alerts::command_id(id));
         }
@@ -634,7 +665,8 @@ impl Hub {
             self.write_zone_doc(&inp.zone, ZoneDoc::Eco, None::<&RoomEco>);
             inp.room_eco = None;
         }
-        let ids = inp.entity_ids.clone();
+        let mut ids = inp.entity_ids.clone();
+        ids.extend(inp.settings.heaters.iter().map(|h| h.entity.clone()));
         inp.overrides = self.update_overrides(&inp.zone, |list| {
             list.retain(|o| {
                 o.until > now && o.entity.as_ref().is_none_or(|entity| ids.contains(entity))
@@ -746,27 +778,13 @@ impl Hub {
         if !matches!(*link.borrow(), ConnectionStatus::Online) {
             return false;
         }
-        {
-            let mut rt = self.climate_runtime();
-            let paused = rt
-                .failures
-                .get(&device.id)
-                .and_then(|(_, until)| *until)
-                .is_some_and(|until| now < until);
-            let recent = rt
-                .last_sent
-                .get(&device.id)
-                .is_some_and(|at| now.saturating_sub(*at) < MIN_RESEND_S);
-            if paused || recent {
-                return false;
-            }
-            rt.last_sent.insert(device.id.clone(), now);
-            rt.inflight.insert(device.id.clone());
+        if !self.claim_command(&device.id, now, true) {
+            return false;
         }
         let mut inflight = InflightGuard {
             hub: self,
             id: &device.id,
-            intended: target,
+            intended: Some(target),
             now,
             armed: true,
         };
@@ -778,8 +796,29 @@ impl Hub {
         self.note_command_result(&device.id, result, &link, now)
     }
 
+    /// Takes `id` for a command at `now`: false while it is paused after repeated failures, or,
+    /// when `spaced`, when it was tried less than `MIN_RESEND_S` ago. Otherwise notes the try
+    /// and marks it in flight; the caller then holds an [`InflightGuard`] for it.
+    pub(super) fn claim_command(&self, id: &str, now: u64, spaced: bool) -> bool {
+        if self.command_paused(id, now) {
+            return false;
+        }
+        let mut rt = self.climate_runtime();
+        let recent = spaced
+            && rt
+                .last_sent
+                .get(id)
+                .is_some_and(|at| now.saturating_sub(*at) < MIN_RESEND_S);
+        if recent {
+            return false;
+        }
+        rt.last_sent.insert(id.to_owned(), now);
+        rt.inflight.insert(id.to_owned());
+        true
+    }
+
     /// Whether `id` is paused after repeated failures.
-    fn command_paused(&self, id: &str, now: u64) -> bool {
+    pub(crate) fn command_paused(&self, id: &str, now: u64) -> bool {
         self.climate_runtime()
             .failures
             .get(id)
@@ -791,7 +830,7 @@ impl Hub {
     /// `MAX_FAILURES`th failure in a row pauses it and raises the alert. A failure while the
     /// broker link changed since `link` was taken is not the device's fault and is not
     /// counted. True on success.
-    fn note_command_result(
+    pub(super) fn note_command_result(
         &self,
         id: &str,
         result: Result<(), String>,
@@ -1089,7 +1128,7 @@ impl Hub {
         }
     }
 
-    fn last_decision(&self, zone: &str) -> Option<Decision> {
+    pub(super) fn last_decision(&self, zone: &str) -> Option<Decision> {
         let logged = self
             .climate_runtime()
             .decisions
@@ -1135,7 +1174,7 @@ impl Hub {
 }
 
 /// A decision that acts on nothing, to resolve a zone's safety alerts.
-fn no_safety(zone: &str) -> Decision {
+pub(super) fn no_safety(zone: &str) -> Decision {
     Decision {
         zone: zone.to_owned(),
         mode: None,
@@ -1153,6 +1192,7 @@ fn no_safety(zone: &str) -> Decision {
         entities: Default::default(),
         eco_restore: Default::default(),
         adjust: None,
+        heaters: BTreeMap::new(),
     }
 }
 
@@ -1294,7 +1334,7 @@ mod tests {
         drop(InflightGuard {
             hub: &hub,
             id: "climate.a",
-            intended: &intended,
+            intended: Some(&intended),
             now: 7,
             armed: true,
         });
@@ -1311,7 +1351,7 @@ mod tests {
         let mut guard = InflightGuard {
             hub: &hub,
             id: "climate.a",
-            intended: &intended,
+            intended: Some(&intended),
             now: 7,
             armed: true,
         };
@@ -1536,6 +1576,7 @@ mod tests {
                     to: HhMm(to),
                     setpoint: Setpoint::Temp(20.0),
                     evidence: None,
+                    heated_by: None,
                 }],
             }),
             cool: None,

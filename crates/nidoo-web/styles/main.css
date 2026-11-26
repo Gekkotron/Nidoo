@@ -8249,6 +8249,7 @@ dialog.popup::backdrop {
 }
 
 .climate-timeline__temp,
+.climate-timeline__heaters,
 .climate-timeline__times {
   overflow: hidden;
   white-space: nowrap;
@@ -8259,6 +8260,18 @@ dialog.popup::backdrop {
 .climate-timeline__temp {
   padding-top: 6px;
   font: 700 16px/18px var(--font-display);
+}
+
+.climate-timeline__heaters {
+  font: var(--type-label);
+  font-size: 11px;
+}
+
+.climate-timeline__heated {
+  display: flex;
+  flex-direction: column;
+  grid-column: 1 / -1;
+  gap: 6px;
 }
 
 .climate-timeline__times {
@@ -8386,7 +8399,8 @@ dialog.popup::backdrop {
   gap: 6px;
 }
 
-.climate-timeline__days .chip {
+.climate-timeline__days .chip,
+.climate-timeline__heated .chip {
   min-height: 32px;
   padding: 0 10px;
 }
@@ -10847,4 +10861,29 @@ dialog.popup::backdrop {
 
 .history-chart__tip-word {
   font-weight: 600;
+}
+
+/* The heaters card (climate/heaters_card.rs): one row per unit or heater. */
+.climate-heater {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.climate-heater__name {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.climate-heaters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.climate-heaters__fill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

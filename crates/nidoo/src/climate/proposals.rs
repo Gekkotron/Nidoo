@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use nidoo_climate::doc::{
     Mode, Override, OverrideOrigin, Proposal, ProposalKind, Rejection, RoomEco, Rules, Setpoint,
-    ZoneState, check_setpoint,
+    ZoneSettings, ZoneState, check_setpoint,
 };
 use nidoo_climate::topics::{self, ZoneDoc};
 use nidoo_climate::view::LearnStatus;
@@ -115,6 +115,23 @@ pub(crate) fn publish(hub: &Hub, zone: &str, proposal: Proposal, now: u64) {
     }
 }
 
+/// Drops from every heat block's `heated_by` the ids that are neither heaters of the zone nor
+/// one of its climate `units`; a list emptied that way becomes `None` (the room default).
+fn drop_unknown_heated_by(settings: &mut ZoneSettings, units: &[String]) {
+    let heaters: Vec<String> = settings.heaters.iter().map(|h| h.entity.clone()).collect();
+    let Some(heat) = settings.rules.heat.as_mut() else {
+        return;
+    };
+    for block in &mut heat.blocks {
+        if let Some(ids) = &mut block.heated_by {
+            ids.retain(|id| heaters.contains(id) || units.contains(id));
+            if ids.is_empty() {
+                block.heated_by = None;
+            }
+        }
+    }
+}
+
 /// A push response: the alert id and the button the user pressed.
 #[derive(Deserialize)]
 struct Reply {
@@ -152,6 +169,13 @@ impl Hub {
             settings.approved_at = Some(now);
             settings.approved_proposal = Some(proposal.id.clone());
             settings.validate().map_err(HubError::Rejected)?;
+            // A proposal's blocks inherit their `heated_by`; an id that has left the room since
+            // would make every later save of the settings fail, so it is dropped here.
+            let units = super::inputs::zone_entity_ids(self, zone, &settings);
+            drop_unknown_heated_by(&mut settings, &units);
+            settings
+                .validate_heated_by(&units)
+                .map_err(HubError::Rejected)?;
             self.publish_zone_doc(zone, ZoneDoc::Settings, Some(&settings))?;
             self.publish_zone_doc(zone, ZoneDoc::Proposal, None::<&Proposal>)?;
             cancel_alert(self, &proposal.id);

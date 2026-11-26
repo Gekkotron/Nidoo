@@ -11,6 +11,7 @@ use crate::doc::{
     ZoneSettings, ZoneState,
 };
 use crate::feedback::{CorrectionInput, FeedbackState, correct};
+use crate::heaters::{self, HeaterDevice};
 use crate::schedule::{Reading, ReadingSource};
 
 /// Step used when a device does not advertise one.
@@ -75,6 +76,8 @@ pub struct ZoneInputs<'a> {
     pub holiday: bool,
     pub overrides: &'a [Override],
     pub devices: &'a [Device],
+    /// Every climate unit the zone lists, reachable or not (`devices` holds the reachable ones).
+    pub unit_ids: &'a [String],
     pub local_now: NaiveDateTime,
     pub now: u64,
     pub safety_memory: Option<&'a SafetyMemory>,
@@ -89,6 +92,8 @@ pub struct ZoneInputs<'a> {
     pub feedback: Option<&'a FeedbackState>,
     /// Nobody has been detected in the room for its presence settings' `empty_after`.
     pub room_empty: bool,
+    /// The zone's on/off heaters, enabled or not, reachable or not.
+    pub heaters: &'a [HeaterDevice],
 }
 
 /// How far back inside the overheat or overcool limit the reading must be before that latched
@@ -193,6 +198,7 @@ fn base_decision(inp: &ZoneInputs, source: Source, reason: String) -> Decision {
         entities: BTreeMap::new(),
         eco_restore: BTreeMap::new(),
         adjust: None,
+        heaters: BTreeMap::new(),
     }
 }
 
@@ -212,6 +218,7 @@ pub fn decide(inp: &ZoneInputs) -> Decision {
             .or_else(|| zone_override(inp))
             .unwrap_or_else(|| rules(inp))
     };
+    heaters::apply(inp, &mut d);
     if matches!(
         inp.reading,
         Reading::Fresh {
@@ -480,15 +487,15 @@ fn pending(inp: &ZoneInputs) -> Option<Decision> {
     Some(d)
 }
 
-fn live(o: &Override, now: u64) -> bool {
+pub(crate) fn live(o: &Override, now: u64) -> bool {
     o.until > now
 }
 
-fn latest<'a>(it: impl Iterator<Item = &'a Override>) -> Option<&'a Override> {
+pub(crate) fn latest<'a>(it: impl Iterator<Item = &'a Override>) -> Option<&'a Override> {
     it.max_by_key(|o| o.until)
 }
 
-fn clock(inp: &ZoneInputs, until: u64) -> String {
+pub(crate) fn clock(inp: &ZoneInputs, until: u64) -> String {
     let secs = i64::try_from(until.saturating_sub(inp.now)).unwrap_or(i64::MAX / 2);
     (inp.local_now + Duration::seconds(secs))
         .format("%H:%M")
@@ -710,7 +717,7 @@ fn rules(inp: &ZoneInputs) -> Decision {
 /// The room-thermometer correction (spec §6): shift the unheld devices' setpoint by the offset.
 fn apply_correction(inp: &ZoneInputs, d: &mut Decision, mode: Mode, target: f64) {
     let fb = &inp.settings.feedback;
-    if !fb.enabled {
+    if !fb.enabled || heaters::units_rest(inp, d) {
         return;
     }
     let unheld = || {
@@ -801,7 +808,10 @@ fn hold_devices(inp: &ZoneInputs, d: &mut Decision, fallback: Option<Setpoint>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc::{Block, Day, HhMm, ModeRules, OverrideOrigin, RoomEco, Rules, ZoneSettings};
+    use crate::doc::{
+        Block, Day, Heater, HeaterDrive, HeaterRun, HhMm, ModeRules, OverrideOrigin, RoomEco,
+        Rules, ZoneSettings,
+    };
 
     const NOW: u64 = 1_000_000;
 
@@ -864,6 +874,7 @@ mod tests {
                 to: HhMm(1320),
                 setpoint: Setpoint::Temp(20.5),
                 evidence: None,
+                heated_by: None,
             }],
         }
     }
@@ -894,6 +905,10 @@ mod tests {
         thermometer: Option<ReadingSource>,
         feedback: Option<FeedbackState>,
         room_empty: bool,
+        heaters: Vec<HeaterDevice>,
+        /// The climate units the zone lists; `None`: the ids of `devices`.
+        units: Option<Vec<String>>,
+        local: NaiveDateTime,
     }
 
     impl Case {
@@ -913,10 +928,59 @@ mod tests {
                 thermometer: None,
                 feedback: None,
                 room_empty: false,
+                heaters: vec![],
+                units: None,
+                local: local(),
             }
         }
 
+        /// Add an on/off heater to the zone, `dev` being how the hub sees it.
+        fn heater(mut self, h: Heater, dev: HeaterDevice) -> Self {
+            self.heaters.push(HeaterDevice {
+                id: h.entity.clone(),
+                ..dev
+            });
+            self.settings.heaters.push(h);
+            self
+        }
+
+        /// Replace the heat blocks by one block, every day, from `from_h` to `to_h` o'clock.
+        fn heat_block_by(self, from_h: u16, to_h: u16, sp: f64, ids: &[&str]) -> Self {
+            self.heat_blocks(vec![block_by(from_h * 60, to_h * 60, sp, ids)])
+        }
+
+        fn heat_blocks(mut self, blocks: Vec<Block>) -> Self {
+            self.settings.rules.heat.as_mut().unwrap().blocks = blocks;
+            self
+        }
+
+        /// The room default.
+        fn heated_by(mut self, ids: &[&str]) -> Self {
+            self.settings.heated_by = Some(ids.iter().map(|i| i.to_string()).collect());
+            self
+        }
+
+        /// The same Wednesday, at `h:m` local.
+        fn at_hm(mut self, h: u32, m: u32) -> Self {
+            self.local = local().date().and_hms_opt(h, m, 0).unwrap();
+            self
+        }
+
+        fn mode(mut self, mode: Mode) -> Self {
+            self.mode = Some(mode);
+            self
+        }
+
+        fn reading(mut self, r: Reading) -> Self {
+            self.reading = r;
+            self
+        }
+
         fn run(&self) -> Decision {
+            let units = self
+                .units
+                .clone()
+                .unwrap_or_else(|| self.devices.iter().map(|d| d.id.clone()).collect());
             decide(&ZoneInputs {
                 zone: "z",
                 settings: &self.settings,
@@ -928,7 +992,8 @@ mod tests {
                 holiday: self.holiday,
                 overrides: &self.overrides,
                 devices: &self.devices,
-                local_now: local(),
+                unit_ids: &units,
+                local_now: self.local,
                 now: NOW,
                 safety_memory: self.memory.as_ref(),
                 previous_cause: self.previous,
@@ -936,7 +1001,74 @@ mod tests {
                 thermometer: self.thermometer,
                 feedback: self.feedback.as_ref(),
                 room_empty: self.room_empty,
+                heaters: &self.heaters,
             })
+        }
+    }
+
+    /// A block every day from minute `from` to minute `to`, heated by `ids`.
+    fn block_by(from: u16, to: u16, sp: f64, ids: &[&str]) -> Block {
+        Block {
+            days: all_days(),
+            from: HhMm(from),
+            to: HhMm(to),
+            setpoint: Setpoint::Temp(sp),
+            evidence: None,
+            heated_by: Some(ids.iter().map(|i| i.to_string()).collect()),
+        }
+    }
+
+    /// A hold heater with a 15 min cool-down.
+    fn stove() -> Heater {
+        Heater {
+            entity: "stove".into(),
+            drive: HeaterDrive::Hold,
+            min_off_min: 15,
+            ..Heater::default()
+        }
+    }
+
+    /// A thermostat heater.
+    fn rad() -> Heater {
+        Heater {
+            entity: "rad".into(),
+            ..Heater::default()
+        }
+    }
+
+    /// A reachable switch, off, with no clocks.
+    fn off() -> HeaterDevice {
+        HeaterDevice {
+            id: String::new(),
+            on: Some(false),
+            available: true,
+            off_since: None,
+            on_since: None,
+        }
+    }
+
+    fn on() -> HeaterDevice {
+        HeaterDevice {
+            on: Some(true),
+            ..off()
+        }
+    }
+
+    fn off_since(t: u64) -> HeaterDevice {
+        HeaterDevice {
+            off_since: Some(t),
+            ..off()
+        }
+    }
+
+    /// A hand change on a switch.
+    fn switch_ov(id: &str, setpoint: Option<Setpoint>, mode: Option<Mode>) -> Override {
+        Override {
+            entity: Some(id.into()),
+            setpoint,
+            mode,
+            until: NOW + 3600,
+            origin: OverrideOrigin::Hand,
         }
     }
 
@@ -2109,5 +2241,610 @@ mod tests {
         assert_eq!(eco_setpoint(Mode::Heat, 16.0, Setpoint::Off), Setpoint::Off);
         assert_eq!(eco_setpoint(Mode::Cool, 28.0, t(24.0)), t(28.0));
         assert_eq!(eco_setpoint(Mode::Cool, 28.0, t(30.0)), t(30.0));
+    }
+
+    fn run_of(off_since: Option<u64>, wait_until: Option<u64>) -> HeaterRun {
+        HeaterRun {
+            off_since,
+            on_since: None,
+            wait_until,
+        }
+    }
+
+    #[test]
+    fn zone_without_heaters_is_unchanged() {
+        let expected = Decision {
+            zone: "z".into(),
+            mode: Some(Mode::Heat),
+            setpoint: Some(Setpoint::Temp(20.5)),
+            source: Source::Schedule,
+            cause: None,
+            reason: "Schedule block 1: 20.5 °C".into(),
+            reading: Some(19.0),
+            reading_age_s: Some(30),
+            outdoor_mean: Some(8.0),
+            home: true,
+            holiday: false,
+            applied: false,
+            at: NOW,
+            entities: BTreeMap::from([("trv".into(), target(Some(20.5), "heat", false))]),
+            eco_restore: BTreeMap::new(),
+            adjust: None,
+            heaters: BTreeMap::new(),
+        };
+        assert_eq!(Case::new().run(), expected);
+        // A disabled heater and no `heated_by`: the engine leaves the room as it was.
+        let disabled = Heater {
+            enabled: false,
+            ..stove()
+        };
+        assert_eq!(Case::new().heater(disabled, on()).run(), expected);
+    }
+
+    #[test]
+    fn block_names_the_stove_unit_goes_off() {
+        let d = Case::new()
+            .heater(stove(), off())
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .at_hm(10, 0)
+            .run();
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(d.heaters["stove"], HeaterRun::default());
+        assert_eq!(d.reason, "Schedule block 1: 20.0 °C");
+    }
+
+    #[test]
+    fn base_uses_the_room_default() {
+        let block = Block {
+            heated_by: None,
+            ..block_by(540, 1080, 20.0, &[])
+        };
+        let d = Case::new()
+            .heater(rad(), off())
+            .heated_by(&["rad"])
+            .heat_blocks(vec![block])
+            .reading(fresh(16.0))
+            .at_hm(20, 0)
+            .run();
+        assert_eq!(d.entities["rad"], target(None, "heat", false));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(d.reason, "Schedule base: 17.0 °C");
+    }
+
+    #[test]
+    fn no_default_means_the_units_heat_and_heaters_are_off() {
+        let mut c = Case::new()
+            .heater(rad(), off())
+            .reading(fresh(12.0))
+            .at_hm(23, 0);
+        c.settings.rules.heat.as_mut().unwrap().base = Setpoint::Temp(15.0);
+        let d = c.run();
+        assert_eq!(d.entities["trv"], target(Some(15.0), "heat", false));
+        assert_eq!(d.entities["rad"], target(None, "off", false));
+        assert_eq!(d.reason, "Schedule base: 15.0 °C");
+    }
+
+    #[test]
+    fn eco_drops_hold_heaters() {
+        let mut c = Case::new()
+            .heater(stove(), on())
+            .heated_by(&["stove", "trv"]);
+        c.home = false;
+        let d = c.run();
+        assert_eq!(d.source, Source::Away);
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(Some(16.0), "heat", false));
+        assert_eq!(d.reason, "Nobody home: eco 16.0 °C");
+    }
+
+    #[test]
+    fn eco_with_only_a_hold_default_lets_the_units_heat() {
+        let mut c = Case::new().heater(stove(), on()).heated_by(&["stove"]);
+        c.home = false;
+        let d = c.run();
+        assert_eq!(d.source, Source::Away);
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(Some(16.0), "heat", false));
+        assert_eq!(d.reason, "Nobody home: eco 16.0 °C");
+    }
+
+    #[test]
+    fn frost_turns_thermostat_heaters_on_not_hold() {
+        let d = Case::new()
+            .heater(rad(), off())
+            .heater(stove(), off())
+            .heated_by(&["stove"])
+            .reading(fresh(5.0))
+            .run();
+        assert_eq!(d.cause, Some(SafetyCause::Frost));
+        assert_eq!(d.entities["rad"], target(None, "heat", false));
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(Some(21.0), "heat", false));
+        assert_eq!(d.reason, "Frost protection: 5.0 °C < 7.0 °C");
+    }
+
+    #[test]
+    fn overheat_turns_every_heater_off() {
+        let d = Case::new()
+            .heater(rad(), on())
+            .heater(stove(), on())
+            .heat_block_by(9, 18, 20.0, &["stove", "rad"])
+            .reading(fresh(31.0))
+            .run();
+        assert_eq!(d.cause, Some(SafetyCause::Overheat));
+        assert_eq!(d.entities["rad"], target(None, "off", false));
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(Some(17.0), "heat", false));
+        assert_eq!(d.reason, "Overheat protection: 31.0 °C > 30.0 °C");
+    }
+
+    #[test]
+    fn stale_reading_turns_heaters_off() {
+        let d = Case::new()
+            .heater(rad(), on())
+            .heater(stove(), on())
+            .heat_block_by(9, 18, 20.0, &["stove", "rad"])
+            .reading(Reading::Stale { last: Some(19.0) })
+            .run();
+        assert_eq!(d.cause, Some(SafetyCause::Stale));
+        assert_eq!(d.entities["rad"], target(None, "off", false));
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(Some(17.0), "heat", false));
+    }
+
+    #[test]
+    fn pending_zone_keeps_heaters_off() {
+        let mut c = Case::new()
+            .heater(rad(), on())
+            .heater(stove(), on())
+            .heat_block_by(9, 18, 20.0, &["stove", "rad"])
+            .reading(fresh(15.0));
+        c.settings.state = ZoneState::Pending;
+        let d = c.run();
+        assert_eq!(
+            d.entities,
+            BTreeMap::from([
+                ("rad".into(), target(None, "off", false)),
+                ("stove".into(), target(None, "off", false)),
+            ])
+        );
+        assert_eq!(d.reason, "Waiting for approved rules; would set 20.0 °C");
+    }
+
+    #[test]
+    fn cool_mode_leaves_heaters_out() {
+        let d = Case::new()
+            .heater(stove(), on())
+            .heated_by(&["stove"])
+            .mode(Mode::Cool)
+            .run();
+        assert!(!d.entities.contains_key("stove"));
+        assert!(d.heaters.is_empty());
+    }
+
+    #[test]
+    fn zone_off_leaves_heaters_out() {
+        let mut c = Case::new()
+            .heater(stove(), on())
+            .heat_block_by(9, 18, 20.0, &["stove"]);
+        c.settings.state = ZoneState::Off;
+        let d = c.run();
+        assert!(d.entities.is_empty());
+        assert!(d.heaters.is_empty());
+        assert_eq!(d.reason, "Zone is off");
+    }
+
+    #[test]
+    fn boost_uses_what_the_schedule_would_choose() {
+        let mut c = Case::new()
+            .heater(stove(), off())
+            .heat_block_by(9, 18, 20.0, &["stove"]);
+        c.overrides = vec![zone_ov(22.0, NOW + 3600)];
+        let d = c.run();
+        assert_eq!(d.source, Source::Boost);
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(d.reason, "Boost to 22.0 °C until 11:00");
+    }
+
+    #[test]
+    fn cooling_down_stove_waits_and_the_unit_fills_in() {
+        let d = Case::new()
+            .heater(stove(), off_since(NOW - 300))
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .at_hm(10, 0)
+            .run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.heaters["stove"], run_of(Some(NOW - 300), Some(NOW + 600)));
+        assert_eq!(d.entities["trv"], target(Some(20.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; stove cooling down until 10:10; \
+             the climate units heat meanwhile"
+        );
+    }
+
+    #[test]
+    fn fill_in_off_says_nothing_heats() {
+        let mut c = Case::new()
+            .heater(stove(), off_since(NOW - 300))
+            .heat_block_by(9, 18, 20.0, &["stove"]);
+        c.settings.fill_in = false;
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; stove cooling down until 10:10; nothing heats the room"
+        );
+    }
+
+    #[test]
+    fn unreachable_heater_fills_in() {
+        let unreachable = HeaterDevice {
+            available: false,
+            off_since: Some(NOW - 7200),
+            ..off()
+        };
+        let d = Case::new()
+            .heater(stove(), unreachable)
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .run();
+        assert!(!d.entities.contains_key("stove"));
+        assert_eq!(d.heaters["stove"], run_of(Some(NOW - 7200), None));
+        assert_eq!(d.entities["trv"], target(Some(20.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; stove unreachable; the climate units heat meanwhile"
+        );
+    }
+
+    #[test]
+    fn running_stove_never_fills_in() {
+        let d = Case::new()
+            .heater(stove(), on())
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .reading(fresh(12.0))
+            .run();
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(d.reason, "Schedule block 1: 20.0 °C");
+    }
+
+    #[test]
+    fn cool_down_blocks_a_boost_and_frost() {
+        let mut c = Case::new()
+            .heater(stove(), off_since(NOW - 300))
+            .heat_block_by(9, 18, 20.0, &["stove"]);
+        c.overrides = vec![zone_ov(22.0, NOW + 3600)];
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.heaters["stove"].wait_until, Some(NOW + 600));
+        assert_eq!(d.entities["trv"], target(Some(22.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Boost to 22.0 °C until 11:00; stove cooling down until 10:10; \
+             the climate units heat meanwhile"
+        );
+
+        let slow_rad = Heater {
+            min_off_min: 15,
+            ..rad()
+        };
+        let d = Case::new()
+            .heater(slow_rad, off_since(NOW - 300))
+            .reading(fresh(5.0))
+            .run();
+        assert_eq!(d.entities["rad"], target(None, "off", false));
+        assert_eq!(d.heaters["rad"].wait_until, Some(NOW + 600));
+        assert_eq!(d.entities["trv"], target(Some(21.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Frost protection: 5.0 °C < 7.0 °C; rad cooling down until 10:10"
+        );
+    }
+
+    #[test]
+    fn hold_bridges_a_gap_shorter_than_its_cool_down() {
+        let d = Case::new()
+            .heater(stove(), on())
+            .heat_blocks(vec![
+                block_by(540, 720, 20.0, &["stove"]),
+                block_by(730, 840, 20.0, &["stove"]),
+            ])
+            .at_hm(12, 5)
+            .run();
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.entities["trv"], target(Some(17.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Schedule base: 17.0 °C; stove stays on until its next block"
+        );
+        // A gap longer than the cool-down: off.
+        let d = Case::new()
+            .heater(stove(), on())
+            .heat_blocks(vec![
+                block_by(540, 720, 20.0, &["stove"]),
+                block_by(750, 840, 20.0, &["stove"]),
+            ])
+            .at_hm(12, 5)
+            .run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(d.reason, "Schedule base: 17.0 °C");
+    }
+
+    #[test]
+    fn hand_off_holds_the_heater() {
+        let mut c = Case::new()
+            .heater(stove(), off())
+            .heat_block_by(9, 18, 20.0, &["stove"]);
+        c.overrides = vec![switch_ov("stove", Some(Setpoint::Off), None)];
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "off", true));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; stove held until 11:00"
+        );
+    }
+
+    #[test]
+    fn overheat_beats_a_hand_hold_on_a_switch() {
+        for ov in [
+            switch_ov("stove", None, Some(Mode::Heat)),
+            switch_ov("stove", Some(Setpoint::Off), None),
+        ] {
+            let mut c = Case::new()
+                .heater(stove(), on())
+                .heat_block_by(9, 18, 20.0, &["stove"])
+                .reading(fresh(31.0));
+            c.overrides = vec![ov];
+            let d = c.run();
+            assert_eq!(d.cause, Some(SafetyCause::Overheat));
+            assert_eq!(d.entities["stove"], target(None, "off", false));
+            assert_eq!(d.reason, "Overheat protection: 31.0 °C > 30.0 °C");
+        }
+    }
+
+    #[test]
+    fn stale_reading_beats_a_hand_hold_on_a_thermostat_heater() {
+        let mut c = Case::new()
+            .heater(rad(), on())
+            .heated_by(&["rad"])
+            .reading(Reading::Stale { last: Some(15.0) });
+        c.overrides = vec![switch_ov("rad", None, Some(Mode::Heat))];
+        let d = c.run();
+        assert_eq!(d.cause, Some(SafetyCause::Stale));
+        assert_eq!(d.entities["rad"], target(None, "off", false));
+        assert!(!d.reason.contains("held"), "{}", d.reason);
+    }
+
+    #[test]
+    fn frost_keeps_a_hand_hold_off_and_the_cool_down() {
+        let mut c = Case::new().heater(rad(), on()).reading(fresh(5.0));
+        c.overrides = vec![switch_ov("rad", Some(Setpoint::Off), None)];
+        let d = c.run();
+        assert_eq!(d.cause, Some(SafetyCause::Frost));
+        assert_eq!(d.entities["rad"], target(None, "off", true));
+        assert_eq!(d.entities["trv"], target(Some(21.0), "heat", false));
+
+        let slow_rad = Heater {
+            min_off_min: 15,
+            ..rad()
+        };
+        let mut c = Case::new()
+            .heater(slow_rad, off_since(NOW - 300))
+            .reading(fresh(5.0));
+        c.overrides = vec![switch_ov("rad", None, Some(Mode::Heat))];
+        let d = c.run();
+        assert_eq!(d.entities["rad"], target(None, "off", true));
+        assert_eq!(d.heaters["rad"].wait_until, Some(NOW + 600));
+    }
+
+    #[test]
+    fn frost_out_of_season_leaves_hold_heaters_out() {
+        for mode in [Some(Mode::Cool), None] {
+            let mut c = Case::new()
+                .heater(rad(), off())
+                .heater(stove(), on())
+                .reading(fresh(5.0));
+            c.mode = mode;
+            let d = c.run();
+            assert_eq!(d.cause, Some(SafetyCause::Frost));
+            assert_eq!(d.entities["rad"], target(None, "heat", false));
+            assert!(!d.entities.contains_key("stove"));
+            assert!(!d.heaters.contains_key("stove"));
+            assert_eq!(d.heaters["rad"], HeaterRun::default());
+        }
+        // In season the stove is told off.
+        let d = Case::new().heater(stove(), on()).reading(fresh(5.0)).run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+    }
+
+    #[test]
+    fn hand_on_holds_but_respects_cool_down() {
+        // Base time: the stove is not chosen, the hand turned it on.
+        let mut c = Case::new()
+            .heater(stove(), off_since(NOW - 300))
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .at_hm(20, 0);
+        c.overrides = vec![switch_ov("stove", None, Some(Mode::Heat))];
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "off", true));
+        assert_eq!(d.heaters["stove"], run_of(Some(NOW - 300), Some(NOW + 600)));
+        assert_eq!(
+            d.reason,
+            "Schedule base: 17.0 °C; stove cooling down until 20:10; stove held until 21:00"
+        );
+        let mut c = Case::new()
+            .heater(stove(), off())
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .at_hm(20, 0);
+        c.overrides = vec![switch_ov("stove", None, Some(Mode::Heat))];
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "heat", true));
+        assert_eq!(d.entities["trv"], target(Some(17.0), "heat", false));
+    }
+
+    #[test]
+    fn unknown_heated_by_id_falls_back() {
+        let d = Case::new()
+            .heater(stove(), on())
+            .heat_block_by(9, 18, 20.0, &["gone"])
+            .run();
+        assert_eq!(d.entities["trv"], target(Some(20.0), "heat", false));
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; ignoring unknown heater gone"
+        );
+        // The room default is filtered the same way, then the climate units heat.
+        let d = Case::new()
+            .heater(stove(), on())
+            .heated_by(&["gone", "stove"])
+            .heat_block_by(9, 18, 20.0, &["gone"])
+            .run();
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; ignoring unknown heater gone"
+        );
+    }
+
+    #[test]
+    fn a_heat_boost_out_of_season_leaves_heaters_out() {
+        for mode in [Some(Mode::Cool), None] {
+            let mut c = Case::new()
+                .heater(stove(), off())
+                .heater(rad(), off())
+                .heat_block_by(9, 18, 20.0, &["stove", "rad"]);
+            c.mode = mode;
+            c.overrides = vec![Override {
+                mode: Some(Mode::Heat),
+                ..zone_ov(22.0, NOW + 3600)
+            }];
+            let d = c.run();
+            assert_eq!(d.source, Source::Boost, "{mode:?}");
+            assert_eq!(d.mode, Some(Mode::Heat));
+            assert!(!d.entities.contains_key("stove"), "{mode:?}: {d:?}");
+            assert!(!d.entities.contains_key("rad"), "{mode:?}: {d:?}");
+            assert!(d.heaters.is_empty(), "{mode:?}: {d:?}");
+            // The climate units run the boost as they always did.
+            assert_eq!(d.entities["trv"], target(Some(22.0), "heat", false));
+            assert_eq!(d.reason, "Boost to 22.0 °C until 11:00");
+        }
+    }
+
+    #[test]
+    fn an_unreachable_unit_named_in_heated_by_is_not_replaced() {
+        let mut c = Case::new()
+            .heater(stove(), off())
+            .heated_by(&["stove"])
+            .heat_block_by(9, 18, 20.0, &["trv"]);
+        // The zone lists the unit; it is offline, so the hub hands no device for it.
+        c.units = Some(vec!["trv".into()]);
+        c.devices = vec![];
+        let d = c.run();
+        assert_eq!(d.entities["stove"], target(None, "off", false));
+        assert!(!d.entities.contains_key("trv"));
+        assert!(d.reason.contains("trv unreachable"), "{}", d.reason);
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; trv unreachable; nothing heats the room"
+        );
+    }
+
+    #[test]
+    fn an_enabled_heater_the_hub_does_not_see_is_unreachable() {
+        // Listed and enabled, but no switch for it (its entity is gone).
+        let mut c = Case::new().heat_block_by(9, 18, 20.0, &["stove"]);
+        c.settings.heaters.push(stove());
+        let d = c.run();
+        assert!(!d.entities.contains_key("stove"));
+        assert_eq!(d.heaters["stove"], HeaterRun::default());
+        assert_eq!(d.entities["trv"], target(Some(20.0), "heat", false));
+        assert_eq!(
+            d.reason,
+            "Schedule block 1: 20.0 °C; stove unreachable; the climate units heat meanwhile"
+        );
+    }
+
+    #[test]
+    fn disabled_heater_is_not_chosen() {
+        let disabled = Heater {
+            enabled: false,
+            ..stove()
+        };
+        let d = Case::new()
+            .heater(disabled, on())
+            .heat_block_by(9, 18, 20.0, &["stove"])
+            .run();
+        assert_eq!(d.entities["trv"], target(Some(20.0), "heat", false));
+        assert!(!d.entities.contains_key("stove"));
+        assert!(d.heaters.is_empty());
+        assert_eq!(d.reason, "Schedule block 1: 20.0 °C");
+    }
+
+    #[test]
+    fn no_correction_while_only_heaters_heat() {
+        // A previous offset of -1.0; the thermometer is over the band, but the stove drives
+        // the room and the unit is off: no step, no offset, no note.
+        let mut c =
+            corrected(19.6, 30)
+                .heater(stove(), on())
+                .heat_block_by(9, 18, 19.0, &["stove"]);
+        let previous = FeedbackState {
+            target: 19.0,
+            offset: -1.0,
+            since: NOW - 7200,
+            last_step_at: Some(NOW - 7200),
+            reached: true,
+        };
+        c.feedback = Some(previous);
+        let d = c.run();
+        assert_eq!(d.adjust, None);
+        assert_eq!(d.entities["trv"], target(None, "off", false));
+        assert_eq!(d.entities["stove"], target(None, "heat", false));
+        assert_eq!(d.reason, "Schedule block 1: 19.0 °C");
+        // The hub's state goes back to 0 instead of stepping on.
+        let kept = FeedbackState::after(
+            c.feedback.as_ref(),
+            &d,
+            &c.settings.feedback,
+            c.thermometer,
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(kept.offset, 0.0);
+
+        // The stove cooling down: the unit fills in, corrected as it would be without heaters.
+        let d = corrected(19.6, 30)
+            .heater(stove(), off_since(NOW - 300))
+            .heat_block_by(9, 18, 19.0, &["stove"])
+            .run();
+        assert_eq!(d.adjust, Some(-0.5));
+        assert_eq!(d.entities["trv"], target(Some(18.5), "heat", false));
+        assert!(
+            d.reason.contains("above 19.5 °C: AC 18.5 °C")
+                && d.reason.ends_with("; the climate units heat meanwhile"),
+            "{}",
+            d.reason
+        );
+    }
+
+    #[test]
+    fn correction_never_touches_a_heater() {
+        // The room thermometer reads 19.6 (the correction lowers the unit), the decision's
+        // reading is 18.0 (the radiator runs).
+        let d = corrected(19.6, 30)
+            .heater(rad(), off())
+            .heated_by(&["rad", "trv"])
+            .reading(fresh(18.0))
+            .run();
+        assert_eq!(d.adjust, Some(-0.5));
+        assert_eq!(d.entities["trv"].setpoint, Some(18.5));
+        assert_eq!(d.entities["rad"], target(None, "heat", false));
     }
 }
