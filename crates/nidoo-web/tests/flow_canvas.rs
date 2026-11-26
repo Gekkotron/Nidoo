@@ -1029,6 +1029,73 @@ async fn field_edit_is_one_undo_step() {
     assert_eq!(duration.value(), "5m");
 }
 
+/// A flow (with the reference id, so `editing` opens it) holding a sun and a wake-up trigger.
+fn time_triggers_view() -> FlowView {
+    let flow = r#"{
+      "id": "living_led_motion", "name": "Times", "enabled": true, "mode": "single",
+      "nodes": [
+        { "id": "sun", "type": "trigger.sun", "params": { "which": "sunset", "offset_minutes": 0 } },
+        { "id": "wake", "type": "trigger.wake_up", "params": { "before_minutes": 30 } }
+      ],
+      "edges": []
+    }"#;
+    FlowView {
+        definition: Flow::decode(flow.as_bytes()).unwrap(),
+        invalid: None,
+        active_run: None,
+        runs: vec![],
+    }
+}
+
+/// The open sheet's catch-up toggle.
+fn catch_up_box(host: &web_sys::Element) -> web_sys::HtmlInputElement {
+    element(host, ".flow-drawer input[type=checkbox]").unchecked_into()
+}
+
+#[wasm_bindgen_test]
+async fn sun_sheet_keeps_its_edits() {
+    // The sheet once read its card tracked while it was built, so every edit rebuilt it from
+    // the unchanged draft and the edit was lost.
+    let (host, _mounted, _) = editing(time_triggers_view()).await;
+    select_card(&host, "sun").await;
+    let before = text(&host, "[data-node=sun] .flow-node__title");
+    catch_up_box(&host).click();
+    tick().await;
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    let html = host.inner_html();
+    assert!(catch_up_box(&host).checked(), "{html}");
+    assert_ne!(
+        text(&host, "[data-node=sun] .flow-node__title"),
+        before,
+        "{html}"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn wake_up_sheet_keeps_its_edits() {
+    let (host, _mounted, _) = editing(time_triggers_view()).await;
+    select_card(&host, "wake").await;
+    // The sheet's fields: the card's name, then the minutes before the alarm.
+    let minutes: web_sys::HtmlInputElement = host
+        .query_selector_all(".flow-drawer input.field")
+        .unwrap()
+        .item(1)
+        .unwrap()
+        .unchecked_into();
+    type_into(&minutes, "45", "change");
+    tick().await;
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    let html = host.inner_html();
+    assert!(
+        text(&host, "[data-node=wake] .flow-node__title").contains("45"),
+        "{html}"
+    );
+    catch_up_box(&host).click();
+    tick().await;
+    gloo_timers::future::TimeoutFuture::new(50).await;
+    assert!(catch_up_box(&host).checked(), "{}", host.inner_html());
+}
+
 // ---- Picker ---------------------------------------------------------------------------------
 
 /// Opens the picker and types `query` into its search box.
