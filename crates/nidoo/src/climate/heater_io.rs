@@ -141,9 +141,11 @@ impl Hub {
     }
 
     /// Once per zone after start: its heaters' clocks from its retained decision, and what that
-    /// decision asked of them as what was last sent. A heater with no clock there starts one
-    /// now from what it shows (unknown counts as off), so a fresh hub never lights a stove
-    /// early.
+    /// decision asked of them as what was last sent (at an unknown time). The switch as it is
+    /// wins over the retained clock: one that shows another state (a power cut, an off that
+    /// never applied) restarts its clock now from what it shows, and that is no hand flip. A
+    /// heater with no clock starts one now too (unknown counts as off), so a fresh hub, or a
+    /// stove found off, never lights early.
     fn seed_heater_clocks(&self, zone: &str, now: u64) {
         if self.climate_runtime().heater_seeded.contains(zone) {
             return;
@@ -189,6 +191,14 @@ impl Hub {
             }
         }
         for (id, on) in states {
+            let disagrees = on.is_some()
+                && rt
+                    .heater_clocks
+                    .get(&id)
+                    .is_some_and(|run| clock_shows(run) != on);
+            if disagrees {
+                rt.heater_clocks.remove(&id);
+            }
             start_clock(&mut rt, &id, on, now);
         }
     }
@@ -240,7 +250,8 @@ impl Hub {
     /// The per-pass net under [`Self::judge_flip`]: a switch that changed after the engine's
     /// last command to it, into another state than that command's, is a hand flip, even if
     /// its change was seen where it was not judged. A switch that never moved after a command
-    /// (a failing command) is not.
+    /// (a failing command) is not, nor one whose last command has no known send time (what a
+    /// retained decision asked for, seeded at start: it may never have been sent).
     fn recheck_flip(&self, zone: &str, id: &str, on: bool, now: u64) {
         let unanswered = {
             let rt = self.climate_runtime();
@@ -250,7 +261,7 @@ impl Hub {
                 .and_then(|run| if on { run.on_since } else { run.off_since });
             matches!(
                 (since, rt.heater_sent.get(id)),
-                (Some(since), Some(&(sent, at))) if sent != on && since > at
+                (Some(since), Some(&(sent, at))) if sent != on && at > 0 && since > at
             )
         };
         if unanswered && self.flips_are_held(zone, id) {
@@ -311,14 +322,20 @@ impl Hub {
             .heater_clocks
             .get(id)
             .and_then(|run| run.off_since);
-        let ready = matches!(
-            (off_since, min_off_min),
-            (Some(off), Some(min)) if off + u64::from(min) * 60 <= at
-        );
-        if !ready {
-            tracing::warn!(entity = id, ?off_since, "heater on refused: cooling down");
+        match (off_since, min_off_min) {
+            (Some(off), Some(min)) if off + u64::from(min) * 60 <= at => true,
+            // The decision waits out the cool-down itself: getting here is a bug worth seeing.
+            (Some(off), Some(min)) => {
+                tracing::warn!(entity = id, off, min, "heater on refused: cooling down");
+                false
+            }
+            // No off time to go by (its clock says on while its state is unknown), or a heater
+            // no zone lists: refused, quietly, as it may repeat every pass.
+            _ => {
+                tracing::debug!(entity = id, ?off_since, "heater on refused: no off time");
+                false
+            }
         }
-        ready
     }
 
     /// The time at a moment later in the pass that started at `now`.
@@ -398,6 +415,15 @@ fn acknowledge(rt: &mut ClimateRuntime, id: &str, on: bool) {
         .or_insert((on, 0));
 }
 
+/// What a clock says the switch is: on, off, or not known.
+fn clock_shows(run: &HeaterRun) -> Option<bool> {
+    match (run.on_since, run.off_since) {
+        (Some(_), None) => Some(true),
+        (None, Some(_)) => Some(false),
+        _ => None,
+    }
+}
+
 /// Starts the clock of a heater that has none, from what it shows now: on is on since now,
 /// off or unknown is off since now.
 fn start_clock(rt: &mut ClimateRuntime, id: &str, on: Option<bool>, now: u64) {
@@ -458,8 +484,8 @@ mod tests {
         assert!(!hub.may_switch_on("switch.other", now));
     }
 
-    #[tokio::test]
-    async fn the_pass_recheck_holds_a_change_made_after_the_last_command_only() {
+    /// A hub whose active zone `living`, deciding in heat, has the heater `switch.stove`.
+    fn living_with_stove() -> Arc<Hub> {
         let mut cfg = crate::config::Config::default();
         cfg.climate.enabled = true;
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
@@ -476,31 +502,52 @@ mod tests {
             decision.mode = Some(Mode::Heat);
             living.decision = Some(decision);
         }
-        let seen_off_at = |since: u64| {
-            let mut rt = hub.climate_runtime();
-            rt.heater_sent
-                .insert("switch.stove".to_owned(), (true, 100));
-            rt.heater_clocks.insert(
-                "switch.stove".to_owned(),
-                HeaterRun {
-                    off_since: Some(since),
-                    ..HeaterRun::default()
-                },
-            );
-        };
-        let overrides = || hub.climate_store().zones["living"].overrides.clone();
+        hub
+    }
+
+    /// The stove off since `since`, after the engine last asked it on at `sent_at` (`0`: at an
+    /// unknown time, as seeded at start).
+    fn seen_off_after_on_sent_at(hub: &Hub, since: u64, sent_at: u64) {
+        let mut rt = hub.climate_runtime();
+        rt.heater_sent
+            .insert("switch.stove".to_owned(), (true, sent_at));
+        rt.heater_clocks.insert(
+            "switch.stove".to_owned(),
+            HeaterRun {
+                off_since: Some(since),
+                ..HeaterRun::default()
+            },
+        );
+    }
+
+    fn living_overrides(hub: &Hub) -> Vec<Override> {
+        hub.climate_store().zones["living"].overrides.clone()
+    }
+
+    #[tokio::test]
+    async fn the_pass_recheck_holds_a_change_made_after_the_last_command_only() {
+        let hub = living_with_stove();
         // Off since before the engine's on: the on failed, nobody touched it.
-        seen_off_at(50);
+        seen_off_after_on_sent_at(&hub, 50, 100);
         hub.recheck_flip("living", "switch.stove", false, 300);
-        assert!(overrides().is_empty());
+        assert!(living_overrides(&hub).is_empty());
         // Off since after the engine's on: someone switched it off.
-        seen_off_at(200);
+        seen_off_after_on_sent_at(&hub, 200, 100);
         hub.recheck_flip("living", "switch.stove", false, 300);
-        let held = overrides();
+        let held = living_overrides(&hub);
         assert_eq!(held.len(), 1, "{held:?}");
         assert_eq!(held[0].setpoint, Some(Setpoint::Off));
         // Taken as the state to start from: not held again.
         hub.recheck_flip("living", "switch.stove", false, 400);
-        assert_eq!(overrides(), held);
+        assert_eq!(living_overrides(&hub), held);
+    }
+
+    #[tokio::test]
+    async fn the_pass_recheck_never_holds_against_a_send_of_unknown_time() {
+        let hub = living_with_stove();
+        // What a retained decision asked for, seeded at start: it may never have been sent.
+        seen_off_after_on_sent_at(&hub, 200, 0);
+        hub.recheck_flip("living", "switch.stove", false, 300);
+        assert!(living_overrides(&hub).is_empty());
     }
 }

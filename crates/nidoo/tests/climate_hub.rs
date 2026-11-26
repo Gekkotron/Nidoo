@@ -3356,6 +3356,60 @@ mod engine {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn restart_resends_an_off_that_never_applied() {
+        let (mut rig, plug) = stove_rig(true, 0).await;
+        // 08:00, before the block: the off never reaches the plug, which stays on.
+        rig.sim.plug_echo = false;
+        assert_eq!(plug_commands(&rig.pass(hm(8, 0)).await), vec!["OFF"]);
+        assert_eq!(rig.sim.plug, Some(true));
+        let decision = rig.zone().decision.unwrap();
+        assert_eq!(decision.entities[&plug], switch_target("off", false));
+        assert_eq!(decision.heaters[&plug].on_since, Some(rig.t0 + hm(8, 0)));
+
+        // After a restart the engine still wants it off: no hold, the off is sent again.
+        let mut next = restarted(&rig).await;
+        let out = next.pass(hm(8, 10)).await;
+        assert!(
+            next.zone().overrides.is_empty(),
+            "{:?}",
+            next.zone().overrides
+        );
+        assert_eq!(plug_commands(&out), vec!["OFF"], "{out:?}");
+        assert_eq!(next.sim.plug, Some(false));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn restart_after_a_power_cut_cools_down_from_the_restart() {
+        let (mut rig, plug) = stove_rig(false, 15).await;
+        rig.pass(hm(10, 0)).await;
+        assert_eq!(plug_commands(&rig.pass(hm(10, 15)).await), vec!["ON"]);
+        // The power goes while the hub is down: the plug comes back off.
+        rig.sim.plug = Some(false);
+
+        let mut next = restarted(&rig).await;
+        let out = next.pass(hm(10, 30)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert!(
+            next.zone().overrides.is_empty(),
+            "{:?}",
+            next.zone().overrides
+        );
+        let decision = next.zone().decision.unwrap();
+        assert_eq!(
+            decision.heaters[&plug].off_since,
+            Some(next.t0 + hm(10, 30))
+        );
+        assert_eq!(
+            decision.heaters[&plug].wait_until,
+            Some(next.t0 + hm(10, 45))
+        );
+        let out = next.pass(hm(10, 44)).await;
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        let out = next.pass(hm(10, 45)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_held_switch_is_never_commanded() {
         let (mut rig, plug) = stove_rig(true, 0).await;
         // A hold that says off while the plug is on (the hold doc arrived from elsewhere).
