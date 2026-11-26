@@ -74,6 +74,7 @@ impl OwnedZoneInputs {
             thermometer: self.thermometer,
             feedback: self.feedback.as_ref(),
             room_empty: self.presence.is_some_and(|p| p.is_empty()),
+            heaters: &[],
         }
     }
 }
