@@ -1357,21 +1357,26 @@ impl Engine {
             }
         }
         for (flow, node, due) in fires {
-            let trigger = TriggerInfo {
-                entity: None,
-                field: Some(format!(
-                    "{CAUGHT_UP_PREFIX}caught up: due {}",
-                    due.format("%H:%M")
-                )),
-                value: Value::Null,
-                previous: Value::Null,
-            };
-            self.fire(flow, node, Some(trigger));
+            // No trigger value, like an on-time fire: the label only replaces the trigger
+            // step's detail and never reaches the run's JSON or `{trigger}`.
+            let label = format!("caught up: due {}", due.format("%H:%M"));
+            self.fire_labelled(flow, node, None, Some(label));
         }
     }
 
     /// Starts a run for a satisfied trigger, honouring the flow's mode when one is active.
     fn fire(&mut self, flow: Flow, node_id: String, trigger: Option<TriggerInfo>) {
+        self.fire_labelled(flow, node_id, trigger, None);
+    }
+
+    /// [`Self::fire`], with `label` as the trigger step's detail when set (a catch-up run).
+    fn fire_labelled(
+        &mut self,
+        flow: Flow,
+        node_id: String,
+        trigger: Option<TriggerInfo>,
+        label: Option<String>,
+    ) {
         if self.active.contains_key(&flow.id) {
             match flow.mode {
                 nidoo_core::flow::FlowMode::Single => {
@@ -1388,7 +1393,7 @@ impl Engine {
                 return;
             }
         };
-        self.spawn(flow, run.id, node_id, trigger);
+        self.spawn(flow, run.id, node_id, trigger, label);
     }
 
     /// Executes a run the hub created for a manual request, from the Manual card `node` or the
@@ -1408,7 +1413,7 @@ impl Engine {
                     self.cancel(flow_id);
                 }
                 let trigger = manual_trigger(&flow, &start);
-                self.spawn(flow, run_id, start, trigger);
+                self.spawn(flow, run_id, start, trigger, None);
             }
             _ => {
                 tracing::warn!(
@@ -1420,12 +1425,20 @@ impl Engine {
         }
     }
 
-    fn spawn(&mut self, flow: Flow, run_id: String, start: String, trigger: Option<TriggerInfo>) {
+    fn spawn(
+        &mut self,
+        flow: Flow,
+        run_id: String,
+        start: String,
+        trigger: Option<TriggerInfo>,
+        label: Option<String>,
+    ) {
         let hub = Arc::clone(&self.hub);
         let now = Arc::clone(&self.now);
         let (flow_id, task_flow, task_run) = (flow.id.clone(), flow.clone(), run_id.clone());
         let abort = self.tasks.spawn(async move {
-            let status = execute(hub, now, task_flow, task_run.clone(), start, trigger).await;
+            let status =
+                execute(hub, now, task_flow, task_run.clone(), start, trigger, label).await;
             (flow_id, task_run, status)
         });
         self.active.insert(
@@ -1503,19 +1516,6 @@ fn catch_up_window(flow: &Flow, node: &str) -> u32 {
         .map_or(0, |n| n.kind.catch_up_minutes())
 }
 
-/// Marks a trigger's `field` as the label of a catch-up run, so `{trigger}` keeps rendering as
-/// it does for a normal run (the value stays null).
-const CAUGHT_UP_PREFIX: &str = "\u{1}catch-up\u{1}";
-
-/// What a catch-up run's trigger step says, when the run is a catch-up.
-fn caught_up(trigger: Option<&TriggerInfo>) -> Option<String> {
-    trigger?
-        .field
-        .as_deref()?
-        .strip_prefix(CAUGHT_UP_PREFIX)
-        .map(str::to_owned)
-}
-
 /// Whether the reported `value` still satisfies a state trigger that waits on it: its `to`, its
 /// bounds, or, with neither, the value the edge brought.
 fn still_holds(params: &TriggerStateParams, edge: &Scalar, value: &Scalar) -> bool {
@@ -1566,6 +1566,7 @@ pub(super) async fn execute(
     run_id: String,
     start: String,
     trigger: Option<TriggerInfo>,
+    mut start_label: Option<String>,
 ) -> RunStatus {
     let mut stack = vec![start];
     let mut failed = false;
@@ -1580,7 +1581,7 @@ pub(super) async fn execute(
             failed = true;
             continue;
         };
-        let (outcome, detail, mut ports) = run_node(
+        let (outcome, mut detail, mut ports) = run_node(
             &hub,
             &now,
             &flow.id,
@@ -1590,6 +1591,10 @@ pub(super) async fn execute(
             &mut results,
         )
         .await;
+        // The start node is popped first: a catch-up run's trigger step says so.
+        if let Some(label) = start_label.take() {
+            detail = label;
+        }
         let branching = matches!(
             node.kind,
             NodeKind::If(_)
@@ -1872,7 +1877,7 @@ async fn run_node(
         },
         NodeKind::TriggerSchedule(params) => (
             StepOutcome::Ok,
-            caught_up(trigger).unwrap_or_else(|| format!("schedule {}", params.cron)),
+            format!("schedule {}", params.cron),
             Vec::new(),
         ),
         NodeKind::TriggerManual(p) => {
@@ -1896,18 +1901,16 @@ async fn run_node(
         }
         NodeKind::TriggerSun(params) => (
             StepOutcome::Ok,
-            caught_up(trigger).unwrap_or_else(|| {
-                format!(
-                    "sun {} {:+}m",
-                    format!("{:?}", params.which).to_lowercase(),
-                    params.offset()
-                )
-            }),
+            format!(
+                "sun {} {:+}m",
+                format!("{:?}", params.which).to_lowercase(),
+                params.offset()
+            ),
             Vec::new(),
         ),
         NodeKind::TriggerWakeUp(params) => (
             StepOutcome::Ok,
-            caught_up(trigger).unwrap_or_else(|| format!("wake-up -{}m", params.before_minutes)),
+            format!("wake-up -{}m", params.before_minutes),
             Vec::new(),
         ),
         NodeKind::ClimateHold(params) => climate_hold(hub, now, params).await,
@@ -3094,37 +3097,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn trigger_placeholder_ignores_the_catch_up_label() {
-        let engine = engine_at(48.8566, 2.3522, "Europe/Paris");
-        let normal = TriggerInfo {
-            entity: None,
-            field: None,
-            value: Value::Null,
-            previous: Value::Null,
-        };
-        let caught = TriggerInfo {
-            field: Some(format!("{CAUGHT_UP_PREFIX}caught up: due 06:15")),
-            ..normal.clone()
-        };
-        assert_eq!(
-            caught_up(Some(&caught)).as_deref(),
-            Some("caught up: due 06:15")
-        );
-        assert_eq!(caught_up(Some(&normal)), None);
-        let fill = |t: &TriggerInfo| {
-            fill_text(
-                &engine.hub,
-                &BTreeMap::new(),
-                Some(t),
-                Lang::En,
-                "went off at {trigger}",
-            )
-        };
-        assert_eq!(fill(&caught), fill(&normal));
-        assert!(!fill(&caught).contains("caught up"), "{}", fill(&caught));
-    }
-
-    #[tokio::test]
     async fn switch_average_counts_every_reading_including_the_newest() {
         let mut engine = engine_at(48.8566, 2.3522, "Europe/Paris");
         let entity = add_sensor(&engine, None);
@@ -3327,6 +3299,7 @@ mod tests {
             run.id,
             "t".to_owned(),
             None,
+            None,
         )
         .await;
         // Exit 1 runs before exit 2 whatever the edge order, depth first.
@@ -3399,6 +3372,7 @@ mod tests {
             run.id,
             "t".to_owned(),
             None,
+            None,
         )
         .await;
         let steps = engine.hub.flow("pv").unwrap().runs[0].steps.clone();
@@ -3432,6 +3406,7 @@ mod tests {
             flow,
             run.id,
             "t".to_owned(),
+            None,
             None,
         )
         .await;

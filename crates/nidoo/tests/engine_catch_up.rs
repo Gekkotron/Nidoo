@@ -200,9 +200,40 @@ async fn restart_inside_window_fires_once() {
         runs[0].steps[0].detail,
         format!("caught up: due {}", clock(due))
     );
+    // The label only shows on the step: the run carries no trigger, like an on-time fire.
+    assert_eq!(runs[0].trigger, None);
     let published = marker_publishes(&log, "morning", "at");
     assert_eq!(published.len(), 1, "{published:?}");
     assert_eq!(marker_due(&published[0]), due.timestamp());
+}
+
+#[tokio::test(start_paused = true)]
+async fn filing_an_enabled_flow_keeps_a_pending_catch_up() {
+    let (cron, due) = daily_cron_ago(25);
+    let retained = vec![
+        flow_retained(
+            "morning",
+            flow_doc("morning", schedule_trigger("at", &cron, Some(60))),
+        ),
+        marker("morning", "at", yesterday(due)),
+    ];
+    let (hub, log) = boot(&retained);
+    settle().await;
+    // Before the catch-up check: a room change and a no-op enable rewrite the flow.
+    hub.set_flow_area("morning", None).await.expect("filed");
+    hub.set_flow_enabled("morning", true)
+        .await
+        .expect("still enabled");
+    settle().await;
+    assert!(marker_publishes(&log, "morning", "at").is_empty());
+    advance(11).await;
+
+    let runs = done_runs(&hub, "morning").await;
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(
+        runs[0].steps[0].detail,
+        format!("caught up: due {}", clock(due))
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -481,10 +512,13 @@ async fn wake_up_catch_up() {
     );
 }
 
-#[tokio::test(start_paused = true)]
-async fn sun_catch_up() {
-    // The sun event closest to 25 minutes ago, with the offset that lands the trigger there.
-    let target = Utc::now() - chrono::Duration::minutes(25);
+/// A sun trigger node `at` whose due instant is `minutes_ago` minutes ago: the sun event closest
+/// to then, with the offset that lands the trigger there. Also returns that instant.
+fn sun_trigger_ago(
+    minutes_ago: i64,
+    catch_up: Option<u32>,
+) -> (serde_json::Value, DateTime<chrono_tz::Tz>) {
+    let target = Utc::now() - chrono::Duration::minutes(minutes_ago);
     let today = target.date_naive();
     let mut best: Option<(SunWhich, &str, DateTime<Utc>)> = None;
     for days in -1..=1 {
@@ -504,17 +538,18 @@ async fn sun_catch_up() {
     let (_, name, event) = best.expect("a sun event");
     let offset = (target - event).num_minutes();
     let due = (event + chrono::Duration::minutes(offset)).with_timezone(&Paris);
-    let flow = serde_json::json!({
-        "id": "sun", "name": "sun", "enabled": true, "mode": "single",
-        "nodes": [
-            { "id": "at", "type": "trigger.sun",
-              "params": { "which": name, "offset_minutes": offset, "catch_up_minutes": 60 } },
-            { "id": "on", "type": "command",
-              "params": { "entity": LED_ID, "command": { "type": "turn_on" } } }
-        ],
-        "edges": [{ "from": "at", "to": "on" }]
-    })
-    .to_string();
+    let mut params = serde_json::json!({ "which": name, "offset_minutes": offset });
+    if let Some(minutes) = catch_up {
+        params["catch_up_minutes"] = minutes.into();
+    }
+    let node = serde_json::json!({ "id": "at", "type": "trigger.sun", "params": params });
+    (node, due)
+}
+
+#[tokio::test(start_paused = true)]
+async fn sun_catch_up() {
+    let (trigger, due) = sun_trigger_ago(25, Some(60));
+    let flow = flow_doc("sun", trigger);
     let retained = vec![
         flow_retained("sun", flow),
         marker("sun", "at", yesterday(due)),
@@ -699,20 +734,11 @@ async fn saving_a_disabled_flow_keeps_its_markers() {
 
 #[tokio::test(start_paused = true)]
 async fn sun_without_the_option_keeps_old_behaviour() {
-    let flow = serde_json::json!({
-        "id": "sun", "name": "sun", "enabled": true, "mode": "single",
-        "nodes": [
-            { "id": "at", "type": "trigger.sun",
-              "params": { "which": "sunrise", "offset_minutes": 0 } },
-            { "id": "on", "type": "command",
-              "params": { "entity": LED_ID, "command": { "type": "turn_on" } } }
-        ],
-        "edges": [{ "from": "at", "to": "on" }]
-    })
-    .to_string();
+    // Due 25 minutes ago, well clear of the run: only a catch-up could fire it.
+    let (trigger, due) = sun_trigger_ago(25, None);
     let retained = vec![
-        flow_retained("sun", flow),
-        marker("sun", "at", Utc::now().timestamp() - 86_400),
+        flow_retained("sun", flow_doc("sun", trigger)),
+        marker("sun", "at", yesterday(due)),
     ];
     let (hub, log) = boot(&retained);
     settle().await;
