@@ -207,8 +207,8 @@ the Energy tab's day card, and every existing preset of the HTTP and MCP API.
   because a week's pattern follows weekdays; its dates therefore differ by a day or two.
 - **Same days only.** While the shown period runs, the compared window ends at the same offset
   from its start as now does from the shown start (26 Nov 15:40 → 26 Nov 15:40 a year back).
-  The app requests the compared window clipped there, with the same `per` as the chart, so a
-  Year view shows a partial last month on both sides; one call per side.
+  The app requests the compared window clipped there (`upto`, below), with the same `per` as
+  the chart, so a Year view shows a partial last month on both sides; one call per side.
 - **Gaps.** Totals and means are taken over the buckets present on **both** sides (a day with
   kWh on one side only is left out of both). When any bucket is left out, the summary says how
   many days (or hours, months) were left out of the comparison. A compared window with no data
@@ -216,8 +216,14 @@ the Energy tab's day card, and every existing preset of the HTTP and MCP API.
 - **Sensor statistics.** The mean is the mean of the series' bucket means (buckets are equal in
   length, so it is the time-weighted mean up to empty buckets); min and max come from the
   buckets' min and max.
-- **Series reply.** No new wire fields are needed: the app knows the window it asked for and
-  places points by their offset from its own `from`.
+- **Window bounds and the cut.** A reply to a window request (`series`, `fields` already has
+  `from`/`to`, `daily`) carries `span: [start, end]` in unix seconds: the window's real start
+  (local midnight of `from`) and its end (clipped at now). The app places points by their
+  offset from `span[0]`. Window requests also take an optional `upto=<seconds>`: the window
+  stops that many seconds after its start. While the shown period runs, the app fetches it
+  first, then asks for the compared window with `upto = span[1] - span[0]` of the shown reply,
+  so the cut is exact for hour, day and month buckets alike. A past period's two windows are
+  fetched together.
 
 ## Left to the builder
 
