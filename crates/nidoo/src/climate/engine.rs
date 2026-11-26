@@ -53,7 +53,7 @@ const DECISION_LOG: usize = 200;
 const OUTDOOR_LIVE_S: u64 = 24 * 3600;
 const OUTDOOR_SAMPLE_GAP_S: u64 = 300;
 /// A command published but never echoed is forgotten after this many seconds.
-pub(super) const UNCONFIRMED_S: u64 = 120;
+const UNCONFIRMED_S: u64 = 120;
 /// Half-hour steps tried to get past a local time that does not exist (spring forward).
 const GAP_STEPS: i64 = 4;
 
@@ -125,10 +125,12 @@ impl Hub {
 
     /// One full pass over every zone at `now` (Unix seconds).
     pub async fn evaluate_climate(self: &Arc<Self>, now: u64) {
+        let started = tokio::time::Instant::now();
         let Some(climate) = &self.climate else {
             return;
         };
         let _pass = climate.pass.lock().await;
+        self.climate_runtime().pass_clock = Some((now, started));
         self.ensure_seeded();
         self.sweep_once(now);
         self.refresh_outdoor(now).await;
@@ -141,10 +143,12 @@ impl Hub {
     /// Evaluates one zone at `now`, serialised with the full passes. What an approval does so
     /// the new rules apply at once.
     pub(crate) async fn evaluate_climate_zone(self: &Arc<Self>, zone: &str, now: u64) {
+        let started = tokio::time::Instant::now();
         let Some(climate) = &self.climate else {
             return;
         };
         let _pass = climate.pass.lock().await;
+        self.climate_runtime().pass_clock = Some((now, started));
         self.ensure_seeded();
         self.refresh_house(now);
         self.evaluate_zone(zone, now).await;
@@ -1170,7 +1174,7 @@ impl Hub {
 }
 
 /// A decision that acts on nothing, to resolve a zone's safety alerts.
-fn no_safety(zone: &str) -> Decision {
+pub(super) fn no_safety(zone: &str) -> Decision {
     Decision {
         zone: zone.to_owned(),
         mode: None,

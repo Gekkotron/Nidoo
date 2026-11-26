@@ -11,7 +11,7 @@ use nidoo_climate::doc::{
 use nidoo_core::model::{Availability, Command, StateValue};
 
 use super::ClimateRuntime;
-use super::engine::{InflightGuard, Outcome, UNCONFIRMED_S};
+use super::engine::{InflightGuard, Outcome};
 use crate::hub::Hub;
 
 impl Hub {
@@ -25,8 +25,8 @@ impl Hub {
             return;
         };
         self.seed_heater_clocks(&zone, now);
-        if self.note_switch(id, on, now) && self.is_hand_flip(&zone, id, on, now) {
-            self.record_heater_hand(&zone, id, on, now);
+        if self.note_switch(id, on, now) {
+            self.judge_flip(&zone, id, on, now);
         }
     }
 
@@ -119,7 +119,10 @@ impl Hub {
         self.seed_heater_clocks(zone, now);
         for heater in &settings.heaters {
             match self.switch_state(&heater.entity) {
-                Some(on) => self.observe_heater(&heater.entity, on, now),
+                Some(on) => {
+                    self.observe_heater(&heater.entity, on, now);
+                    self.recheck_flip(zone, &heater.entity, on, now);
+                }
                 None => start_clock(&mut self.climate_runtime(), &heater.entity, None, now),
             }
         }
@@ -218,25 +221,50 @@ impl Hub {
         true
     }
 
-    /// Whether `id` turning `on` is someone else's doing: an enabled heater of an active zone
-    /// deciding in heat, with no command on the wire, none sent within the confirmation
-    /// window, and a state other than the one last sent (or nothing sent at all).
-    fn is_hand_flip(&self, zone: &str, id: &str, on: bool, now: u64) -> bool {
+    /// `id` was just seen turning `on`. A state the engine did not ask for (another than the
+    /// one it last sent, or nothing sent at all) is a hand flip, at once: only the echo of a
+    /// command to that same state is the engine's, in flight or late. Outside an active zone
+    /// deciding in heat, or on a disabled heater, it is no hand flip and is taken as the state
+    /// to start from, so it never turns into a hold later.
+    fn judge_flip(&self, zone: &str, id: &str, on: bool, now: u64) {
+        if !self.flips_are_held(zone, id) {
+            acknowledge(&mut self.climate_runtime(), id, on);
+            return;
+        }
+        let sent = self.climate_runtime().heater_sent.get(id).copied();
+        if sent.is_none_or(|(sent, _)| sent != on) {
+            self.record_heater_hand(zone, id, on, now);
+        }
+    }
+
+    /// The per-pass net under [`Self::judge_flip`]: a switch that changed after the engine's
+    /// last command to it, into another state than that command's, is a hand flip, even if
+    /// its change was seen where it was not judged. A switch that never moved after a command
+    /// (a failing command) is not.
+    fn recheck_flip(&self, zone: &str, id: &str, on: bool, now: u64) {
+        let unanswered = {
+            let rt = self.climate_runtime();
+            let since = rt
+                .heater_clocks
+                .get(id)
+                .and_then(|run| if on { run.on_since } else { run.off_since });
+            matches!(
+                (since, rt.heater_sent.get(id)),
+                (Some(since), Some(&(sent, at))) if sent != on && since > at
+            )
+        };
+        if unanswered && self.flips_are_held(zone, id) {
+            self.record_heater_hand(zone, id, on, now);
+        }
+    }
+
+    /// Whether a flip of `id` becomes a hold: an enabled heater of an active zone whose
+    /// current decision is in heat.
+    fn flips_are_held(&self, zone: &str, id: &str) -> bool {
         let settings = self.zone_settings(zone);
-        if settings.state != ZoneState::Active
-            || !settings.heater(id).is_some_and(|heater| heater.enabled)
-            || self.last_decision(zone).and_then(|d| d.mode) != Some(Mode::Heat)
-        {
-            return false;
-        }
-        let rt = self.climate_runtime();
-        if rt.inflight.contains(id) {
-            return false;
-        }
-        match rt.heater_sent.get(id) {
-            Some(&(sent, at)) => sent != on && now.saturating_sub(at) > UNCONFIRMED_S,
-            None => true,
-        }
+        settings.state == ZoneState::Active
+            && settings.heater(id).is_some_and(|heater| heater.enabled)
+            && self.last_decision(zone).and_then(|d| d.mode) == Some(Mode::Heat)
     }
 
     /// Holds a hand flip of `id` until the zone's next scheduled change, at most
@@ -254,12 +282,51 @@ impl Hub {
                 origin: OverrideOrigin::Hand,
             });
         });
-        self.climate_runtime()
-            .heater_sent
-            .entry(id.to_owned())
-            .and_modify(|sent| sent.0 = on)
-            .or_insert((on, 0));
+        acknowledge(&mut self.climate_runtime(), id, on);
         tracing::info!(zone, entity = id, on, until, "heater hand flip held");
+    }
+
+    /// Whether `id` may be switched on at this moment of the pass (`now` is its start). The
+    /// last guard of the cool-down, on the one path that publishes an on: a switch seen off
+    /// that its clock (what the decision saw) still has on was switched off during the pass,
+    /// so the change is noted now and the switch is left alone this pass; and no on goes out
+    /// before `off_since + min_off_min`.
+    fn may_switch_on(&self, id: &str, now: u64) -> bool {
+        let at = self.moment(now);
+        let clock_on = self
+            .climate_runtime()
+            .heater_clocks
+            .get(id)
+            .is_some_and(|run| run.on_since.is_some());
+        if clock_on && self.switch_state(id) == Some(false) {
+            self.observe_heater(id, false, at);
+            return false;
+        }
+        let min_off_min = self
+            .heater_claims()
+            .remove(id)
+            .and_then(|zone| self.zone_settings(&zone).heater(id).map(|h| h.min_off_min));
+        let off_since = self
+            .climate_runtime()
+            .heater_clocks
+            .get(id)
+            .and_then(|run| run.off_since);
+        let ready = matches!(
+            (off_since, min_off_min),
+            (Some(off), Some(min)) if off + u64::from(min) * 60 <= at
+        );
+        if !ready {
+            tracing::warn!(entity = id, ?off_since, "heater on refused: cooling down");
+        }
+        ready
+    }
+
+    /// The time at a moment later in the pass that started at `now`.
+    fn moment(&self, now: u64) -> u64 {
+        match self.climate_runtime().pass_clock {
+            Some((at, started)) if at == now => now + started.elapsed().as_secs(),
+            _ => now,
+        }
     }
 
     /// Switches `id` on or off, unless it is paused or (when `spaced`) was tried less than a
@@ -268,6 +335,9 @@ impl Hub {
         // No broker link: nothing can be sent, and that is not the switch's fault.
         let link = self.connection();
         if !matches!(*link.borrow(), ConnectionStatus::Online) {
+            return false;
+        }
+        if on && !self.may_switch_on(id, now) {
             return false;
         }
         if !self.claim_command(id, now, spaced) {
@@ -303,7 +373,8 @@ impl Hub {
         inflight.disarm();
         let accepted = self.note_command_result(id, result, &link, now);
         if accepted {
-            self.note_switch(id, on, now);
+            // Stamped when the switch confirmed it, not when the pass started.
+            self.note_switch(id, on, self.moment(now));
         }
         accepted
     }
@@ -317,6 +388,14 @@ impl Hub {
             _ => None,
         }
     }
+}
+
+/// Takes `on` as the state the engine last asked of `id`, keeping when it last sent one.
+fn acknowledge(rt: &mut ClimateRuntime, id: &str, on: bool) {
+    rt.heater_sent
+        .entry(id.to_owned())
+        .and_modify(|sent| sent.0 = on)
+        .or_insert((on, 0));
 }
 
 /// Starts the clock of a heater that has none, from what it shows now: on is on since now,
@@ -335,4 +414,93 @@ fn start_clock(rt: &mut ClimateRuntime, id: &str, on: Option<bool>, now: u64) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use nidoo_climate::doc::Heater;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn no_on_leaves_before_the_cool_down_ends() {
+        let mut cfg = crate::config::Config::default();
+        cfg.climate.enabled = true;
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let hub = Hub::new(&cfg, tx);
+        hub.climate_store()
+            .zones
+            .entry("living".to_owned())
+            .or_default()
+            .settings
+            .heaters = vec![Heater {
+            entity: "switch.stove".to_owned(),
+            min_off_min: 15,
+            ..Heater::default()
+        }];
+        let now = 10_000;
+        // No clock: never on.
+        assert!(!hub.may_switch_on("switch.stove", now));
+        let off_since = |at: u64| HeaterRun {
+            off_since: Some(at),
+            ..HeaterRun::default()
+        };
+        let set = |run: HeaterRun| {
+            hub.climate_runtime()
+                .heater_clocks
+                .insert("switch.stove".to_owned(), run);
+        };
+        set(off_since(now - 14 * 60));
+        assert!(!hub.may_switch_on("switch.stove", now));
+        set(off_since(now - 15 * 60));
+        assert!(hub.may_switch_on("switch.stove", now));
+        // A heater no zone lists has no cool-down to go by: never on.
+        assert!(!hub.may_switch_on("switch.other", now));
+    }
+
+    #[tokio::test]
+    async fn the_pass_recheck_holds_a_change_made_after_the_last_command_only() {
+        let mut cfg = crate::config::Config::default();
+        cfg.climate.enabled = true;
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let hub = Hub::new(&cfg, tx);
+        {
+            let mut store = hub.climate_store();
+            let living = store.zones.entry("living".to_owned()).or_default();
+            living.settings.state = ZoneState::Active;
+            living.settings.heaters = vec![Heater {
+                entity: "switch.stove".to_owned(),
+                ..Heater::default()
+            }];
+            let mut decision = super::super::engine::no_safety("living");
+            decision.mode = Some(Mode::Heat);
+            living.decision = Some(decision);
+        }
+        let seen_off_at = |since: u64| {
+            let mut rt = hub.climate_runtime();
+            rt.heater_sent
+                .insert("switch.stove".to_owned(), (true, 100));
+            rt.heater_clocks.insert(
+                "switch.stove".to_owned(),
+                HeaterRun {
+                    off_since: Some(since),
+                    ..HeaterRun::default()
+                },
+            );
+        };
+        let overrides = || hub.climate_store().zones["living"].overrides.clone();
+        // Off since before the engine's on: the on failed, nobody touched it.
+        seen_off_at(50);
+        hub.recheck_flip("living", "switch.stove", false, 300);
+        assert!(overrides().is_empty());
+        // Off since after the engine's on: someone switched it off.
+        seen_off_at(200);
+        hub.recheck_flip("living", "switch.stove", false, 300);
+        let held = overrides();
+        assert_eq!(held.len(), 1, "{held:?}");
+        assert_eq!(held[0].setpoint, Some(Setpoint::Off));
+        // Taken as the state to start from: not held again.
+        hub.recheck_flip("living", "switch.stove", false, 400);
+        assert_eq!(overrides(), held);
+    }
 }

@@ -126,4 +126,7 @@ pub(crate) struct ClimateRuntime {
     pub heater_sent: BTreeMap<String, (bool, u64)>,
     /// Zones whose heater clocks were seeded from their retained decision.
     pub heater_seeded: HashSet<String>,
+    /// The `now` of the pass in progress and the instant it was taken, to tell the time of a
+    /// moment later in the pass.
+    pub pass_clock: Option<(u64, tokio::time::Instant)>,
 }

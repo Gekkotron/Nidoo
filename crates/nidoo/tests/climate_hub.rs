@@ -520,6 +520,9 @@ mod engine {
         plug: Option<bool>,
         /// The plug applies its commands and reports its new state.
         plug_echo: bool,
+        /// Once: the plug is switched off by hand as the next command reaches a daikin, in the
+        /// middle of a pass.
+        plug_off_at_unit_command: bool,
     }
 
     impl Sim {
@@ -531,6 +534,7 @@ mod engine {
                 fans: BTreeMap::new(),
                 plug: None,
                 plug_echo: true,
+                plug_off_at_unit_command: false,
             }
         }
 
@@ -592,6 +596,9 @@ mod engine {
                     reason: "test".into(),
                 });
                 return;
+            }
+            if std::mem::take(&mut self.plug_off_at_unit_command) {
+                self.flip_plug(hub, false);
             }
             if !self.echo {
                 return;
@@ -3255,6 +3262,97 @@ mod engine {
         );
         let out = rig.pass(hm(10, 20)).await;
         assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_quick_hand_flip_after_an_engine_command_is_held() {
+        let (mut rig, plug) = stove_rig(false, 0).await;
+        assert_eq!(plug_commands(&rig.pass(hm(9, 0)).await), vec!["ON"]);
+        // Switched off by hand a minute after the engine switched it on.
+        let at = rig.t0 + hm(9, 1);
+        rig.sim.flip_plug(&rig.hub, false);
+        rig.hub.observe_heater(&plug, false, at);
+        assert_eq!(
+            rig.zone().overrides,
+            vec![Override {
+                entity: Some(plug.clone()),
+                setpoint: Some(Setpoint::Off),
+                mode: None,
+                until: rig.hub.hand_hold_until("living", at),
+                origin: OverrideOrigin::Hand,
+            }]
+        );
+        // The engine does not switch it back on.
+        for at in [hm(9, 2), hm(9, 5), hm(10, 0)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        assert_eq!(rig.sim.plug, Some(false));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_heater_switched_off_during_the_pass_is_not_switched_back_on() {
+        let (mut rig, plug) = stove_rig(false, 15).await;
+        // 08:00: the unit heats the base, the plug is off.
+        rig.pass(hm(8, 0)).await;
+        // 08:30: switched on by hand, held on until the block starts at 09:00.
+        rig.sim.flip_plug(&rig.hub, true);
+        rig.hub.observe_heater(&plug, true, rig.t0 + hm(8, 30));
+        let mut settings = stove_settings(&plug, 15);
+        settings.manual_hold_max_min = 10;
+        rig.settings(settings);
+        // 09:00: the decision sees the plug on and wants it on; it is switched off by hand
+        // while the pass commands the unit off, after the decision.
+        rig.sim.plug_off_at_unit_command = true;
+        let out = rig.pass(hm(9, 0)).await;
+        assert_eq!(
+            commands(&out),
+            vec![("/ha/mode/set".to_owned(), "off".to_owned())]
+        );
+        assert!(plug_commands(&out).is_empty(), "{out:?}");
+        assert_eq!(rig.sim.plug, Some(false));
+        let overrides = rig.zone().overrides;
+        assert_eq!(overrides.len(), 1, "{overrides:?}");
+        assert_eq!(overrides[0].entity.as_deref(), Some(plug.as_str()));
+        assert_eq!(overrides[0].setpoint, Some(Setpoint::Off));
+        // Held until 09:10, then cooling down until 09:15: no on before that.
+        for at in [hm(9, 1), hm(9, 11), hm(9, 14)] {
+            let out = rig.pass(at).await;
+            assert!(plug_commands(&out).is_empty(), "at {at}: {out:?}");
+        }
+        let out = rig.pass(hm(9, 16)).await;
+        assert_eq!(plug_commands(&out), vec!["ON"], "{out:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_plug_state_report_reaches_the_engine_through_the_loop() {
+        let mut rig = Rig::new(None).await;
+        rig.sim.set(&rig.hub, 0, "off", 22.0, 20.0);
+        let plug = feed_plug(&rig.hub, "garage").await;
+        rig.sim.flip_plug(&rig.hub, true);
+        let mut settings = heat_rules(21.0);
+        settings.heaters = vec![Heater {
+            entity: plug.clone(),
+            drive: HeaterDrive::Thermostat,
+            ..Heater::default()
+        }];
+        settings.heated_by = Some(vec![plug.clone()]);
+        rig.settings(settings);
+        let task = rig.hub.start_climate().expect("climate loop");
+        // Past the boot settle the first pass wants the plug on, and it is.
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        let decision = rig.zone().decision.expect("first pass ran");
+        assert_eq!(decision.entities[&plug], switch_target("heat", false));
+        drain(&mut rig.rx);
+        // Switched off at the plug: its state report reaches the heater logic through the
+        // loop's state events, before any pass (the debounce is 2 s, the tick 60 s).
+        rig.hub.ingest(PLUG_STATE, br#"{"state":"OFF"}"#);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let overrides = rig.zone().overrides;
+        assert_eq!(overrides.len(), 1, "{overrides:?}");
+        assert_eq!(overrides[0].entity.as_deref(), Some(plug.as_str()));
+        assert_eq!(overrides[0].setpoint, Some(Setpoint::Off));
+        task.abort();
     }
 
     #[tokio::test(start_paused = true)]
