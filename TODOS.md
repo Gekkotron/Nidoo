@@ -108,3 +108,61 @@ What a Home Assistant user misses in the first week. Each is its own brainstorm.
 - [ ] **P3** Flows as files: export and import a flow (or all) as JSON, so they live in git like HA's YAML; a shared catalogue later (HA blueprints).
 - [ ] **P3** English sentences for the Assistant (French only today).
 - [ ] **P3** A documented Grafana setup on the TimescaleDB history (a ready dashboard JSON).
+
+## Project review (2026-11-27)
+
+Found by a read-only review of the hub, the web UI and CI at v0.1.12, filtered against the lists above. Items marked *(unchecked)* come from a grep only: confirm in the code before starting. Each feature is its own brainstorm.
+
+### Hub robustness
+
+- [x] ~~**P1** History retention~~: declined 2026-11-27. Real growth is about 22 MB a week (1.1 GB a year), and every raw row is kept on purpose: no `keep_days`, no `drop_chunks`. The 8.9 GB live database is mostly index bloat: about 40 compressed chunks (2026-01-15 to 10-15) each keep a ~200 MB index on their empty uncompressed heap, about 7 GB in all, likely left by the history backfill. A `REINDEX` of those chunks gets it back without losing data.
+- [ ] **P1** A real readiness check: `/health` always answers `"ok"` without checking the database, the broker link or the engine task (`crates/nidoo/src/http/api.rs:352`). Add `/health/ready`, and a small `/metrics` (history drops from `history/writer.rs` `pending_drops`, pending buffer, engine queue depth, MQTT reconnects, errors per flow).
+- [ ] **P1** Bounded engine and push queues: both are unbounded channels (`crates/nidoo/src/hub.rs:403`, `crates/nidoo-push/src/service.rs:121`), so a slow engine during a Zigbee storm grows memory without limit. Bound them with a drop-oldest or coalescing policy and a counter.
+- [ ] **P2** Supervised background tasks *(unchecked)*: about 74 `tokio::spawn` calls, handles kept only to abort at shutdown (`crates/nidoo/src/main.rs:125-248`); a panic in the flow engine loop dies silently. A `spawn_supervised(name, fut)` that logs the panic, restarts with backoff and reports into System health.
+- [ ] **P2** A separate pool for the history writer and a `statement_timeout` on reads: one pool of 4 connections serves history, settings, climate and assist (`crates/nidoo/src/history/db.rs:36`), so a long read can starve the writer, which then drops states.
+- [ ] **P3** Generic HTTP limits *(unchecked)*: only the restore and TTS upload routes cap the body; no global timeout, concurrency limit or default body cap on `/api/v1`.
+- [ ] **P3** Pagination (`limit` and a cursor) on `/alerts`, `/assist/turns`, `/flows` and the MCP `list_entities` and `list_alerts` *(unchecked)*.
+- [ ] **P3** Config validation reports one problem at a time (`crates/nidoo/src/config.rs`, `validate()` returning `Result<(), String>`): collect them all, and add a `nidoo check-config` command (the CLI has only `run`, `mcp-stdio` and `init-bundled`).
+- [ ] **P3** MCP and REST parity: dashboards, assist turns, `history/daily`, `today`, `extent`, `last_change` and `fields` are REST only; `search`, `list_devices`, `list_entities`, settings and `bridge_info` are MCP only *(unchecked)*. No OpenAPI document: generate one, or a CI test that `docs/reference/http-api.md` lists every route.
+
+### Code structure
+
+- [ ] **P3** Split the largest hub files: `crates/nidoo/src/hub.rs` (2,500 lines), `flows/engine.rs` (2,528, with a `run_node` of about 400 lines: one handler per node kind), `http/api.rs` (1,415: one file per domain), `crates/nidoo-assist/src/plan.rs` (2,282).
+- [ ] **P3** Split the largest web files: `screens/flow_canvas/settings.rs` (3,091 lines, continue the split by node type), `screens/settings.rs` (1,237), `screens/alarm_settings.rs` (1,213), `components/history_chart/view.rs` (1,157).
+- [ ] **P3** One dialog and confirm primitive in the web UI *(unchecked)*: the same confirm is hand-built in `screens/group_sheet_v2.rs:333`, `screens/flows/label_manager.rs:266` and `screens/flows/room_menu.rs:367` beside `components/confirm.rs`; `role="dialog"`, `aria-modal` and `aria-labelledby` are set in some places only.
+- [ ] **P3** A shared fetch helper for the web UI *(unchecked)*: 245 `spawn_local` calls and no `Resource`; loading and error states are rebuilt per screen. A `use_fetch` giving loading, ready or error with a retry.
+- [ ] **P3** i18n structure: `enum Lang { En, Fr }` with `("en", "fr")` tuples (`crates/nidoo-web/src/i18n/mod.rs:81`), so a third language touches 30+ files. Per-language tables or a generated catalogue.
+
+### Web UI
+
+- [ ] **P2** An "offline, reconnecting" banner *(unchecked)*: the connection state shows only in the sidebar badge (`crates/nidoo-web/src/ws.rs:26-76`), hidden in the drawer on a phone. Disable the dashboard cards while offline.
+- [ ] **P2** Release profile for size: `[profile.release]` only sets `incremental = true` (`Cargo.toml:67`); try `lto`, `opt-level = "s"` and `codegen-units = 1` for the wasm bundle. Measure the bundle first.
+- [ ] **P3** The devices page renders every row *(unchecked)*: add a render cap or windowing for houses with 300+ devices.
+- [ ] **P3** A test that the docs list every dashboard widget kind and span (`nidoo_core::dashboard::WidgetKind` against `docs/users/web-ui.md`).
+
+### CI and release
+
+- [ ] **P2** Dependabot (or Renovate) for Cargo, GitHub Actions and `website/` npm; goes with the `cargo audit` item above.
+- [ ] **P2** Fix the known flakes instead of re-running them: `engine_catch_up::link_back_catches_up_skipped_tick` (clock), "web UI browser tests (1/3)" renderer timeout, the `tts_speech` 404 test.
+- [ ] **P3** A GitHub release with generated notes for each `v*` tag: the version bump tags every merge but nothing lists what changed.
+- [ ] **P3** `cargo check` the `satellite/mac` workspace in CI: it is its own workspace and breaks silently on a `nidoo-satellite` API change.
+- [x] The "cap/clean `target/`" item above is obsolete: builds go to the shared scratch folder.
+
+### New features
+
+- [ ] **P2** Energy cost in currency: tariffs are modelled (`crates/nidoo-core/src/energy/tariff`) but nothing has a price. A peak, off-peak and export price setting, cost per day and month, savings from solar. The prerequisite of the comfort ↔ cost slider.
+- [ ] **P2** Device health digest *(unchecked)*: low battery, silent for N days, weak link, as a report, an MCP tool, a flow trigger and a push. The devices page already shows battery and link quality; "last seen" is missing.
+- [ ] **P2** Installable PWA: no manifest or service worker in `crates/nidoo-web/index.html`. A manifest and a service worker caching the hashed assets, `index.html` network-first. Opens web push, an iOS answer without a native app.
+- [ ] **P2** CSV export from the history page, the energy day chart and the daily bars (the only download today is the backup file).
+- [ ] **P2** Persisted flow runs and a dry run: runs are kept in memory only (`crates/nidoo/src/flows/store.rs:42`) and a restart loses them; nothing simulates a flow against a given state without sending commands.
+- [ ] **P2** Flow nodes: write a virtual entity (variable, counter), an on-error output; check whether `limit` covers debounce and throttle.
+- [ ] **P3** Person and presence model *(unchecked)*: presence is the ping-based network watch only. A "who is home" entity from the phone ping and the app, and a `trigger.presence`.
+- [ ] **P3** Calendar trigger *(unchecked)*: ICS import (school holidays, bin collection), a `trigger.calendar` and an "is a holiday" condition for wake-up and heating.
+- [ ] **P3** More widgets: alarm panel, ambiance button, weather, solar, media player, vacuum, note, clock, gauge.
+- [ ] **P3** Flow canvas *(unchecked)*: multi-select (shift-click or marquee), copy and paste of a group of nodes into another flow, find a node, filter runs (failed only, by node).
+- [ ] **P3** Dashboards: duplicate, export and import as JSON, undo while editing.
+- [ ] **P3** History chart: drag to zoom and pan; event markers (flow runs, door opens, restarts) over a sensor line.
+- [ ] **P3** Entity management at scale *(unchecked)*: multi-select on devices and entities to move room, hide or rename; a list of stale entities.
+- [ ] **P3** In-app log viewer (level filter, copy) on the System page.
+- [ ] **P3** Search beyond devices: flows, ambiances, dashboards and settings pages.
+- [ ] **P3** Config export as one plain JSON for git, beside the encrypted backup *(unchecked)*.
