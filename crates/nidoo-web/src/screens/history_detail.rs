@@ -81,6 +81,23 @@ pub fn chart_window(s: &PeriodState, today: NaiveDate) -> ChartWindow {
     }
 }
 
+/// Whether to offer a comparison for a plot of known comparability (unknown: offer it).
+pub fn compare_fits(known: Option<bool>) -> bool {
+    known.unwrap_or(true)
+}
+
+/// The window without its comparison.
+pub fn without_compare(w: ChartWindow) -> ChartWindow {
+    match w {
+        ChartWindow::Dates { shown, unit, .. } => ChartWindow::Dates {
+            shown,
+            unit,
+            compare: None,
+        },
+        preset => preset,
+    }
+}
+
 /// The period a click on a bucket dated `date` zooms into: a year opens its month, a week, month
 /// or custom span opens the day. The comparison and the chosen values stay.
 pub fn zoomed(s: &PeriodState, date: NaiveDate, today: NaiveDate) -> PeriodState {
@@ -139,7 +156,21 @@ pub fn HistoryDetailScreen() -> impl IntoView {
             .get()
             .unwrap_or_else(|| local_today((crate::energy::now_ms() / 1000) as i64))
     });
-    let window = Memo::new(move |_| chart_window(&state.get(), today.get()));
+    // Whether the plot drawn can be compared: `None` until it is known (and again for each new
+    // entity). A plot of values or words draws no comparison, so none is asked for.
+    let plot_comparable = RwSignal::new(None::<bool>);
+    Effect::new(move |_| {
+        id.track();
+        plot_comparable.set(None);
+    });
+    let window = Memo::new(move |_| {
+        let w = chart_window(&state.get(), today.get());
+        if compare_fits(plot_comparable.get()) {
+            w
+        } else {
+            without_compare(w)
+        }
+    });
 
     let entity: Memo<Option<EntityView>> =
         Memo::new(move |_| house.entities.with(|m| m.get(&id.get()).cloned()));
@@ -222,8 +253,10 @@ pub fn HistoryDetailScreen() -> impl IntoView {
     let kind_sig: Memo<Kind> = Memo::new(move |_| entity.get().map_or(Kind::Generic, |e| e.kind));
 
     // A discrete entity (light, switch, cover) is drawn in words: nothing to set against.
-    let compare_allowed =
-        Signal::derive(move || state_axis_labels(lang(), None, &kind_str.get()).is_none());
+    let compare_allowed = Signal::derive(move || {
+        state_axis_labels(lang(), None, &kind_str.get()).is_none()
+            && compare_fits(plot_comparable.get())
+    });
 
     let known = Memo::new(move |_| house.entities.with(|m| m.contains_key(&id.get())));
     let loaded = Memo::new(move |_| {
@@ -262,6 +295,7 @@ pub fn HistoryDetailScreen() -> impl IntoView {
                                 today=Signal::derive(move || hub_today.get())
                                 device_class=Signal::derive(move || device_class.get())
                                 field_kind=Signal::derive(move || kind_sig.get())
+                                comparable=plot_comparable
                             />
                         </section>
                     }.into_any()
@@ -283,6 +317,43 @@ pub fn HistoryDetailScreen() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plot_that_draws_no_comparison_asks_for_none() {
+        use crate::components::history_chart::plot::{Plot, comparable};
+        assert_eq!(comparable(&Plot::Loading), None);
+        assert_eq!(comparable(&Plot::Bars), Some(true));
+        assert_eq!(comparable(&Plot::Headline { overlay: None }), Some(true));
+        assert_eq!(
+            comparable(&Plot::Field {
+                track: 0,
+                overlay: None
+            }),
+            Some(false)
+        );
+        assert_eq!(comparable(&Plot::Words { track: 0 }), Some(false));
+        assert!(compare_fits(None) && compare_fits(Some(true)) && !compare_fits(Some(false)));
+        let today = NaiveDate::from_ymd_opt(2026, 11, 26).unwrap();
+        let s = PeriodState {
+            unit: Unit::Month,
+            at: None,
+            custom: None,
+            vs: Some(1),
+            show: None,
+        };
+        let w = chart_window(&s, today);
+        assert!(matches!(
+            &w,
+            ChartWindow::Dates {
+                compare: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            without_compare(w),
+            ChartWindow::Dates { compare: None, .. }
+        ));
+    }
 
     #[test]
     fn flavor_for_entity_is_counter_for_energy_units() {

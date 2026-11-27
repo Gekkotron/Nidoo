@@ -27,6 +27,7 @@ use super::geom::{
     value_decimals, y_scale,
 };
 use super::periods::{Band, band_near, legend, periods, scalar_text, value_at, word_in};
+use super::plot::comparable as plot_comparable;
 use super::plot::{FieldsState, Plot, field_series, headline_or_error, percent_scale, plot_for};
 use super::selection::{chip_label, chips, parse_show, show_param, toggle};
 use super::summary::PeriodSummary;
@@ -93,6 +94,10 @@ pub fn HistoryChart(
     /// it the browser's clock does.
     #[prop(optional, into)]
     today: Signal<Option<NaiveDate>>,
+    /// Told, once the plot is known, whether it can be compared (see `plot::comparable`); it
+    /// keeps the last known answer while the next reply loads.
+    #[prop(optional)]
+    comparable: Option<RwSignal<Option<bool>>>,
 ) -> impl IntoView {
     let wants_fields = on_show.is_some();
     let state = RwSignal::new(State::Loading);
@@ -255,6 +260,22 @@ pub fn HistoryChart(
                 }
             });
             inputs
+        });
+    }
+
+    if let Some(comparable) = comparable {
+        Effect::new(move |_| {
+            let fields_now = fields.get();
+            let tracks = match &fields_now {
+                FieldsState::Ready(f) => f.tracks.clone(),
+                _ => Vec::new(),
+            };
+            let chip_list = chips(&tracks);
+            let sel = parse_show(show.get().as_deref(), &chip_list);
+            let plot = plot_for(flavor.get(), &fields_now, &sel, &chip_list);
+            if let Some(ok) = plot_comparable(&plot) {
+                comparable.set(Some(ok));
+            }
         });
     }
 

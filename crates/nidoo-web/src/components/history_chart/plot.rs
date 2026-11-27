@@ -33,6 +33,16 @@ pub enum Plot {
     },
 }
 
+/// Whether the plot can be set against an earlier period: only the bars and the headline series
+/// draw a comparison. `None` while the plot is not known yet.
+pub fn comparable(plot: &Plot) -> Option<bool> {
+    match plot {
+        Plot::Loading => None,
+        Plot::Bars | Plot::Headline { .. } => Some(true),
+        Plot::Field { .. } | Plot::Words { .. } => Some(false),
+    }
+}
+
 fn find<'a>(chips: &'a [Chip], key: &Option<String>, slot: Slot) -> Option<&'a Chip> {
     let key = key.as_ref()?;
     chips.iter().find(|c| c.slot == slot && &c.key == key)
