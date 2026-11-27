@@ -19,8 +19,8 @@ use crate::components::period_bar::PeriodBar;
 use crate::energy::{energy_entities, energy_entity};
 use crate::format::{area_name, shown_name, title_suffix, type_word, wrap_id};
 use crate::history_period::{
-    PeriodState, Span, Unit, compare_span, parse_state, per_for, shown_span, span_of, state_path,
-    switch_unit, zoom,
+    PeriodState, Span, Unit, compare_span, parse_date, parse_state, per_for, shown_span, span_of,
+    state_path, switch_unit, zoom,
 };
 use crate::house::House;
 use crate::i18n::devices::availability_text;
@@ -94,10 +94,6 @@ pub fn zoomed(s: &PeriodState, date: NaiveDate, today: NaiveDate) -> PeriodState
         at: (!(span.from <= today && today <= span.to)).then_some(span.from),
         ..switch_unit(s, unit, today)
     }
-}
-
-fn parse_date(s: &str) -> Option<NaiveDate> {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
 }
 
 #[component]

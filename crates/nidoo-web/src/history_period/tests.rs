@@ -267,3 +267,27 @@ fn slugs_round_trip() {
     }
     assert_eq!(Unit::from_slug("x"), None);
 }
+
+#[test]
+fn out_of_range_or_unpadded_dates_are_ignored() {
+    let w = parse_state(|k| match k {
+        "period" => Some("week".into()),
+        "at" => Some("-262144-01-01".into()),
+        _ => None,
+    });
+    assert_eq!((w.unit, w.at), (Unit::Week, None));
+    let c = parse_state(|k| match k {
+        "period" => Some("custom".into()),
+        "from" => Some("2025-01-01".into()),
+        "to" => Some("+262142-12-31".into()),
+        _ => None,
+    });
+    assert_eq!((c.unit, c.custom), (Unit::Day, None));
+    assert_eq!(parse_date("2025-1-1"), None);
+    assert_eq!(parse_date("1999-12-31"), None);
+    assert_eq!(parse_date("2101-01-01"), None);
+    assert_eq!(parse_date("2000-01-01"), Some(d(2000, 1, 1)));
+    // Spans from the edge dates still compute.
+    let _ = span_of(Unit::Week, d(2000, 1, 1));
+    let _ = span_of(Unit::Week, d(2100, 12, 31));
+}

@@ -79,8 +79,15 @@ pub struct PeriodState {
     pub show: Option<String>,
 }
 
-fn parse_date(s: &str) -> Option<NaiveDate> {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+/// A `YYYY-MM-DD` date, zero-padded, in years 2000 to 2100: anything else (an unpadded date, a
+/// signed or far-off year from a crafted link) is rejected, as the hub does.
+pub fn parse_date(s: &str) -> Option<NaiveDate> {
+    if s.len() != 10 {
+        return None;
+    }
+    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .ok()
+        .filter(|d| (2000..=2100).contains(&d.year()))
 }
 
 fn fmt_date(d: NaiveDate) -> String {
@@ -167,7 +174,9 @@ pub fn span_of(unit: Unit, at: NaiveDate) -> Span {
             let from = at.week(Weekday::Mon).first_day();
             Span {
                 from,
-                to: from + chrono::Duration::days(6),
+                to: from
+                    .checked_add_signed(chrono::Duration::days(6))
+                    .unwrap_or(from),
             }
         }
         Unit::Month => {

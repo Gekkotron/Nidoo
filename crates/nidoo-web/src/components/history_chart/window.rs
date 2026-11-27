@@ -81,7 +81,8 @@ fn local_midnight(d: NaiveDate) -> i64 {
 
 /// Real seconds a window lasts: a day with a clock change has 23 or 25 hours.
 pub fn window_secs(w: &WindowReq) -> i64 {
-    local_midnight(w.to + chrono::Duration::days(1)) - local_midnight(w.from)
+    let after = w.to.succ_opt().unwrap_or(w.to);
+    local_midnight(after) - local_midnight(w.from)
 }
 
 /// Calendar months a window touches.
