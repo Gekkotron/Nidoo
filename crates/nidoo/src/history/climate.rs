@@ -135,35 +135,35 @@ impl Db {
         from: Micros,
         to: Micros,
     ) -> Result<Vec<(Micros, Option<f64>, Option<String>)>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT GREATEST(time, $2::timestamptz) AS t, target, mode FROM (
-               (SELECT time, seq,
-                       (value->'value'->>'target')::float8 AS target,
-                       value->'value'->>'mode' AS mode
-                FROM entity_state
-                WHERE entity_id = $1 AND value->>'type' = 'climate'
-                  AND time < $2::timestamptz
-                ORDER BY time DESC, seq DESC
-                LIMIT 1)
-               UNION ALL
-               (SELECT time, seq,
-                       (value->'value'->>'target')::float8 AS target,
-                       value->'value'->>'mode' AS mode
-                FROM entity_state
-                WHERE entity_id = $1 AND value->>'type' = 'climate'
-                  AND time >= $2::timestamptz AND time < $3::timestamptz)
-             ) r
-             ORDER BY time, seq",
-        )
+        const COLUMNS: &str = "(value->'value'->>'target')::float8, value->'value'->>'mode'";
+        let carry = self
+            .last_row_before(
+                &format!(
+                    "SELECT {COLUMNS} FROM entity_state
+                     WHERE entity_id = $1 AND value->>'type' = 'climate' AND time < $2"
+                ),
+                entity,
+                from,
+            )
+            .await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {COLUMNS}, time FROM entity_state
+             WHERE entity_id = $1 AND value->>'type' = 'climate'
+               AND time >= $2 AND time < $3
+             ORDER BY time, seq"
+        ))
         .bind(entity)
         .bind(micros_to_dt(from))
         .bind(micros_to_dt(to))
         .fetch_all(&self.pool)
         .await?;
-        let mut out = Vec::with_capacity(rows.len());
+        let mut out = Vec::with_capacity(rows.len() + 1);
+        if let Some(row) = carry {
+            out.push((from, row.get(0), row.get(1)));
+        }
         for row in rows {
-            let t: DateTime<Utc> = row.get(0);
-            out.push((dt_to_micros(t), row.get(1), row.get(2)));
+            let t: DateTime<Utc> = row.get(2);
+            out.push((dt_to_micros(t), row.get(0), row.get(1)));
         }
         Ok(out)
     }
