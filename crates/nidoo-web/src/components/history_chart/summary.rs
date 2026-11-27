@@ -13,7 +13,7 @@ use crate::history_period::{Span, per_for};
 use crate::i18n::Lang;
 use crate::i18n::format as fmt;
 use crate::i18n::history::{
-    HistoryText, history_text, kwh, left_out, min_max, no_data_for, period_name,
+    HistoryText, history_text, kwh, left_out, min_max, no_data_for, period_name, so_far_to,
 };
 use chrono::NaiveDate;
 
@@ -257,14 +257,12 @@ pub fn PeriodSummary(
     let Some(mut s) = summary(&shown, compared.ready(), compare.is_some(), per) else {
         return ().into_any();
     };
-    let running = runs_today(
-        &req,
-        today_or(today, (crate::energy::now_ms() / 1000) as i64),
-    );
+    let house_today = today_or(today, (crate::energy::now_ms() / 1000) as i64);
+    let running = runs_today(&req, house_today);
     let unit = unit.as_deref();
     let mut shown_name = period_name(lang, period_unit, span(&req));
     if running {
-        shown_name = format!("{shown_name} · {}", history_text(lang, HistoryText::SoFar));
+        shown_name = format!("{shown_name} · {}", so_far_to(lang, house_today));
     }
     let shown_card = figures_card(lang, shown_name, s.shown, unit, "");
     if pending {

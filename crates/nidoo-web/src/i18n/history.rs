@@ -305,6 +305,16 @@ pub fn period_name(lang: Lang, u: Unit, s: Span) -> String {
     }
 }
 
+/// The running period's label: "so far, to 26 Nov" / "jusqu'ici, au 26 nov." (`today` is the
+/// house's date).
+pub fn so_far_to(lang: Lang, today: NaiveDate) -> String {
+    let day = day_month(lang, today);
+    match lang {
+        Lang::En => format!("so far, to {day}"),
+        Lang::Fr => format!("jusqu'ici, au {day}"),
+    }
+}
+
 /// "No data for November 2025" / "Aucune donnée pour novembre 2025".
 pub fn no_data_for(lang: Lang, name: &str) -> String {
     match lang {
@@ -344,6 +354,13 @@ pub fn left_out(lang: Lang, n: usize, per: DailyPer) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_running_label_names_today() {
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 11, 26).unwrap();
+        assert_eq!(super::so_far_to(Lang::En, d), "so far, to 26 Nov");
+        assert_eq!(super::so_far_to(Lang::Fr, d), "jusqu'ici, au 26 nov.");
+    }
+
     use super::*;
 
     #[test]
