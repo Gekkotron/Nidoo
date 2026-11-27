@@ -40,8 +40,24 @@ pub struct Summary {
     /// against the shown period.
     pub compared: Option<Option<Figures>>,
     pub diff: Option<Diff>,
-    /// Buckets left out of the comparison because only one period had them (counters).
+    /// Buckets left out of the comparison because only one period had them, counted in
+    /// `left_per` units.
     pub left_out: usize,
+    pub left_per: DailyPer,
+}
+
+/// A sensor's left-out buckets of `step` seconds, as a count of the nearest unit the text has
+/// (hours below half a day, days below two weeks, else months), rounded up.
+pub fn sensor_left_out(n: usize, step: i64) -> (usize, DailyPer) {
+    let (unit, per) = match step {
+        ..43_200 => (3_600, DailyPer::Hour),
+        43_200..1_296_000 => (86_400, DailyPer::Day),
+        _ => (2_629_746, DailyPer::Month),
+    };
+    (
+        (n as i64 * step.max(1) + unit - 1).div_euclid(unit) as usize,
+        per,
+    )
 }
 
 /// Decide the cards from the replies. `asked` is whether the window has a comparison, `per` how
@@ -74,12 +90,14 @@ pub fn summary(
                         pct: c.pct,
                     }),
                     left_out: c.left_out,
+                    left_per: per,
                 },
                 None => Summary {
                     shown: Figures::Total(counter_total(&d.days)),
                     compared: asked.then_some(None),
                     diff: None,
                     left_out: 0,
+                    left_per: per,
                 },
             })
         }
@@ -96,25 +114,30 @@ pub fn summary(
                 _ => None,
             };
             Some(match pair {
-                Some(c) => Summary {
-                    shown: Figures::Stats {
-                        mean: c.mean,
-                        min: c.min,
-                        max: c.max,
-                    },
-                    compared: Some(Some(Figures::Stats {
-                        mean: c.cmp_mean,
-                        min: c.cmp_min,
-                        max: c.cmp_max,
-                    })),
-                    diff: Some(Diff::Mean(c.diff)),
-                    left_out: c.left_out,
-                },
+                Some(c) => {
+                    let (left_out, left_per) = sensor_left_out(c.left_out, s.window);
+                    Summary {
+                        left_out,
+                        left_per,
+                        shown: Figures::Stats {
+                            mean: c.mean,
+                            min: c.min,
+                            max: c.max,
+                        },
+                        compared: Some(Some(Figures::Stats {
+                            mean: c.cmp_mean,
+                            min: c.cmp_min,
+                            max: c.cmp_max,
+                        })),
+                        diff: Some(Diff::Mean(c.diff)),
+                    }
+                }
                 None => Summary {
                     shown: Figures::Stats { mean, min, max },
                     compared: asked.then_some(None),
                     diff: None,
                     left_out: 0,
+                    left_per: per,
                 },
             })
         }
@@ -257,8 +280,9 @@ pub fn PeriodSummary(
         }
     });
     let diff = s.diff.map(|d| diff_card(lang, d, unit));
-    let note = (s.left_out > 0 && matches!(s.shown, Figures::Total(_)))
-        .then(|| view! { <p class="history-summary__note">{left_out(lang, s.left_out, per)}</p> });
+    let note = (s.left_out > 0).then(
+        || view! { <p class="history-summary__note">{left_out(lang, s.left_out, s.left_per)}</p> },
+    );
     view! {
         <div class="history-summary">
             {shown_card}

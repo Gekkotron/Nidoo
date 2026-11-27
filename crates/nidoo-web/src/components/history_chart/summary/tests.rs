@@ -108,3 +108,24 @@ fn a_signed_number_has_its_sign() {
     assert_eq!(signed(Lang::En, -1.5, 1), "\u{2212}1.5");
     assert_eq!(signed(Lang::En, 0.0, 1), "0.0");
 }
+
+#[test]
+fn a_sensors_left_out_buckets_are_counted_in_the_nearest_unit() {
+    assert_eq!(sensor_left_out(5, 3_600), (5, DailyPer::Hour));
+    // Ten-minute buckets: 12 of them are 2 hours.
+    assert_eq!(sensor_left_out(12, 600), (2, DailyPer::Hour));
+    assert_eq!(sensor_left_out(3, 86_400), (3, DailyPer::Day));
+    assert_eq!(sensor_left_out(2, 604_800), (14, DailyPer::Day));
+}
+
+#[test]
+fn a_sensor_reports_what_it_left_out() {
+    let s = summary(
+        &series(0, &[20.0, 22.0, 23.0]),
+        Some(&series(500 * DAY, &[18.0])),
+        true,
+        DailyPer::Day,
+    )
+    .unwrap();
+    assert_eq!((s.left_out, s.left_per), (2, DailyPer::Hour));
+}

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use chrono::Datelike;
 use nidoo_api::DailyPer;
 
 /// Nominal bucket length in seconds for a daily-counter grouping.
@@ -49,11 +50,46 @@ pub struct SensorSummary {
     pub left_out: usize,
 }
 
-/// Index each bucket by its offset; on a collision the first one wins.
-fn by_index<T: Copy>(items: &[(i64, T)], start: i64, nominal_s: i64) -> BTreeMap<i64, T> {
+/// How the buckets of a reply are numbered from its window start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bucketing {
+    /// By rounded offset in buckets of this many seconds (hours, days, series steps).
+    Nominal(i64),
+    /// By calendar month from the month of the window start: month buckets are the window's
+    /// start and then each 1st, so a window starting mid-month has a short first bucket and
+    /// the next one is already index 1.
+    Months,
+}
+
+impl Bucketing {
+    /// The numbering of a daily counter's buckets.
+    pub fn of(per: DailyPer) -> Self {
+        match per {
+            DailyPer::Month => Bucketing::Months,
+            other => Bucketing::Nominal(nominal(other)),
+        }
+    }
+
+    /// Index of the bucket starting at unix second `t` in a window starting at `start`.
+    pub fn index(self, t: i64, start: i64) -> i64 {
+        match self {
+            Bucketing::Nominal(n) => bucket_index(t - start, n),
+            Bucketing::Months => month_of(t) - month_of(start),
+        }
+    }
+}
+
+/// Months since year 0 of the house-local date at unix second `t`.
+fn month_of(t: i64) -> i64 {
+    let d = crate::components::history_chart::window::local_today(t);
+    i64::from(d.year()) * 12 + i64::from(d.month0())
+}
+
+/// Index each bucket by its number; on a collision the first one wins.
+fn by_index<T: Copy>(items: &[(i64, T)], start: i64, b: Bucketing) -> BTreeMap<i64, T> {
     let mut map = BTreeMap::new();
     for &(t, v) in items {
-        map.entry(bucket_index(t - start, nominal_s)).or_insert(v);
+        map.entry(b.index(t, start)).or_insert(v);
     }
     map
 }
@@ -65,10 +101,10 @@ fn pair<T: Copy>(
     shown_start: i64,
     cmp: &[(i64, T)],
     cmp_start: i64,
-    nominal_s: i64,
+    bucketing: Bucketing,
 ) -> (Vec<(T, T)>, usize) {
-    let a = by_index(shown, shown_start, nominal_s);
-    let b = by_index(cmp, cmp_start, nominal_s);
+    let a = by_index(shown, shown_start, bucketing);
+    let b = by_index(cmp, cmp_start, bucketing);
     let matched: Vec<(T, T)> = a
         .iter()
         .filter_map(|(i, x)| b.get(i).map(|y| (*x, *y)))
@@ -87,7 +123,7 @@ pub fn counter_summary(
     if cmp.is_empty() {
         return None;
     }
-    let (matched, left_out) = pair(shown, shown_start, cmp, cmp_start, nominal(per));
+    let (matched, left_out) = pair(shown, shown_start, cmp, cmp_start, Bucketing::of(per));
     if matched.is_empty() {
         return None;
     }
@@ -129,7 +165,13 @@ pub fn sensor_summary(
     let tuple = |p: &[(i64, f64, f64, f64)]| -> Vec<(i64, Point)> {
         p.iter().map(|&(t, m, lo, hi)| (t, (m, lo, hi))).collect()
     };
-    let (matched, left_out) = pair(&tuple(shown), shown_start, &tuple(cmp), cmp_start, window);
+    let (matched, left_out) = pair(
+        &tuple(shown),
+        shown_start,
+        &tuple(cmp),
+        cmp_start,
+        Bucketing::Nominal(window),
+    );
     let (mean, min, max) = stats(matched.iter().map(|(a, _)| *a))?;
     let (cmp_mean, cmp_min, cmp_max) = stats(matched.iter().map(|(_, b)| *b))?;
     Some(SensorSummary {

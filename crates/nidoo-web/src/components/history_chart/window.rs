@@ -2,7 +2,7 @@
 //! presentation range its labels borrow, the compared window's request, the refresh rule and
 //! the x domain.
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use nidoo_api::{DailyPer, HistoryRange};
 
 use super::view::Flavor;
@@ -69,7 +69,25 @@ pub fn refetches(window: &ChartWindow, today: NaiveDate) -> bool {
 /// The x domain of a date window: the whole period from the reply's start, so a running month
 /// leaves the days to come empty. `span` is the reply's unix `[start, end]`.
 pub fn x_domain(shown: &WindowReq, span: (i64, i64)) -> (i64, i64) {
-    (span.0, span.0 + window_days(shown) * 86_400)
+    (span.0, span.0 + window_secs(shown))
+}
+
+/// Unix second of the house-local midnight starting `d`. The offset is read at the previous
+/// noon, which is before any change of the night.
+fn local_midnight(d: NaiveDate) -> i64 {
+    let utc = (d.num_days_from_ce() as i64 - 719_163) * 86_400;
+    utc - i64::from(super::format::paris_offset(utc - 43_200))
+}
+
+/// Real seconds a window lasts: a day with a clock change has 23 or 25 hours.
+pub fn window_secs(w: &WindowReq) -> i64 {
+    local_midnight(w.to + chrono::Duration::days(1)) - local_midnight(w.from)
+}
+
+/// Calendar months a window touches.
+pub fn window_months(w: &WindowReq) -> usize {
+    let ym = |d: NaiveDate| i64::from(d.year()) * 12 + i64::from(d.month0());
+    (ym(w.to) - ym(w.from) + 1).max(1) as usize
 }
 
 /// The x domain of any window at unix second `now`; a date window with no reply span yet falls
@@ -79,7 +97,7 @@ pub fn domain(window: &ChartWindow, span: Option<(i64, i64)>, now: i64) -> (i64,
         ChartWindow::Preset(r) => (now - r.span_secs(), now),
         ChartWindow::Dates { shown, .. } => match span {
             Some(span) => x_domain(shown, span),
-            None => (now - window_days(shown) * 86_400, now),
+            None => (now - window_secs(shown), now),
         },
     }
 }

@@ -16,7 +16,7 @@ use nidoo_api::HistoryRange;
 const NOW_GAP: f64 = 0.12;
 
 /// The most month labels a long window carries.
-const MAX_MONTH_LABELS: usize = 12;
+const MAX_MONTH_LABELS: usize = 13;
 
 /// Labels of `shown` as `(position in 0..1, text)`. `now_pos` is where the running period has
 /// got to, as a fraction of the window: it adds a "now" label there, and a window that is not
@@ -26,6 +26,7 @@ pub fn window_ticks(
     unit: Unit,
     shown: &WindowReq,
     now_pos: Option<f64>,
+    by_slot: bool,
 ) -> Vec<(f64, String)> {
     let n = window_days(shown).max(1);
     let at = |i: i64| (i as f64 + 0.5) / n as f64;
@@ -50,7 +51,7 @@ pub fn window_ticks(
                 })
                 .collect()
         }
-        HistoryRange::Year => month_ticks(lang, shown, n),
+        HistoryRange::Year => month_ticks(lang, shown, n, by_slot),
     };
     if let Some(p) = now_pos {
         out.retain(|(pos, _)| (pos - p).abs() >= NOW_GAP);
@@ -61,8 +62,8 @@ pub fn window_ticks(
 }
 
 /// One label per month the window touches (every few months for a long window), at the middle
-/// of the days of that month inside the window.
-fn month_ticks(lang: Lang, shown: &WindowReq, n: i64) -> Vec<(f64, String)> {
+/// of the days of that month inside the window, or of the month's slot when `by_slot`.
+fn month_ticks(lang: Lang, shown: &WindowReq, n: i64, by_slot: bool) -> Vec<(f64, String)> {
     let mut months: Vec<(f64, NaiveDate)> = Vec::new();
     let mut first = shown.from.with_day(1).unwrap_or(shown.from);
     while first <= shown.to {
@@ -78,6 +79,13 @@ fn month_ticks(lang: Lang, shown: &WindowReq, n: i64) -> Vec<(f64, String)> {
             break;
         }
         first = next;
+    }
+    if by_slot {
+        // Month bars are equal slots, one per month the window touches.
+        let slots = months.len() as f64;
+        for (k, m) in months.iter_mut().enumerate() {
+            m.0 = (k as f64 + 0.5) / slots;
+        }
     }
     let step = months.len().div_ceil(MAX_MONTH_LABELS).max(1);
     let years = months.len() > MAX_MONTH_LABELS;

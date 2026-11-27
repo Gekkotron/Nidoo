@@ -36,7 +36,7 @@ use super::window::{
 };
 use crate::api::history::{HistoryApiError, WindowReq, fetch_fields, fetch_fields_window};
 use crate::components::now::Now;
-use crate::history_period::zoom;
+use crate::history_period::{Span, per_for, zoom};
 use crate::house::House;
 use crate::i18n::format as fmt;
 use crate::i18n::history::{
@@ -330,21 +330,21 @@ pub fn HistoryChart(
                         match tracks.get(track).and_then(field_series) {
                             Some((s, unit)) => {
                                 let fixed = percent_scale(unit.as_deref());
-                                let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1);
+                                let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1, false);
                                 render_series(SeriesView {
                                     lang, s, range, domain: fdomain, kind: field_series_kind(),
-                                    unit, overlay, fixed, axis, name, dates: None,
+                                    unit, overlay, fixed, axis, name, dates: None, zoom: None,
                                 }).into_any()
                             }
                             None => {
-                                let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1);
+                                let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1, false);
                                 render_words(lang, range, fdomain, overlay, axis, name).into_any()
                             }
                         }
                     }
                     Plot::Words { track } => {
                         let overlay = overlay_of(lang, entity_kind, &tracks, Some(track), fdomain);
-                        let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1);
+                        let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1, false);
                         render_words(lang, range, fdomain, overlay, axis, name).into_any()
                     }
                     Plot::Bars | Plot::Headline { .. } => {
@@ -374,10 +374,15 @@ pub fn HistoryChart(
                                     _ => None,
                                 };
                                 let dates = dctx.as_ref().map(|c| series_dates(c, &s, cmp));
-                                let axis = axis_for(lang, dctx.as_ref(), range, s.span, dom.1);
+                                // A point zooms like a bar, by the buckets the window would have.
+                                let zoom_to = dctx.as_ref().and_then(|c| {
+                                    let span = Span { from: c.req.from, to: c.req.to };
+                                    on_zoom.filter(|_| zoom(c.unit, per_for(c.unit, span)).is_some())
+                                });
+                                let axis = axis_for(lang, dctx.as_ref(), range, s.span, dom.1, false);
                                 render_series(SeriesView {
                                     lang, s, range, domain: dom, kind: kind_rx.get(), unit: unit_rx.get(),
-                                    overlay, fixed: None, axis, name, dates,
+                                    overlay, fixed: None, axis, name, dates, zoom: zoom_to,
                                 }).into_any()
                             }
                         },
@@ -391,7 +396,7 @@ pub fn HistoryChart(
                                     };
                                     render_bars_window(BarsWindow {
                                         lang,
-                                        axis: axis_for(lang, Some(c), range, d.span, fdomain.1),
+                                        axis: axis_for(lang, Some(c), range, d.span, fdomain.1, per == DailyPer::Month),
                                         shown: d,
                                         compared,
                                         per,
@@ -765,6 +770,8 @@ struct SeriesView {
     /// The legend's name of what is shown.
     name: String,
     dates: Option<SeriesDates>,
+    /// Called with the local date of a clicked point, when the unit zooms.
+    zoom: Option<Callback<NaiveDate>>,
 }
 
 fn render_series(v: SeriesView) -> impl IntoView {
@@ -780,6 +787,7 @@ fn render_series(v: SeriesView) -> impl IntoView {
         axis,
         name,
         dates,
+        zoom,
     } = v;
     let discrete = state_axis_labels(lang, None, &kind).is_some();
     let cmp_pts: Vec<(i64, f64, f64, f64)> = dates
@@ -862,6 +870,14 @@ fn render_series(v: SeriesView) -> impl IntoView {
             .get()
             .and_then(|i| xs.with_value(|xs| xs.get(i).copied()))
     };
+    let click = move |_| {
+        let t = hover
+            .get_untracked()
+            .and_then(|i| points.with_value(|p| p.get(i).map(|p| p.0)));
+        if let (Some(zoom), Some(t)) = (zoom, t) {
+            zoom.run(local_today(t));
+        }
+    };
     let gid = next_gradient_id();
     let fill = format!("url(#{gid})");
     let layer = overlay.as_ref().map(|o| periods_layer(o, true));
@@ -871,7 +887,8 @@ fn render_series(v: SeriesView) -> impl IntoView {
     view! {
         <div class="history-chart__inset">
             <div class="history-chart__plot" node_ref=plot
-                on:pointermove=track on:pointerdown=track
+                class:history-chart__plot--zoom=zoom.is_some()
+                on:pointermove=track on:pointerdown=track on:click=click
                 on:pointerleave=move |_| hover.set(None)
                 on:pointercancel=move |_| hover.set(None)>
                 {layer}
@@ -885,7 +902,9 @@ fn render_series(v: SeriesView) -> impl IntoView {
                     }).collect::<Vec<_>>()}
                     <path d=band class="history-chart__band" />
                     <path d=area fill=fill class="history-chart__area" />
-                    <path d=cmp_line class="history-chart__line history-chart__line--compare" fill="none" />
+                    {(!cmp_line.is_empty()).then(|| view! {
+                        <path d=cmp_line class="history-chart__line history-chart__line--compare" fill="none" />
+                    })}
                     <path d=line class="history-chart__line" class:history-chart__line--step=discrete fill="none" />
                 </svg>
                 {now_line}
@@ -908,7 +927,7 @@ fn render_series(v: SeriesView) -> impl IntoView {
                         let mut tip = series_tip(lang, range, &kind, unit_tip.as_deref(), decimals, now, &p);
                         // Against another period, each value says which date it is.
                         let versus = dates.with_value(|d| d.as_ref().and_then(|d| {
-                            let c = compared_at(&d.compared, p.0, d.start, d.nominal)?;
+                            let c = compared_at(&d.compared, p.0, d.start, d.bucketing)?;
                             let mut other = series_tip(
                                 lang, range, &kind, unit_tip.as_deref(), decimals, now,
                                 &(c.orig, c.v.0, c.v.1, c.v.2),

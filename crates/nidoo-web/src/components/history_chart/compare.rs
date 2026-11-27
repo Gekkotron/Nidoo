@@ -11,10 +11,12 @@ use super::format::{tooltip_day, tooltip_time};
 use super::geom::{slot_index, tooltip_flips};
 use super::ticks::window_ticks;
 use super::view::{pct, pointer_frac};
-use super::window::{ChartWindow, local_today, runs_today, window_days};
+use super::window::{
+    ChartWindow, local_today, runs_today, window_days, window_months, window_secs,
+};
 use crate::api::history::WindowReq;
 use crate::components::history_chart::format::tick_labels;
-use crate::history_compare::{bucket_index, nominal};
+use crate::history_compare::{Bucketing, bucket_index, nominal};
 use crate::history_period::{Span, Unit};
 use crate::i18n::Lang;
 use crate::i18n::history::{kwh, period_counter_legend, period_name, period_total_line};
@@ -45,17 +47,28 @@ pub fn place<T: Copy>(
     cmp_start: i64,
     shown_start: i64,
     shown_len: i64,
-    nominal_s: i64,
+    bucketing: Bucketing,
 ) -> Vec<Shifted<T>> {
-    let nominal_s = nominal_s.max(1);
+    let bucketing = match bucketing {
+        Bucketing::Nominal(n) => Bucketing::Nominal(n.max(1)),
+        months => months,
+    };
+    // Seconds one bucket stands for on the shown axis, and how many buckets the shown reply has.
+    let (step, buckets) = match bucketing {
+        Bucketing::Nominal(n) => (n, (shown_len + n - 1).div_euclid(n)),
+        Bucketing::Months if shown_len > 0 => (
+            nominal(DailyPer::Month),
+            Bucketing::Months.index(shown_start + shown_len - 1, shown_start) + 1,
+        ),
+        Bucketing::Months => (nominal(DailyPer::Month), 0),
+    };
     items
         .iter()
         .filter_map(|&(orig, v)| {
-            let idx = bucket_index(orig - cmp_start, nominal_s);
-            let off = idx * nominal_s;
-            (idx >= 0 && off < shown_len).then_some(Shifted {
+            let idx = bucketing.index(orig, cmp_start);
+            (idx >= 0 && idx < buckets).then_some(Shifted {
                 idx,
-                t: shown_start + off,
+                t: shown_start + idx * step,
                 orig,
                 v,
             })
@@ -69,13 +82,13 @@ pub fn place_points(
     cmp_start: i64,
     shown_start: i64,
     shown_len: i64,
-    nominal_s: i64,
+    bucketing: Bucketing,
 ) -> Vec<Shifted<(f64, f64, f64)>> {
     let items: Vec<(i64, (f64, f64, f64))> = points
         .iter()
         .map(|&(t, m, lo, hi)| (t, (m, lo, hi)))
         .collect();
-    place(&items, cmp_start, shown_start, shown_len, nominal_s)
+    place(&items, cmp_start, shown_start, shown_len, bucketing)
 }
 
 /// The compared bucket sharing the bucket of the shown time `shown_t`.
@@ -83,15 +96,21 @@ pub fn compared_at<T>(
     cmp: &[Shifted<T>],
     shown_t: i64,
     shown_start: i64,
-    nominal_s: i64,
+    bucketing: Bucketing,
 ) -> Option<&Shifted<T>> {
-    let idx = bucket_index(shown_t - shown_start, nominal_s.max(1));
+    let idx = bucketing.index(shown_t, shown_start);
     cmp.iter().find(|c| c.idx == idx)
 }
 
-/// How many bucket slots a period of `domain_len` seconds holds.
-pub fn slot_count(domain_len: i64, nominal_s: i64) -> usize {
-    (bucket_index(domain_len, nominal_s.max(1))).max(1) as usize
+/// How many bucket slots a window holds: hours by its real length (a clock-change day has 23 or
+/// 25), days by its dates, months by the calendar months it touches (a window starting
+/// mid-month has a short first one).
+pub fn slots_for(per: DailyPer, req: &WindowReq) -> usize {
+    match per {
+        DailyPer::Hour => bucket_index(window_secs(req), 3_600).max(1) as usize,
+        DailyPer::Day => window_days(req).max(1) as usize,
+        DailyPer::Month => window_months(req),
+    }
 }
 
 /// What one bar slot holds: the shown bucket and the compared one (its own time, value).
@@ -113,7 +132,7 @@ pub fn bar_slots(
     shown: &[(i64, f64)],
     cmp: &[Shifted<f64>],
     shown_start: i64,
-    nominal_s: i64,
+    bucketing: Bucketing,
     n: usize,
 ) -> Vec<BarSlot> {
     let mut slots = vec![
@@ -124,7 +143,7 @@ pub fn bar_slots(
         n
     ];
     for &(t, v) in shown {
-        let idx = bucket_index(t - shown_start, nominal_s.max(1));
+        let idx = bucketing.index(t, shown_start);
         if let Some(slot) = usize::try_from(idx).ok().and_then(|i| slots.get_mut(i))
             && slot.shown.is_none()
         {
@@ -228,7 +247,7 @@ impl DatesCtx {
     /// period is over, or reaches its end.
     pub fn now_frac(&self, span: Option<(i64, i64)>) -> Option<f64> {
         let (a, b) = span.filter(|_| self.running)?;
-        let frac = (b - a) as f64 / (window_days(&self.req) * 86_400) as f64;
+        let frac = (b - a) as f64 / window_secs(&self.req) as f64;
         (0.0..1.0).contains(&frac).then_some(frac)
     }
 }
@@ -249,10 +268,11 @@ pub fn axis_for(
     range: HistoryRange,
     span: Option<(i64, i64)>,
     domain_end: i64,
+    by_slot: bool,
 ) -> Axis {
     match ctx {
         Some(c) => Axis {
-            ticks: window_ticks(lang, c.unit, &c.req, c.now_frac(span)),
+            ticks: window_ticks(lang, c.unit, &c.req, c.now_frac(span), by_slot),
             windowed: true,
         },
         None => Axis {
@@ -305,7 +325,7 @@ pub struct SeriesDates {
     pub cmp_name: Option<String>,
     /// The shown reply's start, and its bucket length, which index both series.
     pub start: i64,
-    pub nominal: i64,
+    pub bucketing: Bucketing,
     pub now_frac: Option<f64>,
     /// The shown reply's end, while the period is running.
     pub running_to: Option<i64>,
@@ -317,11 +337,11 @@ pub fn series_dates(
     shown: &HistorySeries,
     cmp: Option<&HistorySeries>,
 ) -> SeriesDates {
-    let nominal = shown.window.max(1);
+    let bucketing = Bucketing::Nominal(shown.window.max(1));
     let compared = match (cmp, shown.span) {
         (Some(c), Some(s)) => c
             .span
-            .map(|cs| place_points(&c.points, cs.0, s.0, s.1 - s.0, nominal))
+            .map(|cs| place_points(&c.points, cs.0, s.0, s.1 - s.0, bucketing))
             .unwrap_or_default(),
         _ => Vec::new(),
     };
@@ -330,7 +350,7 @@ pub fn series_dates(
         cmp_name: ctx.cmp_name.clone().filter(|_| !compared.is_empty()),
         compared,
         start: shown.span.map_or(0, |s| s.0),
-        nominal,
+        bucketing,
         now_frac,
         running_to: shown.span.filter(|_| ctx.running).map(|s| s.1),
     }
@@ -360,9 +380,8 @@ pub fn render_bars_window(p: BarsWindow) -> impl IntoView {
         axis,
         zoom,
     } = p;
-    let nom = nominal(per);
-    let len = window_days(&ctx.req) * 86_400;
-    let n = slot_count(len, nom);
+    let nom = Bucketing::of(per);
+    let n = slots_for(per, &ctx.req);
     let start = shown
         .span
         .map_or_else(|| shown.days.first().map_or(0, |d| d.0), |s| s.0);

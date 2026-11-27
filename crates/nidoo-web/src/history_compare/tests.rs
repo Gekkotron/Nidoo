@@ -63,3 +63,44 @@ fn stats_without_comparison() {
         Some((2.0, 0.0, 5.0))
     );
 }
+
+fn midnight(y: i32, m: u32, d: u32) -> i64 {
+    let date = chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    date.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days()
+        * 86_400
+        - 3_600
+}
+
+/// The month buckets of a window as the hub makes them: its start, then each 1st.
+fn month_buckets(start: (i32, u32, u32), months: u32, kwh: f64) -> (i64, Vec<(i64, f64)>) {
+    let first = midnight(start.0, start.1, start.2);
+    let mut out = vec![(first, kwh)];
+    let (mut y, mut m) = (start.0, start.1);
+    for _ in 1..months {
+        (y, m) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+        out.push((midnight(y, m, 1), kwh));
+    }
+    (first, out)
+}
+
+#[test]
+fn a_window_starting_mid_month_keeps_every_month_apart() {
+    // 28 Nov 2025 to 27 Nov 2026: the Nov stub and December are different buckets.
+    let (s, shown) = month_buckets((2025, 11, 28), 13, 1.0);
+    let (c, cmp) = month_buckets((2024, 11, 28), 13, 2.0);
+    assert_eq!(Bucketing::Months.index(shown[1].0, s), 1);
+    let sum = counter_summary(&shown, s, &cmp, c, DailyPer::Month).unwrap();
+    assert!(close(sum.shown, 13.0) && close(sum.compared, 26.0));
+    assert_eq!(sum.left_out, 0);
+}
+
+#[test]
+fn a_window_starting_on_the_15th_of_january_keeps_feb_and_mar() {
+    let (s, shown) = month_buckets((2026, 1, 15), 13, 1.0);
+    let idx: Vec<i64> = shown
+        .iter()
+        .map(|(t, _)| Bucketing::Months.index(*t, s))
+        .collect();
+    assert_eq!(idx, (0..13).collect::<Vec<_>>());
+}
