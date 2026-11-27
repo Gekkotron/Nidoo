@@ -40,6 +40,15 @@ fn api_error(e: ApiError) -> ToolError {
     ToolError(e.message)
 }
 
+/// A history failure as a tool error: `code: message`, without the variant's own prefix
+/// doubling the code for a bad request.
+fn history_tool_error(e: HistoryError) -> ToolError {
+    match &e {
+        HistoryError::BadRequest(msg) => ToolError(format!("{}: {msg}", e.code())),
+        _ => ToolError(format!("{}: {e}", e.code())),
+    }
+}
+
 #[tool_router(vis = "pub(super)")]
 impl NidooMcp {
     /// The outdoor weather from Open-Meteo: now, today, rain in the next hour, tonight's low and
@@ -468,7 +477,7 @@ impl NidooMcp {
             .history()
             .ok_or_else(|| ToolError("history_unavailable: `[history] url` is not set".into()))?;
         let now = crate::clock::now_micros();
-        let history_err = |e: HistoryError| ToolError(format!("{}: {e}", e.code()));
+        let history_err = history_tool_error;
         let bad = |msg: &str| ToolError(format!("bad_request: {msg}"));
         let window = parse_window(
             params.from.as_deref(),
@@ -615,7 +624,7 @@ impl NidooMcp {
             crate::clock::now_micros(),
         )
         .await
-        .map_err(|e| ToolError(format!("{}: {e}", e.code())))?;
+        .map_err(history_tool_error)?;
         Ok(Json(day))
     }
 
@@ -800,7 +809,15 @@ mod tests {
     use nidoo_core::model::{AlarmMode, Command};
 
     use super::super::params::{SendCommandParams, SetFlowParams};
-    use super::logged_args;
+    use super::{HistoryError, history_tool_error, logged_args};
+
+    #[test]
+    fn bad_request_does_not_double_its_prefix() {
+        let e = history_tool_error(HistoryError::BadRequest("to is before from".into()));
+        assert_eq!(e.0, "bad_request: to is before from");
+        let e = history_tool_error(HistoryError::NotRecorded);
+        assert_eq!(e.0, "not_recorded: not recorded");
+    }
 
     #[test]
     fn send_command_log_hides_the_alarm_code() {

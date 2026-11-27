@@ -29,6 +29,23 @@ fn parse_window_rules() {
     assert!(parse_window(Some("2025-11-30"), Some("2025-11-01"), None).is_err());
     assert!(parse_window(Some("nope"), Some("2025-11-01"), None).is_err());
     assert!(parse_window(Some("2025-11-01"), Some("2025-11-30"), Some("0")).is_err());
+    for bad_date in [
+        "-262144-01-01",
+        "0999-01-01",
+        "2025-1-1",
+        "+2025-01-01",
+        "2101-01-01",
+    ] {
+        assert!(
+            parse_window(Some(bad_date), Some("2025-01-01"), None).is_err(),
+            "{bad_date}"
+        );
+        assert!(
+            parse_window(Some("2000-01-01"), Some(bad_date), None).is_err(),
+            "{bad_date}"
+        );
+    }
+    assert!(parse_window(Some("2000-01-01"), Some("2100-12-31"), None).is_ok());
     let w = parse_window(Some("2025-11-01"), Some("2025-11-30"), Some("3600"))
         .unwrap()
         .unwrap();

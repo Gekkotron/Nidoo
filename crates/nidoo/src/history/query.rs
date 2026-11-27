@@ -628,8 +628,8 @@ pub async fn daily_window(
     now: Micros,
 ) -> Result<HistoryDaily, HistoryError> {
     check_limits(w, WindowUse::Daily(per))?;
-    let db = h.db()?;
     let r = resolve(h.zone(), w, now)?;
+    let db = h.db()?;
     if !db.is_recorded(entity).await.map_err(unavailable)? {
         return Err(HistoryError::NotRecorded);
     }

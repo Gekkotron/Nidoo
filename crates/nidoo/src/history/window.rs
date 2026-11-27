@@ -43,7 +43,15 @@ fn bad(msg: impl Into<String>) -> HistoryError {
 }
 
 fn date(name: &str, s: &str) -> Result<NaiveDate, HistoryError> {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| bad(format!("{name} must be YYYY-MM-DD")))
+    let err = || bad(format!("{name} must be YYYY-MM-DD, years 2000 to 2100"));
+    if s.len() != 10 {
+        return Err(err());
+    }
+    let d = NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| err())?;
+    if !(2000..=2100).contains(&d.year()) {
+        return Err(err());
+    }
+    Ok(d)
 }
 
 /// Parses the window parameters: `None` when neither `from` nor `to` is given.
