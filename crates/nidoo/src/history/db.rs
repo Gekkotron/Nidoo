@@ -17,6 +17,11 @@ use nidoo_core::history::buckets::{Bucket, Sample};
 use nidoo_core::history::{AvailabilityRow, LastWritten, Micros, Rows, ValueRow};
 use nidoo_core::model::{Availability, StateValue};
 
+/// How far back a "last row before" lookup reads first. A query with no lower time bound is
+/// planned across every chunk the table ever had, which costs far more than running it; an
+/// entity that last spoke longer ago than this pays that once more, in a second query.
+pub(super) const CARRY_LOOKBACK: &str = "INTERVAL '30 days'";
+
 /// Handle on the history Postgres pool.
 #[derive(Clone)]
 pub struct Db {
@@ -294,16 +299,41 @@ impl Db {
 
     /// The latest raw value of `entity` strictly before `at`.
     pub async fn last_before(&self, entity: &str, at: Micros) -> Result<Option<f64>, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT num FROM entity_state
-             WHERE entity_id = $1 AND num IS NOT NULL AND time < $2
-             ORDER BY time DESC, seq DESC LIMIT 1",
-        )
-        .bind(entity)
-        .bind(micros_to_dt(at))
-        .fetch_optional(&self.pool)
-        .await?;
+        let row = self
+            .last_row_before(
+                "SELECT num FROM entity_state
+                 WHERE entity_id = $1 AND num IS NOT NULL AND time < $2",
+                entity,
+                at,
+            )
+            .await?;
         Ok(row.map(|r| r.get(0)))
+    }
+
+    /// The newest row of `select` (a `SELECT … WHERE entity_id = $1 AND time < $2 …` over a
+    /// table with `time` and `seq`) before `at`: read within [`CARRY_LOOKBACK`] first, then
+    /// without a lower bound when nothing is that recent.
+    pub(super) async fn last_row_before(
+        &self,
+        select: &str,
+        entity: &str,
+        at: Micros,
+    ) -> Result<Option<sqlx::postgres::PgRow>, sqlx::Error> {
+        const NEWEST: &str = "ORDER BY time DESC, seq DESC LIMIT 1";
+        let recent = format!("{select} AND time >= $2 - {CARRY_LOOKBACK} {NEWEST}");
+        let row = sqlx::query(&recent)
+            .bind(entity)
+            .bind(micros_to_dt(at))
+            .fetch_optional(&self.pool)
+            .await?;
+        if row.is_some() {
+            return Ok(row);
+        }
+        sqlx::query(&format!("{select} {NEWEST}"))
+            .bind(entity)
+            .bind(micros_to_dt(at))
+            .fetch_optional(&self.pool)
+            .await
     }
 
     /// `entity`'s last value before `from` and its values in `[from, to)`, oldest first, text
@@ -314,16 +344,14 @@ impl Db {
         from: Micros,
         to: Micros,
     ) -> Result<(Option<StateValue>, Vec<(Micros, StateValue)>), sqlx::Error> {
-        let carry = sqlx::query(
-            "SELECT value FROM entity_state
-             WHERE entity_id = $1 AND time < $2
-             ORDER BY time DESC, seq DESC LIMIT 1",
-        )
-        .bind(entity)
-        .bind(micros_to_dt(from))
-        .fetch_optional(&self.pool)
-        .await?
-        .and_then(|row| serde_json::from_value::<StateValue>(row.get::<Json, _>(0)).ok());
+        let carry = self
+            .last_row_before(
+                "SELECT value FROM entity_state WHERE entity_id = $1 AND time < $2",
+                entity,
+                from,
+            )
+            .await?
+            .and_then(|row| serde_json::from_value::<StateValue>(row.get::<Json, _>(0)).ok());
         let rows = sqlx::query(
             "SELECT time, value FROM entity_state
              WHERE entity_id = $1 AND time >= $2 AND time < $3
@@ -351,16 +379,15 @@ impl Db {
         from: Micros,
         to: Micros,
     ) -> Result<(Option<Availability>, Vec<(Micros, Availability)>), sqlx::Error> {
-        let carry = sqlx::query(
-            "SELECT availability FROM entity_availability
-             WHERE entity_id = $1 AND time < $2
-             ORDER BY time DESC, seq DESC LIMIT 1",
-        )
-        .bind(entity)
-        .bind(micros_to_dt(from))
-        .fetch_optional(&self.pool)
-        .await?
-        .and_then(|row| parse_availability(&row.get::<String, _>(0)));
+        let carry = self
+            .last_row_before(
+                "SELECT availability FROM entity_availability
+                 WHERE entity_id = $1 AND time < $2",
+                entity,
+                from,
+            )
+            .await?
+            .and_then(|row| parse_availability(&row.get::<String, _>(0)));
         let rows = sqlx::query(
             "SELECT time, availability FROM entity_availability
              WHERE entity_id = $1 AND time >= $2 AND time < $3

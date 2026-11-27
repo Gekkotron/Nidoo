@@ -685,6 +685,50 @@ async fn climate_targets_reads_jsonb_and_carries_prior_value() {
     tdb.drop_db().await;
 }
 
+/// The lookups for the last row before a time read 30 days back first; a row older than that
+/// must still be found, and a recent one must win over it.
+#[tokio::test]
+async fn carries_reach_past_the_first_lookback() {
+    let Some(tdb) = fresh_db().await else { return };
+    let t: i64 = 1_800_000_000_000_000;
+    let day = 24 * 3_600_000_000i64;
+    let rows = Rows {
+        values: vec![
+            climate_row("old", t - 90 * day, Some(17.0), "heat"),
+            value_row("old", t - 80 * day, 1.5),
+            climate_row("both", t - 90 * day, Some(17.0), "heat"),
+            climate_row("both", t - 2 * day, Some(21.0), "cool"),
+            value_row("both", t - 80 * day, 1.5),
+            value_row("both", t - day, 2.5),
+        ],
+        availability: vec![availability_row("old", t - 70 * day, Availability::Offline)],
+    };
+    tdb.db.insert(&rows).await.unwrap();
+
+    assert_eq!(
+        tdb.db.climate_targets("old", t, t + day).await.unwrap(),
+        vec![(t, Some(17.0), Some("heat".to_string()))]
+    );
+    assert_eq!(
+        tdb.db.climate_targets("both", t, t + day).await.unwrap(),
+        vec![(t, Some(21.0), Some("cool".to_string()))]
+    );
+    assert_eq!(tdb.db.last_before("old", t).await.unwrap(), Some(1.5));
+    assert_eq!(tdb.db.last_before("both", t).await.unwrap(), Some(2.5));
+    assert_eq!(tdb.db.last_before("ghost", t).await.unwrap(), None);
+    let (carry, rows) = tdb.db.states_between("old", t, t + day).await.unwrap();
+    assert_eq!(carry, Some(StateValue::Number(1.5)));
+    assert!(rows.is_empty());
+    let (carry, _) = tdb
+        .db
+        .availability_between("old", t, t + day)
+        .await
+        .unwrap();
+    assert_eq!(carry, Some(Availability::Offline));
+
+    tdb.drop_db().await;
+}
+
 #[tokio::test]
 async fn equal_times_keep_insertion_order() {
     let Some(tdb) = fresh_db().await else { return };
