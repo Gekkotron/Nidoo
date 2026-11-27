@@ -159,10 +159,15 @@ impl Db {
             return Ok(HashMap::new());
         }
         let rows = sqlx::query(
-            "SELECT DISTINCT ON (entity_id) entity_id, last
-             FROM history_hourly
-             WHERE bucket < $1 AND entity_id = ANY($2::text[])
-             ORDER BY entity_id, bucket DESC",
+            // One backward index probe per entity: a `DISTINCT ON` over the same rows reads
+            // every bucket the entities ever had.
+            "SELECT e.entity_id, h.last
+             FROM UNNEST($2::text[]) AS e(entity_id)
+             CROSS JOIN LATERAL (
+                 SELECT last FROM history_hourly
+                 WHERE entity_id = e.entity_id AND bucket < $1
+                 ORDER BY bucket DESC LIMIT 1
+             ) h",
         )
         .bind(micros_to_dt(before))
         .bind(entities)
@@ -182,32 +187,45 @@ impl Db {
         if rows.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin().await?;
-        for (id, b) in rows {
-            sqlx::query(
-                "INSERT INTO history_hourly
-                   (entity_id, bucket, covered_us, integral, min, max, last, increase)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (entity_id, bucket) DO UPDATE SET
-                   covered_us = EXCLUDED.covered_us,
-                   integral   = EXCLUDED.integral,
-                   min        = EXCLUDED.min,
-                   max        = EXCLUDED.max,
-                   last       = EXCLUDED.last,
-                   increase   = EXCLUDED.increase",
-            )
-            .bind(id)
-            .bind(micros_to_dt(b.start))
-            .bind(b.covered)
-            .bind(b.integral)
-            .bind(b.min)
-            .bind(b.max)
-            .bind(b.last)
-            .bind(b.increase)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
+        let ids: Vec<&str> = rows.iter().map(|(id, _)| id.as_str()).collect();
+        let buckets: Vec<DateTime<Utc>> = rows.iter().map(|(_, b)| micros_to_dt(b.start)).collect();
+        let covered: Vec<i64> = rows.iter().map(|(_, b)| b.covered).collect();
+        let integral: Vec<f64> = rows.iter().map(|(_, b)| b.integral).collect();
+        let min: Vec<f64> = rows.iter().map(|(_, b)| b.min).collect();
+        let max: Vec<f64> = rows.iter().map(|(_, b)| b.max).collect();
+        let last: Vec<f64> = rows.iter().map(|(_, b)| b.last).collect();
+        let increase: Vec<f64> = rows.iter().map(|(_, b)| b.increase).collect();
+        // One statement for the batch. An upsert may not touch a row twice, so a repeated
+        // (entity, bucket) keeps its last entry, as one statement per row did.
+        sqlx::query(
+            "INSERT INTO history_hourly
+               (entity_id, bucket, covered_us, integral, min, max, last, increase)
+             SELECT DISTINCT ON (entity_id, bucket)
+                    entity_id, bucket, covered_us, integral, min, max, last, increase
+             FROM UNNEST(
+                 $1::text[], $2::timestamptz[], $3::int8[], $4::float8[],
+                 $5::float8[], $6::float8[], $7::float8[], $8::float8[]
+             ) WITH ORDINALITY
+               AS t(entity_id, bucket, covered_us, integral, min, max, last, increase, ord)
+             ORDER BY entity_id, bucket, ord DESC
+             ON CONFLICT (entity_id, bucket) DO UPDATE SET
+               covered_us = EXCLUDED.covered_us,
+               integral   = EXCLUDED.integral,
+               min        = EXCLUDED.min,
+               max        = EXCLUDED.max,
+               last       = EXCLUDED.last,
+               increase   = EXCLUDED.increase",
+        )
+        .bind(&ids)
+        .bind(&buckets)
+        .bind(&covered)
+        .bind(&integral)
+        .bind(&min)
+        .bind(&max)
+        .bind(&last)
+        .bind(&increase)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -365,9 +383,38 @@ impl Db {
         Ok((carry, rows))
     }
 
-    /// Oldest value time over `entities`, if any: one indexed `ORDER BY time LIMIT 1` per id,
-    /// so the answer never scans an entity's history.
+    /// Oldest value time over `entities`, if any, found through their first hourly bucket (one
+    /// index probe per id). Raw rows are only read (one indexed `ORDER BY time
+    /// LIMIT 1` per id, which plans across every chunk) when no entity has a bucket yet.
     pub async fn first_time_of(&self, entities: &[String]) -> Result<Option<Micros>, sqlx::Error> {
+        if entities.is_empty() {
+            return Ok(None);
+        }
+        let rolled: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT min(h.bucket)
+             FROM UNNEST($1::text[]) AS e(entity_id)
+             CROSS JOIN LATERAL (
+                 SELECT bucket FROM history_hourly
+                 WHERE entity_id = e.entity_id
+                 ORDER BY bucket LIMIT 1
+             ) h",
+        )
+        .bind(entities)
+        .fetch_one(&self.pool)
+        .await?;
+        if let Some(hour) = rolled {
+            // The exact time within that hour: a read of one chunk.
+            let exact: Option<DateTime<Utc>> = sqlx::query_scalar(
+                "SELECT min(time) FROM entity_state
+                 WHERE entity_id = ANY($1::text[]) AND num IS NOT NULL
+                   AND time >= $2 AND time < $2 + INTERVAL '1 hour'",
+            )
+            .bind(entities)
+            .bind(hour)
+            .fetch_one(&self.pool)
+            .await?;
+            return Ok(Some(dt_to_micros(exact.unwrap_or(hour))));
+        }
         let mut first: Option<Micros> = None;
         for id in entities {
             let row = sqlx::query(
@@ -450,26 +497,34 @@ async fn insert_values(
     Ok(())
 }
 
+/// One statement for the batch. An upsert may not touch a row twice, so each entity keeps only
+/// its newest row, the later one on a tie: what one statement per row left behind.
 async fn upsert_entity_latest(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     values: &[ValueRow],
 ) -> Result<(), sqlx::Error> {
-    for row in values {
-        let v = serde_json::to_value(&row.value).unwrap_or(Json::Null);
-        sqlx::query(
-            "INSERT INTO entity_latest (entity_id, time, value)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (entity_id) DO UPDATE SET
-               time  = EXCLUDED.time,
-               value = EXCLUDED.value
-             WHERE EXCLUDED.time >= entity_latest.time",
-        )
-        .bind(&row.id)
-        .bind(micros_to_dt(row.at))
-        .bind(v)
-        .execute(&mut **tx)
-        .await?;
-    }
+    let ids: Vec<&str> = values.iter().map(|r| r.id.as_str()).collect();
+    let times: Vec<DateTime<Utc>> = values.iter().map(|r| micros_to_dt(r.at)).collect();
+    let payload: Vec<Json> = values
+        .iter()
+        .map(|r| serde_json::to_value(&r.value).unwrap_or(Json::Null))
+        .collect();
+    sqlx::query(
+        "INSERT INTO entity_latest (entity_id, time, value)
+         SELECT DISTINCT ON (entity_id) entity_id, time, value
+         FROM UNNEST($1::text[], $2::timestamptz[], $3::jsonb[]) WITH ORDINALITY
+           AS t(entity_id, time, value, ord)
+         ORDER BY entity_id, time DESC, ord DESC
+         ON CONFLICT (entity_id) DO UPDATE SET
+           time  = EXCLUDED.time,
+           value = EXCLUDED.value
+         WHERE EXCLUDED.time >= entity_latest.time",
+    )
+    .bind(&ids)
+    .bind(&times)
+    .bind(&payload)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -497,25 +552,33 @@ async fn insert_availability(
     Ok(())
 }
 
+/// One statement for the batch, like [`upsert_entity_latest`].
 async fn upsert_availability_latest(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     rows: &[AvailabilityRow],
 ) -> Result<(), sqlx::Error> {
-    for row in rows {
-        sqlx::query(
-            "INSERT INTO availability_latest (entity_id, time, availability)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (entity_id) DO UPDATE SET
-               time         = EXCLUDED.time,
-               availability = EXCLUDED.availability
-             WHERE EXCLUDED.time >= availability_latest.time",
-        )
-        .bind(&row.id)
-        .bind(micros_to_dt(row.at))
-        .bind(availability_to_str(row.availability))
-        .execute(&mut **tx)
-        .await?;
-    }
+    let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let times: Vec<DateTime<Utc>> = rows.iter().map(|r| micros_to_dt(r.at)).collect();
+    let avails: Vec<&str> = rows
+        .iter()
+        .map(|r| availability_to_str(r.availability))
+        .collect();
+    sqlx::query(
+        "INSERT INTO availability_latest (entity_id, time, availability)
+         SELECT DISTINCT ON (entity_id) entity_id, time, availability
+         FROM UNNEST($1::text[], $2::timestamptz[], $3::text[]) WITH ORDINALITY
+           AS t(entity_id, time, availability, ord)
+         ORDER BY entity_id, time DESC, ord DESC
+         ON CONFLICT (entity_id) DO UPDATE SET
+           time         = EXCLUDED.time,
+           availability = EXCLUDED.availability
+         WHERE EXCLUDED.time >= availability_latest.time",
+    )
+    .bind(&ids)
+    .bind(&times)
+    .bind(&avails)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
