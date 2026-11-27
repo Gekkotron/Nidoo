@@ -73,6 +73,12 @@ services:
         [ -f /run/nidoo-bundled/db-password ] && export POSTGRES_PASSWORD_FILE=/run/nidoo-bundled/db-password
         exec docker-entrypoint.sh "$$0" "$$@"
     command: ["postgres"]
+    # Every hypertable chunk is a set of files, so years of history can pass
+    # the default open-file limit ("Too many open files").
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ./data/timescaledb:/var/lib/postgresql/data
       - ./data/bundled:/run/nidoo-bundled:ro
