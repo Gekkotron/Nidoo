@@ -1,11 +1,14 @@
 //! History chart: pure geometry and label formatting; the Leptos component wraps both.
 
+pub mod compare;
 pub mod fetch;
 pub mod format;
 pub mod geom;
 pub mod periods;
 pub mod plot;
 pub mod selection;
+pub mod summary;
+pub mod ticks;
 pub mod view;
 pub mod window;
 

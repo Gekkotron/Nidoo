@@ -316,3 +316,25 @@ fn daily_bars_lay_out_evenly_and_scale_to_max() {
 fn daily_bars_empty_input_is_empty() {
     assert!(daily_bars(&[], 300.0, 100.0).is_empty());
 }
+
+#[test]
+fn a_held_step_path_stops_at_the_hold() {
+    let p = [(0, 1.0, 1.0, 1.0), (50, 2.0, 2.0, 2.0)];
+    let s = YScale { min: 0.0, max: 2.0 };
+    let full = step_path(&p, s, 0, 100, 100.0, 50.0);
+    assert!(full.d.ends_with("H100"), "{}", full.d);
+    let held = step_path_held(&p, s, 0, 100, 100.0, 60.0, 50.0);
+    assert!(held.d.ends_with("H60"), "{}", held.d);
+}
+
+#[test]
+fn a_held_smooth_line_ends_at_its_hold() {
+    let p = [(0, 1.0, 1.0, 1.0), (50, 2.0, 2.0, 2.0)];
+    let s = YScale { min: 0.0, max: 2.0 };
+    let full = smooth_path(&p, s, 0, 100, 100.0, 50.0);
+    let held = smooth_path_held(&p, s, 0, 100, 100.0, 50.0, 50.0);
+    assert_ne!(full.line, held.line);
+    // Held right where the last point is: nothing is added after it.
+    assert_eq!(held.line.matches('C').count(), 1);
+    assert_eq!(full.line.matches('C').count(), 2);
+}

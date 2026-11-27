@@ -5,6 +5,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use chrono::NaiveDate;
 use leptos::html;
 use leptos::prelude::*;
 use nidoo_api::{
@@ -13,23 +14,29 @@ use nidoo_api::{
 use nidoo_core::flow::Scalar;
 use nidoo_core::model::Kind;
 
+use super::compare::{
+    Axis, BarsWindow, SeriesDates, axis_for, axis_x, compare_key, compared_at, dates_ctx, now_mark,
+    render_bars_window, series_dates, series_when,
+};
 pub use super::fetch::{FetchPlan, drawn_unit, is_stale, plan_fetch};
 use super::fetch::{State, apply_shown, compared_next, compared_plan, fetch_plan};
-use super::format::{state_axis_labels, state_value_label, tick_labels, tooltip_day, tooltip_time};
+use super::format::{state_axis_labels, state_value_label, tooltip_day, tooltip_time};
 use super::geom::{
     Bar, NiceScale, SmoothPath, StepPath, YScale, daily_bars, nearest_index, nice_scale,
-    plot_points, slot_index, smooth_path, step_decimals, step_path, tooltip_flips, value_decimals,
-    y_scale,
+    plot_points, slot_index, smooth_path_held, step_decimals, step_path_held, tooltip_flips,
+    value_decimals, y_scale,
 };
 use super::periods::{Band, band_near, legend, periods, scalar_text, value_at, word_in};
 use super::plot::{FieldsState, Plot, field_series, headline_or_error, percent_scale, plot_for};
 use super::selection::{chip_label, chips, parse_show, show_param, toggle};
+use super::summary::PeriodSummary;
 pub use super::window::ChartWindow;
 use super::window::{
     compared_req, domain, has_fields, local_today, refetches, runs_today, window_per, window_range,
 };
 use crate::api::history::{HistoryApiError, WindowReq, fetch_fields, fetch_fields_window};
 use crate::components::now::Now;
+use crate::history_period::zoom;
 use crate::house::House;
 use crate::i18n::format as fmt;
 use crate::i18n::history::{
@@ -77,6 +84,10 @@ pub fn HistoryChart(
     /// The entity's kind, which words the chips and the periods.
     #[prop(optional)]
     field_kind: Option<Signal<Kind>>,
+    /// Called with the local date of a clicked bucket of a date window, when its unit zooms
+    /// into a finer one (a year into its months, a week or month into its days).
+    #[prop(optional)]
+    on_zoom: Option<Callback<NaiveDate>>,
 ) -> impl IntoView {
     let wants_fields = on_show.is_some();
     let state = RwSignal::new(State::Loading);
@@ -267,15 +278,18 @@ pub fn HistoryChart(
                 let chip_list = chips(&tracks);
                 let sel = parse_show(show.get().as_deref(), &chip_list);
                 // The x domain of a field plot: the fields reply's own axis.
-                let fdomain = domain(
-                    &win,
-                    match &fields_now {
-                        FieldsState::Ready(f) if f.to > f.from => Some((f.from, f.to)),
-                        _ => None,
-                    },
-                    now_s,
-                );
+                let fspan = match &fields_now {
+                    FieldsState::Ready(f) if f.to > f.from => Some((f.from, f.to)),
+                    _ => None,
+                };
+                let fdomain = domain(&win, fspan, now_s);
+                let dctx = dates_ctx(lang, &win, now_s);
+                let name = dctx
+                    .as_ref()
+                    .map_or_else(|| range_name(lang, range).to_owned(), |c| c.name.clone());
+                let cmp_state = compared.get();
                 let plot = plot_for(flavor.get(), &fields_now, &sel, &chip_list);
+                let entity_plot = matches!(plot, Plot::Bars | Plot::Headline { .. });
                 let row = match on_show {
                     Some(on_show)
                         if chip_list.len() > 1 && matches!(fields_now, FieldsState::Ready(_)) =>
@@ -316,14 +330,22 @@ pub fn HistoryChart(
                         match tracks.get(track).and_then(field_series) {
                             Some((s, unit)) => {
                                 let fixed = percent_scale(unit.as_deref());
-                                render_series(lang, s, range, fdomain, field_series_kind(), unit, overlay, fixed).into_any()
+                                let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1);
+                                render_series(SeriesView {
+                                    lang, s, range, domain: fdomain, kind: field_series_kind(),
+                                    unit, overlay, fixed, axis, name, dates: None,
+                                }).into_any()
                             }
-                            None => render_words(lang, range, fdomain, overlay).into_any(),
+                            None => {
+                                let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1);
+                                render_words(lang, range, fdomain, overlay, axis, name).into_any()
+                            }
                         }
                     }
                     Plot::Words { track } => {
                         let overlay = overlay_of(lang, entity_kind, &tracks, Some(track), fdomain);
-                        render_words(lang, range, fdomain, overlay).into_any()
+                        let axis = axis_for(lang, dctx.as_ref(), range, fspan, fdomain.1);
+                        render_words(lang, range, fdomain, overlay, axis, name).into_any()
                     }
                     Plot::Bars | Plot::Headline { .. } => {
                         let overlay = match plot {
@@ -347,14 +369,49 @@ pub fn HistoryChart(
                             Some(msg) => error_block(lang, &msg, retry_bump).into_any(),
                             None => {
                                 let dom = domain(&win, s.span, now_s);
-                                render_series(lang, s, range, dom, kind_rx.get(), unit_rx.get(), overlay, None).into_any()
+                                let cmp = match &cmp_state {
+                                    Some(State::Series(c)) => Some(c),
+                                    _ => None,
+                                };
+                                let dates = dctx.as_ref().map(|c| series_dates(c, &s, cmp));
+                                let axis = axis_for(lang, dctx.as_ref(), range, s.span, dom.1);
+                                render_series(SeriesView {
+                                    lang, s, range, domain: dom, kind: kind_rx.get(), unit: unit_rx.get(),
+                                    overlay, fixed: None, axis, name, dates,
+                                }).into_any()
                             }
                         },
-                        State::Bars(d) => render_bars(lang, d, range, window_per(&win, flavor.get()).unwrap_or(DailyPer::Day)).into_any(),
+                        State::Bars(d) => {
+                            let per = window_per(&win, flavor.get()).unwrap_or(DailyPer::Day);
+                            match &dctx {
+                                Some(c) => {
+                                    let compared = match &cmp_state {
+                                        Some(State::Bars(c)) => Some(c.clone()),
+                                        _ => None,
+                                    };
+                                    render_bars_window(BarsWindow {
+                                        lang,
+                                        axis: axis_for(lang, Some(c), range, d.span, fdomain.1),
+                                        shown: d,
+                                        compared,
+                                        per,
+                                        ctx: c.clone(),
+                                        zoom: on_zoom.filter(|_| zoom(c.unit, per).is_some()),
+                                    }).into_any()
+                                }
+                                None => render_bars(lang, d, range, per).into_any(),
+                            }
+                        }
                         }
                     }
                 };
-                view! { {row} {body} }
+                let summary = (dctx.is_some() && entity_plot).then(|| {
+                    view! {
+                        <PeriodSummary lang=lang window=win.clone() shown=state.get()
+                            compared=cmp_state.clone() kind=kind_rx.get() unit=unit_rx.get() />
+                    }
+                });
+                view! { {row} {body} {summary} }
             }}
         </div>
     }
@@ -523,10 +580,11 @@ fn period_key(overlay: &Overlay) -> impl IntoView + use<> {
 fn render_words(
     lang: Lang,
     range: HistoryRange,
-    (_, now): (i64, i64),
+    _domain: (i64, i64),
     overlay: Option<Overlay>,
+    axis: Axis,
+    name: String,
 ) -> impl IntoView {
-    let xticks = tick_labels(lang, range, now);
     let layer = overlay.as_ref().map(|o| periods_layer(o, false));
     let key = overlay.as_ref().map(period_key);
     let overlay = StoredValue::new(overlay);
@@ -572,14 +630,10 @@ fn render_words(
                     })}
                 </div>
             </div>
-            <div class="history-chart__axis-x">
-                {xticks.into_iter().map(|(pos, l)| view! {
-                    <span class:history-chart__tick--near-end=near_end(pos) style=format!("left: {}%", pos * 100.0)>{l}</span>
-                }).collect::<Vec<_>>()}
-            </div>
+            {axis_x(axis)}
         </div>
         <div class="history-chart__legend">
-            <span>{range_name(lang, range)}</span>
+            <span>{name}</span>
             {key}
         </div>
     }
@@ -619,7 +673,7 @@ fn pointer_frac_width(plot: &NodeRef<html::Div>, ev: &web_sys::PointerEvent) -> 
 }
 
 /// The pointer's x across `plot`, as a fraction of its width.
-fn pointer_frac(plot: &NodeRef<html::Div>, ev: &web_sys::PointerEvent) -> Option<f64> {
+pub(super) fn pointer_frac(plot: &NodeRef<html::Div>, ev: &web_sys::PointerEvent) -> Option<f64> {
     pointer_frac_width(plot, ev).map(|(f, _)| f)
 }
 
@@ -628,7 +682,7 @@ fn pointer_frac(plot: &NodeRef<html::Div>, ev: &web_sys::PointerEvent) -> Option
 const HOVER_SLACK_PX: f64 = 1.5;
 
 /// A fraction as a CSS percentage.
-fn pct(frac: f64) -> String {
+pub(super) fn pct(frac: f64) -> String {
     format!("{:.2}%", frac * 100.0)
 }
 
@@ -695,32 +749,72 @@ fn gradient_markup(id: &str) -> String {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_series(
+/// Everything `render_series` draws: the series, its axes and, for a date window, the compared
+/// period and the running mark.
+struct SeriesView {
     lang: Lang,
     s: HistorySeries,
     range: HistoryRange,
-    (t_start, now): (i64, i64),
+    /// The x domain, unix seconds `(start, end)`.
+    domain: (i64, i64),
     kind: String,
     unit: Option<String>,
     overlay: Option<Overlay>,
     fixed: Option<YScale>,
-) -> impl IntoView {
+    axis: Axis,
+    /// The legend's name of what is shown.
+    name: String,
+    dates: Option<SeriesDates>,
+}
+
+fn render_series(v: SeriesView) -> impl IntoView {
+    let SeriesView {
+        lang,
+        s,
+        range,
+        domain: (t_start, now),
+        kind,
+        unit,
+        overlay,
+        fixed,
+        axis,
+        name,
+        dates,
+    } = v;
     let discrete = state_axis_labels(lang, None, &kind).is_some();
+    let cmp_pts: Vec<(i64, f64, f64, f64)> = dates
+        .as_ref()
+        .map(|d| {
+            d.compared
+                .iter()
+                .map(|c| (c.t, c.v.0, c.v.1, c.v.2))
+                .collect()
+        })
+        .unwrap_or_default();
+    // The compared series shares the axis, so it must fit the scale too.
+    let scaled: Vec<(i64, f64, f64, f64)> = s.points.iter().chain(&cmp_pts).copied().collect();
     // The x-axis is the whole domain: a preset ends now, so short history sits at the right
     // edge; a date window is the whole period.
-    let base = y_scale(&s.points);
+    let base = y_scale(&scaled);
     let (min_v, max_v) = series_min_max(&s.points);
+    let (scale_lo, scale_hi) = series_min_max(&scaled);
     // Round ticks around the data itself; a flat line keeps the padded extent.
     // A number field in % is the one series with a fixed extent.
-    let nice = nice_scale(nice_input(fixed, min_v, max_v, base));
+    let nice = nice_scale(nice_input(fixed, scale_lo, scale_hi, base));
     let scale = if discrete { base } else { nice.scale };
+    // A running period's lines stop at its now line; anything else runs on to the edge.
+    let x_frac = |t: i64| ((t - t_start) as f64 / (now - t_start).max(1) as f64).clamp(0.0, 1.0);
+    let hold_px = dates
+        .as_ref()
+        .and_then(|d| d.running_to)
+        .map_or(VIEW_W, |t| x_frac(t) * VIEW_W);
     let (line, area, band) = if discrete {
-        let StepPath { d, .. } = step_path(&s.points, scale, t_start, now, VIEW_W, VIEW_H);
+        let StepPath { d, .. } =
+            step_path_held(&s.points, scale, t_start, now, VIEW_W, hold_px, VIEW_H);
         (d, String::new(), String::new())
     } else {
         let SmoothPath { line, area, band } =
-            smooth_path(&s.points, scale, t_start, now, VIEW_W, VIEW_H);
+            smooth_path_held(&s.points, scale, t_start, now, VIEW_W, hold_px, VIEW_H);
         // Short ranges are raw samples: their min/max spread is noise, not a band.
         (
             line,
@@ -732,15 +826,29 @@ fn render_series(
             },
         )
     };
+    let cmp_hold = cmp_pts.last().map_or(VIEW_W, |p| x_frac(p.0) * VIEW_W);
+    let cmp_line = if discrete {
+        step_path_held(&cmp_pts, scale, t_start, now, VIEW_W, cmp_hold, VIEW_H).d
+    } else {
+        smooth_path_held(&cmp_pts, scale, t_start, now, VIEW_W, cmp_hold, VIEW_H).line
+    };
     let keyed = shows_band(range, discrete, &s.points);
     let (ylabels, hlines) = y_axis(lang, &nice, scale, &kind);
-    let xticks = tick_labels(lang, range, now);
+    let grid_x: Vec<f64> = axis
+        .ticks
+        .iter()
+        .map(|(p, _)| *p)
+        .filter(|p| *p < 1.0)
+        .collect();
     let fracs = plot_points(&s.points, scale, t_start, now);
     let xs = StoredValue::new(fracs.iter().map(|p| p.0).collect::<Vec<_>>());
     let ys = StoredValue::new(fracs.iter().map(|p| p.1).collect::<Vec<_>>());
     let decimals = value_decimals(nice.step);
     let unit_tip = unit.clone();
     let points = StoredValue::new(s.points);
+    let now_line = now_mark(dates.as_ref().and_then(|d| d.now_frac));
+    let cmp_name = dates.as_ref().and_then(|d| d.cmp_name.clone());
+    let dates = StoredValue::new(dates);
 
     let plot = NodeRef::<html::Div>::new();
     let hover = RwSignal::new(None::<usize>);
@@ -772,13 +880,15 @@ fn render_series(
                     {hlines.into_iter().map(|y| view! {
                         <line x1="0" y1=format!("{}", y * VIEW_H) x2=format!("{VIEW_W}") y2=format!("{}", y * VIEW_H) class="history-chart__grid" />
                     }).collect::<Vec<_>>()}
-                    {xticks.iter().filter(|(pos, _)| *pos < 1.0).map(|(pos, _)| view! {
+                    {grid_x.into_iter().map(|pos| view! {
                         <line x1=format!("{}", pos * VIEW_W) y1="0" x2=format!("{}", pos * VIEW_W) y2=format!("{VIEW_H}") class="history-chart__grid" />
                     }).collect::<Vec<_>>()}
                     <path d=band class="history-chart__band" />
                     <path d=area fill=fill class="history-chart__area" />
+                    <path d=cmp_line class="history-chart__line history-chart__line--compare" fill="none" />
                     <path d=line class="history-chart__line" class:history-chart__line--step=discrete fill="none" />
                 </svg>
+                {now_line}
                 <div class="history-chart__axis-y">
                     {ylabels.into_iter().map(|(y, l)| view! {
                         <span style=format!("top: {}", pct(y))>{l}</span>
@@ -795,7 +905,20 @@ fn render_series(
                     class:history-chart__tip--left=move || x_at().is_some_and(tooltip_flips)
                     style=move || x_at().map(|x| format!("left: {}", pct(x))).unwrap_or_default()>
                     {move || hover.get().and_then(|i| points.with_value(|p| p.get(i).cloned())).map(|p| {
-                        let tip = series_tip(lang, range, &kind, unit_tip.as_deref(), decimals, now, &p);
+                        let mut tip = series_tip(lang, range, &kind, unit_tip.as_deref(), decimals, now, &p);
+                        // Against another period, each value says which date it is.
+                        let versus = dates.with_value(|d| d.as_ref().and_then(|d| {
+                            let c = compared_at(&d.compared, p.0, d.start, d.nominal)?;
+                            let mut other = series_tip(
+                                lang, range, &kind, unit_tip.as_deref(), decimals, now,
+                                &(c.orig, c.v.0, c.v.1, c.v.2),
+                            );
+                            other.time = series_when(lang, range, c.orig);
+                            Some(other)
+                        }));
+                        if versus.is_some() {
+                            tip.time = series_when(lang, range, p.0);
+                        }
                         let word = overlay.with_value(|o| o.as_ref().map(|o| {
                             if is_bucketed(range) {
                                 let end = hover.get_untracked().map_or(p.0 + 1, |i| {
@@ -810,19 +933,20 @@ fn render_series(
                             <span class="history-chart__tip-time">{tip.time}</span>
                             <strong class="history-chart__tip-value">{tip.value}</strong>
                             {tip.band.map(|b| view! { <span class="history-chart__tip-band">{b}</span> })}
+                            {versus.map(|o| view! {
+                                <span class="history-chart__tip-time history-chart__tip-time--compare">{o.time}</span>
+                                <strong class="history-chart__tip-value history-chart__tip-value--compare">{o.value}</strong>
+                                {o.band.map(|b| view! { <span class="history-chart__tip-band">{b}</span> })}
+                            })}
                             {word.map(|w| view! { <span class="history-chart__tip-word">{w}</span> })}
                         }
                     })}
                 </div>
             </div>
-            <div class="history-chart__axis-x">
-                {xticks.into_iter().map(|(pos, l)| view! {
-                    <span class:history-chart__tick--near-end=near_end(pos) style=format!("left: {}%", pos * 100.0)>{l}</span>
-                }).collect::<Vec<_>>()}
-            </div>
+            {axis_x(axis)}
         </div>
         <div class="history-chart__legend">
-            <span>{range_name(lang, range)}</span>
+            <span>{name}</span>
             {keyed.then(|| view! {
                 <span class="history-chart__key" title=history_text(lang, HistoryText::SpreadHint)>
                     <span class="history-chart__key-item">
@@ -835,6 +959,7 @@ fn render_series(
                     </span>
                 </span>
             })}
+            {compare_key(cmp_name)}
             {key}
             <span>{min_max(lang, min_v, max_v, unit.as_deref())}</span>
         </div>

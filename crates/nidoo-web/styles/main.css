@@ -6594,6 +6594,33 @@ html:has(.flow-canvas-screen) {
   opacity: 1;
 }
 
+/* The compared period: wider and faint, behind the shown bar. */
+.history-chart__bar--compare {
+  background: var(--compare);
+  opacity: 0.28;
+}
+
+.history-chart__plot--zoom {
+  cursor: pointer;
+}
+
+/* The compared period's line: dashed, behind the shown one. */
+.history-chart__line--compare {
+  stroke: var(--compare);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+/* Where the running period has got to. */
+.history-chart__now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dotted var(--muted);
+  pointer-events: none;
+}
+
 .history-chart__axis-y {
   position: absolute;
   inset: 0;
@@ -6625,6 +6652,15 @@ html:has(.flow-canvas-screen) {
 
 /* "now" sits at the right edge; anchor it there instead of overflowing the chart. */
 .history-chart__axis-x > span:last-child {
+  transform: translateX(-100%);
+}
+
+/* A date window's labels name a slot: centred on their tick, with no "now" at the end. */
+.history-chart__axis-x--window > span:last-child {
+  transform: translateX(-50%);
+}
+
+.history-chart__axis-x--window > .history-chart__tick--end {
   transform: translateX(-100%);
 }
 
@@ -6696,6 +6732,15 @@ html:has(.flow-canvas-screen) {
   font-size: 13px;
 }
 
+.history-chart__tip-time--compare,
+.history-chart__tip-value--compare {
+  color: var(--compare);
+}
+
+.history-chart__tip-time--compare {
+  margin-top: 4px;
+}
+
 .history-chart__legend {
   display: flex;
   flex-wrap: wrap;
@@ -6725,6 +6770,12 @@ html:has(.flow-canvas-screen) {
   height: 2px;
   border-radius: 1px;
   background: var(--accent-mint);
+}
+
+.history-chart__key-compare {
+  width: 12px;
+  height: 0;
+  border-top: 2px dashed var(--compare);
 }
 
 .history-chart__key-band {
@@ -10861,6 +10912,66 @@ dialog.popup::backdrop {
 
 .history-chart__tip-word {
   font-weight: 600;
+}
+
+/* The cards under a date window's chart: shown, compared and their difference. */
+.history-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.history-summary__card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+}
+
+.history-summary__name,
+.history-summary__sub {
+  font: 400 11px/14px var(--font-body);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.history-summary__value {
+  font: var(--type-card-value);
+  overflow-wrap: anywhere;
+}
+
+.history-summary__card--compare {
+  border-left: 3px solid var(--compare);
+}
+
+.history-summary__card--empty .history-summary__name {
+  font-style: italic;
+}
+
+.history-summary__card--up .history-summary__value {
+  color: var(--accent-rose);
+}
+
+.history-summary__card--down .history-summary__value {
+  color: var(--accent-mint);
+}
+
+.history-summary__note {
+  margin: 6px 0 0;
+  font: 400 11px/14px var(--font-body);
+  color: var(--muted);
+}
+
+@media (max-width: 600px) {
+  .history-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* The heaters card (climate/heaters_card.rs): one row per unit or heater. */

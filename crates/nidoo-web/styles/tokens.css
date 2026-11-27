@@ -22,6 +22,8 @@
   --accent-cyan: #58e1ff;
   --accent-violet: #8f7bff;
   --accent-rose: #ff7a9a;
+  /* The period compared against the shown one, on the history chart. */
+  --compare: #b3a6ff;
 
   /* Status */
   --offline: #ff9ab2;
@@ -127,6 +129,7 @@
   --accent-violet: #6a5acd;
   /* Darkened from the spec's #b4552f (4.3:1) to pass AA as text. */
   --accent-rose: #ac512b;
+  --compare: #6a5acd;
   --offline: #a23b4f;
   --connected: #4f6b4a;
   --connected-bg: #e3eadf;

@@ -12,7 +12,7 @@ use leptos::prelude::*;
 
 /// What the chart is currently drawing.
 #[derive(Clone, Debug)]
-pub(super) enum State {
+pub enum State {
     Loading,
     Series(HistorySeries),
     Bars(HistoryDaily),

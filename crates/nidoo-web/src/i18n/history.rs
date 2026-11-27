@@ -200,10 +200,15 @@ pub fn kwh(lang: Lang, v: f64) -> String {
 
 /// "Last 24 hours total: 4.2 kWh" / "24 dernières heures, total : 4,2 kWh".
 pub fn total_line(lang: Lang, r: HistoryRange, total: f64) -> String {
+    total_text(lang, range_name(lang, r), total)
+}
+
+/// "{name} total: 4.2 kWh" / "{name}, total : 4,2 kWh".
+fn total_text(lang: Lang, name: &str, total: f64) -> String {
     let value = kwh(lang, total);
     match lang {
-        Lang::En => format!("{} total: {value}", range_name(lang, r)),
-        Lang::Fr => format!("{}, total{NBSP}: {value}", range_name(lang, r)),
+        Lang::En => format!("{name} total: {value}"),
+        Lang::Fr => format!("{name}, total{NBSP}: {value}"),
     }
 }
 
@@ -214,6 +219,25 @@ pub fn counter_legend(lang: Lang, r: HistoryRange) -> String {
         Lang::Fr => "total quotidien",
     };
     format!("{} · {tail}", range_name(lang, r))
+}
+
+/// The legend of a counter over a named period: "November 2026 · daily total" /
+/// "novembre 2026 · total quotidien"; hourly for a day, monthly for a year.
+pub fn period_counter_legend(lang: Lang, name: &str, per: DailyPer) -> String {
+    let tail = match (lang, per) {
+        (Lang::En, DailyPer::Hour) => "hourly total",
+        (Lang::En, DailyPer::Day) => "daily total",
+        (Lang::En, DailyPer::Month) => "monthly total",
+        (Lang::Fr, DailyPer::Hour) => "total horaire",
+        (Lang::Fr, DailyPer::Day) => "total quotidien",
+        (Lang::Fr, DailyPer::Month) => "total mensuel",
+    };
+    format!("{name} · {tail}")
+}
+
+/// "November 2026 total: 4.2 kWh" / "novembre 2026, total : 4,2 kWh".
+pub fn period_total_line(lang: Lang, name: &str, total: f64) -> String {
+    total_text(lang, name, total)
 }
 
 /// The picker's unit chip: the 1 h and 6 h chips keep the range chip text.
@@ -536,6 +560,30 @@ mod tests {
         assert_eq!(
             left_out(Lang::Fr, 3, DailyPer::Hour),
             "3 heures exclues de la comparaison"
+        );
+    }
+
+    #[test]
+    fn a_named_period_words_its_totals() {
+        assert_eq!(
+            period_counter_legend(Lang::En, "November 2026", DailyPer::Day),
+            "November 2026 · daily total"
+        );
+        assert_eq!(
+            period_counter_legend(Lang::En, "2026", DailyPer::Month),
+            "2026 · monthly total"
+        );
+        assert_eq!(
+            period_counter_legend(Lang::Fr, "jeu. 26 nov. 2026", DailyPer::Hour),
+            "jeu. 26 nov. 2026 · total horaire"
+        );
+        assert_eq!(
+            period_total_line(Lang::En, "2026", 4.2),
+            "2026 total: 4.2\u{a0}kWh"
+        );
+        assert_eq!(
+            total_line(Lang::En, HistoryRange::Day, 4.2),
+            "Last 24 hours total: 4.2\u{a0}kWh"
         );
     }
 }
