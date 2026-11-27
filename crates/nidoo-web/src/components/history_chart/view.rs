@@ -18,8 +18,8 @@ use super::compare::{
     Axis, BarsWindow, SeriesDates, axis_for, axis_x, compare_key, compared_at, dates_ctx, now_mark,
     render_bars_window, series_dates, series_when,
 };
+use super::fetch::{Compared, State, apply_shown, compared_next, compared_plan, fetch_plan};
 pub use super::fetch::{FetchPlan, drawn_unit, is_stale, plan_fetch};
-use super::fetch::{State, apply_shown, compared_next, compared_plan, fetch_plan};
 use super::format::{state_axis_labels, state_value_label, tooltip_day, tooltip_time};
 use super::geom::{
     Bar, NiceScale, SmoothPath, StepPath, YScale, daily_bars, nearest_index, nice_scale,
@@ -96,9 +96,9 @@ pub fn HistoryChart(
 ) -> impl IntoView {
     let wants_fields = on_show.is_some();
     let state = RwSignal::new(State::Loading);
-    // The compared window's reply (`State::Series` or `State::Bars`); `None` when there is no
-    // comparison or its reply failed or was empty. Not drawn yet.
-    let compared = RwSignal::new(None::<State>);
+    // The compared window: off, still loading, its reply (`State::Series` or `State::Bars`), or
+    // empty (the reply failed or had no data).
+    let compared = RwSignal::new(Compared::Off);
     let fields = RwSignal::new(FieldsState::Loading);
     let latest: Rc<Cell<u32>> = Rc::new(Cell::new(0));
     let retry_bump = RwSignal::new(0u32);
@@ -153,7 +153,13 @@ pub fn HistoryChart(
                 } else {
                     FieldsState::Ready(no_fields())
                 });
-                compared.set(None);
+                compared.set(Compared::starting(matches!(
+                    &inputs.1,
+                    ChartWindow::Dates {
+                        compare: Some(_),
+                        ..
+                    }
+                )));
             }
 
             let (id, w, f, pp, _) = inputs.clone();
@@ -209,7 +215,7 @@ pub fn HistoryChart(
                     if !is_stale(my_req, latest_check.get())
                         && let Some(next) = compared_next(outcome, refresh)
                     {
-                        compared.set(next);
+                        let _ = compared.try_set(next);
                     }
                 }
             };
@@ -225,8 +231,11 @@ pub fn HistoryChart(
                         }
                         let req = compared_req(outcome.span(), true, cmp);
                         apply_shown(state, outcome, refresh);
-                        if let Some(req) = req {
-                            fetch_compared(req).await;
+                        match req {
+                            Some(req) => fetch_compared(req).await,
+                            None => {
+                                let _ = compared.try_update(|c| *c = c.clone().unrequested());
+                            }
                         }
                     }
                     // Not running: both at once.
@@ -297,7 +306,8 @@ pub fn HistoryChart(
                 let name = dctx
                     .as_ref()
                     .map_or_else(|| range_name(lang, range).to_owned(), |c| c.name.clone());
-                let cmp_state = compared.get();
+                let cmp_all = compared.get();
+                let cmp_state = cmp_all.ready().cloned();
                 let plot = plot_for(flavor.get(), &fields_now, &sel, &chip_list);
                 let entity_plot = matches!(plot, Plot::Bars | Plot::Headline { .. });
                 let row = match on_show {
@@ -423,7 +433,7 @@ pub fn HistoryChart(
                 let summary = (dctx.is_some() && entity_plot).then(|| {
                     view! {
                         <PeriodSummary lang=lang window=win.clone() shown=state.get()
-                            compared=cmp_state.clone() kind=kind_rx.get() unit=unit_rx.get()
+                            compared=cmp_all.clone() kind=kind_rx.get() unit=unit_rx.get()
                             today=today.get() />
                     }
                 });

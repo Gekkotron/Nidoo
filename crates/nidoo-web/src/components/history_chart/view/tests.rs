@@ -42,7 +42,9 @@ fn a_period_at_the_right_edge_stays_inside_the_box() {
     assert!(style.contains("max(0.10%, 3px)"), "{style}");
 }
 
-use super::super::fetch::{FetchResult, compared_next, compared_state, daily_days_for, map_error};
+use super::super::fetch::{
+    Compared, FetchResult, compared_next, compared_state, daily_days_for, map_error,
+};
 use super::super::window::{compare_request, compared_req, present_range, window_per, x_domain};
 use super::*;
 use crate::history_period::Unit;
@@ -516,10 +518,36 @@ fn a_failed_compared_refresh_keeps_the_comparison() {
     let err = || FetchResult::Series(Err(HistoryApiError::Other("x".into())));
     // Refresh: leave what is there. First load: clear.
     assert!(compared_next(err(), true).is_none());
-    assert!(matches!(compared_next(err(), false), Some(None)));
+    assert!(matches!(compared_next(err(), false), Some(Compared::Empty)));
     // An empty Ok reply clears it even on a refresh.
     assert!(matches!(
         compared_next(FetchResult::Series(Ok(empty_series())), true),
-        Some(None)
+        Some(Compared::Empty)
     ));
+}
+
+#[test]
+fn the_compared_state_is_pending_until_its_reply() {
+    // Asked: pending, never "no data" before the reply.
+    let c = Compared::starting(true);
+    assert!(c.is_pending() && c.ready().is_none());
+    assert!(matches!(Compared::starting(false), Compared::Off));
+    // The reply lands: ready, or empty.
+    let full = HistorySeries {
+        points: vec![(0, 1.0, 1.0, 1.0)],
+        ..empty_series()
+    };
+    let next = compared_next(FetchResult::Series(Ok(full)), false).unwrap();
+    assert!(next.ready().is_some() && !next.is_pending());
+    let next = compared_next(FetchResult::Series(Ok(empty_series())), false).unwrap();
+    assert!(matches!(next, Compared::Empty));
+    // No request will ever be made (the shown fetch failed): pending turns empty, others stay.
+    assert!(matches!(Compared::Pending.unrequested(), Compared::Empty));
+    assert!(matches!(Compared::Off.unrequested(), Compared::Off));
+    assert!(
+        Compared::Ready(State::Loading)
+            .unrequested()
+            .ready()
+            .is_some()
+    );
 }

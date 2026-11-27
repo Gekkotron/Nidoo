@@ -11146,6 +11146,14 @@ dialog.popup::backdrop {
   font-style: italic;
 }
 
+.history-summary__card--pending .history-summary__value {
+  display: block;
+  min-height: 1.2em;
+  min-width: 4em;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(128, 128, 128, 0.15));
+}
+
 .history-summary__card--up .history-summary__value {
   color: var(--accent-rose);
 }

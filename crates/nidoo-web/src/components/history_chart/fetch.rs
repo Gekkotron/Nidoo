@@ -157,9 +157,49 @@ pub(super) fn compared_state(outcome: FetchResult) -> Option<State> {
     }
 }
 
+/// Where the compared window stands.
+#[derive(Clone, Debug)]
+pub enum Compared {
+    /// No comparison is asked for.
+    Off,
+    /// Asked for; its reply has not come back (or has not been requested yet).
+    Pending,
+    /// The reply, ready to draw.
+    Ready(State),
+    /// The reply was empty, or failed on a first load: nothing to set against the shown period.
+    Empty,
+}
+
+impl Compared {
+    /// The state a fresh (non-refresh) fetch starts in.
+    pub(super) fn starting(asked: bool) -> Self {
+        if asked { Self::Pending } else { Self::Off }
+    }
+
+    /// The state once it is known no compared request will be made: a pending one has nothing.
+    pub(super) fn unrequested(self) -> Self {
+        match self {
+            Self::Pending => Self::Empty,
+            other => other,
+        }
+    }
+
+    pub(super) fn is_pending(&self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    /// The reply to draw, if there is one.
+    pub(super) fn ready(&self) -> Option<&State> {
+        match self {
+            Self::Ready(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 /// What to write to the compared state after a reply: `None` leaves it as it is (a failed
 /// reply during a refresh keeps the comparison drawn, like the shown series); `Some(x)` sets it.
-pub(super) fn compared_next(outcome: FetchResult, refresh: bool) -> Option<Option<State>> {
+pub(super) fn compared_next(outcome: FetchResult, refresh: bool) -> Option<Compared> {
     let failed = matches!(
         outcome,
         FetchResult::Series(Err(_)) | FetchResult::Daily(Err(_))
@@ -167,7 +207,7 @@ pub(super) fn compared_next(outcome: FetchResult, refresh: bool) -> Option<Optio
     if refresh && failed {
         None
     } else {
-        Some(compared_state(outcome))
+        Some(compared_state(outcome).map_or(Compared::Empty, Compared::Ready))
     }
 }
 

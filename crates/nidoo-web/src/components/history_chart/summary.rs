@@ -5,7 +5,7 @@
 use leptos::prelude::*;
 use nidoo_api::DailyPer;
 
-use super::fetch::State;
+use super::fetch::{Compared, State};
 use super::format::state_axis_labels;
 use super::window::{ChartWindow, runs_today, today_or};
 use crate::history_compare::{counter_summary, counter_total, sensor_stats, sensor_summary};
@@ -230,7 +230,7 @@ pub fn PeriodSummary(
     lang: Lang,
     window: ChartWindow,
     shown: State,
-    compared: Option<State>,
+    compared: Compared,
     /// The entity's kind, which tells a state (no summary) from a number.
     kind: String,
     unit: Option<String>,
@@ -253,7 +253,8 @@ pub fn PeriodSummary(
         to: w.to,
     };
     let per = per_for(period_unit, span(&req));
-    let Some(s) = summary(&shown, compared.as_ref(), compare.is_some(), per) else {
+    let pending = compared.is_pending();
+    let Some(mut s) = summary(&shown, compared.ready(), compare.is_some(), per) else {
         return ().into_any();
     };
     let running = runs_today(
@@ -266,8 +267,21 @@ pub fn PeriodSummary(
         shown_name = format!("{shown_name} · {}", history_text(lang, HistoryText::SoFar));
     }
     let shown_card = figures_card(lang, shown_name, s.shown, unit, "");
+    if pending {
+        // No difference to show until the compared period is in.
+        s.diff = None;
+    }
     let cmp_card = compare.map(|c| {
         let name = period_name(lang, period_unit, span(&c));
+        if pending {
+            return view! {
+                <div class="history-summary__card history-summary__card--pending">
+                    <span class="history-summary__name">{name}</span>
+                    <span class="history-summary__value" aria-hidden="true"></span>
+                </div>
+            }
+            .into_any();
+        }
         match s.compared.flatten() {
             Some(f) => {
                 let label = if running {
