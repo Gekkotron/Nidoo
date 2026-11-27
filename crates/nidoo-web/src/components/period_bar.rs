@@ -218,17 +218,19 @@ pub fn PeriodBar(
                         </button>
                         {stepper(1, "›", HistoryText::NextPeriod)}
                         {status}
-                        <PeriodPicker
-                            open=picker_open
-                            initial=initial
-                            today=today
-                            first=first
-                            on_show=on_show
-                        />
                     </div>
                     {compare}
                 </div>
             </Show>
+            <div class="period-bar__anchor">
+                <PeriodPicker
+                    open=picker_open
+                    initial=initial
+                    today=today
+                    first=first
+                    on_show=on_show
+                />
+            </div>
         </div>
     }
 }

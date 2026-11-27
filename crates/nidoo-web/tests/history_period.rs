@@ -213,3 +213,40 @@ async fn a_legacy_range_link_selects_its_unit() {
     })
     .await;
 }
+
+#[wasm_bindgen_test]
+async fn the_first_month_of_data_cannot_step_back() {
+    let stub = FetchStub::install();
+    stub_page(&stub);
+    let m = mount(Lang::En, "/history/sensor.t?period=month&at=2022-01-01");
+    let next = "button[aria-label='Next period']";
+    let prev = "button[aria-label='Previous period']";
+    wait_until("the extent", &m.host, &stub, || {
+        all(&m.host, next)
+            .first()
+            .is_some_and(|b| !b.has_attribute("disabled"))
+    })
+    .await;
+    assert_eq!(name(&m.host), "January 2022");
+    assert!(all(&m.host, prev)[0].has_attribute("disabled"));
+}
+
+#[wasm_bindgen_test]
+async fn custom_opens_the_picker_from_the_hour_views() {
+    let stub = FetchStub::install();
+    stub_page(&stub);
+    let m = mount(Lang::En, "/history/sensor.t?period=1h");
+    wait_until("the chips", &m.host, &stub, || {
+        !all(&m.host, ".history-detail__chips .chip").is_empty()
+    })
+    .await;
+    all(&m.host, ".history-detail__chips .chip")
+        .into_iter()
+        .find(|c| c.text_content().unwrap_or_default().starts_with("Custom"))
+        .unwrap()
+        .click();
+    wait_until("the picker", &m.host, &stub, || {
+        !all(&m.host, ".period-pop").is_empty()
+    })
+    .await;
+}

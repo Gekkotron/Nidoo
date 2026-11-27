@@ -19,7 +19,8 @@ use crate::components::period_bar::PeriodBar;
 use crate::energy::{energy_entities, energy_entity};
 use crate::format::{area_name, shown_name, title_suffix, type_word, wrap_id};
 use crate::history_period::{
-    PeriodState, Span, Unit, compare_span, parse_state, shown_span, span_of, state_path,
+    PeriodState, Span, Unit, compare_span, parse_state, per_for, shown_span, span_of, state_path,
+    switch_unit, zoom,
 };
 use crate::house::House;
 use crate::i18n::devices::availability_text;
@@ -83,18 +84,15 @@ pub fn chart_window(s: &PeriodState, today: NaiveDate) -> ChartWindow {
 /// The period a click on a bucket dated `date` zooms into: a year opens its month, a week, month
 /// or custom span opens the day. The comparison and the chosen values stay.
 pub fn zoomed(s: &PeriodState, date: NaiveDate, today: NaiveDate) -> PeriodState {
-    let unit = if s.unit == Unit::Year {
-        Unit::Month
-    } else {
-        Unit::Day
-    };
+    let shown = shown_span(s, today).unwrap_or(Span {
+        from: today,
+        to: today,
+    });
+    let unit = zoom(s.unit, per_for(s.unit, shown)).unwrap_or(Unit::Day);
     let span = span_of(unit, date);
     PeriodState {
-        unit,
         at: (!(span.from <= today && today <= span.to)).then_some(span.from),
-        custom: None,
-        vs: s.vs,
-        show: s.show.clone(),
+        ..switch_unit(s, unit, today)
     }
 }
 
@@ -125,9 +123,9 @@ pub fn HistoryDetailScreen() -> impl IntoView {
         extent.set(None);
         spawn_local(async move {
             if let Ok(e) = fetch_extent(&asked).await
-                && asked == id.get_untracked()
+                && id.try_get_untracked().is_some_and(|cur| cur == asked)
             {
-                extent.set(Some(e));
+                extent.try_set(Some(e));
             }
         });
     });

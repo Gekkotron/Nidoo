@@ -56,7 +56,7 @@ fn vacuum() -> EntityView {
     }
 }
 
-/// The hub's reply for a vacuum: its activity, battery and fan speed over the last 24 hours.
+/// The hub's reply for a vacuum: its activity, battery and fan speed over its last 6 hours.
 fn vacuum_fields(headline: bool) -> Value {
     let to = now();
     let from = to - 21_600;
@@ -213,8 +213,8 @@ async fn tapping_a_word_chip_swaps_the_word_and_writes_the_url() {
 async fn range_change_keeps_the_selection() {
     let stub = FetchStub::install();
     stub_range(&stub, "6h", &vacuum_fields(true), &empty_series());
-    // The week's reply has no activity track, so its first chip is the series' "Valeur" rather than "Activité": seeing them
-    // proves the 1 h reply has landed, not a stale day.
+    // The 1 h reply has no activity track, so its first chip is the series' "Valeur" rather than "Activité": seeing them
+    // proves the 1 h reply has landed, not a stale 6 h one.
     stub_range(&stub, "1h", &vacuum_fields(false), &empty_series());
     let m = mount(
         Lang::Fr,

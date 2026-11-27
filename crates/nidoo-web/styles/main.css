@@ -6512,6 +6512,11 @@ html:has(.flow-canvas-screen) {
   min-width: 0;
 }
 
+.period-bar__anchor {
+  position: relative;
+  height: 0;
+}
+
 .period-bar__row {
   display: flex;
   flex-wrap: wrap;
@@ -6610,13 +6615,13 @@ html:has(.flow-canvas-screen) {
 
 .period-pop {
   position: absolute;
-  top: 46px;
+  top: 0;
   left: 0;
   z-index: 5;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(300px, 100%);
+  width: min(300px, calc(100vw - 32px));
   padding: 14px;
   border: 1px solid var(--card-border);
   border-radius: 16px;

@@ -196,13 +196,8 @@ pub fn HistoryChart(
             // is still running (then the shown reply says how far in to cut it).
             let comparison = match &w {
                 ChartWindow::Dates {
-                    shown,
-                    compare: Some(cmp),
-                    ..
-                } => {
-                    let _ = shown;
-                    Some((*cmp, running.get()))
-                }
+                    compare: Some(cmp), ..
+                } => Some((*cmp, running.get())),
                 _ => None,
             };
             let latest_check = latest.clone();

@@ -12,10 +12,26 @@ fn parse(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
 }
 
-/// The span two date inputs describe, when both are set and in order.
-pub fn picked_span(from: &str, to: &str) -> Option<Span> {
+/// `span` moved into `first..=today` (no lower bound without `first`), each end on its own.
+pub fn clamp_span(span: Span, first: Option<NaiveDate>, today: NaiveDate) -> Span {
+    let lo = first.unwrap_or(NaiveDate::MIN).min(today);
+    let fit = |d: NaiveDate| d.clamp(lo, today);
+    Span {
+        from: fit(span.from),
+        to: fit(span.to),
+    }
+}
+
+/// The span two date inputs describe: both set and in order as typed, then held inside the days
+/// that have data.
+pub fn picked_span(
+    from: &str,
+    to: &str,
+    first: Option<NaiveDate>,
+    today: NaiveDate,
+) -> Option<Span> {
     let (from, to) = (parse(from)?, parse(to)?);
-    (from <= to).then_some(Span { from, to })
+    (from <= to).then(|| clamp_span(Span { from, to }, first, today))
 }
 
 #[component]
@@ -40,6 +56,7 @@ pub fn PeriodPicker(
         }
     });
     let set_span = move |s: Span| {
+        let s = clamp_span(s, first.get_untracked(), today.get_untracked());
         from.set(s.from.to_string());
         to.set(s.to.to_string());
     };
@@ -63,15 +80,22 @@ pub fn PeriodPicker(
     let winter = Signal::derive(move || Some(this_winter(today.get())));
     let year = Signal::derive(move || Some(last_12_months(today.get())));
     let everything = Signal::derive(move || first.get().map(|f| all_data(f, today.get())));
-    let picked = move || picked_span(&from.get(), &to.get());
+    let picked = move || picked_span(&from.get(), &to.get(), first.get(), today.get());
+    let from_input = NodeRef::<leptos::html::Input>::new();
+    Effect::new(move |_| {
+        if let Some(el) = from_input.get() {
+            let _ = el.focus();
+        }
+    });
     view! {
         <Show when=move || open.get()>
-            <div class="period-pop" role="dialog" aria-label=move || history_text(lang(), HistoryText::PickTitle)>
+            <div class="period-pop" role="dialog" on:keydown={move |ev| if ev.key() == "Escape" { open.set(false) }} aria-label=move || history_text(lang(), HistoryText::PickTitle)>
                 <h2 class="period-pop__title">{move || history_text(lang(), HistoryText::PickTitle)}</h2>
                 <label class="period-pop__field">
                     <span>{move || history_text(lang(), HistoryText::PickFrom)}</span>
                     <input
                         type="date"
+                        node_ref=from_input
                         prop:value=move || from.get()
                         min=move || first.get().map(|d| d.to_string())
                         max=move || today.get().to_string()
@@ -124,22 +148,52 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()
     }
 
+    const TODAY: (i32, u32, u32) = (2026, 11, 26);
+
+    fn today() -> NaiveDate {
+        d(TODAY.0, TODAY.1, TODAY.2)
+    }
+
     #[test]
     fn two_ordered_dates_make_a_span() {
         assert_eq!(
-            picked_span("2026-11-01", "2026-11-26"),
+            picked_span("2026-11-01", "2026-11-26", None, today()),
             Some(Span {
                 from: d(2026, 11, 1),
                 to: d(2026, 11, 26)
             })
         );
-        assert!(picked_span("2026-11-01", "2026-11-01").is_some());
+        assert!(picked_span("2026-11-01", "2026-11-01", None, today()).is_some());
     }
 
     #[test]
     fn unset_or_reversed_dates_make_none() {
-        assert_eq!(picked_span("", "2026-11-26"), None);
-        assert_eq!(picked_span("2026-11-27", "2026-11-26"), None);
-        assert_eq!(picked_span("junk", "2026-11-26"), None);
+        assert_eq!(picked_span("", "2026-11-26", None, today()), None);
+        assert_eq!(picked_span("2026-11-27", "2026-11-26", None, today()), None);
+        assert_eq!(picked_span("junk", "2026-11-26", None, today()), None);
+    }
+
+    #[test]
+    fn typed_dates_are_held_between_the_first_day_and_today() {
+        let first = Some(d(2022, 1, 1));
+        assert_eq!(
+            picked_span("2020-05-01", "2030-01-01", first, today()),
+            Some(Span {
+                from: d(2022, 1, 1),
+                to: today()
+            })
+        );
+    }
+
+    #[test]
+    fn this_winter_stops_at_today() {
+        let winter = crate::history_period::this_winter(today());
+        assert_eq!(
+            clamp_span(winter, Some(d(2022, 1, 1)), today()),
+            Span {
+                from: d(2026, 11, 1),
+                to: today()
+            }
+        );
     }
 }
