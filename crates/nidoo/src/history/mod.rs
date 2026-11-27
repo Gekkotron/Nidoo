@@ -10,6 +10,7 @@ pub mod query;
 pub mod restore;
 pub mod rollup;
 pub mod solar;
+pub mod window;
 pub mod writer;
 
 use std::sync::Arc;

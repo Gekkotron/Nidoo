@@ -68,6 +68,20 @@ pub fn step_path(
     view_w: f64,
     view_h: f64,
 ) -> StepPath {
+    step_path_held(points, scale, t_start, t_end, view_w, view_w, view_h)
+}
+
+/// [`step_path`] with the last value held only as far as `hold_px` (a running period stops at
+/// its now line instead of running on into the days to come).
+pub fn step_path_held(
+    points: &[(i64, f64, f64, f64)],
+    scale: YScale,
+    t_start: i64,
+    t_end: i64,
+    view_w: f64,
+    hold_px: f64,
+    view_h: f64,
+) -> StepPath {
     if points.is_empty() {
         return StepPath {
             d: String::new(),
@@ -78,7 +92,7 @@ pub fn step_path(
     let y_span = (scale.max - scale.min).max(f64::EPSILON);
     let x_of = |t: i64| ((t - t_start) as f64 / t_span).clamp(0.0, 1.0) * view_w;
     let y_of = |v: f64| view_h - (v - scale.min) / y_span * view_h;
-    let x_end = view_w;
+    let x_end = hold_px;
 
     let (x0, y0) = (x_of(points[0].0), y_of(points[0].1));
     let mut d = format!("M{x0},{y0}");
@@ -251,6 +265,19 @@ pub fn smooth_path(
     view_w: f64,
     view_h: f64,
 ) -> SmoothPath {
+    smooth_path_held(points, scale, t_start, t_end, view_w, view_w, view_h)
+}
+
+/// [`smooth_path`] with the last value held only as far as `hold_px`.
+pub fn smooth_path_held(
+    points: &[(i64, f64, f64, f64)],
+    scale: YScale,
+    t_start: i64,
+    t_end: i64,
+    view_w: f64,
+    hold_px: f64,
+    view_h: f64,
+) -> SmoothPath {
     let empty = SmoothPath {
         line: String::new(),
         area: String::new(),
@@ -267,7 +294,7 @@ pub fn smooth_path(
             .into_iter()
             .map(to_px)
             .collect(),
-        view_w,
+        hold_px,
     );
     let first = mean[0];
     let line = format!("M{}{}", pt(first.0, first.1), smooth_tail(&mean));
@@ -285,7 +312,7 @@ pub fn smooth_path(
                 .zip(xs)
                 .map(|(p, (x, _))| (x * view_w, y_of(pick(p))))
                 .collect();
-            extended(raw, view_w)
+            extended(raw, hold_px)
         };
         let upper = edge(|p| p.3);
         let lower = edge(|p| p.2);

@@ -15,12 +15,13 @@ use nidoo_alarm::doc::AlarmSettings;
 use nidoo_alarm::view::AlarmView;
 use nidoo_api::{
     AlertView, Ambiance, AmbianceView, ApiError, ApplyReport, AreaView, CameraInfo, CamerasView,
-    CommandResponse, ConnectionStatus, Dashboard, DashboardReorder, DashboardView, EnergyKind,
-    EntityView, FlowLabelsView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay, GroupSpec,
-    GroupView, HistoryDaily, HistoryFields, HistoryRange, HistorySeries, HistoryToday,
-    HomeSettings, IgnoredView, LabelEdit, LabelSwitchBody, LabelSwitchResult, LastChange,
-    NetworkWatchSpec, NetworkWatchView, NotifyInput, OverridePatch, RunView, SchedulePreview,
-    Snapshot, SupervisorSettings, SupervisorView, SystemView, VirtualSpec, WeatherView,
+    CommandResponse, ConnectionStatus, DailyPer, Dashboard, DashboardReorder, DashboardView,
+    EnergyKind, EntityView, FlowLabelsView, FlowView, FlowWriteOutcome, FlowsConfigView, GridDay,
+    GroupSpec, GroupView, HistoryDaily, HistoryExtent, HistoryFields, HistoryRange, HistorySeries,
+    HistoryToday, HomeSettings, IgnoredView, LabelEdit, LabelSwitchBody, LabelSwitchResult,
+    LastChange, NetworkWatchSpec, NetworkWatchView, NotifyInput, OverridePatch, RunView,
+    SchedulePreview, Snapshot, SupervisorSettings, SupervisorView, SystemView, VirtualSpec,
+    WeatherView,
 };
 use nidoo_climate::doc::{HouseSettings, Rules, ZoneSettings};
 use nidoo_climate::view::{ClimateView, DecisionLog, LearnStatus, OverrideRequest, RoomEcoRequest};
@@ -28,6 +29,7 @@ use nidoo_core::flow::{Flow, Schedule};
 use nidoo_core::model::{AreasDocument, Command};
 use serde::Serialize;
 
+use crate::history::window::{DateWindow, WindowUse, check_limits, parse_window};
 use crate::history::{HistoryError, query as history_query};
 use crate::hub::{Hub, HubError};
 use crate::media::{CameraFile, MediaError, Upstream, is_camera_id};
@@ -128,6 +130,7 @@ pub(super) fn routes() -> Router<Arc<Hub>> {
         .route("/history/series", get(history_series))
         .route("/history/fields", get(history_fields))
         .route("/history/daily", get(history_daily))
+        .route("/history/extent", get(history_extent))
         .route("/history/today", get(history_today))
         .route("/history/last_change", get(history_last_change))
         .route("/history/grid_day", get(history_grid_day))
@@ -1222,7 +1225,25 @@ async fn delete_virtual(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// `GET /history/series?entity=&range=` — 400 for a missing or unknown range, 503 without
+/// The date window of a history request, when it has one: `from` and `to` (and an optional
+/// `upto`), which may not be combined with the preset parameter `preset` (`range` or `days`).
+fn window_param(
+    params: &[(String, String)],
+    preset: &str,
+) -> Result<Option<DateWindow>, HttpError> {
+    let window = parse_window(
+        get_one(params, "from"),
+        get_one(params, "to"),
+        get_one(params, "upto"),
+    )?;
+    match (&window, get_one(params, preset)) {
+        (Some(_), Some(_)) | (None, None) => Err(bad_request()),
+        _ => Ok(window),
+    }
+}
+
+/// `GET /history/series?entity=&range=` or `&from=&to=[&upto=]` — exactly one of a preset
+/// range or a house-local date window; 400 for neither, both, or a bad value, 503 without
 /// history, 404 for an entity that was never recorded.
 async fn history_series(
     State(hub): HubState,
@@ -1230,6 +1251,14 @@ async fn history_series(
 ) -> Result<Json<HistorySeries>, HttpError> {
     let params = parse_query(q.as_deref());
     let entity = get_one(&params, "entity").ok_or_else(bad_request)?;
+    let window = window_param(&params, "range")?;
+    if let Some(w) = &window {
+        check_limits(w, WindowUse::Series)?;
+        let history = require_history(&hub)?;
+        return Ok(Json(
+            history_query::series_window(history, entity, w, now_micros()).await?,
+        ));
+    }
     let range = get_one(&params, "range")
         .and_then(HistoryRange::parse)
         .ok_or_else(bad_request)?;
@@ -1239,15 +1268,24 @@ async fn history_series(
     ))
 }
 
-/// `GET /history/fields?entity=&range=` — every value of the entity over `range`, one track
-/// each; 400 for a missing or unknown range, 404 for an unknown or never recorded entity, 503
-/// without history.
+/// `GET /history/fields?entity=&range=` or `&from=&to=[&upto=]` — every value of the entity
+/// over a preset range or a date window, one track each; 400 for neither, both, or a bad
+/// value, 404 for an unknown or never recorded entity, 503 without history.
 async fn history_fields(
     State(hub): HubState,
     RawQuery(q): RawQuery,
 ) -> Result<Json<HistoryFields>, HttpError> {
     let params = parse_query(q.as_deref());
     let id = get_one(&params, "entity").ok_or_else(bad_request)?;
+    let window = window_param(&params, "range")?;
+    if let Some(w) = &window {
+        check_limits(w, WindowUse::Fields)?;
+        let history = require_history(&hub)?;
+        let entity = hub.entity_for_history(id)?;
+        return Ok(Json(
+            history_query::fields_window(history, &entity, w, now_micros()).await?,
+        ));
+    }
     let range = get_one(&params, "range")
         .and_then(HistoryRange::parse)
         .ok_or_else(bad_request)?;
@@ -1258,14 +1296,34 @@ async fn history_fields(
     ))
 }
 
-/// `GET /history/daily?entity=&days=&kind=` — `days` must be 7, 30 or 365; `kind` is
-/// counter or power.
+/// `GET /history/daily?entity=&kind=&days=` or `&from=&to=[&per=][&upto=]` — `days` must be
+/// 7, 30 or 365; `kind` is counter or power. A window is bucketed `per` hour, day (the
+/// default) or month; `per` without a window is a 400.
 async fn history_daily(
     State(hub): HubState,
     RawQuery(q): RawQuery,
 ) -> Result<Json<HistoryDaily>, HttpError> {
     let params = parse_query(q.as_deref());
     let entity = get_one(&params, "entity").ok_or_else(bad_request)?;
+    let window = window_param(&params, "days")?;
+    let per = match get_one(&params, "per") {
+        None => None,
+        Some(s) => Some(DailyPer::parse(s).ok_or_else(bad_request)?),
+    };
+    if let Some(w) = &window {
+        let per = per.unwrap_or(DailyPer::Day);
+        let kind = get_one(&params, "kind")
+            .and_then(EnergyKind::parse)
+            .ok_or_else(bad_request)?;
+        check_limits(w, WindowUse::Daily(per))?;
+        let history = require_history(&hub)?;
+        return Ok(Json(
+            history_query::daily_window(history, entity, w, per, kind, now_micros()).await?,
+        ));
+    }
+    if per.is_some() {
+        return Err(bad_request());
+    }
     let days: u32 = get_one(&params, "days")
         .and_then(|s| s.parse().ok())
         .ok_or_else(bad_request)?;
@@ -1278,6 +1336,21 @@ async fn history_daily(
     let history = require_history(&hub)?;
     Ok(Json(
         history_query::daily(history, entity, days, kind, now_micros()).await?,
+    ))
+}
+
+/// `GET /history/extent?entity=` — the first recorded day of the entity and the house's
+/// today, to bound a period picker; 400 without an entity, 404 never recorded, 503 without
+/// history.
+async fn history_extent(
+    State(hub): HubState,
+    RawQuery(q): RawQuery,
+) -> Result<Json<HistoryExtent>, HttpError> {
+    let params = parse_query(q.as_deref());
+    let entity = get_one(&params, "entity").ok_or_else(bad_request)?;
+    let history = require_history(&hub)?;
+    Ok(Json(
+        history_query::extent(history, entity, now_micros()).await?,
     ))
 }
 

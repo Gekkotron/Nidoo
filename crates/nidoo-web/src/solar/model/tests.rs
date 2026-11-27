@@ -63,6 +63,7 @@ fn series(points: &[(i64, f64)]) -> HistorySeries {
     HistorySeries {
         window: 300,
         points: points.iter().map(|&(t, v)| (t, v, v, v)).collect(),
+        span: None,
     }
 }
 

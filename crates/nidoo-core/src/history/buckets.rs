@@ -220,12 +220,18 @@ pub fn readings_mean(recorded: &[Sample], recent: &[Sample], start: Micros) -> O
 /// `integral` and `increase`, takes min of `min` and max of `max`, and keeps the last
 /// bucket's `last` within each window.
 pub fn merge(buckets: &[Bucket], window: Micros) -> Vec<Bucket> {
+    merge_from(buckets, 0, window)
+}
+
+/// Like `merge`, but the windows start at `origin` (e.g. a house-local midnight) instead of
+/// the unix epoch: a bucket belongs to the window `origin + k * window` that contains it.
+pub fn merge_from(buckets: &[Bucket], origin: Micros, window: Micros) -> Vec<Bucket> {
     if window <= 0 || buckets.is_empty() {
         return Vec::new();
     }
     let mut groups: BTreeMap<Micros, Vec<&Bucket>> = BTreeMap::new();
     for b in buckets {
-        let ws = (b.start / window) * window;
+        let ws = origin + (b.start - origin).div_euclid(window) * window;
         groups.entry(ws).or_default().push(b);
     }
     let mut out = Vec::new();
@@ -387,6 +393,34 @@ mod tests {
         let recent = [s(9 * M, 60.0), s(13 * M, 50.0)];
         assert_eq!(readings_mean(&recorded, &recent, 0), Some(67.5));
         assert_eq!(readings_mean(&recorded, &[], 0), Some(220.0 / 3.0));
+    }
+
+    fn hourly(start: Micros, increase: f64) -> Bucket {
+        Bucket {
+            start,
+            covered: HOUR,
+            integral: 0.0,
+            min: 0.0,
+            max: 0.0,
+            last: 0.0,
+            increase,
+        }
+    }
+
+    #[test]
+    fn merge_from_groups_from_origin() {
+        let origin = 23 * HOUR;
+        let hours: Vec<Bucket> = (0..6).map(|i| hourly(origin + i * HOUR, 1.0)).collect();
+        let merged = merge_from(&hours, origin, 5 * HOUR);
+        assert_eq!(
+            merged
+                .iter()
+                .map(|b| (b.start, b.increase))
+                .collect::<Vec<_>>(),
+            vec![(23 * HOUR, 5.0), (28 * HOUR, 1.0)]
+        );
+        // Epoch-aligned merging puts the same hours in different groups.
+        assert_eq!(merge(&hours, 5 * HOUR)[0].start, 20 * HOUR);
     }
 
     #[test]

@@ -1327,6 +1327,58 @@ async fn get_history_is_listed() {
 }
 
 #[tokio::test]
+async fn get_history_schema_lists_window_params() {
+    let server = Server::start().await;
+    let client = server.client().await;
+
+    let tools = client.list_all_tools().await.expect("list tools");
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == "get_history")
+        .expect("get_history is listed");
+    let schema = Value::Object((*tool.input_schema).clone()).to_string();
+    for name in ["\"from\"", "\"to\"", "\"per\"", "\"upto\""] {
+        assert!(schema.contains(name), "{name} missing from {schema}");
+    }
+    assert!(schema.contains("\"extent\""), "{schema}");
+
+    client.cancel().await.expect("close");
+}
+
+#[tokio::test]
+async fn get_history_window_and_range_is_an_error() {
+    let server = Server::start().await;
+    let (history, _rx) = nidoo::history::History::detached(8, chrono_tz::UTC);
+    server.hub.set_history(history);
+    let client = server.client().await;
+
+    let result = call(
+        &client,
+        "get_history",
+        json!({
+            "entity": "x", "what": "series", "range": "24h",
+            "from": "2025-11-01", "to": "2025-11-30"
+        }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = text_of(&result);
+    assert!(text.contains("bad_request"), "{text}");
+    assert!(text.contains("range") && text.contains("from"), "{text}");
+
+    let result = call(
+        &client,
+        "get_history",
+        json!({ "entity": "x", "what": "daily", "days": 7, "kind": "power", "per": "day" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(text_of(&result).contains("per"), "{}", text_of(&result));
+
+    client.cancel().await.expect("close");
+}
+
+#[tokio::test]
 async fn supervisor_status_is_listed_read_only() {
     let server = Server::start().await;
     let client = server.client().await;

@@ -42,7 +42,12 @@ fn a_period_at_the_right_edge_stays_inside_the_box() {
     assert!(style.contains("max(0.10%, 3px)"), "{style}");
 }
 
+use super::super::fetch::{
+    Compared, FetchResult, compared_next, compared_state, daily_days_for, map_error,
+};
+use super::super::window::{compare_request, compared_req, present_range, window_per, x_domain};
 use super::*;
+use crate::history_period::Unit;
 
 #[test]
 fn stale_guard_rejects_old_request_ids() {
@@ -83,7 +88,7 @@ fn plan_fetch_series_flavor_uses_entity_series_for_every_range() {
         HistoryRange::Year,
     ] {
         assert_eq!(
-            plan_fetch("sensor.temp", r, Flavor::Series, None),
+            plan_fetch("sensor.temp", &ChartWindow::Preset(r), Flavor::Series, None),
             FetchPlan::Series("sensor.temp".into())
         );
     }
@@ -97,7 +102,12 @@ fn plan_fetch_counter_24h_uses_paired_power_series_when_present() {
         HistoryRange::Day,
     ] {
         assert_eq!(
-            plan_fetch("counter.e", r, Flavor::Counter, Some("sensor.power")),
+            plan_fetch(
+                "counter.e",
+                &ChartWindow::Preset(r),
+                Flavor::Counter,
+                Some("sensor.power")
+            ),
             FetchPlan::Series("sensor.power".into())
         );
     }
@@ -109,7 +119,7 @@ fn drawn_unit_is_the_paired_power_sensors_for_a_counter_day_chart() {
     let wh = || Some("Wh".to_owned());
     let paired = plan_fetch(
         "counter.e",
-        HistoryRange::Day,
+        &ChartWindow::Preset(HistoryRange::Day),
         Flavor::Counter,
         Some("sensor.power"),
     );
@@ -119,12 +129,17 @@ fn drawn_unit_is_the_paired_power_sensors_for_a_counter_day_chart() {
     );
     let own = plan_fetch(
         "counter.e",
-        HistoryRange::Week,
+        &ChartWindow::Preset(HistoryRange::Week),
         Flavor::Counter,
         Some("sensor.power"),
     );
     assert_eq!(drawn_unit(&own, "counter.e", wh(), unit_of), wh());
-    let temp = plan_fetch("sensor.t", HistoryRange::Day, Flavor::Series, None);
+    let temp = plan_fetch(
+        "sensor.t",
+        &ChartWindow::Preset(HistoryRange::Day),
+        Flavor::Series,
+        None,
+    );
     assert_eq!(
         drawn_unit(&temp, "sensor.t", Some("°C".into()), unit_of),
         Some("°C".into())
@@ -140,7 +155,7 @@ fn plan_fetch_counter_24h_falls_back_to_single_day_bar_without_power() {
         HistoryRange::Day,
     ] {
         assert_eq!(
-            plan_fetch("counter.e", r, Flavor::Counter, None),
+            plan_fetch("counter.e", &ChartWindow::Preset(r), Flavor::Counter, None),
             FetchPlan::Daily("counter.e".into(), 1)
         );
     }
@@ -149,15 +164,30 @@ fn plan_fetch_counter_24h_falls_back_to_single_day_bar_without_power() {
 #[test]
 fn plan_fetch_counter_long_ranges_use_daily_with_right_days() {
     assert_eq!(
-        plan_fetch("counter.e", HistoryRange::Week, Flavor::Counter, None),
+        plan_fetch(
+            "counter.e",
+            &ChartWindow::Preset(HistoryRange::Week),
+            Flavor::Counter,
+            None
+        ),
         FetchPlan::Daily("counter.e".into(), 7)
     );
     assert_eq!(
-        plan_fetch("counter.e", HistoryRange::Month, Flavor::Counter, None),
+        plan_fetch(
+            "counter.e",
+            &ChartWindow::Preset(HistoryRange::Month),
+            Flavor::Counter,
+            None
+        ),
         FetchPlan::Daily("counter.e".into(), 30)
     );
     assert_eq!(
-        plan_fetch("counter.e", HistoryRange::Year, Flavor::Counter, None),
+        plan_fetch(
+            "counter.e",
+            &ChartWindow::Preset(HistoryRange::Year),
+            Flavor::Counter,
+            None
+        ),
         FetchPlan::Daily("counter.e".into(), 365)
     );
 }
@@ -284,4 +314,249 @@ fn gradient_ids_are_unique_per_chart() {
 fn series_min_max_handles_empty() {
     let (lo, hi) = series_min_max(&[]);
     assert_eq!((lo, hi), (0.0, 0.0));
+}
+
+fn d(y: i32, m: u32, day: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(y, m, day).unwrap()
+}
+
+fn win(from: chrono::NaiveDate, to: chrono::NaiveDate) -> WindowReq {
+    WindowReq {
+        from,
+        to,
+        upto: None,
+    }
+}
+
+fn dates(unit: Unit, from: chrono::NaiveDate, to: chrono::NaiveDate) -> ChartWindow {
+    ChartWindow::Dates {
+        shown: win(from, to),
+        unit,
+        compare: None,
+    }
+}
+
+#[test]
+fn plan_fetch_dates_series_uses_window() {
+    let w = dates(Unit::Week, d(2026, 11, 23), d(2026, 11, 29));
+    assert_eq!(
+        plan_fetch("sensor.t", &w, Flavor::Series, Some("sensor.p")),
+        FetchPlan::SeriesWindow("sensor.t".into(), win(d(2026, 11, 23), d(2026, 11, 29)))
+    );
+}
+
+#[test]
+fn plan_fetch_dates_counter_month_per_day() {
+    let w = dates(Unit::Month, d(2026, 11, 1), d(2026, 11, 30));
+    assert_eq!(
+        plan_fetch("counter.a", &w, Flavor::Counter, None),
+        FetchPlan::DailyWindow(
+            "counter.a".into(),
+            win(d(2026, 11, 1), d(2026, 11, 30)),
+            DailyPer::Day
+        )
+    );
+}
+
+#[test]
+fn plan_fetch_dates_counter_year_per_month() {
+    let w = dates(Unit::Year, d(2026, 1, 1), d(2026, 12, 31));
+    assert_eq!(
+        plan_fetch("counter.a", &w, Flavor::Counter, None),
+        FetchPlan::DailyWindow(
+            "counter.a".into(),
+            win(d(2026, 1, 1), d(2026, 12, 31)),
+            DailyPer::Month
+        )
+    );
+}
+
+#[test]
+fn plan_fetch_dates_counter_day_per_hour() {
+    let w = dates(Unit::Day, d(2026, 11, 27), d(2026, 11, 27));
+    assert_eq!(
+        plan_fetch("counter.a", &w, Flavor::Counter, Some("sensor.p")),
+        FetchPlan::DailyWindow(
+            "counter.a".into(),
+            win(d(2026, 11, 27), d(2026, 11, 27)),
+            DailyPer::Hour
+        )
+    );
+}
+
+#[test]
+fn plan_fetch_preset_counter_6h_keeps_power_pair() {
+    assert_eq!(
+        plan_fetch(
+            "counter.a",
+            &ChartWindow::Preset(HistoryRange::SixHours),
+            Flavor::Counter,
+            Some("sensor.p")
+        ),
+        FetchPlan::Series("sensor.p".into())
+    );
+}
+
+#[test]
+fn compare_upto_from_shown_span() {
+    let cmp = win(d(2025, 11, 1), d(2025, 11, 30));
+    let running = compare_request((1_000, 1_000 + 86_400 * 10), true, cmp);
+    assert_eq!(running.upto, Some(86_400 * 10));
+    assert_eq!((running.from, running.to), (cmp.from, cmp.to));
+    assert_eq!(compare_request((1_000, 5_000), false, cmp), cmp);
+}
+
+#[test]
+fn a_dates_window_shows_the_range_of_its_length() {
+    let of = |unit, days: i64| {
+        let from = d(2026, 1, 1);
+        present_range(unit, &win(from, from + chrono::Duration::days(days - 1)))
+    };
+    assert_eq!(of(Unit::Day, 1), HistoryRange::Day);
+    assert_eq!(of(Unit::Week, 7), HistoryRange::Week);
+    assert_eq!(of(Unit::Month, 28), HistoryRange::Month);
+    assert_eq!(of(Unit::Year, 365), HistoryRange::Year);
+    assert_eq!(of(Unit::Custom, 1), HistoryRange::Day);
+    assert_eq!(of(Unit::Custom, 2), HistoryRange::Week);
+    assert_eq!(of(Unit::Custom, 8), HistoryRange::Week);
+    assert_eq!(of(Unit::Custom, 9), HistoryRange::Month);
+    assert_eq!(of(Unit::Custom, 32), HistoryRange::Month);
+    assert_eq!(of(Unit::Custom, 33), HistoryRange::Year);
+}
+
+#[test]
+fn only_a_window_holding_today_refetches() {
+    let today = d(2026, 11, 27);
+    let running = dates(Unit::Month, d(2026, 11, 1), d(2026, 11, 30));
+    let past = dates(Unit::Month, d(2026, 10, 1), d(2026, 10, 31));
+    let ended_yesterday = dates(Unit::Custom, d(2026, 11, 20), d(2026, 11, 26));
+    assert!(refetches(&running, today));
+    assert!(!refetches(&past, today));
+    assert!(!refetches(&ended_yesterday, today));
+    assert!(refetches(&ChartWindow::Preset(HistoryRange::Week), today));
+}
+
+#[test]
+fn the_x_domain_is_the_whole_period() {
+    let w = win(d(2026, 11, 1), d(2026, 11, 30));
+    assert_eq!(
+        x_domain(&w, (100, 100 + 86_400 * 5)),
+        (100, 100 + 86_400 * 30)
+    );
+}
+
+#[test]
+fn fields_are_fetched_up_to_400_days() {
+    let from = d(2025, 1, 1);
+    let of = |days: i64| dates(Unit::Custom, from, from + chrono::Duration::days(days - 1));
+    assert!(has_fields(&of(400)));
+    assert!(!has_fields(&of(401)));
+    assert!(has_fields(&ChartWindow::Preset(HistoryRange::Year)));
+}
+
+#[test]
+fn today_is_the_house_local_date() {
+    // 2026-11-27 23:30 UTC is already the 28th in Paris (UTC+1).
+    assert_eq!(local_today(1_795_822_200), d(2026, 11, 28));
+    assert_eq!(local_today(1_795_822_200 - 3_600), d(2026, 11, 27));
+}
+
+#[test]
+fn a_running_comparison_waits_for_the_shown_span() {
+    let cmp = win(d(2025, 11, 1), d(2025, 11, 30));
+    assert_eq!(compared_req(None, true, cmp), None);
+    assert_eq!(
+        compared_req(Some((0, 864_000)), true, cmp).map(|w| w.upto),
+        Some(Some(864_000))
+    );
+    assert_eq!(compared_req(None, false, cmp), Some(cmp));
+}
+
+#[test]
+fn only_a_date_counter_has_a_bucket_size() {
+    let month = dates(Unit::Month, d(2026, 11, 1), d(2026, 11, 30));
+    assert_eq!(window_per(&month, Flavor::Counter), Some(DailyPer::Day));
+    assert_eq!(window_per(&month, Flavor::Series), None);
+    let day = dates(Unit::Day, d(2026, 11, 27), d(2026, 11, 27));
+    assert_eq!(window_per(&day, Flavor::Counter), Some(DailyPer::Hour));
+    assert_eq!(
+        window_per(&ChartWindow::Preset(HistoryRange::Week), Flavor::Counter),
+        None
+    );
+}
+
+fn empty_series() -> HistorySeries {
+    HistorySeries {
+        window: 0,
+        points: vec![],
+        span: None,
+    }
+}
+
+#[test]
+fn an_empty_or_failed_compared_reply_is_no_comparison() {
+    assert!(compared_state(FetchResult::Series(Ok(empty_series()))).is_none());
+    assert!(
+        compared_state(FetchResult::Daily(Ok(HistoryDaily {
+            days: vec![],
+            span: None
+        })))
+        .is_none()
+    );
+    let full = HistorySeries {
+        points: vec![(0, 1.0, 1.0, 1.0)],
+        ..empty_series()
+    };
+    assert!(matches!(
+        compared_state(FetchResult::Series(Ok(full))),
+        Some(State::Series(_))
+    ));
+}
+
+#[test]
+fn a_failed_compared_refresh_keeps_the_comparison() {
+    let err = || FetchResult::Series(Err(HistoryApiError::Other("x".into())));
+    // Refresh: leave what is there. First load: clear.
+    assert!(compared_next(err(), true).is_none());
+    assert!(matches!(compared_next(err(), false), Some(Compared::Empty)));
+    // An empty Ok reply clears it even on a refresh.
+    assert!(matches!(
+        compared_next(FetchResult::Series(Ok(empty_series())), true),
+        Some(Compared::Empty)
+    ));
+}
+
+#[test]
+fn the_compared_state_is_pending_until_its_reply() {
+    // Asked: pending, never "no data" before the reply.
+    let c = Compared::starting(true);
+    assert!(c.is_pending() && c.ready().is_none());
+    assert!(matches!(Compared::starting(false), Compared::Off));
+    // The reply lands: ready, or empty.
+    let full = HistorySeries {
+        points: vec![(0, 1.0, 1.0, 1.0)],
+        ..empty_series()
+    };
+    let next = compared_next(FetchResult::Series(Ok(full)), false).unwrap();
+    assert!(next.ready().is_some() && !next.is_pending());
+    let next = compared_next(FetchResult::Series(Ok(empty_series())), false).unwrap();
+    assert!(matches!(next, Compared::Empty));
+    // No request will ever be made (the shown fetch failed): pending turns empty, others stay.
+    assert!(matches!(Compared::Pending.unrequested(), Compared::Empty));
+    assert!(matches!(Compared::Off.unrequested(), Compared::Off));
+    assert!(
+        Compared::Ready(State::Loading)
+            .unrequested()
+            .ready()
+            .is_some()
+    );
+}
+
+#[test]
+fn a_past_compared_line_runs_to_the_shown_edge() {
+    let pts = [(0, 1.0, 1.0, 1.0), (100, 2.0, 2.0, 2.0)];
+    let px = |t: i64| t as f64;
+    assert_eq!(compared_hold(&pts, false, 500.0, px), 500.0);
+    assert_eq!(compared_hold(&pts, true, 300.0, px), 100.0);
+    assert_eq!(compared_hold(&[], true, 300.0, px), 300.0);
 }

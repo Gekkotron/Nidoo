@@ -2,10 +2,10 @@
 //! Results are objects (the MCP `structuredContent` must be one), so lists are wrapped.
 
 use nidoo_api::{
-    Ambiance, AmbianceView, AreaView, BridgeView, ConnectionStatus, DeviceView, EnergyKind,
-    EntityView, GroupSpec, GroupView, HistoryDaily, HistoryFields, HistoryRange, HistorySeries,
-    HistoryToday, IgnoredView, LastChangeItem, NetworkWatchSpec, NetworkWatchView, OverridePatch,
-    RunStatus, VirtualSpec,
+    Ambiance, AmbianceView, AreaView, BridgeView, ConnectionStatus, DailyPer, DeviceView,
+    EnergyKind, EntityView, GroupSpec, GroupView, HistoryDaily, HistoryExtent, HistoryFields,
+    HistoryRange, HistorySeries, HistoryToday, IgnoredView, LastChangeItem, NetworkWatchSpec,
+    NetworkWatchView, OverridePatch, RunStatus, VirtualSpec,
 };
 use nidoo_core::flow::Flow;
 use nidoo_core::model::{Area, Command, Kind, UiOverride};
@@ -618,6 +618,8 @@ pub enum HistoryWhat {
     Fields,
     /// The time of the last state change for the entity.
     LastChange,
+    /// The first recorded day of the entity and the house's today, to bound a period.
+    Extent,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -630,19 +632,30 @@ pub struct GetGridDayParams {
 pub struct GetHistoryParams {
     /// The entity id, as `list_entities` returns it.
     pub entity: String,
-    /// What to return: `series`, `fields`, `daily`, `today` or `last_change`.
+    /// What to return: `series`, `fields`, `daily`, `today`, `last_change` or `extent`.
     pub what: HistoryWhat,
-    /// `1h`, `6h`, `24h`, `7d`, `30d` or `1y`. Required for `what = series` and `what = fields`.
+    /// `1h`, `6h`, `24h`, `7d`, `30d` or `1y`. For `what = series` and `what = fields`, give
+    /// exactly one of `range` or a `from`/`to` window.
     pub range: Option<HistoryRange>,
-    /// 7, 30 or 365. Required for `what = daily`.
+    /// 7, 30 or 365. For `what = daily`, give exactly one of `days` or a `from`/`to` window.
     pub days: Option<u32>,
+    /// First house-local day of a window, `YYYY-MM-DD`. Needs `to`; replaces `range` / `days`.
+    pub from: Option<String>,
+    /// Last house-local day of a window, `YYYY-MM-DD`, inclusive. Needs `from`.
+    pub to: Option<String>,
+    /// Cuts the window this many seconds after its start when that is before its end, so a
+    /// partial period can be compared with a whole one. A positive number; needs a window.
+    pub upto: Option<i64>,
+    /// Bucket size of a `daily` window: `hour`, `day` (the default) or `month`. Only with a
+    /// window; an error with `days`.
+    pub per: Option<DailyPer>,
     /// `counter` for a meter reading or `power` for a watt reading. Required for `daily`
     /// and `today`.
     pub kind: Option<EnergyKind>,
 }
 
-/// A single-entry object: at most one of `series`, `fields`, `daily`, `today` or `last_change` is
-/// present, matching the `what` of the request.
+/// A single-entry object: at most one of `series`, `fields`, `daily`, `today`, `last_change` or
+/// `extent` is present, matching the `what` of the request.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct HistoryAnswer {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -655,6 +668,8 @@ pub struct HistoryAnswer {
     pub today: Option<HistoryToday>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_change: Option<LastChangeItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extent: Option<HistoryExtent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

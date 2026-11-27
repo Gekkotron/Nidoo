@@ -374,3 +374,18 @@ fn day_starts_cross_dst() {
     assert_eq!(starts[1], micros_of_local(Paris, "2026-03-30 00:00:00"));
     assert_eq!(hours_between(starts[0], starts[1]), 23);
 }
+
+#[tokio::test]
+async fn daily_window_rejects_a_bad_window_before_needing_the_db() {
+    let (h, _rx) = History::detached(1, Paris);
+    let w = DateWindow {
+        from: nd("2026-11-27"),
+        to: nd("2026-11-27"),
+        upto: None,
+    };
+    let now = at("2026-11-26 12:00:00");
+    let err = daily_window(&h, "e", &w, DailyPer::Day, EnergyKind::Counter, now)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, HistoryError::BadRequest(_)), "{err:?}");
+}

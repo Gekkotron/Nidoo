@@ -6,19 +6,22 @@ use chrono::{DateTime, NaiveDate, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 
 use nidoo_api::{
-    GridDay, GridSlot, GridTotals, HistoryDaily, HistoryFields, HistoryRange, HistorySeries,
-    HistoryToday, LastChange, LastChangeItem,
+    DailyPer, GridDay, GridSlot, GridTotals, HistoryDaily, HistoryExtent, HistoryFields,
+    HistoryRange, HistorySeries, HistoryToday, LastChange, LastChangeItem,
 };
 use nidoo_core::energy::{
     GridCounters, OffPeakDevice, OffPeakEntry, device_off_peak, is_off_peak, windows_for,
 };
 use nidoo_core::flow::fields as entity_fields;
-use nidoo_core::history::buckets::{Bucket, EnergyKind, Sample, fill, kwh, merge, rollup, round3};
+use nidoo_core::history::buckets::{
+    Bucket, EnergyKind, Sample, fill, kwh, merge, merge_from, rollup, round3,
+};
 use nidoo_core::history::grid_day::{HALF_HOUR, fill_slots, increases, slot_starts};
 use nidoo_core::history::{HOUR, Micros};
 use nidoo_core::model::{Availability, Entity, StateValue};
 
 use super::fields::{TrackInput, build_tracks};
+use super::window::{DateWindow, WindowUse, boundaries, check_limits, days, resolve, step_secs};
 use super::{History, HistoryError};
 
 fn hour_floor(t: Micros) -> Micros {
@@ -50,7 +53,7 @@ pub fn day_starts(zone: Tz, now: Micros, days: u32) -> Vec<Micros> {
 }
 
 /// Local midnight of `date` in `zone`, the earliest instant when midnight is ambiguous.
-fn local_midnight(zone: Tz, date: NaiveDate) -> Micros {
+pub(crate) fn local_midnight(zone: Tz, date: NaiveDate) -> Micros {
     let naive = date
         .and_hms_opt(0, 0, 0)
         .expect("00:00:00 is always a valid clock time");
@@ -369,8 +372,14 @@ pub(crate) async fn hours(
 ) -> Result<Vec<Bucket>, HistoryError> {
     let db = h.db()?;
     let done_until = db.done_until().await.map_err(unavailable)?;
-    let live_start = done_until.unwrap_or(from).max(from);
-    let stored_end = live_start.min(now);
+    let mut live_start = done_until.unwrap_or(from).max(from);
+    let mut stored_end = live_start.min(now);
+    if stored_end < live_start && stored_end % HOUR != 0 {
+        // The span ends mid-hour inside the stored part: that hour's stored row covers all
+        // of it, so roll it from raw samples cut at `now` instead.
+        stored_end = hour_floor(stored_end).max(from);
+        live_start = stored_end;
+    }
 
     let stored = if from < stored_end {
         db.hourly(entity, from, stored_end)
@@ -414,6 +423,44 @@ pub(crate) async fn hours(
     Ok(fill(carry_at_from, &all, from, now, HOUR))
 }
 
+/// Buckets of `window` from raw samples over `[start, end)`, quiet ones filled with the carry
+/// at `start`.
+async fn raw_series(
+    db: &super::db::Db,
+    entity: &str,
+    start: Micros,
+    end: Micros,
+    window: Micros,
+) -> Result<Vec<Bucket>, HistoryError> {
+    let carry = series_carry_at(db, entity, start)
+        .await
+        .map_err(unavailable)?;
+    let samples: Vec<Sample> = db
+        .samples(start, end, Some(entity))
+        .await
+        .map_err(unavailable)?
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect();
+    let raw = rollup(carry, &samples, start, end, window);
+    Ok(fill(carry, &raw, start, end, window))
+}
+
+/// `(t, mean, min, max)` per bucket, `t` in unix seconds.
+fn points_of(buckets: &[Bucket]) -> Vec<(i64, f64, f64, f64)> {
+    buckets
+        .iter()
+        .map(|b| {
+            (
+                b.start / 1_000_000,
+                round3(b.mean()),
+                round3(b.min),
+                round3(b.max),
+            )
+        })
+        .collect()
+}
+
 pub async fn series(
     h: &History,
     entity: &str,
@@ -432,18 +479,7 @@ pub async fn series(
 
     let buckets = match range {
         HistoryRange::Hour | HistoryRange::SixHours | HistoryRange::Day => {
-            let carry = series_carry_at(db, entity, start)
-                .await
-                .map_err(unavailable)?;
-            let samples: Vec<Sample> = db
-                .samples(start, now, Some(entity))
-                .await
-                .map_err(unavailable)?
-                .into_iter()
-                .map(|(_, s)| s)
-                .collect();
-            let raw = rollup(carry, &samples, start, now, window);
-            fill(carry, &raw, start, now, window)
+            raw_series(db, entity, start, now, window).await?
         }
         _ => {
             let bs = hours(h, entity, start, now).await?;
@@ -451,20 +487,11 @@ pub async fn series(
         }
     };
 
-    let points = buckets
-        .iter()
-        .map(|b| {
-            (
-                b.start / 1_000_000,
-                round3(b.mean()),
-                round3(b.min),
-                round3(b.max),
-            )
-        })
-        .collect();
+    let points = points_of(&buckets);
     Ok(HistorySeries {
         window: window_secs,
         points,
+        span: None,
     })
 }
 
@@ -476,17 +503,37 @@ pub async fn fields(
     range: HistoryRange,
     now: Micros,
 ) -> Result<HistoryFields, HistoryError> {
+    let window = range.window_secs() * 1_000_000;
+    let from = align_down(now - range.span_secs() * 1_000_000, window);
+    fields_between(h, entity, from, now, window).await
+}
+
+/// [`fields`] over a house-local date window. Rejects windows beyond the fields limit.
+pub async fn fields_window(
+    h: &History,
+    entity: &Entity,
+    w: &DateWindow,
+    now: Micros,
+) -> Result<HistoryFields, HistoryError> {
+    check_limits(w, WindowUse::Fields)?;
+    let r = resolve(h.zone(), w, now)?;
+    let window = step_secs(days(w)) * 1_000_000;
+    fields_between(h, entity, r.start, r.end, window).await
+}
+
+async fn fields_between(
+    h: &History,
+    entity: &Entity,
+    from: Micros,
+    to: Micros,
+    window: Micros,
+) -> Result<HistoryFields, HistoryError> {
     let db = h.db()?;
     let id = entity.unique_id.as_str();
     if !db.is_recorded(id).await.map_err(unavailable)? {
         return Err(HistoryError::NotRecorded);
     }
-    let window = range.window_secs() * 1_000_000;
-    let from = align_down(now - range.span_secs() * 1_000_000, window);
-    let (carry, rows) = db
-        .states_between(id, from, now)
-        .await
-        .map_err(unavailable)?;
+    let (carry, rows) = db.states_between(id, from, to).await.map_err(unavailable)?;
     let list = entity_fields(
         entity.kind,
         &entity.component,
@@ -500,12 +547,12 @@ pub async fn fields(
         carry: carry.as_ref(),
         rows: &rows,
         from,
-        to: now,
+        to,
         window,
     });
     Ok(HistoryFields {
         from: from / 1_000_000,
-        to: now / 1_000_000,
+        to: to / 1_000_000,
         tracks,
     })
 }
@@ -536,7 +583,84 @@ pub async fn daily(
             days_vec.push((day_from / 1_000_000, round3(k)));
         }
     }
-    Ok(HistoryDaily { days: days_vec })
+    Ok(HistoryDaily {
+        days: days_vec,
+        span: None,
+    })
+}
+
+/// `series` over a house-local date window: a one-day window rolls raw samples as the `Day`
+/// preset does; longer ones merge the hourly rows into steps aligned at the window's start.
+pub async fn series_window(
+    h: &History,
+    entity: &str,
+    w: &DateWindow,
+    now: Micros,
+) -> Result<HistorySeries, HistoryError> {
+    let r = resolve(h.zone(), w, now)?;
+    let db = h.db()?;
+    if !db.is_recorded(entity).await.map_err(unavailable)? {
+        return Err(HistoryError::NotRecorded);
+    }
+    let window_secs = step_secs(days(w));
+    let window = window_secs * 1_000_000;
+    let buckets = if days(w) <= 1 {
+        raw_series(db, entity, r.start, r.end, window).await?
+    } else {
+        let bs = hours(h, entity, r.start, r.end).await?;
+        merge_from(&bs, r.start, window)
+    };
+    Ok(HistorySeries {
+        window: window_secs,
+        points: points_of(&buckets),
+        span: Some((r.start / 1_000_000, r.end / 1_000_000)),
+    })
+}
+
+/// kWh per hour, day or month over a house-local date window. Buckets with no data are left
+/// out.
+pub async fn daily_window(
+    h: &History,
+    entity: &str,
+    w: &DateWindow,
+    per: DailyPer,
+    kind: EnergyKind,
+    now: Micros,
+) -> Result<HistoryDaily, HistoryError> {
+    check_limits(w, WindowUse::Daily(per))?;
+    let r = resolve(h.zone(), w, now)?;
+    let db = h.db()?;
+    if !db.is_recorded(entity).await.map_err(unavailable)? {
+        return Err(HistoryError::NotRecorded);
+    }
+    let hourly = hours(h, entity, r.start, r.end).await?;
+    let bounds = boundaries(h.zone(), w, &r, per);
+    let days_vec = bounds
+        .windows(2)
+        .filter_map(|p| kwh(&hourly, p[0], p[1], kind).map(|k| (p[0] / 1_000_000, round3(k))))
+        .collect();
+    Ok(HistoryDaily {
+        days: days_vec,
+        span: Some((r.start / 1_000_000, r.end / 1_000_000)),
+    })
+}
+
+/// The dates history covers for `entity`: its first recorded day and the house's today.
+pub async fn extent(h: &History, entity: &str, now: Micros) -> Result<HistoryExtent, HistoryError> {
+    let db = h.db()?;
+    if !db.is_recorded(entity).await.map_err(unavailable)? {
+        return Err(HistoryError::NotRecorded);
+    }
+    let zone = h.zone();
+    let first = db
+        .first_time_of(&[entity.to_string()])
+        .await
+        .map_err(unavailable)?;
+    let ymd = |d: NaiveDate| d.format("%Y-%m-%d").to_string();
+    Ok(HistoryExtent {
+        first_date: first.map(|t| ymd(local_date(zone, t))),
+        today: ymd(local_date(zone, now)),
+    })
 }
 
 pub async fn today(
