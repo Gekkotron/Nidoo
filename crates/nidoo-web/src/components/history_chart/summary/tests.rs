@@ -129,3 +129,15 @@ fn a_sensor_reports_what_it_left_out() {
     .unwrap();
     assert_eq!((s.left_out, s.left_per), (2, DailyPer::Hour));
 }
+
+#[test]
+fn sensors_in_different_steps_are_not_compared() {
+    let shown = series(0, &[20.0, 22.0]);
+    let mut other = series(500 * DAY, &[18.0, 18.0]);
+    if let State::Series(c) = &mut other {
+        c.window = 18_000;
+    }
+    let s = summary(&shown, Some(&other), true, DailyPer::Day).unwrap();
+    assert_eq!(s.compared, Some(None));
+    assert_eq!(s.diff, None);
+}

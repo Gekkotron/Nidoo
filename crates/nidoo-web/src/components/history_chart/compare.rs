@@ -336,6 +336,16 @@ pub struct SeriesDates {
     pub running_to: Option<i64>,
 }
 
+/// The compared series, only when the hub bucketed it in the same step as the shown one. A
+/// custom span with a leap day can sit on the other side of a step threshold from its compared
+/// span; the buckets of two steps do not line up, so such a pair is not compared.
+pub fn same_step<'a>(
+    shown: &HistorySeries,
+    cmp: Option<&'a HistorySeries>,
+) -> Option<&'a HistorySeries> {
+    cmp.filter(|c| c.window == shown.window)
+}
+
 /// The series extras of a date window: `cmp` is the compared reply, if it came back.
 pub fn series_dates(
     ctx: &DatesCtx,
@@ -343,7 +353,7 @@ pub fn series_dates(
     cmp: Option<&HistorySeries>,
 ) -> SeriesDates {
     let bucketing = Bucketing::Nominal(shown.window.max(1));
-    let compared = match (cmp, shown.span) {
+    let compared = match (same_step(shown, cmp), shown.span) {
         (Some(c), Some(s)) => c
             .span
             .map(|cs| place_points(&c.points, cs.0, s.0, s.1 - s.0, bucketing))

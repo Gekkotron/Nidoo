@@ -191,3 +191,16 @@ fn the_tooltip_dates_carry_the_year() {
         day_when(Lang::En, t)
     );
 }
+
+#[test]
+fn a_series_in_another_step_is_not_comparable() {
+    let mk = |window| HistorySeries {
+        window,
+        points: vec![],
+        span: None,
+    };
+    let (a, b) = (mk(86_400), mk(18_000));
+    assert!(same_step(&a, Some(&b)).is_none());
+    assert!(same_step(&a, Some(&a)).is_some());
+    assert!(same_step(&a, None).is_none());
+}

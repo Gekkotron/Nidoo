@@ -5,6 +5,7 @@
 use leptos::prelude::*;
 use nidoo_api::DailyPer;
 
+use super::compare::same_step;
 use super::fetch::{Compared, State};
 use super::format::state_axis_labels;
 use super::window::{ChartWindow, runs_today, today_or};
@@ -105,7 +106,7 @@ pub fn summary(
         State::Series(s) => {
             let (mean, min, max) = sensor_stats(&s.points)?;
             let cmp = match compared {
-                Some(State::Series(c)) => Some(c),
+                Some(State::Series(c)) => same_step(s, Some(c)),
                 _ => None,
             };
             let pair = match (cmp, s.span) {
