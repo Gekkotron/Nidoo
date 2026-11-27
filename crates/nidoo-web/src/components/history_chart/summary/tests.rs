@@ -138,6 +138,6 @@ fn sensors_in_different_steps_are_not_compared() {
         c.window = 18_000;
     }
     let s = summary(&shown, Some(&other), true, DailyPer::Day).unwrap();
-    assert_eq!(s.compared, Some(None));
+    assert_eq!(s.compared, None);
     assert_eq!(s.diff, None);
 }

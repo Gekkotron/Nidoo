@@ -109,6 +109,10 @@ pub fn summary(
                 Some(State::Series(c)) => same_step(s, Some(c)),
                 _ => None,
             };
+            // The reply has data but in another step: leave the comparison out, don't claim
+            // there is none.
+            let mismatched =
+                matches!(compared, Some(State::Series(c)) if cmp.is_none() && !c.points.is_empty());
             let pair = match (cmp, s.span) {
                 (Some(c), Some(sp)) => c.span.and_then(|cs| {
                     sensor_summary(&s.points, sp.0, &c.points, cs.0, s.window.max(1))
@@ -136,7 +140,7 @@ pub fn summary(
                 }
                 None => Summary {
                     shown: Figures::Stats { mean, min, max },
-                    compared: asked.then_some(None),
+                    compared: (asked && !mismatched).then_some(None),
                     diff: None,
                     left_out: 0,
                     left_per: per,
@@ -270,34 +274,36 @@ pub fn PeriodSummary(
         // No difference to show until the compared period is in.
         s.diff = None;
     }
-    let cmp_card = compare.map(|c| {
-        let name = period_name(lang, period_unit, span(&c));
-        if pending {
-            return view! {
-                <div class="history-summary__card history-summary__card--pending">
-                    <span class="history-summary__name">{name}</span>
-                    <span class="history-summary__value" aria-hidden="true"></span>
-                </div>
+    let cmp_card = compare
+        .filter(|_| pending || s.compared.is_some())
+        .map(|c| {
+            let name = period_name(lang, period_unit, span(&c));
+            if pending {
+                return view! {
+                    <div class="history-summary__card history-summary__card--pending">
+                        <span class="history-summary__name">{name}</span>
+                        <span class="history-summary__value" aria-hidden="true"></span>
+                    </div>
+                }
+                .into_any();
             }
-            .into_any();
-        }
-        match s.compared.flatten() {
-            Some(f) => {
-                let label = if running {
-                    format!("{name} · {}", history_text(lang, HistoryText::SameDays))
-                } else {
-                    name
-                };
-                figures_card(lang, label, f, unit, "history-summary__card--compare")
+            match s.compared.flatten() {
+                Some(f) => {
+                    let label = if running {
+                        format!("{name} · {}", history_text(lang, HistoryText::SameDays))
+                    } else {
+                        name
+                    };
+                    figures_card(lang, label, f, unit, "history-summary__card--compare")
+                }
+                None => view! {
+                    <div class="history-summary__card history-summary__card--empty">
+                        <span class="history-summary__name">{no_data_for(lang, &name)}</span>
+                    </div>
+                }
+                .into_any(),
             }
-            None => view! {
-                <div class="history-summary__card history-summary__card--empty">
-                    <span class="history-summary__name">{no_data_for(lang, &name)}</span>
-                </div>
-            }
-            .into_any(),
-        }
-    });
+        });
     let diff = s.diff.map(|d| diff_card(lang, d, unit));
     let note = (s.left_out > 0).then(
         || view! { <p class="history-summary__note">{left_out(lang, s.left_out, s.left_per)}</p> },
