@@ -4,6 +4,7 @@
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
+use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_query_map};
 use nidoo_api::{WeatherDay, WeatherView};
 
@@ -28,13 +29,19 @@ fn measure(lang: Lang, v: Option<f64>, decimals: usize, unit: Option<&str>) -> S
     )
 }
 
-fn tile(label: &'static str, value: AnyView, sub: String) -> impl IntoView {
+/// The href of the history chart of the weather entity `key`.
+fn history_href(key: &str) -> String {
+    format!("/history/weather_{key}")
+}
+
+/// One figure of the page; a click opens the history of the weather entity `key`.
+fn tile(label: &'static str, value: AnyView, sub: String, key: &str) -> impl IntoView {
     view! {
-        <div class="weather-tile">
+        <A href=history_href(key) attr:class="weather-tile">
             <div class="weather-tile__label">{label}</div>
             <div class="weather-tile__value">{value}</div>
             <div class="weather-tile__sub">{sub}</div>
-        </div>
+        </A>
     }
 }
 
@@ -314,14 +321,14 @@ fn tiles(lang: Lang, f: &Figures, house: House) -> AnyView {
     let (sun_value, sun_sub) = sun_figures(lang, f.midday, house);
     view! {
         <div class="weather-tiles">
-            {tile(weather_text(lang, T::Wind), wind_value(lang, f), i18n::wind_sub(lang, compass, gusts.as_deref()))}
-            {tile(weather_text(lang, T::Humidity), measure(lang, f.humidity, 0, Some("%")).into_any(), String::new())}
-            {tile(weather_text(lang, T::Pressure), measure(lang, f.pressure, 0, Some("hPa")).into_any(), String::new())}
-            {tile(weather_text(lang, T::Clouds), measure(lang, f.cloud_cover, 0, Some("%")).into_any(), String::new())}
-            {tile(weather_text(lang, T::Rain), measure(lang, f.rain_mm, 1, Some("mm")).into_any(), f.rain_sub.clone())}
-            {tile(weather_text(lang, T::MaxGusts), measure(lang, f.max_gusts, 0, Some("km/h")).into_any(), f.max_gusts_sub.clone())}
-            {tile(weather_text(lang, T::UvIndex), measure(lang, f.uv, 0, None).into_any(), uv_sub)}
-            {tile(weather_text(lang, T::Sun), sun_value.into_any(), sun_sub)}
+            {tile(weather_text(lang, T::Wind), wind_value(lang, f), i18n::wind_sub(lang, compass, gusts.as_deref()), "wind_speed")}
+            {tile(weather_text(lang, T::Humidity), measure(lang, f.humidity, 0, Some("%")).into_any(), String::new(), "humidity")}
+            {tile(weather_text(lang, T::Pressure), measure(lang, f.pressure, 0, Some("hPa")).into_any(), String::new(), "pressure")}
+            {tile(weather_text(lang, T::Clouds), measure(lang, f.cloud_cover, 0, Some("%")).into_any(), String::new(), "cloud_cover")}
+            {tile(weather_text(lang, T::Rain), measure(lang, f.rain_mm, 1, Some("mm")).into_any(), f.rain_sub.clone(), "today_precipitation")}
+            {tile(weather_text(lang, T::MaxGusts), measure(lang, f.max_gusts, 0, Some("km/h")).into_any(), f.max_gusts_sub.clone(), "today_wind_gusts_max")}
+            {tile(weather_text(lang, T::UvIndex), measure(lang, f.uv, 0, None).into_any(), uv_sub, "uv_index")}
+            {tile(weather_text(lang, T::Sun), sun_value.into_any(), sun_sub, "daylight")}
         </div>
     }
     .into_any()
@@ -388,7 +395,7 @@ fn content<'a>(
         .flatten();
 
     view! {
-        <div class="weather-page__top">
+        <A href=history_href("temperature") attr:class="weather-page__top">
             <span class="weather-page__icon" inner_html=top.icon></span>
             <div>
                 <div class="weather-page__temp">{top.temp}</div>
@@ -397,7 +404,7 @@ fn content<'a>(
             <div class="weather-page__side">
                 {top.side.into_iter().map(|l| view! { <div>{l}</div> }).collect_view()}
             </div>
-        </div>
+        </A>
 
         <h3 class="weather-page__label">{heading}</h3>
         {tiles}

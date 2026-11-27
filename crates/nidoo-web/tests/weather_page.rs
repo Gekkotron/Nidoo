@@ -95,6 +95,38 @@ async fn weather_page_shows_tiles_and_days() {
     assert!(text.contains("No rain within the hour"), "{text}");
 }
 
+/// A click on the top block or a tile opens the history of the weather entity behind it.
+#[wasm_bindgen_test]
+async fn the_top_block_and_every_tile_link_to_a_history() {
+    let host = mount(Some(full_weather()), true).await;
+    let hrefs = |selector: &str| {
+        let nodes = host.query_selector_all(selector).unwrap();
+        (0..nodes.length())
+            .map(|i| {
+                let el: web_sys::Element = nodes.item(i).unwrap().unchecked_into();
+                el.get_attribute("href").unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        hrefs(".weather-page__top"),
+        ["/history/weather_temperature"]
+    );
+    assert_eq!(
+        hrefs(".weather-tile"),
+        [
+            "/history/weather_wind_speed",
+            "/history/weather_humidity",
+            "/history/weather_pressure",
+            "/history/weather_cloud_cover",
+            "/history/weather_today_precipitation",
+            "/history/weather_today_wind_gusts_max",
+            "/history/weather_uv_index",
+            "/history/weather_daylight",
+        ]
+    );
+}
+
 #[wasm_bindgen_test]
 async fn weather_page_unavailable() {
     let host = mount(None, true).await;
