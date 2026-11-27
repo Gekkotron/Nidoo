@@ -9253,7 +9253,27 @@ dialog.popup::backdrop {
 }
 
 .weather-tile {
+  display: block;
   padding: 12px 14px;
+}
+
+/* The top block and the tiles are links to the history of their figure. */
+.weather-page__top,
+.weather-tile {
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 120ms ease;
+}
+
+.weather-page__top:hover,
+.weather-tile:hover {
+  border-color: color-mix(in srgb, var(--accent-amber) 45%, var(--card-border));
+}
+
+.weather-page__top:focus-visible,
+.weather-tile:focus-visible {
+  outline: 2px solid var(--accent-amber);
+  outline-offset: 2px;
 }
 
 .weather-tile__label {
