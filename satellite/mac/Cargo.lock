@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-satellite"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2217,7 +2217,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-sound"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "axum",
@@ -2245,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "nidoo-voice"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "getrandom 0.2.17",
  "hmac",
