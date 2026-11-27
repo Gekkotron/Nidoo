@@ -816,6 +816,21 @@ struct SeriesView {
     zoom: Option<Callback<NaiveDate>>,
 }
 
+/// How far the compared line runs, in px: a past period's runs to the same edge as the shown
+/// line; a running one stops at its last point.
+fn compared_hold(
+    pts: &[(i64, f64, f64, f64)],
+    running: bool,
+    shown_hold: f64,
+    px_of: impl Fn(i64) -> f64,
+) -> f64 {
+    if running {
+        pts.last().map_or(shown_hold, |p| px_of(p.0))
+    } else {
+        shown_hold
+    }
+}
+
 fn render_series(v: SeriesView) -> impl IntoView {
     let SeriesView {
         lang,
@@ -876,7 +891,8 @@ fn render_series(v: SeriesView) -> impl IntoView {
             },
         )
     };
-    let cmp_hold = cmp_pts.last().map_or(VIEW_W, |p| x_frac(p.0) * VIEW_W);
+    let running = dates.as_ref().is_some_and(|d| d.running_to.is_some());
+    let cmp_hold = compared_hold(&cmp_pts, running, hold_px, |t| x_frac(t) * VIEW_W);
     let cmp_line = if discrete {
         step_path_held(&cmp_pts, scale, t_start, now, VIEW_W, cmp_hold, VIEW_H).d
     } else {

@@ -89,12 +89,19 @@ fn month_ticks(lang: Lang, shown: &WindowReq, n: i64, by_slot: bool) -> Vec<(f64
     }
     let step = months.len().div_ceil(MAX_MONTH_LABELS).max(1);
     let years = months.len() > MAX_MONTH_LABELS;
-    months
+    let shown: Vec<(f64, NaiveDate)> = months.into_iter().step_by(step).collect();
+    // A 13-month axis starts and ends on the same month name: the first and last carry the year.
+    let ends = match (shown.first(), shown.last()) {
+        (Some(a), Some(b)) if shown.len() > 1 => a.1.month() == b.1.month(),
+        _ => false,
+    };
+    let last = shown.len().saturating_sub(1);
+    shown
         .into_iter()
-        .step_by(step)
-        .map(|(pos, d)| {
+        .enumerate()
+        .map(|(k, (pos, d))| {
             let name = fmt::month_short(lang, d.month());
-            let label = if years {
+            let label = if years || (ends && (k == 0 || k == last)) {
                 format!("{name} {}", d.year())
             } else {
                 name.to_owned()

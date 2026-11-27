@@ -146,5 +146,29 @@ fn month_bars_put_each_month_on_its_slot() {
     );
     assert_eq!(t.len(), 13);
     assert!((t[0].0 - 0.5 / 13.0).abs() < 1e-9);
-    assert_eq!(t[0].1, "Nov");
+    assert_eq!(t[0].1, "Nov 2025");
+    assert_eq!(t[12].1, "Nov 2026");
+}
+
+#[test]
+fn a_thirteen_month_axis_puts_the_year_on_its_matching_ends() {
+    let t = window_ticks(
+        Lang::En,
+        Unit::Custom,
+        &req(d(2025, 11, 27), d(2026, 11, 26)),
+        None,
+        false,
+    );
+    assert_eq!(t.first().unwrap().1, "Nov 2025");
+    assert_eq!(t.last().unwrap().1, "Nov 2026");
+    assert!(t[1..t.len() - 1].iter().all(|(_, l)| l.len() == 3));
+    let fr = window_ticks(
+        Lang::Fr,
+        Unit::Custom,
+        &req(d(2025, 11, 27), d(2026, 11, 26)),
+        None,
+        false,
+    );
+    assert_eq!(fr.first().unwrap().1, "nov. 2025");
+    assert_eq!(fr.last().unwrap().1, "nov. 2026");
 }

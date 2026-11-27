@@ -551,3 +551,12 @@ fn the_compared_state_is_pending_until_its_reply() {
             .is_some()
     );
 }
+
+#[test]
+fn a_past_compared_line_runs_to_the_shown_edge() {
+    let pts = [(0, 1.0, 1.0, 1.0), (100, 2.0, 2.0, 2.0)];
+    let px = |t: i64| t as f64;
+    assert_eq!(compared_hold(&pts, false, 500.0, px), 500.0);
+    assert_eq!(compared_hold(&pts, true, 300.0, px), 100.0);
+    assert_eq!(compared_hold(&[], true, 300.0, px), 300.0);
+}
