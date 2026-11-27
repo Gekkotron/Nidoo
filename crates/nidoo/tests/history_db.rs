@@ -167,6 +167,127 @@ async fn hourly_carry_takes_latest_before() {
     tdb.drop_db().await;
 }
 
+#[tokio::test]
+async fn hourly_carry_answers_per_entity() {
+    let Some(tdb) = fresh_db().await else { return };
+    let hour = 3_600_000_000i64;
+    tdb.db
+        .upsert_hourly(&[
+            ("a".into(), make_bucket(0, 1.0, 1.0, 0.0)),
+            ("a".into(), make_bucket(hour, 2.0, 2.0, 0.0)),
+            ("b".into(), make_bucket(0, 7.0, 7.0, 0.0)),
+            ("c".into(), make_bucket(3 * hour, 9.0, 9.0, 0.0)),
+        ])
+        .await
+        .unwrap();
+    let ids: Vec<String> = ["a", "b", "c", "ghost"].map(String::from).to_vec();
+    let carry = tdb.db.hourly_carry(2 * hour, &ids).await.unwrap();
+    assert_eq!(carry.get("a"), Some(&2.0));
+    assert_eq!(carry.get("b"), Some(&7.0));
+    // Nothing before the bound, and never recorded: both absent.
+    assert_eq!(carry.len(), 2);
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn hourly_upsert_keeps_the_last_of_a_repeated_bucket() {
+    let Some(tdb) = fresh_db().await else { return };
+    tdb.db
+        .upsert_hourly(&[
+            ("a".into(), make_bucket(0, 1.0, 1.0, 0.0)),
+            ("a".into(), make_bucket(0, 4.0, 4.0, 0.0)),
+        ])
+        .await
+        .unwrap();
+    let hours = tdb.db.hourly("a", 0, 3_600_000_000).await.unwrap();
+    assert_eq!(hours.len(), 1);
+    assert_eq!(hours[0].last, 4.0);
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn insert_keeps_the_newest_of_a_batch_as_latest() {
+    let Some(tdb) = fresh_db().await else { return };
+    // Out of order, with a tie on the newest time: the later row of the tie wins.
+    let rows = Rows {
+        values: vec![
+            value_row("a", 2_000_000, 2.0),
+            value_row("a", 1_000_000, 1.0),
+            value_row("a", 2_000_000, 3.0),
+            value_row("b", 1_000_000, 9.0),
+        ],
+        availability: vec![
+            availability_row("a", 2_000_000, Availability::Offline),
+            availability_row("a", 1_000_000, Availability::Unknown),
+            availability_row("a", 2_000_000, Availability::Online),
+        ],
+    };
+    tdb.db.insert(&rows).await.unwrap();
+    // An older batch leaves the latest alone.
+    tdb.db
+        .insert(&Rows {
+            values: vec![value_row("a", 500_000, 0.5)],
+            availability: vec![availability_row("a", 500_000, Availability::Offline)],
+        })
+        .await
+        .unwrap();
+
+    let mut latest = tdb.db.latest_states().await.unwrap();
+    latest.sort_by(|x, y| x.0.cmp(&y.0));
+    assert_eq!(
+        latest,
+        vec![
+            ("a".to_string(), 2_000_000, StateValue::Number(3.0)),
+            ("b".to_string(), 1_000_000, StateValue::Number(9.0)),
+        ]
+    );
+    let availability: String =
+        sqlx::query_scalar("SELECT availability FROM availability_latest WHERE entity_id = 'a'")
+            .fetch_one(tdb.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(availability, "online");
+
+    tdb.drop_db().await;
+}
+
+#[tokio::test]
+async fn first_time_of_is_exact_with_and_without_hourly_rows() {
+    let Some(tdb) = fresh_db().await else { return };
+    let hour = 3_600_000_000i64;
+    let first = 5 * hour + 1_234_567;
+    tdb.db
+        .insert(&Rows {
+            values: vec![
+                value_row("a", first, 1.0),
+                value_row("a", 9 * hour, 2.0),
+                value_row("b", 7 * hour, 3.0),
+            ],
+            availability: vec![],
+        })
+        .await
+        .unwrap();
+    let ids: Vec<String> = ["b", "a", "ghost"].map(String::from).to_vec();
+    // Before any rollup the raw rows answer.
+    assert_eq!(tdb.db.first_time_of(&ids).await.unwrap(), Some(first));
+
+    rollup_once(&tdb.db, 12 * hour, i64::MAX).await.unwrap();
+    assert_eq!(tdb.db.first_time_of(&ids).await.unwrap(), Some(first));
+    assert_eq!(
+        tdb.db.first_time_of(&["b".to_string()]).await.unwrap(),
+        Some(7 * hour)
+    );
+    assert_eq!(
+        tdb.db.first_time_of(&["ghost".to_string()]).await.unwrap(),
+        None
+    );
+    assert_eq!(tdb.db.first_time_of(&[]).await.unwrap(), None);
+
+    tdb.drop_db().await;
+}
+
 const HOUR: i64 = 3_600_000_000;
 const MINUTE: i64 = 60_000_000;
 
