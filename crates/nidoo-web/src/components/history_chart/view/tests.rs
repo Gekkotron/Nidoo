@@ -42,8 +42,10 @@ fn a_period_at_the_right_edge_stays_inside_the_box() {
     assert!(style.contains("max(0.10%, 3px)"), "{style}");
 }
 
-use super::super::window::{present_range, x_domain};
+use super::super::fetch::{FetchResult, compared_next, compared_state, daily_days_for, map_error};
+use super::super::window::{compare_request, compared_req, present_range, window_per, x_domain};
 use super::*;
+use crate::history_period::Unit;
 
 #[test]
 fn stale_guard_rejects_old_request_ids() {
@@ -455,4 +457,69 @@ fn today_is_the_house_local_date() {
     // 2026-11-27 23:30 UTC is already the 28th in Paris (UTC+1).
     assert_eq!(local_today(1_795_822_200), d(2026, 11, 28));
     assert_eq!(local_today(1_795_822_200 - 3_600), d(2026, 11, 27));
+}
+
+#[test]
+fn a_running_comparison_waits_for_the_shown_span() {
+    let cmp = win(d(2025, 11, 1), d(2025, 11, 30));
+    assert_eq!(compared_req(None, true, cmp), None);
+    assert_eq!(
+        compared_req(Some((0, 864_000)), true, cmp).map(|w| w.upto),
+        Some(Some(864_000))
+    );
+    assert_eq!(compared_req(None, false, cmp), Some(cmp));
+}
+
+#[test]
+fn only_a_date_counter_has_a_bucket_size() {
+    let month = dates(Unit::Month, d(2026, 11, 1), d(2026, 11, 30));
+    assert_eq!(window_per(&month, Flavor::Counter), Some(DailyPer::Day));
+    assert_eq!(window_per(&month, Flavor::Series), None);
+    let day = dates(Unit::Day, d(2026, 11, 27), d(2026, 11, 27));
+    assert_eq!(window_per(&day, Flavor::Counter), Some(DailyPer::Hour));
+    assert_eq!(
+        window_per(&ChartWindow::Preset(HistoryRange::Week), Flavor::Counter),
+        None
+    );
+}
+
+fn empty_series() -> HistorySeries {
+    HistorySeries {
+        window: 0,
+        points: vec![],
+        span: None,
+    }
+}
+
+#[test]
+fn an_empty_or_failed_compared_reply_is_no_comparison() {
+    assert!(compared_state(FetchResult::Series(Ok(empty_series()))).is_none());
+    assert!(
+        compared_state(FetchResult::Daily(Ok(HistoryDaily {
+            days: vec![],
+            span: None
+        })))
+        .is_none()
+    );
+    let full = HistorySeries {
+        points: vec![(0, 1.0, 1.0, 1.0)],
+        ..empty_series()
+    };
+    assert!(matches!(
+        compared_state(FetchResult::Series(Ok(full))),
+        Some(State::Series(_))
+    ));
+}
+
+#[test]
+fn a_failed_compared_refresh_keeps_the_comparison() {
+    let err = || FetchResult::Series(Err(HistoryApiError::Other("x".into())));
+    // Refresh: leave what is there. First load: clear.
+    assert!(compared_next(err(), true).is_none());
+    assert!(matches!(compared_next(err(), false), Some(None)));
+    // An empty Ok reply clears it even on a refresh.
+    assert!(matches!(
+        compared_next(FetchResult::Series(Ok(empty_series())), true),
+        Some(None)
+    ));
 }

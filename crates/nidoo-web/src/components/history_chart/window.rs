@@ -3,10 +3,11 @@
 //! the x domain.
 
 use chrono::NaiveDate;
-use nidoo_api::HistoryRange;
+use nidoo_api::{DailyPer, HistoryRange};
 
+use super::view::Flavor;
 use crate::api::history::WindowReq;
-use crate::history_period::Unit;
+use crate::history_period::{Span, Unit, per_for};
 
 /// The stretch of time a chart draws.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +103,32 @@ pub fn has_fields(window: &ChartWindow) -> bool {
     }
 }
 
+/// The compared window's request, if it can be made yet: a running period needs the shown
+/// reply's span to cut it, so with no span (the shown fetch failed) there is none; a finished
+/// period needs nothing.
+pub fn compared_req(shown: Option<(i64, i64)>, running: bool, cmp: WindowReq) -> Option<WindowReq> {
+    if running {
+        shown.map(|span| compare_request(span, true, cmp))
+    } else {
+        Some(cmp)
+    }
+}
+
+/// How a date window's counter is bucketed; `None` for presets and for series.
+pub fn window_per(window: &ChartWindow, flavor: Flavor) -> Option<DailyPer> {
+    match (window, flavor) {
+        (ChartWindow::Dates { shown, unit, .. }, Flavor::Counter) => Some(per_for(
+            *unit,
+            Span {
+                from: shown.from,
+                to: shown.to,
+            },
+        )),
+        _ => None,
+    }
+}
+
+// TODO(Task 12): use the hub's today from /history/extent
 /// The house-local date at unix second `now`.
 pub fn local_today(now: i64) -> NaiveDate {
     let local = now + i64::from(super::format::paris_offset(now));
