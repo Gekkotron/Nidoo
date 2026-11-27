@@ -32,7 +32,8 @@ use super::selection::{chip_label, chips, parse_show, show_param, toggle};
 use super::summary::PeriodSummary;
 pub use super::window::ChartWindow;
 use super::window::{
-    compared_req, domain, has_fields, local_today, refetches, runs_today, window_per, window_range,
+    compared_req, domain, has_fields, local_today, refetches, runs_today, today_or, window_per,
+    window_range,
 };
 use crate::api::history::{HistoryApiError, WindowReq, fetch_fields, fetch_fields_window};
 use crate::components::now::Now;
@@ -88,6 +89,10 @@ pub fn HistoryChart(
     /// into a finer one (a year into its months, a week or month into its days).
     #[prop(optional)]
     on_zoom: Option<Callback<NaiveDate>>,
+    /// The hub's today, once known: it decides whether a date window is still running. Without
+    /// it the browser's clock does.
+    #[prop(optional, into)]
+    today: Signal<Option<NaiveDate>>,
 ) -> impl IntoView {
     let wants_fields = on_show.is_some();
     let state = RwSignal::new(State::Loading);
@@ -106,12 +111,22 @@ pub fn HistoryChart(
         let w = window.get();
         now.map(|n| {
             let secs = n.0.get();
-            if refetches(&w, local_today(secs as i64)) {
+            if refetches(&w, today_or(today.get(), secs as i64)) {
                 secs / refresh_period_s(window_range(&w))
             } else {
                 0
             }
         })
+    });
+
+    // Whether the shown date window holds today. A memo, so the hub's `today` arriving refetches
+    // only when it changes the answer.
+    let running = Memo::new(move |_| match window.get() {
+        ChartWindow::Dates { shown, .. } => runs_today(
+            &shown,
+            today_or(today.get(), (crate::energy::now_ms() / 1000) as i64),
+        ),
+        ChartWindow::Preset(_) => false,
     });
 
     // Fetch effect — refires on any input change (or Retry), and on each tick. A tick alone is
@@ -184,10 +199,10 @@ pub fn HistoryChart(
                     shown,
                     compare: Some(cmp),
                     ..
-                } => Some((
-                    *cmp,
-                    runs_today(shown, local_today((crate::energy::now_ms() / 1000) as i64)),
-                )),
+                } => {
+                    let _ = shown;
+                    Some((*cmp, running.get()))
+                }
                 _ => None,
             };
             let latest_check = latest.clone();
@@ -283,7 +298,7 @@ pub fn HistoryChart(
                     _ => None,
                 };
                 let fdomain = domain(&win, fspan, now_s);
-                let dctx = dates_ctx(lang, &win, now_s);
+                let dctx = dates_ctx(lang, &win, now_s, today.get());
                 let name = dctx
                     .as_ref()
                     .map_or_else(|| range_name(lang, range).to_owned(), |c| c.name.clone());
@@ -413,7 +428,8 @@ pub fn HistoryChart(
                 let summary = (dctx.is_some() && entity_plot).then(|| {
                     view! {
                         <PeriodSummary lang=lang window=win.clone() shown=state.get()
-                            compared=cmp_state.clone() kind=kind_rx.get() unit=unit_rx.get() />
+                            compared=cmp_state.clone() kind=kind_rx.get() unit=unit_rx.get()
+                            today=today.get() />
                     }
                 });
                 view! { {row} {body} {summary} }

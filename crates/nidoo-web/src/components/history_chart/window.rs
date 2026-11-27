@@ -146,7 +146,12 @@ pub fn window_per(window: &ChartWindow, flavor: Flavor) -> Option<DailyPer> {
     }
 }
 
-// TODO(Task 12): use the hub's today from /history/extent
+/// The house-local date at unix second `now`, from the browser's clock. The chart uses it only
+/// until (or without) the hub's own `today`, which the history page passes from `/history/extent`.
+pub fn today_or(today: Option<NaiveDate>, now: i64) -> NaiveDate {
+    today.unwrap_or_else(|| local_today(now))
+}
+
 /// The house-local date at unix second `now`.
 pub fn local_today(now: i64) -> NaiveDate {
     let local = now + i64::from(super::format::paris_offset(now));

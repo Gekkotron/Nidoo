@@ -12,7 +12,7 @@ use super::geom::{slot_index, tooltip_flips};
 use super::ticks::window_ticks;
 use super::view::{pct, pointer_frac};
 use super::window::{
-    ChartWindow, local_today, runs_today, window_days, window_months, window_secs,
+    ChartWindow, local_today, runs_today, today_or, window_days, window_months, window_secs,
 };
 use crate::api::history::WindowReq;
 use crate::components::history_chart::format::tick_labels;
@@ -224,7 +224,12 @@ fn span_of(w: &WindowReq) -> Span {
 }
 
 /// The drawing context of `window` at unix second `now`; `None` for a preset.
-pub fn dates_ctx(lang: Lang, window: &ChartWindow, now: i64) -> Option<DatesCtx> {
+pub fn dates_ctx(
+    lang: Lang,
+    window: &ChartWindow,
+    now: i64,
+    today: Option<NaiveDate>,
+) -> Option<DatesCtx> {
     let ChartWindow::Dates {
         shown,
         unit,
@@ -236,7 +241,7 @@ pub fn dates_ctx(lang: Lang, window: &ChartWindow, now: i64) -> Option<DatesCtx>
     Some(DatesCtx {
         req: *shown,
         unit: *unit,
-        running: runs_today(shown, local_today(now)),
+        running: runs_today(shown, today_or(today, now)),
         name: period_name(lang, *unit, span_of(shown)),
         cmp_name: compare.map(|c| period_name(lang, *unit, span_of(&c))),
     })

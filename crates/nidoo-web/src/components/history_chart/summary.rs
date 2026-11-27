@@ -7,7 +7,7 @@ use nidoo_api::DailyPer;
 
 use super::fetch::State;
 use super::format::state_axis_labels;
-use super::window::{ChartWindow, local_today, runs_today};
+use super::window::{ChartWindow, runs_today, today_or};
 use crate::history_compare::{counter_summary, counter_total, sensor_stats, sensor_summary};
 use crate::history_period::{Span, per_for};
 use crate::i18n::Lang;
@@ -15,6 +15,7 @@ use crate::i18n::format as fmt;
 use crate::i18n::history::{
     HistoryText, history_text, kwh, left_out, min_max, no_data_for, period_name,
 };
+use chrono::NaiveDate;
 
 /// What a card shows of one period.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -233,6 +234,8 @@ pub fn PeriodSummary(
     /// The entity's kind, which tells a state (no summary) from a number.
     kind: String,
     unit: Option<String>,
+    /// The hub's today, when known.
+    today: Option<NaiveDate>,
 ) -> impl IntoView {
     let ChartWindow::Dates {
         shown: req,
@@ -253,7 +256,10 @@ pub fn PeriodSummary(
     let Some(s) = summary(&shown, compared.as_ref(), compare.is_some(), per) else {
         return ().into_any();
     };
-    let running = runs_today(&req, local_today((crate::energy::now_ms() / 1000) as i64));
+    let running = runs_today(
+        &req,
+        today_or(today, (crate::energy::now_ms() / 1000) as i64),
+    );
     let unit = unit.as_deref();
     let mut shown_name = period_name(lang, period_unit, span(&req));
     if running {

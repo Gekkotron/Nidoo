@@ -1,20 +1,29 @@
-//! The full-screen `/history/:id?range=…` page: chrome row, range chips, and a `HistoryChart`.
+//! The full-screen `/history/:id?period=…` page: chrome row, the period bar, and a `HistoryChart`.
 
 use std::collections::BTreeMap;
 
+use chrono::NaiveDate;
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
-use nidoo_api::{EntityView, HistoryRange};
+use nidoo_api::{EntityView, HistoryExtent, HistoryRange};
 use nidoo_core::energy::{EnergyMeters, EnergyUnits};
 use nidoo_core::model::Kind;
 
+use crate::api::history::{WindowReq, fetch_extent};
+use crate::components::history_chart::format::state_axis_labels;
+use crate::components::history_chart::window::local_today;
 use crate::components::history_chart::{ChartWindow, Flavor, HistoryChart};
+use crate::components::period_bar::PeriodBar;
 use crate::energy::{energy_entities, energy_entity};
 use crate::format::{area_name, shown_name, title_suffix, type_word, wrap_id};
+use crate::history_period::{
+    PeriodState, Span, Unit, compare_span, parse_state, shown_span, span_of, state_path,
+};
 use crate::house::House;
 use crate::i18n::devices::availability_text;
-use crate::i18n::history::{HistoryText, history_text, range_chip};
+use crate::i18n::history::{HistoryText, history_text};
 use crate::i18n::use_lang;
 use crate::nav::BackLink;
 use crate::screens::entity_sheet::availability_class;
@@ -46,46 +55,52 @@ pub fn day_curve_of(entities: &BTreeMap<String, EntityView>, id: &str) -> String
         .unwrap_or_else(|| id.to_owned())
 }
 
-/// Parse the `range` query parameter (`1h`, `6h`, `24h`, `7d`, `30d`, `1y`); default `24h`.
-pub fn parse_range(raw: Option<String>) -> HistoryRange {
-    raw.as_deref()
-        .and_then(HistoryRange::parse)
-        .unwrap_or(HistoryRange::Day)
-}
-
-fn range_slug(r: HistoryRange) -> &'static str {
-    match r {
-        HistoryRange::Hour => "1h",
-        HistoryRange::SixHours => "6h",
-        HistoryRange::Day => "24h",
-        HistoryRange::Week => "7d",
-        HistoryRange::Month => "30d",
-        HistoryRange::Year => "1y",
+/// What the chart draws for a period: the hour views are the last 1 or 6 hours; the rest is a
+/// date window, set against the same period of an earlier year when `vs` says so.
+pub fn chart_window(s: &PeriodState, today: NaiveDate) -> ChartWindow {
+    match s.unit {
+        Unit::Hour1 => ChartWindow::Preset(HistoryRange::Hour),
+        Unit::Hour6 => ChartWindow::Preset(HistoryRange::SixHours),
+        unit => {
+            let span = shown_span(s, today).unwrap_or(Span {
+                from: today,
+                to: today,
+            });
+            let req = |sp: Span| WindowReq {
+                from: sp.from,
+                to: sp.to,
+                upto: None,
+            };
+            ChartWindow::Dates {
+                shown: req(span),
+                unit,
+                compare: s.vs.map(|v| req(compare_span(unit, span, v))),
+            }
+        }
     }
 }
 
-/// The page's address for a range and, when chips picked values, the `show` list.
-fn history_path(id: &str, range: HistoryRange, show: Option<&str>) -> String {
-    let mut path = format!(
-        "/history/{}?range={}",
-        crate::api::encode_id(id),
-        range_slug(range)
-    );
-    if let Some(show) = show.filter(|s| !s.is_empty()) {
-        path.push_str("&show=");
-        path.push_str(&crate::api::encode_id(show));
+/// The period a click on a bucket dated `date` zooms into: a year opens its month, a week, month
+/// or custom span opens the day. The comparison and the chosen values stay.
+pub fn zoomed(s: &PeriodState, date: NaiveDate, today: NaiveDate) -> PeriodState {
+    let unit = if s.unit == Unit::Year {
+        Unit::Month
+    } else {
+        Unit::Day
+    };
+    let span = span_of(unit, date);
+    PeriodState {
+        unit,
+        at: (!(span.from <= today && today <= span.to)).then_some(span.from),
+        custom: None,
+        vs: s.vs,
+        show: s.show.clone(),
     }
-    path
 }
 
-const RANGES: [HistoryRange; 6] = [
-    HistoryRange::Hour,
-    HistoryRange::SixHours,
-    HistoryRange::Day,
-    HistoryRange::Week,
-    HistoryRange::Month,
-    HistoryRange::Year,
-];
+fn parse_date(s: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
 
 #[component]
 pub fn HistoryDetailScreen() -> impl IntoView {
@@ -96,8 +111,41 @@ pub fn HistoryDetailScreen() -> impl IntoView {
     let lang = use_lang();
 
     let id = Memo::new(move |_| params.read().get("id").unwrap_or_default());
-    let range = Memo::new(move |_| parse_range(query.read().get("range")));
-    let show = Memo::new(move |_| query.read().get("show"));
+    let state = Memo::new(move |_| {
+        let q = query.read();
+        parse_state(|k| q.get(k))
+    });
+    let show = Memo::new(move |_| state.get().show);
+
+    // The hub's today and first day of data, asked once per entity. Until the reply lands the
+    // browser's date stands in for today, and the arrows and the comparison stay off.
+    let extent = RwSignal::new(None::<HistoryExtent>);
+    Effect::new(move |_| {
+        let asked = id.get();
+        extent.set(None);
+        spawn_local(async move {
+            if let Ok(e) = fetch_extent(&asked).await
+                && asked == id.get_untracked()
+            {
+                extent.set(Some(e));
+            }
+        });
+    });
+    let hub_today =
+        Memo::new(move |_| extent.with(|e| e.as_ref().and_then(|e| parse_date(&e.today))));
+    let first = Memo::new(move |_| {
+        extent.with(|e| {
+            e.as_ref()
+                .and_then(|e| e.first_date.as_deref())
+                .and_then(parse_date)
+        })
+    });
+    let today = Memo::new(move |_| {
+        hub_today
+            .get()
+            .unwrap_or_else(|| local_today((crate::energy::now_ms() / 1000) as i64))
+    });
+    let window = Memo::new(move |_| chart_window(&state.get(), today.get()));
 
     let entity: Memo<Option<EntityView>> =
         Memo::new(move |_| house.entities.with(|m| m.get(&id.get()).cloned()));
@@ -147,15 +195,12 @@ pub fn HistoryDetailScreen() -> impl IntoView {
         })
     };
 
-    // Range chips update the `range` query param via replace-navigation so Back works.
-    let id_for_nav = id;
-    let navigate = navigate.clone();
-    let on_range = {
+    // Every change of period or chips replaces the history entry, so Back leaves the page.
+    let replace = {
         let navigate = navigate.clone();
-        move |r: HistoryRange| {
-            let path = history_path(&id_for_nav.get(), r, show.get().as_deref());
+        move |s: &PeriodState| {
             navigate(
-                &path,
+                &state_path(&id.get_untracked(), s),
                 NavigateOptions {
                     replace: true,
                     ..Default::default()
@@ -163,24 +208,28 @@ pub fn HistoryDetailScreen() -> impl IntoView {
             );
         }
     };
-
-    // The value chips write their selection to the `show` query param, replacing the entry.
+    let on_period = {
+        let replace = replace.clone();
+        Callback::new(move |s: PeriodState| replace(&s))
+    };
     let on_show = {
-        let navigate = navigate.clone();
+        let replace = replace.clone();
         Callback::new(move |param: String| {
-            let path = history_path(&id.get_untracked(), range.get_untracked(), Some(&param));
-            navigate(
-                &path,
-                NavigateOptions {
-                    replace: true,
-                    ..Default::default()
-                },
-            );
+            let mut s = state.get_untracked();
+            s.show = Some(param).filter(|p| !p.is_empty());
+            replace(&s);
         })
     };
+    let on_zoom = Callback::new(move |date: NaiveDate| {
+        replace(&zoomed(&state.get_untracked(), date, today.get_untracked()));
+    });
     let device_class: Memo<Option<String>> =
         Memo::new(move |_| entity.get().and_then(|e| e.device_class));
     let kind_sig: Memo<Kind> = Memo::new(move |_| entity.get().map_or(Kind::Generic, |e| e.kind));
+
+    // A discrete entity (light, switch, cover) is drawn in words: nothing to set against.
+    let compare_allowed =
+        Signal::derive(move || state_axis_labels(lang(), None, &kind_str.get()).is_none());
 
     let known = Memo::new(move |_| house.entities.with(|m| m.contains_key(&id.get())));
     let loaded = Memo::new(move |_| {
@@ -196,35 +245,27 @@ pub fn HistoryDetailScreen() -> impl IntoView {
             </header>
             {move || {
                 if known.get() {
-                    let on_range = on_range.clone();
                     view! {
                         <section class="sheet__panel">
-                            <div class="chips history-detail__chips">
-                                {RANGES.iter().map(|r| {
-                                    let r = *r;
-                                    let on_range = on_range.clone();
-                                    view! {
-                                        <button
-                                            type="button"
-                                            class="chip"
-                                            class:chip--selected=move || range.get() == r
-                                            aria-pressed=move || (range.get() == r).to_string()
-                                            on:click=move |_| on_range(r)
-                                        >
-                                            {move || range_chip(lang(), r)}
-                                        </button>
-                                    }
-                                }).collect_view()}
-                            </div>
+                            <PeriodBar
+                                state=state
+                                today=today
+                                first=first
+                                on_change=on_period
+                                compare_allowed=compare_allowed
+                                ready=Signal::derive(move || hub_today.get().is_some())
+                            />
                             <HistoryChart
                                 entity_id=Signal::derive(move || id.get())
-                                window=Signal::derive(move || ChartWindow::Preset(range.get()))
+                                window=window
                                 flavor=Signal::derive(move || flavor_sig.get())
                                 kind=Signal::derive(move || kind_str.get())
                                 unit=Signal::derive(move || unit_opt.get())
                                 power_pair=Signal::derive(move || power_pair.get())
                                 show=Signal::derive(move || show.get())
                                 on_show=on_show
+                                on_zoom=on_zoom
+                                today=Signal::derive(move || hub_today.get())
                                 device_class=Signal::derive(move || device_class.get())
                                 field_kind=Signal::derive(move || kind_sig.get())
                             />
@@ -312,45 +353,79 @@ mod tests {
         );
     }
 
-    #[test]
-    fn range_parses_wire_names_and_defaults_to_day() {
-        assert_eq!(parse_range(Some("1h".into())), HistoryRange::Hour);
-        assert_eq!(parse_range(Some("6h".into())), HistoryRange::SixHours);
-        assert_eq!(parse_range(Some("24h".into())), HistoryRange::Day);
-        assert_eq!(parse_range(Some("7d".into())), HistoryRange::Week);
-        assert_eq!(parse_range(Some("30d".into())), HistoryRange::Month);
-        assert_eq!(parse_range(Some("1y".into())), HistoryRange::Year);
-        assert_eq!(parse_range(Some("junk".into())), HistoryRange::Day);
-        assert_eq!(parse_range(None), HistoryRange::Day);
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    fn state(unit: Unit, at: Option<NaiveDate>, vs: Option<u8>) -> PeriodState {
+        PeriodState {
+            unit,
+            at,
+            custom: None,
+            vs,
+            show: Some("battery".into()),
+        }
     }
 
     #[test]
-    fn the_path_keeps_the_picked_values() {
+    fn the_hour_views_are_presets() {
+        let today = d(2026, 11, 26);
         assert_eq!(
-            history_path("vacuum.x", HistoryRange::Week, None),
-            "/history/vacuum.x?range=7d"
+            chart_window(&state(Unit::Hour1, None, Some(1)), today),
+            ChartWindow::Preset(HistoryRange::Hour)
         );
         assert_eq!(
-            history_path("vacuum.x", HistoryRange::Week, Some("battery,fan_speed")),
-            "/history/vacuum.x?range=7d&show=battery%2Cfan_speed"
-        );
-    }
-
-    #[test]
-    fn a_value_with_url_characters_stays_in_its_parameter() {
-        assert_eq!(
-            history_path("vacuum.x", HistoryRange::Day, Some("a&b=c d")),
-            "/history/vacuum.x?range=24h&show=a%26b%3Dc%20d"
+            chart_window(&state(Unit::Hour6, None, None), today),
+            ChartWindow::Preset(HistoryRange::SixHours)
         );
     }
 
     #[test]
-    fn range_slugs_match_history_range_wire_names() {
-        assert_eq!(range_slug(HistoryRange::Hour), "1h");
-        assert_eq!(range_slug(HistoryRange::SixHours), "6h");
-        assert_eq!(range_slug(HistoryRange::Day), "24h");
-        assert_eq!(range_slug(HistoryRange::Week), "7d");
-        assert_eq!(range_slug(HistoryRange::Month), "30d");
-        assert_eq!(range_slug(HistoryRange::Year), "1y");
+    fn a_month_is_a_date_window_with_its_comparison() {
+        let today = d(2026, 11, 26);
+        let req = |from, to| WindowReq {
+            from,
+            to,
+            upto: None,
+        };
+        assert_eq!(
+            chart_window(&state(Unit::Month, None, Some(1)), today),
+            ChartWindow::Dates {
+                shown: req(d(2026, 11, 1), d(2026, 11, 30)),
+                unit: Unit::Month,
+                compare: Some(req(d(2025, 11, 1), d(2025, 11, 30))),
+            }
+        );
+        assert_eq!(
+            chart_window(&state(Unit::Week, Some(d(2026, 10, 5)), None), today),
+            ChartWindow::Dates {
+                shown: req(d(2026, 10, 5), d(2026, 10, 11)),
+                unit: Unit::Week,
+                compare: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_year_opens_the_month_and_on_a_month_the_day() {
+        let today = d(2026, 11, 26);
+        let year = state(Unit::Year, None, Some(2));
+        let z = zoomed(&year, d(2026, 3, 1), today);
+        assert_eq!(
+            (z.unit, z.at, z.vs),
+            (Unit::Month, Some(d(2026, 3, 1)), Some(2))
+        );
+        assert_eq!(z.show.as_deref(), Some("battery"));
+        let z = zoomed(&year, d(2026, 11, 1), today);
+        assert_eq!(
+            (z.unit, z.at),
+            (Unit::Month, None),
+            "the running month is current"
+        );
+        let month = state(Unit::Month, None, None);
+        let z = zoomed(&month, d(2026, 11, 12), today);
+        assert_eq!((z.unit, z.at), (Unit::Day, Some(d(2026, 11, 12))));
+        let z = zoomed(&month, today, today);
+        assert_eq!((z.unit, z.at), (Unit::Day, None));
     }
 }
